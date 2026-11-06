@@ -119,8 +119,9 @@ public sealed class DirectedPathMatcher
     private Projection? Project(Vector3 position, Vector2 heading, List<Segment> segments)
     {
         var candidates = new List<Projection>();
-        foreach (var segment in segments)
+        for (int index = 0; index < segments.Count; index++)
         {
+            var segment = segments[index];
             if (Vector2.Dot(heading, segment.Heading) < _minimumDirectionDot)
                 continue;
             var start = new Vector2(segment.Start.X, segment.Start.Z);
@@ -128,9 +129,14 @@ public sealed class DirectedPathMatcher
             var location = new Vector2(position.X, position.Z);
             var delta = end - start;
             var t = Vector2.Dot(location - start, delta) / delta.LengthSquared();
-            // Do not turn a point beyond a path endpoint into on-path evidence.
-            if (t < 0 || t > 1)
+            // Fill only the outside wedge at an internal bend: neither adjacent
+            // segment has an interior perpendicular projection there. Never borrow
+            // a later segment endpoint to extend the overall path's start or end.
+            if (t < 0 && (index == 0 || Parameter(location, segments[index - 1]) < 1))
                 continue;
+            if (t > 1 && (index == segments.Count - 1 || Parameter(location, segments[index + 1]) > 0))
+                continue;
+            t = Math.Clamp(t, 0, 1);
             var projected = Vector3.Lerp(segment.Start, segment.End, t);
             var horizontalError = Vector2.Distance(location, start + delta * t);
             var verticalError = Math.Abs(position.Y - projected.Y);
@@ -149,6 +155,13 @@ public sealed class DirectedPathMatcher
             && Math.Abs(candidate.AlongDistance - best.AlongDistance) > _horizontalTolerance * 2 + 1))
             return null;
         return best;
+    }
+
+    private static float Parameter(Vector2 location, Segment segment)
+    {
+        var start = new Vector2(segment.Start.X, segment.Start.Z);
+        var delta = new Vector2(segment.End.X, segment.End.Z) - start;
+        return Vector2.Dot(location - start, delta) / delta.LengthSquared();
     }
 
     private static bool Finite(Vector3 value) =>

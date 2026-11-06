@@ -159,4 +159,36 @@ public sealed class DirectedPathMatcherTests
         var match = new DirectedPathMatcher().Match(Point(-5), Forward,
             Camera(Point(350)), [Road(Point(0), Point(500))], true);
         Assert.Equal(CameraApproach.Unknown, match.Approach);
-    }}
+    }
+    [Theory]
+    [InlineData(99, -3)]
+    [InlineData(100, -3)]
+    [InlineData(103, -3)]
+    public void OutsideBendVertexHasContinuousProjection(float x, float z)
+    {
+        var road = Road(Point(0), Point(100), Point(100, 100));
+        var direction = Vector3.Normalize(new Vector3(1, 0, 1));
+        var match = new DirectedPathMatcher().Match(Point(x, z), direction,
+            Camera(Point(100, 80), Vector3.UnitZ), [road], true);
+        Assert.Equal(CameraApproach.RouteAhead, match.Approach);
+        Assert.InRange(match.RoadDistanceMeters!.Value, 79, 82);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(11)]
+    public void InternalEndpointCannotExtendWholeMultisegmentPath(float x)
+    {
+        var road = Road(Point(0), Point(5), Point(10));
+        Assert.Null(new DirectedPathMatcher().ProjectDistance(Point(x), Forward, [road]));
+    }
+
+    [Fact]
+    public void BendVertexStillRequiresLocalDirectionAndHeight()
+    {
+        var road = Road(Point(0), Point(100), Point(100, 100));
+        var matcher = new DirectedPathMatcher();
+        Assert.Null(matcher.ProjectDistance(Point(103, -3), -Vector3.UnitX, [road]));
+        Assert.Null(matcher.ProjectDistance(Point(103, -3, 4), Vector3.UnitX, [road]));
+    }
+}

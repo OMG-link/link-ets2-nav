@@ -95,13 +95,13 @@ public sealed class RoadPathSourceTests
     }
 
     [Fact]
-    public void NoRouteNearTwoRoadsRefusesToGuessAtJunction()
+    public void NoRouteAtSimpleJoinRetainsUniqueContinuation()
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(250));
         road.Append(Point(500));
         var route = Route();
-        Assert.Empty(new RoadPathSource(map).GetPath(Point(250), Vector3.UnitX, route, route.Availability));
+        Assert.Equal(2, new RoadPathSource(map).GetPath(Point(250), Vector3.UnitX, route, route.Availability).Count);
     }
 
     [Fact]
@@ -304,4 +304,93 @@ public sealed class RoadPathSourceTests
         var match = new RoadPathSource(map).MatchCamera(Point(50), Vector3.UnitX,
             new("camera", Point(349, 8), Vector3.UnitX), route, route.Availability);
         Assert.Equal(LinkEts2Nav.Core.CameraApproach.Unknown, match.Approach);
-    }}
+    }
+    [Theory]
+    [InlineData(248)]
+    [InlineData(250)]
+    [InlineData(252)]
+    public void RouteMembershipAndDistanceStayContinuousAcrossSimpleJoin(float x)
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(250));
+        var second = first.Append(Point(500));
+        var route = Route((first.Node.Uid, 500), (first.ForwardNode.Uid, 250), (second.ForwardNode.Uid, 0));
+        var source = new RoadPathSource(map);
+        var match = source.MatchCamera(Point(x, 3), Vector3.UnitX,
+            new("camera", Point(400, 3), Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.RouteAhead, match.Approach);
+        Assert.Equal(400 - x, match.RoadDistanceMeters!.Value, 2);
+        var cameraAtJoin = source.MatchCamera(Point(50, 3), Vector3.UnitX,
+            new("camera", Point(x, 3), Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.RouteAhead, cameraAtJoin.Approach);
+        Assert.Equal(x - 50, cameraAtJoin.RoadDistanceMeters!.Value, 2);
+    }
+
+    [Theory]
+    [InlineData(248)]
+    [InlineData(250)]
+    [InlineData(252)]
+    public void NoRouteAtJoinUsesBothSidesWithoutLosingCameraMembership(float x)
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(250));
+        first.Append(Point(500));
+        var route = Route();
+        var source = new RoadPathSource(map);
+        var match = source.MatchCamera(Point(x, 3), Vector3.UnitX,
+            new("camera", Point(400, 3), Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.UnavoidableAhead, match.Approach);
+        Assert.Equal(400 - x, match.RoadDistanceMeters!.Value, 2);
+        var reverse = source.MatchCamera(Point(x, 3), -Vector3.UnitX,
+            new("camera", Point(50, 3), -Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.UnavoidableAhead, reverse.Approach);
+        Assert.Equal(x - 50, reverse.RoadDistanceMeters!.Value, 2);
+    }
+
+    [Fact]
+    public void JoinWithThirdBranchRemainsUncertainEvenWithNavigation()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(250));
+        var second = first.Append(Point(500));
+        var branch = AddRoad(map, Point(250), Point(250, 200));
+        branch.Node = first.ForwardNode;
+        var route = Route((first.Node.Uid, 500), (first.ForwardNode.Uid, 250), (second.ForwardNode.Uid, 0));
+        var source = new RoadPathSource(map);
+        Assert.Empty(source.GetPath(Point(250), Vector3.UnitX, route, route.Availability));
+        Assert.Empty(source.GetPath(Point(250), Vector3.UnitX, Route(), RouteAvailability.None));
+    }
+
+    [Fact]
+    public void NearbyNonRouteRoadCannotBorrowSimpleJoin()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(250));
+        var second = first.Append(Point(500));
+        AddRoad(map, Point(0, 6), Point(500, 6));
+        var route = Route((first.Node.Uid, 500), (first.ForwardNode.Uid, 250), (second.ForwardNode.Uid, 0));
+        var source = new RoadPathSource(map);
+        Assert.Empty(source.GetPath(Point(250, 3), Vector3.UnitX, route, route.Availability));
+        Assert.Empty(source.GetPath(Point(250, 3), Vector3.UnitX, Route(), RouteAvailability.None));
+    }
+
+    [Fact]
+    public void SimpleJoinDoesNotAdmitOnlyOneOfItsRoadsToRoute()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(250));
+        first.Append(Point(500));
+        var route = Route((first.Node.Uid, 250), (first.ForwardNode.Uid, 0));
+        var source = new RoadPathSource(map);
+        Assert.Empty(source.GetPath(Point(250, 3), Vector3.UnitX, route, route.Availability));
+    }
+
+    [Fact]
+    public void NoRouteJoinRejectsHeadingPerpendicularToItsLocalTangents()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(250));
+        first.Append(Point(250, 250));
+        Assert.Empty(new RoadPathSource(map).GetPath(Point(250), Vector3.Normalize(new Vector3(1, 0, -1)), Route(), RouteAvailability.None));
+    }
+}

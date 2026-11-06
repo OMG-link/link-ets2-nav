@@ -120,9 +120,20 @@ public sealed class RoadPathSource
             return false;
         var candidates = roads.Where(r => r.Node is not null && r.ForwardNode is not null && Near(r, position))
             .Select(r => (Road: r, Score: Distance(position, [Orient(r, r.Node.Uid)])))
-            .Where(p => p.Score < 12).OrderBy(p => p.Score).Take(2).ToArray();
-        if (candidates.Length == 0 || candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3)
-            return false;
+            .Where(p => p.Score < 12).OrderBy(p => p.Score).Take(3).ToArray();
+        if (candidates.Length == 0) return false;
+        if (candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3)
+        {
+            if (candidates.Length > 2 && candidates[2].Score - candidates[0].Score < 3
+                || !TryContinuousJoin(position, candidates[0].Road, candidates[1].Road, out var join))
+                return false;
+            var first = candidates[0].Road.Uid.ToString("X16");
+            var second = candidates[1].Road.Uid.ToString("X16");
+            return path.Zip(path.Skip(1)).Any(pair =>
+                pair.First.EndNodeUid == join && pair.Second.StartNodeUid == join
+                && (pair.First.Id == first && pair.Second.Id == second
+                    || pair.First.Id == second && pair.Second.Id == first));
+        }
         var selectedId = candidates[0].Road.Uid.ToString("X16");
         return path.Any(road => StringComparer.Ordinal.Equals(road.Id, selectedId));
     }
@@ -132,9 +143,30 @@ public sealed class RoadPathSource
         var candidates = roads.Where(r => r.Node is not null && r.ForwardNode is not null && Near(r, position))
             .Select(r => (Road: r, Sample: Orient(r, r.Node.Uid)))
             .Select(p => (p.Road, p.Sample, Score: Distance(position, [p.Sample])))
-            .Where(p => p.Score < 12).OrderBy(p => p.Score).Take(2).ToArray();
-        if (candidates.Length == 0 || candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3) return [];
+            .Where(p => p.Score < 12).OrderBy(p => p.Score).Take(3).ToArray();
+        if (candidates.Length == 0) return [];
         var candidate = candidates[0];
+        if (candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3)
+        {
+            if (candidates.Length > 2 && candidates[2].Score - candidates[0].Score < 3
+                || !TryContinuousJoin(position, candidates[0].Road, candidates[1].Road, out var join)) return [];
+            // Start with the incoming road so the unique continuation includes both
+            // sides of this join. A U-turn or conflicting tangent is not certainty.
+            var incoming = candidates.Take(2).Where(p =>
+            {
+                var atJoin = p.Road.Node.Uid == join ? p.Sample.Points[0] : p.Sample.Points[^1];
+                var adjacent = p.Road.Node.Uid == join ? p.Sample.Points[1] : p.Sample.Points[^2];
+                return Vector3.Dot(Vector3.Normalize(atJoin - adjacent), heading) >= .5f;
+            }).ToArray();
+            var outgoing = candidates.Take(2).Where(p =>
+            {
+                var atJoin = p.Road.Node.Uid == join ? p.Sample.Points[0] : p.Sample.Points[^1];
+                var adjacent = p.Road.Node.Uid == join ? p.Sample.Points[1] : p.Sample.Points[^2];
+                return Vector3.Dot(Vector3.Normalize(adjacent - atJoin), heading) >= .5f;
+            }).ToArray();
+            if (incoming.Length != 1 || outgoing.Length != 1 || incoming[0].Road.Uid == outgoing[0].Road.Uid) return [];
+            candidate = incoming[0];
+        }
         var nearest = candidate.Sample.Points.Zip(candidate.Sample.Points.Skip(1))
             .OrderBy(p => SegmentDistance(position, p.First, p.Second)).First();
         var tangent = Vector3.Normalize(nearest.Second - nearest.First);
@@ -157,6 +189,18 @@ public sealed class RoadPathSource
             current = next;
         }
         return path;
+    }
+
+    private bool TryContinuousJoin(Vector3 position, Road first, Road second, out ulong join)
+    {
+        join = 0;
+        var shared = new[] { first.Node, first.ForwardNode }
+            .Where(node => node.Uid == second.Node.Uid || node.Uid == second.ForwardNode.Uid).ToArray();
+        if (shared.Length != 1 || Vector3.Distance(position, shared[0].Position) > 12
+            || !incidentRoads.TryGetValue(shared[0].Uid, out var connected) || connected.Count != 2)
+            return false;
+        join = shared[0].Uid;
+        return true;
     }
 
     private static double PolylineLength(DirectedRoad road)

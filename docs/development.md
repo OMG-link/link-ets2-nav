@@ -82,7 +82,7 @@ dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<game-directory>" -
 dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<game-directory>" --inspect-model /model/speedcamera/speedcamera_hw_au.pmg
 ```
 
-默认扫描已安装官方归档，输出的 `profileResolved` 为 false，不代表当前存档。传入 `--game-log "<game.log.txt>"` 后才按实际挂载日志解析当前地图；会拒绝无法确认兼容的地图或探头资源覆盖。日志中已经卸载的归档不参与解析。用 `--help` 查看完整参数。
+默认扫描已安装官方归档，输出的 `profileResolved` 为 false，不代表当前存档。传入 `--game-log "<game.log.txt>"` 后才按实际挂载日志解析当前地图；会拒绝无法确认兼容的地图或探头资源覆盖。模组以最近一次显式活动列表为准；模组管理界面的临时预览挂载不算启用，也不会重置地图缓存。用 `--help` 查看完整参数。
 
 启用插件后，开发宿主首页的“测速探头诊断”链接进入 `/link-ets2-nav`。该页面随插件 DLL 提供，在标准宿主中也可通过对应路由访问。架构及预警规则见 [预警设计](architecture.md)。
 ## 运行日志
@@ -98,3 +98,7 @@ Get-Content .\ETS2LA\ETS2LA\bin\Debug\net10.0\ets2la.log -Tail 30 -Wait
 ```
 
 插件运行日志附带 UTC 时间；宿主控制台另有本地时间。上游文件日志约每 5 秒刷新一次，因此文件输出可能比控制台稍晚。重新启动宿主会重新创建日志文件，需要保留时请先复制到本地忽略的 `artifacts/`。
+
+## 模组兼容性检查
+
+兼容性检查按实际资源文件判断：车流生成规则、AI 车道规则和信号灯时序允许共存；收费站配置仅在解析确认全部单位为收费站或非测速模型挂点、且没有外部包含时放行。真正覆盖道路、模型、标志或测速挂点的文件仍会暂停扫描，日志会列出完整模组路径和冲突资源。

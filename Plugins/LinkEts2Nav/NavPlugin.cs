@@ -7,8 +7,6 @@ using ETS2LA.State;
 using LinkEts2Nav.Map;
 using LinkEts2Nav.Runtime;
 using System.Numerics;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace LinkEts2Nav;
 
@@ -82,10 +80,6 @@ public sealed class NavPlugin : Plugin
     }
 
     public override void Shutdown() => OnDisable();
-
-    private static string MountSignature(IEnumerable<string> log)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n",
-            log.Where(l => l.Contains("[fs] device ", StringComparison.Ordinal) || l.Contains("Unmounted", StringComparison.OrdinalIgnoreCase))))));
 
     private static async Task RunAsync(CancellationToken token)
     {
@@ -169,7 +163,7 @@ public sealed class NavPlugin : Plugin
                     {
                         mountCheck = now.AddSeconds(5);
                         var log = currentInstallation.GetLogFileContents();
-                        string nextSignature = MountSignature(log);
+                        string nextSignature = OfficialArchiveMount.ResolveGameLog(currentInstallation.Path, log).Signature;
                         if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature || mount is null)
                         {
                             mount?.Dispose(); mount = null; scanner = null; nearby = null;

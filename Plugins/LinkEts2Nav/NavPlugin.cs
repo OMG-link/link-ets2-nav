@@ -1,3 +1,4 @@
+using ETS2LA.Audio;
 using ETS2LA.Backend.Events;
 using ETS2LA.Game;
 using ETS2LA.Logging;
@@ -80,13 +81,32 @@ public sealed class NavPlugin : Plugin
 
     public override void Shutdown() => OnDisable();
 
+    private static PlannedSpeechAnnouncer? CreateSpeech(IWarningAnnouncer fallback, NavigationLogReporter log, CancellationToken token)
+    {
+        try
+        {
+            var options = SpeechOptions.Load(AppContext.BaseDirectory);
+            if (!options.Enabled) return null;
+            log.Event("TTS 已启用：按预警触发顺序预生成，音色=" + options.Voice + "，文件缓存=" + options.CacheDirectory, DateTimeOffset.UtcNow);
+            return new(new KokoroSpeechProcess(options), fallback, path => AudioHandler.Current.Queue(path),
+                message => log.Event(message, DateTimeOffset.UtcNow), token);
+        }
+        catch (Exception ex)
+        {
+            log.Event("TTS 配置不可用，使用现有提示音：" + ex.Message, DateTimeOffset.UtcNow);
+            return null;
+        }
+    }
+
     private static async Task RunAsync(CancellationToken token)
     {
         using var source = new Ets2LaGameDataSource(Events.Current);
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
         var logOutput = new NavigationLogReporter();
         logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
-        var pipeline = new WarningPipeline(new LoggedAnnouncer(new Ets2LaWarningAnnouncer(cancellationToken: token), logOutput));
+        var fallback = new Ets2LaWarningAnnouncer(cancellationToken: token);
+        await using var speech = CreateSpeech(fallback, logOutput, token);
+        var pipeline = new WarningPipeline(new LoggedAnnouncer((IWarningAnnouncer?)speech ?? fallback, logOutput), speech);
         void Publish(NavDiagnosticSnapshot snapshot, bool isWarning = false)
         {
             if (token.IsCancellationRequested) return;
@@ -117,6 +137,7 @@ public sealed class NavPlugin : Plugin
                 token.ThrowIfCancellationRequested();
                 var data = source.Capture();
                 var now = DateTimeOffset.UtcNow;
+                if (!data.IsVehicleUsable) speech?.ClearPlan();
                 logOutput.ReportFines(source.Store.DrainFines(), data.DroppedFineCount, now);
                 if (!data.CanPrepareMap(now) || data.Vehicle is not { } vehicle)
                 {
@@ -154,6 +175,7 @@ public sealed class NavPlugin : Plugin
                 var currentInstallation = ApplicationState.Current.RunningGame;
                 if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2)
                 {
+                    speech?.ClearPlan();
                     Publish(new(now, "等待 ETS2 当前地图就绪。", data.RouteAvailability.ToString(), 0, []));
                     continue;
                 }
@@ -176,7 +198,7 @@ public sealed class NavPlugin : Plugin
                             signature = nextSignature;
                         }
                     }
-                    if (mount is null || scanner is null) continue;
+                    if (mount is null || scanner is null) { speech?.ClearPlan(); continue; }
                     if (session != data.SessionId)
                     {
                         logOutput.ResetTargets("车辆会话变化：已重置目标和预警状态（首次连接、读档或传送等）。", now);
@@ -198,7 +220,7 @@ public sealed class NavPlugin : Plugin
                     }
                     // Disk reads may take time; recapture to honor pause, teleport and sample freshness.
                     var latest = source.Capture();
-                    if (latest.SessionId != session) { nearby = null; continue; }
+                    if (latest.SessionId != session) { nearby = null; speech?.ClearPlan(); continue; }
                     token.ThrowIfCancellationRequested();
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var diagnostic = pipeline.Process(latest, calibrated, DateTimeOffset.UtcNow);
@@ -209,6 +231,7 @@ public sealed class NavPlugin : Plugin
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    speech?.ClearPlan();
                     Publish(new(DateTimeOffset.UtcNow, "地图暂不可用：" + ex.GetType().Name + ": " + ex.Message,
                         data.RouteAvailability.ToString(), 0, []), isWarning: true);
                     // No tight retry loop if archives or map resources are unavailable.

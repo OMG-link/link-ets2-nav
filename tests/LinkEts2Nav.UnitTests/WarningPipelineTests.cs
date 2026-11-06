@@ -58,10 +58,10 @@ public sealed class WarningPipelineTests
     public void CandidateOutsideThresholdDoesNotWarnUntilEnteringRange()
     {
         var map = new GameMap();
-        var road = AddRoad(map, Point(0), Point(500));
+        var road = AddRoad(map, Point(0), Point(800));
         var announcer = new RecordingAnnouncer();
         var pipeline = new WarningPipeline(announcer);
-        var nearby = Nearby(map, Camera(position: Point(349)));
+        var nearby = Nearby(map, Camera(position: Point(549)));
         var route = Route(road);
         pipeline.Process(Data(route, Vehicle(x: 40)), nearby, Now);
         Assert.Empty(announcer.Warnings);

@@ -6,7 +6,7 @@ using TruckLib.ScsMap;
 namespace LinkEts2Nav.Runtime;
 
 /// <summary>Connects immutable game samples to geometry matching and the pure warning policy.</summary>
-public sealed class WarningPipeline(IWarningAnnouncer announcer)
+public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner? planner = null)
 {
     private readonly CameraWarningEngine engine = new();
     private TruckLib.ScsMap.Map? previousMap;
@@ -16,8 +16,11 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer)
     public NavDiagnosticSnapshot Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
     {
         if (!data.IsVehicleUsable || data.Vehicle is not { } vehicle)
+        {
+            planner?.ClearPlan();
             return new(now, "等待有效的车辆数据；暂停或连接中断期间不预警。", data.RouteAvailability.ToString(), nearby.Cameras.Count, [], lastWarning, LatestFine: data.LatestFine, LatestCameraFine: data.LatestCameraFine,
                 FineHistory: data.FineHistory, DroppedFineCount: data.DroppedFineCount);
+        }
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
         if (!ReferenceEquals(previousMap, nearby.Map))
         {
@@ -52,12 +55,14 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer)
                 candidate.RoadDistanceMeters, camera.SourceDescriptor, camera.ModelVariant, camera.MetadataFingerprint));
         }
         // Raw pose age, not processing time, controls whether alerts may fire.
-        var warnings = engine.Update(new(data.SessionId, data.Route.Revision, hasRoute,
-            usableRoute && vehicle.SpeedMetersPerSecond >= 0, vehicle.ReceivedAt, candidates), now);
+        var warningSnapshot = new WarningSnapshot(data.SessionId, data.Route.Revision, hasRoute,
+            usableRoute && vehicle.SpeedMetersPerSecond >= 0, vehicle.ReceivedAt, candidates);
+        planner?.UpdatePlan(warningSnapshot, engine.GetPlans(warningSnapshot, now), now);
+        var warnings = engine.Update(warningSnapshot, now);
         foreach (var warning in warnings)
         {
             announcer.Announce(warning);
-            lastWarning = $"{warning.CameraId} · {warning.DistanceMeters:F0} m · {warning.DistanceKind}";
+            lastWarning = $"{warning.CameraId} · {warning.StageDistanceMeters:F0} m 阶段 · 实距 {warning.DistanceMeters:F0} m · {warning.DistanceKind}";
         }
         string state = nearby.Cameras.Any(c => c.DirectionVerified)
             ? "预警运行中；只有位置和方向已验证的目标会播报。"
@@ -71,6 +76,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer)
     public void Reset()
     {
         engine.Reset();
+        planner?.ClearPlan();
         previousMap = null;
         paths = null;
         lastWarning = null;

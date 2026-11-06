@@ -29,5 +29,6 @@
   </Folder>
   <Folder Name="/Tools/">
     <Project Path="tools/LinkEts2Nav.Probe/LinkEts2Nav.Probe.csproj" />
+    <Project Path="tools/LinkEts2Nav.Speech/LinkEts2Nav.Speech.csproj" />
   </Folder>
 </Solution>

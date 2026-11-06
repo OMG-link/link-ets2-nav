@@ -105,7 +105,7 @@ Get-Content .\ETS2LA\ETS2LA\bin\Debug\net10.0\ets2la.log -Tail 30 -Wait
 
 ## 预警音频与试听
 
-测速诊断页的“试听预警音”按钮仅测试声音链路，不计作探头预警，也不需要启用扫描。可先保持游戏暂停，启用插件并等待日志出现“附近地图已准备”，再开始行驶，避免首次资源加载使预警晚于 300 米。
+测速诊断页的“试听预警音”按钮仅测试声音链路，不计作探头预警，也不需要启用扫描。可先保持游戏暂停，启用插件并等待日志出现“附近地图已准备”，再开始行驶，减少首次资源加载导致的预警延迟。
 
 在宿主输出目录的 `Settings/LinkEts2Nav.Audio.json` 中选择本地音频：
 
@@ -118,3 +118,36 @@ Get-Content .\ETS2LA\ETS2LA\bin\Debug\net10.0\ets2la.log -Tail 30 -Wait
 相对路径以宿主输出目录为基准，也可使用绝对路径。配置在每次播放请求时读取，修改 JSON 无需重启；更新 DLL 仍需重启宿主。支持 WAV、OGG、MP3、FLAC；FMOD `.bank` 须先解码成普通音频。配置缺失时使用内置提示音，配置或文件错误会记录原因并尝试回退。
 
 借用第三方声音进行本地测试时，音频和提取工具应放在忽略目录，不能随插件 DLL 或代码提交分发。试听和实际预警都会记录选用的音频文件；“已提交播放”只表示已排队，设备或异步解码错误需结合宿主音频日志判断。
+
+## 离线语音合成
+
+可选的 `tools/LinkEts2Nav.Speech/` 是常驻 .NET 合成子进程，使用 sherpa-onnx 2.0.1、CPU 推理和 Kokoro multi-lang v1.1-zh。当前预设音色为 `zf_067`（该模型 Speaker 36），默认使用 2 个线程。开发脚本自动构建并将 Windows x64 worker 及原生依赖部署到宿主的 `Tools/LinkEts2Nav.Speech/`；无需安装 Python、CUDA 或系统语音服务。
+
+模型需另行下载并解压：[官方模型包](https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2)。模型权重、音色、词典和生成音频不提交到代码仓库。模型与运行库各自保留原有许可证；[Kokoro 模型说明](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh)和[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)提供来源及许可证。
+
+在宿主输出目录创建 `Settings/LinkEts2Nav.Speech.json`：
+
+```json
+{
+  "enabled": true,
+  "modelDirectory": "Models/kokoro-multi-lang-v1_1",
+  "workerPath": "Tools/LinkEts2Nav.Speech/LinkEts2Nav.Speech.dll",
+  "cacheDirectory": "Cache/LinkEts2Nav/Speech",
+  "voice": "zf_067",
+  "threads": 2
+}
+```
+
+相对路径均以宿主输出目录为基准，也可配置绝对路径。配置缺失或 `enabled=false` 时继续使用已有音频。TTS 配置在启用插件时读取；修改后停用再启用，更新 DLL 后需重启宿主。模型目录必须包含 `model.onnx`、`voices.bin`、`tokens.txt`、`lexicon-zh.txt` 和 `lexicon-us-en.txt`。
+
+确认目标在前方后，立即按各阶段预计触发顺序生成 500 米、200 米等完整短句。当前使用同一种文案的目标共用同一缓存文件。缓存目录中的哈希文件名由内容和模型指纹决定，重启后仍可复用；文件损坏会重新合成。初次初始化和合成可能需要数秒，触发时未准备好则立即回退已有提示音，不补播迟到语音。日志会显示规划后的合成开始、文件就绪、实际播放请求和回退原因。
+
+诊断页的“试听预警音”仍试听 `LinkEts2Nav.Audio.json` 指定的静态回退音频；实际 500/200 米阶段使用对应的 TTS 缓存。暂停或无有效路线时不生成新的目标计划，不因缓存生成完成而自动播放。
+
+可单独运行 worker 检查模型，无需启动游戏或宿主：
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Speech -- --model-dir "<model-directory>" --cache-dir "<cache-directory>" --voice zf_067 --threads 2
+```
+
+worker 从标准输入按行读取 `{"id":"example","text":"前方五百米有测速，请注意限速。"}`，标准输出返回 `id/path/cacheHit/error` JSON。EOF 正常退出，合成诊断只写标准错误。调用时应使用结构化参数和 JSON 序列化，不能把动态文本拼进 shell 命令。

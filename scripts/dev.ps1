@@ -9,6 +9,8 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $frameworkRoot = Join-Path $projectRoot 'ETS2LA'
 $pluginProject = Join-Path $projectRoot 'Plugins\LinkEts2Nav\LinkEts2Nav.csproj'
+$speechProject = Join-Path $projectRoot 'tools\LinkEts2Nav.Speech\LinkEts2Nav.Speech.csproj'
+$speechOutput = Join-Path $projectRoot "tools\LinkEts2Nav.Speech\bin\$Configuration\net10.0\win-x64"
 $hostProject = Join-Path $frameworkRoot 'ETS2LA\ETS2LA.csproj'
 $hostOutput = Join-Path $frameworkRoot "ETS2LA\bin\$Configuration\net10.0"
 
@@ -49,6 +51,7 @@ try {
     finally { Pop-Location }
     Invoke-Checked dotnet @('restore', $hostProject)
     Invoke-Checked dotnet @('restore', $pluginProject)
+    Invoke-Checked dotnet @('restore', $speechProject, '-r', 'win-x64')
     if ($Action -eq 'Restore' -or $Action -eq 'Test') {
         Invoke-Checked dotnet @('restore', (Join-Path $projectRoot 'LinkEts2Nav.slnx'))
     }
@@ -60,6 +63,7 @@ try {
 
     Invoke-Checked dotnet @('build', $hostProject, '-c', $Configuration, '--no-restore')
     Invoke-Checked dotnet @('build', $pluginProject, '-c', $Configuration, '--no-restore')
+    Invoke-Checked dotnet @('build', $speechProject, '-c', $Configuration, '-r', 'win-x64', '--no-restore')
     if ($Action -eq 'Build') { exit 0 }
 
     $pluginOutput = Join-Path $projectRoot "Plugins\LinkEts2Nav\bin\$Configuration\net10.0"
@@ -70,6 +74,9 @@ try {
         $source = Join-Path $pluginOutput $name
         if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $deployment -Force }
     }
+    $speechDeployment = Join-Path $hostOutput 'Tools\LinkEts2Nav.Speech'
+    New-Item -ItemType Directory -Path $speechDeployment -Force | Out-Null
+    Get-ChildItem -LiteralPath $speechOutput -File | Copy-Item -Destination $speechDeployment -Force
     Write-Host "Plugin deployed to $deployment. Enable it in ETS2LA's plugin manager."
     if ($Action -eq 'Run') {
         Push-Location $hostOutput

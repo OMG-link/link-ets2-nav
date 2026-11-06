@@ -110,5 +110,5 @@ public sealed class NavigationLogReporter
     }
 
     public void Triggered(CameraWarning alert, DateTimeOffset now)
-        => Event(FormattableString.Invariant($"触发预警：{alert.CameraId}，距离={alert.DistanceMeters:F0} m，距离类型={alert.DistanceKind}；提交预警音频播放请求。"), now);
+        => Event(FormattableString.Invariant($"触发预警：{alert.CameraId}，阶段={alert.StageDistanceMeters:F0} m，距离={alert.DistanceMeters:F0} m，距离类型={alert.DistanceKind}；提交预警音频播放请求。"), now);
 }

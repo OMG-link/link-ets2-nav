@@ -1,0 +1,64 @@
+@page "/link-ets2-nav"
+@using LinkEts2Nav.Runtime
+@implements IAsyncDisposable
+
+<div style="padding:32px;max-width:1100px">
+    <h1>Link ETS2 Nav</h1>
+    <p>固定测速探头预警 · 开发诊断</p>
+    <p>@snapshot.State</p>
+    <dl>
+        <dt>路线状态</dt><dd>@snapshot.RouteState</dd>
+        <dt>车辆世界坐标（X, Y, Z）</dt><dd>@(snapshot.VehiclePosition ?? "未知")</dd>
+        <dt>附近探头</dt><dd>@snapshot.CameraCount</dd>
+        <dt>状态更新时间</dt><dd>@(snapshot.UpdatedAt == default ? "尚未收到数据" : snapshot.UpdatedAt.ToLocalTime().ToString("HH:mm:ss"))</dd>
+        <dt>最近预警</dt><dd>@(snapshot.LastWarning ?? "无")</dd>
+    </dl>
+    @if (snapshot.LatestFine is { } fine)
+    {
+        <details>
+            <summary>最近观测的罚单：@fine.Offence · @fine.Amount</summary>
+            <p>@fine.ObservedAt.ToLocalTime().ToString("HH:mm:ss.fff") · 车辆位置 @fine.Vehicle.X.ToString("F1"), @fine.Vehicle.Y.ToString("F1"), @fine.Vehicle.Z.ToString("F1") · 朝向 @fine.Vehicle.HeadingTurns.ToString("F4") 圈</p>
+            <p>这是 SDK 事件到达时的车辆位置，可能有延迟，不代表精确测速位置，也不能自动归属某个探头。</p>
+        </details>
+    }
+    @if (snapshot.Cameras.Count > 0)
+    {
+        <table style="width:100%;text-align:left">
+            <thead><tr><th>探头</th><th>挂点</th><th>直线距离</th><th>沿路距离</th><th>方向已验证</th><th>判定</th></tr></thead>
+            <tbody>
+                @foreach (var camera in snapshot.Cameras)
+                {
+                    <tr><td><details><summary>@camera.Id</summary><p>@camera.SourceDescriptor · @camera.Variant</p><small>@camera.MetadataFingerprint</small></details></td><td>@camera.Hookup</td><td>@camera.DistanceMeters.ToString("F0") m</td><td>@(camera.RoadDistanceMeters?.ToString("F0") ?? "未知")</td><td>@(camera.DirectionVerified ? "是" : "否")</td><td>@camera.Decision</td></tr>
+                }
+            </tbody>
+        </table>
+    }
+    <p>地图和方向证据不足的探头不会播报；此页面不会控制车辆或阻止罚款。</p>
+    <p><a href="/plugins/manager">插件管理</a></p>
+</div>
+
+@code {
+    private NavDiagnosticSnapshot snapshot = NavDiagnostics.Current;
+    private readonly CancellationTokenSource stop = new();
+    private Task? refresh;
+
+    protected override void OnInitialized() => refresh = Refresh();
+
+    private async Task Refresh()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stop.Token))
+                await InvokeAsync(() => { snapshot = NavDiagnostics.Current; StateHasChanged(); });
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        stop.Cancel();
+        if (refresh is not null) await refresh;
+        stop.Dispose();
+    }
+}

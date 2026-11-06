@@ -13,4 +13,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" PrivateAssets="all" />
     <Using Include="Xunit" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../Plugins/LinkEts2Nav/LinkEts2Nav.csproj" />
+  </ItemGroup>
 </Project>

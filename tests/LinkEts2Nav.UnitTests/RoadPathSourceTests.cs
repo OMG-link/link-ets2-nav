@@ -1,0 +1,307 @@
+using System.Numerics;
+using LinkEts2Nav.Map;
+using LinkEts2Nav.Runtime;
+using TruckLib.ScsMap;
+using GameMap = TruckLib.ScsMap.Map;
+
+namespace LinkEts2Nav.UnitTests;
+
+public sealed class RoadPathSourceTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 11, 6, 0, 0, 0, TimeSpan.Zero);
+    private static Vector3 Point(float x, float z = 0, float y = 0) => new(x, y, z);
+    private static Road AddRoad(GameMap map, Vector3 start, Vector3 end) =>
+        Road.Add(map, start, end, default);
+    private static RouteSnapshot Route(params (ulong Uid, float Distance)[] nodes) =>
+        RouteSnapshot.Parse(nodes.Select(node => new RouteNode(node.Uid, node.Distance, node.Distance / 20)), Now);
+
+    [Fact]
+    public void DescendingRouteNodesIdentifyActualRoadAndTraversalDirection()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        var route = Route((road.Node.Uid, 500), (road.ForwardNode.Uid, 0));
+        var path = new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability);
+        var selected = Assert.Single(path);
+        Assert.Equal(road.Uid.ToString("X16"), selected.Id);
+        Assert.Equal(road.Node.Uid, selected.StartNodeUid);
+        Assert.Equal(road.ForwardNode.Uid, selected.EndNodeUid);
+        Assert.True(Vector3.Distance(Point(0), selected.Points[0]) < 0.01f);
+        Assert.True(Vector3.Distance(Point(500), selected.Points[^1]) < 0.01f);
+    }
+
+    [Fact]
+    public void IncreasingPayloadOrderIsNormalizedToTravelOrder()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        var route = Route((road.ForwardNode.Uid, 0), (road.Node.Uid, 500));
+        var selected = Assert.Single(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
+        Assert.Equal(road.Node.Uid, selected.StartNodeUid);
+    }
+
+    [Fact]
+    public void ReverseRouteReversesRoadGeometryAndEndpointUids()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        var route = Route((road.ForwardNode.Uid, 500), (road.Node.Uid, 0));
+        var selected = Assert.Single(new RoadPathSource(map).GetPath(Point(450), -Vector3.UnitX, route, route.Availability));
+        Assert.Equal(road.ForwardNode.Uid, selected.StartNodeUid);
+        Assert.True(Vector3.Distance(Point(500), selected.Points[0]) < 0.01f);
+    }
+
+    [Fact]
+    public void EqualDistanceNodesCannotEstablishRouteOrder()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        var route = Route((road.Node.Uid, 0), (road.ForwardNode.Uid, 0));
+        Assert.Empty(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
+    }
+
+    [Fact]
+    public void NonMonotonicRouteIsRejected()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(250));
+        var second = first.Append(Point(500));
+        var route = Route((first.Node.Uid, 500), (first.ForwardNode.Uid, 0), (second.ForwardNode.Uid, 250));
+        Assert.Empty(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
+    }
+
+    [Theory]
+    [InlineData(RouteAvailability.Unknown)]
+    [InlineData(RouteAvailability.Invalid)]
+    [InlineData(RouteAvailability.Stale)]
+    public void MissingOrStaleRouteDoesNotFallBackToNoRouteCertainty(RouteAvailability availability)
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        var route = Route((road.Node.Uid, 500), (road.ForwardNode.Uid, 0));
+        Assert.Empty(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, availability));
+    }
+
+    [Fact]
+    public void NoRouteChoosesOnlyCurrentRoadAndOrientsItFromVehicleHeading()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        road.Append(Point(1000));
+        var route = Route();
+        var selected = Assert.Single(new RoadPathSource(map).GetPath(Point(400), -Vector3.UnitX, route, route.Availability));
+        Assert.Equal(road.Uid.ToString("X16"), selected.Id);
+        Assert.Equal(road.ForwardNode.Uid, selected.StartNodeUid);
+    }
+
+    [Fact]
+    public void NoRouteNearTwoRoadsRefusesToGuessAtJunction()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(250));
+        road.Append(Point(500));
+        var route = Route();
+        Assert.Empty(new RoadPathSource(map).GetPath(Point(250), Vector3.UnitX, route, route.Availability));
+    }
+
+    [Fact]
+    public void NoRouteBetweenEquallyCloseParallelRoadsIsUncertain()
+    {
+        var map = new GameMap();
+        AddRoad(map, Point(0), Point(500));
+        AddRoad(map, Point(0, 4), Point(500, 4));
+        var route = Route();
+        Assert.Empty(new RoadPathSource(map).GetPath(Point(100, 2), Vector3.UnitX, route, route.Availability));
+    }
+
+    [Fact]
+    public void RouteDoesNotIncludeUnrelatedNearbyRoad()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        AddRoad(map, Point(0, 20), Point(500, 20));
+        var route = Route((road.Node.Uid, 500), (road.ForwardNode.Uid, 0));
+        var selected = Assert.Single(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
+        Assert.Equal(road.Uid.ToString("X16"), selected.Id);
+    }
+    [Fact]
+    public void CameraOnActualRouteRoadIsConfirmed()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        var route = Route((road.Node.Uid, 500), (road.ForwardNode.Uid, 0));
+        var source = new RoadPathSource(map);
+        var path = source.GetPath(Point(50), Vector3.UnitX, route, route.Availability);
+        Assert.True(source.IsPositionOnPath(Point(350), path));
+    }
+
+    [Fact]
+    public void NearbyCameraOnParallelNonRouteRoadIsRejectedBeforeProjection()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        AddRoad(map, Point(0, 8), Point(500, 8));
+        var route = Route((road.Node.Uid, 500), (road.ForwardNode.Uid, 0));
+        var source = new RoadPathSource(map);
+        var path = source.GetPath(Point(50), Vector3.UnitX, route, route.Availability);
+        Assert.NotEmpty(path);
+        Assert.False(source.IsPositionOnPath(Point(350, 8), path));
+    }
+
+    [Fact]
+    public void CameraEquallyCloseToParallelRoadsHasNoCertainMembership()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        AddRoad(map, Point(0, 8), Point(500, 8));
+        var route = Route((road.Node.Uid, 500), (road.ForwardNode.Uid, 0));
+        var source = new RoadPathSource(map);
+        var path = source.GetPath(Point(50), Vector3.UnitX, route, route.Availability);
+        Assert.False(source.IsPositionOnPath(Point(350, 4), path));
+    }
+
+    [Fact]
+    public void CameraOnUpperNonRouteRoadIsRejected()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        AddRoad(map, Point(0, y: 8), Point(500, y: 8));
+        var route = Route((road.Node.Uid, 500), (road.ForwardNode.Uid, 0));
+        var source = new RoadPathSource(map);
+        var path = source.GetPath(Point(50), Vector3.UnitX, route, route.Availability);
+        Assert.False(source.IsPositionOnPath(Point(350, y: 8), path));
+    }
+
+    [Fact]
+    public void RouteDistancePlateauIsRejectedRatherThanGuessed()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(250));
+        var second = road.Append(Point(500));
+        var route = Route((road.Node.Uid, 500), (road.ForwardNode.Uid, 500), (second.ForwardNode.Uid, 0));
+        Assert.Empty(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
+    }    private static RouteSnapshot GapRoute(Road first, Road second) => Route(
+        (first.Node.Uid, 500), (first.ForwardNode.Uid, 300),
+        (second.Node.Uid, 250), (second.ForwardNode.Uid, 0));
+
+    [Fact]
+    public void NoRouteExtendsThroughUniquelyConnectedRoadItems()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(200));
+        var second = first.Append(Point(500));
+        var route = Route();
+        var source = new RoadPathSource(map);
+        var path = source.GetPath(Point(50), Vector3.UnitX, route, route.Availability);
+        Assert.Equal(2, path.Count);
+        Assert.Equal(second.Uid.ToString("X16"), path[1].Id);
+        var match = source.MatchCamera(Point(50), Vector3.UnitX,
+            new("camera", Point(349), Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.UnavoidableAhead, match.Approach);
+        Assert.InRange(match.RoadDistanceMeters!.Value, 298.99, 299.01);
+    }
+
+    [Fact]
+    public void NoRouteDoesNotBridgeNearbyUnconnectedRoadGap()
+    {
+        var map = new GameMap();
+        AddRoad(map, Point(0), Point(200));
+        AddRoad(map, Point(250), Point(500));
+        var route = Route();
+        var source = new RoadPathSource(map);
+        Assert.Single(source.GetPath(Point(50), Vector3.UnitX, route, route.Availability));
+        var match = source.MatchCamera(Point(50), Vector3.UnitX,
+            new("camera", Point(349), Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.Unknown, match.Approach);
+    }
+
+    [Fact]
+    public void NoRouteStopsBeforeAmbiguousRoadSuccessor()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(200));
+        first.Append(Point(500));
+        var branch = AddRoad(map, Point(200), Point(200, 300));
+        branch.Node = first.ForwardNode;
+        var route = Route();
+        Assert.Single(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
+    }
+
+    [Fact]
+    public void NoRouteExtensionHasBoundedForwardHorizon()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(100));
+        for (int i = 2; i <= 20; i++) road = road.Append(Point(i * 100));
+        var route = Route();
+        var path = new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability);
+        Assert.InRange(path.Count, 10, 11);
+        Assert.True(path[^1].Points[^1].X <= 1100.1f);
+    }
+
+    [Fact]
+    public void OrderedRouteGapAllowsDirectFallbackWithoutInventingRoadLength()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(200));
+        var second = AddRoad(map, Point(250), Point(500));
+        var route = GapRoute(first, second);
+        var match = new RoadPathSource(map).MatchCamera(Point(50), Vector3.UnitX,
+            new("camera", Point(349), Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.RouteAhead, match.Approach);
+        Assert.Null(match.RoadDistanceMeters);
+        Assert.InRange(match.EuclideanDistanceMeters, 298.99, 299.01);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void RouteGapFallbackStillRequiresBothTravelDirections(bool wrongVehicle)
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(200));
+        var second = AddRoad(map, Point(250), Point(500));
+        var route = GapRoute(first, second);
+        var match = new RoadPathSource(map).MatchCamera(Point(50), wrongVehicle ? -Vector3.UnitX : Vector3.UnitX,
+            new("camera", Point(349), wrongVehicle ? Vector3.UnitX : -Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.Unknown, match.Approach);
+    }
+
+    [Fact]
+    public void CameraOnEarlierRouteChunkIsBehindRatherThanDirectFallbackAhead()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(200));
+        var second = AddRoad(map, Point(250), Point(500));
+        var route = GapRoute(first, second);
+        var match = new RoadPathSource(map).MatchCamera(Point(300), Vector3.UnitX,
+            new("camera", Point(150), Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.Behind, match.Approach);
+    }
+
+    [Fact]
+    public void RepeatedRouteRoadOccurrencesPreventGuessingGapTraversalOrder()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(200));
+        var second = AddRoad(map, Point(250), Point(500));
+        var route = Route((first.Node.Uid, 1000), (first.ForwardNode.Uid, 800),
+            (second.Node.Uid, 700), (second.ForwardNode.Uid, 500),
+            (first.Node.Uid, 200), (first.ForwardNode.Uid, 0));
+        var match = new RoadPathSource(map).MatchCamera(Point(50), Vector3.UnitX,
+            new("camera", Point(349), Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.Unknown, match.Approach);
+    }
+
+    [Fact]
+    public void CameraOnNonRouteParallelRoadCannotUseGapFallback()
+    {
+        var map = new GameMap();
+        var first = AddRoad(map, Point(0), Point(200));
+        var second = AddRoad(map, Point(250), Point(500));
+        AddRoad(map, Point(250, 8), Point(500, 8));
+        var route = GapRoute(first, second);
+        var match = new RoadPathSource(map).MatchCamera(Point(50), Vector3.UnitX,
+            new("camera", Point(349, 8), Vector3.UnitX), route, route.Availability);
+        Assert.Equal(LinkEts2Nav.Core.CameraApproach.Unknown, match.Approach);
+    }}

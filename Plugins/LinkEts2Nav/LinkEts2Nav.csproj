@@ -1,12 +1,17 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.Razor">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
   </PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../ETS2LA/ETS2LA.Shared/ETS2LA.Shared.csproj" Private="false" />
     <ProjectReference Include="../../ETS2LA/ETS2LA.Logging/ETS2LA.Logging.csproj" Private="false" />
+    <ProjectReference Include="../../ETS2LA/ETS2LA.Game/ETS2LA.Game.csproj" Private="false" />
+    <ProjectReference Include="../../ETS2LA/ETS2LA.Backend/ETS2LA.Backend.csproj" Private="false" />
+    <ProjectReference Include="../../ETS2LA/ETS2LA.Audio/ETS2LA.Audio.csproj" Private="false" />
+    <ProjectReference Include="../../ETS2LA/ETS2LA.State/ETS2LA.State.csproj" Private="false" />
   </ItemGroup>
 </Project>

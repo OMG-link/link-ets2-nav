@@ -108,4 +108,25 @@ public sealed class LocalHostTests(LocalHostFixture fixture) : IClassFixture<Loc
         });
         Assert.Contains("Link ETS2 Nav", html);
     }
+
+    [Fact]
+    public async Task PluginDiagnosticsPage_LoadsFromPluginAssemblyWithoutGame()
+    {
+        var handler = new PluginHandler();
+        try
+        {
+            handler.LoadPlugins();
+            var plugin = Assert.Single(handler.LoadedPlugins);
+            var page = Assert.Single(plugin.GetType().Assembly.GetTypes(), t => t.GetCustomAttributes(typeof(RouteAttribute), false)
+                    .Cast<RouteAttribute>().Any(a => a.Template == "/link-ets2-nav"));
+            await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+            await using var renderer = new HtmlRenderer(services,
+                services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>());
+            var html = await renderer.Dispatcher.InvokeAsync(async () =>
+                (await renderer.RenderComponentAsync(page, ParameterView.Empty)).ToHtmlString());
+            Assert.Contains("Link ETS2 Nav", html);
+            Assert.Contains("/plugins/manager", html);
+        }
+        finally { handler.UnloadPlugins(); }
+    }
 }

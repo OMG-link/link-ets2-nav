@@ -27,4 +27,7 @@
     <Project Path="tests/LinkEts2Nav.UnitTests/LinkEts2Nav.UnitTests.csproj" />
     <Project Path="tests/DevHost.IntegrationTests/DevHost.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/Tools/">
+    <Project Path="tools/LinkEts2Nav.Probe/LinkEts2Nav.Probe.csproj" />
+  </Folder>
 </Solution>

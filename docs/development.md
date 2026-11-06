@@ -58,7 +58,7 @@ README 面向用户，保留功能、安装、使用和限制说明。开发指�
 
 宿主集成测试禁止并行执行，诱饵文件仅创建于测试输出目录并在结束时清理。插件测试产物由 MSBuild 自动复制，不需要手工指定宿主路径。页面测试使用 Blazor HtmlRenderer。
 
-单元测试项目目前仅建立结构，没有占位测试；新增导航算法时再加入真实用例。不要用空断言或重复实现的测试制造通过数量。
+单元测试覆盖预警状态机、路线与道路匹配、遥测时效、真实资源格式的合成样本以及官方归档选择。测试不依赖本机安装游戏，不播放真实音频。
 
 ## 上游诊断
 
@@ -72,3 +72,16 @@ dotnet build LinkEts2Nav.slnx --no-restore --no-incremental -p:NavShowUpstreamWa
 ```
 
 恢复默认显示策略后，运行 `dotnet restore LinkEts2Nav.slnx` 刷新依赖诊断。上游更新时应重新审查并移除不再需要的屏蔽项。
+## 地图资源检查
+
+`tools/LinkEts2Nav.Probe/` 是开发用只读工具，不随插件发布。它读取本机游戏归档，不启动游戏，不修改存档；JSON 输出可重定向到忽略的 `artifacts/`。普通扫描必须提供世界坐标。
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<game-directory>" --x -39000 --z -30000 --radius 1000
+# 检查指定模型的真实测速挂点
+dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<game-directory>" --inspect-model /model/speedcamera/speedcamera_hw_au.pmg
+```
+
+默认扫描已安装官方归档，输出的 `profileResolved` 为 false，不代表当前存档。传入 `--game-log "<game.log.txt>"` 后才按实际挂载日志解析当前地图；会拒绝无法确认兼容的地图或探头资源覆盖。日志中已经卸载的归档不参与解析。用 `--help` 查看完整参数。
+
+启用插件后，开发宿主首页的“测速探头诊断”链接进入 `/link-ets2-nav`。该页面随插件 DLL 提供，在标准宿主中也可通过对应路由访问。架构及预警规则见 [预警设计](architecture.md)。

@@ -48,14 +48,21 @@ public sealed record RouteSnapshot(
     }
 }
 
+public enum FineObservationSignal { Toggle, PayloadChange }
+
 /// <summary>Vehicle pose observed with a fine flag; not an exact offence location or camera identity.</summary>
 public sealed record FineObservation(string Offence, ulong Amount, VehicleSnapshot Vehicle, DateTimeOffset ObservedAt)
 {
     public bool IsSpeedCameraOffence => string.Equals(Offence, "speeding_camera", StringComparison.Ordinal);
+    public bool EventFlag { get; init; }
+    public long Sequence { get; init; }
+    public FineObservationSignal Signal { get; init; }
+    public bool IsSignalCertain => Signal == FineObservationSignal.Toggle;
 }
 
 public sealed record GameDataSnapshot(VehicleSnapshot? Vehicle, RouteSnapshot Route,
-    RouteAvailability RouteAvailability, string SessionId, bool IsVehicleUsable, FineObservation? LatestFine = null);
+    RouteAvailability RouteAvailability, string SessionId, bool IsVehicleUsable, FineObservation? LatestFine = null,
+    FineObservation? LatestCameraFine = null, IReadOnlyList<FineObservation>? FineHistory = null, long DroppedFineCount = 0);
 
 /// <summary>Copies event data into immutable snapshots; stale routes never mean no route.</summary>
 public sealed class GameSnapshotStore
@@ -63,11 +70,7 @@ public sealed class GameSnapshotStore
     private readonly object gate = new();
     private VehicleSnapshot? vehicle;
     private DateTimeOffset lastVehicleProgress;
-    private FineObservation? latestFine;
-    private bool hasFineBaseline;
-    private bool previousFined;
-    private string previousOffence = "";
-    private ulong previousFineAmount;
+    private readonly FineObservationTracker fines = new();
     private RouteSnapshot route = new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.Unknown, default);
     private long session;
     private readonly string instanceId = Guid.NewGuid().ToString("N");
@@ -91,8 +94,7 @@ public sealed class GameSnapshotStore
                 if (discontinuity)
                 {
                     session++;
-                    latestFine = null;
-                    hasFineBaseline = false;
+                    fines.ResetSession();
                     route = new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.Unknown, default);
                 }
             }
@@ -106,20 +108,18 @@ public sealed class GameSnapshotStore
     {
         lock (gate)
         {
-            bool changed = !previousFined || offence != previousOffence || amount != previousFineAmount;
-            // A true flag on initial connection may describe an old latched event.
-            if (hasFineBaseline && fined && changed
-                && vehicle is { SdkActive: true, Paused: false, IsFinite: true }
+            bool usablePose = vehicle is { SdkActive: true, Paused: false, IsFinite: true }
                 && IsFresh(vehicle.ReceivedAt, observedAt, TimeSpan.FromSeconds(2))
-                && IsFresh(lastVehicleProgress, observedAt, TimeSpan.FromSeconds(2)))
-                latestFine = new(offence, amount, vehicle, observedAt);
-            hasFineBaseline = true;
-            previousFined = fined;
-            previousOffence = offence;
-            previousFineAmount = amount;
+                && IsFresh(lastVehicleProgress, observedAt, TimeSpan.FromSeconds(2));
+            fines.Observe(fined, offence, amount, usablePose ? vehicle : null, observedAt);
         }
     }
 
+    /// <summary>Returns committed observations once; session changes do not erase this pending log queue.</summary>
+    public IReadOnlyList<FineObservation> DrainFines()
+    {
+        lock (gate) return fines.Drain();
+    }
 
     public GameDataSnapshot Capture(DateTimeOffset now)
     {
@@ -134,7 +134,8 @@ public sealed class GameSnapshotStore
             if (usable && ((availability == RouteAvailability.None && vehicle!.NavigationDistanceRemainingMeters > 1)
                 || (availability == RouteAvailability.Available && vehicle!.NavigationDistanceRemainingMeters <= 0)))
                 availability = RouteAvailability.Invalid;
-            return new(vehicle, route, availability, $"{instanceId}:{session}", usable, latestFine);
+            return new(vehicle, route, availability, $"{instanceId}:{session}", usable,
+                fines.Latest, fines.LatestCamera, fines.GetHistory(), fines.DroppedCount);
         }
     }
 

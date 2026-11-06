@@ -5,7 +5,8 @@ public sealed record CameraDiagnostic(string Id, string Hookup, double DistanceM
     string SourceDescriptor = "", string Variant = "", string MetadataFingerprint = "");
 
 public sealed record NavDiagnosticSnapshot(DateTimeOffset UpdatedAt, string State,
-    string RouteState, int CameraCount, IReadOnlyList<CameraDiagnostic> Cameras, string? LastWarning = null, string? VehiclePosition = null, FineObservation? LatestFine = null);
+    string RouteState, int CameraCount, IReadOnlyList<CameraDiagnostic> Cameras, string? LastWarning = null, string? VehiclePosition = null, FineObservation? LatestFine = null,
+    FineObservation? LatestCameraFine = null, IReadOnlyList<FineObservation>? FineHistory = null, long DroppedFineCount = 0);
 
 /// <summary>Read-only in-process diagnostics shared with the plugin's Razor page.</summary>
 public static class NavDiagnostics

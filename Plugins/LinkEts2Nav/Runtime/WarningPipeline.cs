@@ -16,7 +16,8 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer)
     public NavDiagnosticSnapshot Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
     {
         if (!data.IsVehicleUsable || data.Vehicle is not { } vehicle)
-            return new(now, "等待有效的车辆数据；暂停或连接中断期间不预警。", data.RouteAvailability.ToString(), nearby.Cameras.Count, [], lastWarning, LatestFine: data.LatestFine);
+            return new(now, "等待有效的车辆数据；暂停或连接中断期间不预警。", data.RouteAvailability.ToString(), nearby.Cameras.Count, [], lastWarning, LatestFine: data.LatestFine, LatestCameraFine: data.LatestCameraFine,
+                FineHistory: data.FineHistory, DroppedFineCount: data.DroppedFineCount);
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
         if (!ReferenceEquals(previousMap, nearby.Map))
         {
@@ -64,7 +65,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer)
         if (nearby.Diagnostics.Count > 0) state += " " + nearby.Diagnostics[0];
         return new(now, state, data.RouteAvailability.ToString(), nearby.Cameras.Count,
             diagnostics.OrderBy(d => d.DistanceMeters).Take(30).ToArray(), lastWarning,
-            FormattableString.Invariant($"{vehicle.X:F1}, {vehicle.Y:F1}, {vehicle.Z:F1}"), data.LatestFine);
+            FormattableString.Invariant($"{vehicle.X:F1}, {vehicle.Y:F1}, {vehicle.Z:F1}"), data.LatestFine, data.LatestCameraFine, data.FineHistory, data.DroppedFineCount);
     }
 
     public void Reset()

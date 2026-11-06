@@ -89,11 +89,18 @@ public sealed class NavigationLogReporter
             string roadDistance = camera.RoadDistanceMeters is { } distance ? $"{distance:F0} m" : "未知";
             Event(FormattableString.Invariant($"{action}：{camera.Id}，挂点={camera.Hookup}，直线={camera.DistanceMeters:F0} m，沿路={roadDistance}，方向已验证={camera.DirectionVerified}；{camera.Decision}；模型={camera.SourceDescriptor}，变体={camera.Variant}。"), snapshot.UpdatedAt);
         }
-        Change("last-fine", snapshot.LatestFine is { } fine
-            ? FormattableString.Invariant($"观测罚单：{fine.Offence}，金额={fine.Amount}，X={fine.Vehicle.X:F1}, Z={fine.Vehicle.Z:F1}；观测时刻={fine.ObservedAt:O}；此位置可能有轮询延迟。")
-            : "本会话尚未观测到罚单。", snapshot.UpdatedAt);
     }
 
+    public void ReportFines(IReadOnlyList<FineObservation> observations, long droppedCount, DateTimeOffset now)
+    {
+        foreach (var fine in observations)
+        {
+            string signal = fine.IsSignalCertain ? "罚款位翻转" : "仅字段变化，事件次数不确定";
+            Event(FormattableString.Invariant($"观测罚单：{fine.Offence}，金额={fine.Amount}，X={fine.Vehicle.X:F1}, Y={fine.Vehicle.Y:F1}, Z={fine.Vehicle.Z:F1}；朝向={fine.Vehicle.HeadingTurns:F5} 圈；速度={fine.Vehicle.SpeedMetersPerSecond * 3.6:F1} km/h；序号={fine.Sequence}，标志={fine.EventFlag}，信号={signal}；观测时刻={fine.ObservedAt:O}；此位置可能有轮询延迟。"), now);
+        }
+        if (droppedCount > 0)
+            Change("dropped-fines", $"罚款观察队列已溢出：累计 {droppedCount} 条未输出记录被丢弃，不能据此推断未发生罚款。", now, isWarning: true);
+    }
     public void ResetTargets(string reason, DateTimeOffset now)
     {
         cameras.Clear();

@@ -32,6 +32,30 @@ public sealed class RuntimeSubscriptionTests
     }
 
     [Fact]
+    public void SourceCapturesFineToggleInBothDirectionsAfterStableSamples()
+    {
+        var bus = new FakeBus();
+        using var source = new Ets2LaGameDataSource(bus, new FixedClock());
+        var payload = new GameTelemetryData { sdkActive = true };
+        bus.Publish(Ets2LaGameDataSource.TelemetryTopic, payload);
+        payload.specialBool.fined = true;
+        payload.gameplayString.fineOffence = "speeding_camera";
+        payload.gameplayLongLong.fineAmount = 550;
+        bus.Publish(Ets2LaGameDataSource.TelemetryTopic, payload);
+        bus.Publish(Ets2LaGameDataSource.TelemetryTopic, payload);
+        payload.specialBool.fined = false;
+        payload.gameplayString.fineOffence = "avoid_sleeping";
+        payload.gameplayLongLong.fineAmount = 150;
+        bus.Publish(Ets2LaGameDataSource.TelemetryTopic, payload);
+        bus.Publish(Ets2LaGameDataSource.TelemetryTopic, payload);
+        var fines = source.Store.DrainFines();
+        Assert.Equal(2, fines.Count);
+        Assert.True(fines[0].EventFlag);
+        Assert.False(fines[1].EventFlag);
+        Assert.Equal("speeding_camera", source.Capture().LatestCameraFine!.Offence);
+    }
+
+    [Fact]
     public void PartialSubscriptionFailureRemovesFirstSubscription()
     {
         var bus = new FakeBus { RejectNavigation = true };

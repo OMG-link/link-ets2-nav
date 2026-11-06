@@ -126,4 +126,35 @@ public sealed class NavigationLogReporterTests
         reporter.Change("calibration", "已加载一条", Now.AddSeconds(15));
         Assert.Equal(3, messages.Count);
     }
+
+    [Fact]
+    public void FineBatchLogsCameraAndLaterFatigueSeparately()
+    {
+        var messages = new List<string>();
+        var reporter = new NavigationLogReporter(messages.Add);
+        var pose = new VehicleSnapshot(123, 4, 567, .25, 20, 1000, true, false, 100, Now);
+        FineObservation[] observations =
+        [
+            new("speeding_camera", 550, pose, Now) { Sequence = 1, EventFlag = true },
+            new("avoid_sleeping", 150, pose, Now.AddMilliseconds(20)) { Sequence = 2, EventFlag = false }
+        ];
+        reporter.ReportFines(observations, 0, Now.AddSeconds(5));
+        Assert.Equal(2, messages.Count);
+        Assert.Contains("speeding_camera", messages[0]);
+        Assert.Contains("avoid_sleeping", messages[1]);
+        Assert.Contains("标志=False", messages[1]);
+        Assert.Contains("朝向=", messages[0]);
+    }
+
+    [Fact]
+    public void FineQueueOverflowIsVisibleWithoutRepeatingSameWarning()
+    {
+        var warnings = new List<string>();
+        var reporter = new NavigationLogReporter(_ => { }, warnings.Add);
+        reporter.ReportFines([], 1, Now);
+        reporter.ReportFines([], 1, Now.AddSeconds(1));
+        reporter.ReportFines([], 2, Now.AddSeconds(2));
+        Assert.Equal(2, warnings.Count);
+        Assert.All(warnings, message => Assert.Contains("溢出", message));
+    }
 }

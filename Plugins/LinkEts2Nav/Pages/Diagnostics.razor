@@ -21,6 +21,28 @@
             <p>这是 SDK 事件到达时的车辆位置，可能有延迟，不代表精确测速位置，也不能自动归属某个探头。</p>
         </details>
     }
+
+    @if (snapshot.LatestCameraFine is { } cameraFine)
+    {
+        <p><strong>最近测速探头罚款：</strong>@cameraFine.ObservedAt.ToLocalTime().ToString("HH:mm:ss.fff") · @cameraFine.Amount · X=@cameraFine.Vehicle.X.ToString("F1"), Z=@cameraFine.Vehicle.Z.ToString("F1") · @(cameraFine.IsSignalCertain ? "已观察到罚款位翻转" : "仅字段变化，次数不确定")</p>
+    }
+    @if (snapshot.FineHistory is { Count: > 0 } history)
+    {
+        <details open>
+            <summary>本会话罚款观测（保留最近 64 条，此处显示最近 12 条）</summary>
+            <table style="width:100%;text-align:left">
+                <thead><tr><th>时间</th><th>类型</th><th>金额</th><th>位置 X / Z</th><th>朝向（圈）</th><th>事件信号</th></tr></thead>
+                <tbody>
+                    @foreach (var item in history.Reverse().Take(12))
+                    {
+                        <tr><td>@item.ObservedAt.ToLocalTime().ToString("HH:mm:ss.fff")</td><td>@item.Offence</td><td>@item.Amount</td><td>@item.Vehicle.X.ToString("F1") / @item.Vehicle.Z.ToString("F1")</td><td>@item.Vehicle.HeadingTurns.ToString("F5")</td><td>@(item.IsSignalCertain ? "罚款位翻转" : "仅字段变化")</td></tr>
+                    }
+                </tbody>
+            </table>
+            <p>观测时间和位置可能有轮询延迟，不能自动归属探头。后续疲劳罚单不会覆盖“最近测速探头罚款”。</p>
+        </details>
+    }
+
     @if (snapshot.Cameras.Count > 0)
     {
         <table style="width:100%;text-align:left">

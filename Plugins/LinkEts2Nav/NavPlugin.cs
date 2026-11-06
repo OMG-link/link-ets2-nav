@@ -94,6 +94,9 @@ public sealed class NavPlugin : Plugin
         void Publish(NavDiagnosticSnapshot snapshot, bool isWarning = false)
         {
             if (token.IsCancellationRequested) return;
+            var fineState = source.Capture();
+            snapshot = snapshot with { LatestFine = fineState.LatestFine, LatestCameraFine = fineState.LatestCameraFine,
+                FineHistory = fineState.FineHistory, DroppedFineCount = fineState.DroppedFineCount };
             NavDiagnostics.Publish(snapshot);
             if (isWarning) logOutput.Status(snapshot.State, snapshot.UpdatedAt, isWarning: true);
             else logOutput.Report(snapshot);
@@ -118,6 +121,7 @@ public sealed class NavPlugin : Plugin
                 token.ThrowIfCancellationRequested();
                 var data = source.Capture();
                 var now = DateTimeOffset.UtcNow;
+                logOutput.ReportFines(source.Store.DrainFines(), data.DroppedFineCount, now);
                 if (!data.IsVehicleUsable || data.Vehicle is not { } vehicle)
                 {
                     string reason = data.Vehicle switch
@@ -214,6 +218,8 @@ public sealed class NavPlugin : Plugin
         }
         finally
         {
+            source.Dispose();
+            logOutput.ReportFines(source.Store.DrainFines(), source.Capture().DroppedFineCount, DateTimeOffset.UtcNow);
             mount?.Dispose();
             logOutput.Event("后台扫描已停止。", DateTimeOffset.UtcNow);
         }

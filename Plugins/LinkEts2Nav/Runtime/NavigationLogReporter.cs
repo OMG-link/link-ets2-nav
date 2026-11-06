@@ -1,0 +1,107 @@
+using System.Numerics;
+using ETS2LA.Logging;
+using LinkEts2Nav.Core;
+using LinkEts2Nav.Map;
+
+namespace LinkEts2Nav.Runtime;
+
+/// <summary>Logs transitions immediately and a heartbeat every 30 seconds, never every tick.</summary>
+public sealed class NavigationLogReporter
+{
+    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
+    private readonly Action<string> info;
+    private readonly Action<string> warning;
+    private readonly Dictionary<string, string> changes = new();
+    private readonly Dictionary<string, (string Decision, bool Verified)> cameras = new();
+    private string? state;
+    private DateTimeOffset stateAt = DateTimeOffset.MinValue;
+    private string? scan;
+    private DateTimeOffset scanAt = DateTimeOffset.MinValue;
+    private DateTimeOffset scanStartedAt = DateTimeOffset.MinValue;
+
+    public NavigationLogReporter(Action<string>? info = null, Action<string>? warning = null)
+    {
+        this.info = info ?? (message => Logger.Info(Escape(message)));
+        this.warning = warning ?? (message => Logger.Warn(Escape(message)));
+    }
+
+    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
+    private static string Stamp(string message, DateTimeOffset now)
+        => $"[LinkEts2Nav] [{now.UtcDateTime:HH:mm:ss} UTC] {message}";
+
+    public void Event(string message, DateTimeOffset now) => info(Stamp(message, now));
+
+    public void Change(string key, string message, DateTimeOffset now, bool isWarning = false)
+    {
+        string value = $"{isWarning}:{message}";
+        if (changes.TryGetValue(key, out var previous) && previous == value) return;
+        changes[key] = value;
+        (isWarning ? warning : info)(Stamp(message, now));
+    }
+
+    public void Status(string message, DateTimeOffset now, bool isWarning = false, string? detail = null)
+    {
+        string value = $"{isWarning}:{message}";
+        if (state == value && now - stateAt < Interval) return;
+        state = value;
+        stateAt = now;
+        (isWarning ? warning : info)(Stamp("状态：" + message + (detail is null ? "" : "；" + detail), now));
+    }
+
+    public void ScanStarted(Vector3 position, DateTimeOffset now)
+    {
+        if (scanStartedAt != DateTimeOffset.MinValue && now - scanStartedAt < Interval) return;
+        scanStartedAt = now;
+        Event(FormattableString.Invariant($"开始扫描附近地图：X={position.X:F1}, Z={position.Z:F1}，半径 1100 m。"), now);
+    }
+
+    public void Scanned(NearbyMapSnapshot nearby, Vector3 position, TimeSpan elapsed, DateTimeOffset now)
+    {
+        string signature = string.Join(",", nearby.Sectors.Select(s => $"{s.X}/{s.Z}")) + ":"
+            + string.Join(",", nearby.Cameras.Select(c => c.Id).Order(StringComparer.Ordinal)) + ":"
+            + string.Join("|", nearby.Diagnostics);
+        if (scan == signature && now - scanAt < Interval) return;
+        scan = signature;
+        scanAt = now;
+        Event(FormattableString.Invariant($"扫描完成：{nearby.Sectors.Count} 个区块，{nearby.Map.MapItems.Count} 个地图条目，附近 {nearby.Cameras.Count} 个测速挂点；耗时 {elapsed.TotalMilliseconds:F0} ms；X={position.X:F1}, Z={position.Z:F1}。"), now);
+        if (nearby.Diagnostics.Count > 0)
+            warning(Stamp($"扫描有 {nearby.Diagnostics.Count} 条资源诊断：{string.Join(" | ", nearby.Diagnostics.Take(3))}", now));
+    }
+
+    public void Report(NavDiagnosticSnapshot snapshot)
+    {
+        Status(snapshot.State + " 路线=" + snapshot.RouteState, snapshot.UpdatedAt,
+            detail: $"车辆={snapshot.VehiclePosition ?? "未知"}，附近探头={snapshot.CameraCount}。");
+        // Waiting/paused snapshots are not evidence that previously observed cameras disappeared.
+        if (snapshot.VehiclePosition is null) return;
+        var present = new HashSet<string>(snapshot.Cameras.Select(c => c.Id), StringComparer.Ordinal);
+        foreach (string id in cameras.Keys.Where(id => !present.Contains(id)).ToArray())
+        {
+            Event($"目标离开当前诊断列表：{id}（不代表已经过监测位置）。", snapshot.UpdatedAt);
+            cameras.Remove(id);
+        }
+        foreach (var camera in snapshot.Cameras)
+        {
+            var current = (camera.Decision, camera.DirectionVerified);
+            if (cameras.TryGetValue(camera.Id, out var previous) && previous == current) continue;
+            string action = cameras.ContainsKey(camera.Id) ? "目标判定变化" : "发现探头";
+            cameras[camera.Id] = current;
+            string roadDistance = camera.RoadDistanceMeters is { } distance ? $"{distance:F0} m" : "未知";
+            Event(FormattableString.Invariant($"{action}：{camera.Id}，挂点={camera.Hookup}，直线={camera.DistanceMeters:F0} m，沿路={roadDistance}，方向已验证={camera.DirectionVerified}；{camera.Decision}；模型={camera.SourceDescriptor}，变体={camera.Variant}。"), snapshot.UpdatedAt);
+        }
+        Change("last-fine", snapshot.LatestFine is { } fine
+            ? FormattableString.Invariant($"观测罚单：{fine.Offence}，金额={fine.Amount}，X={fine.Vehicle.X:F1}, Z={fine.Vehicle.Z:F1}；观测时刻={fine.ObservedAt:O}；此位置可能有轮询延迟。")
+            : "本会话尚未观测到罚单。", snapshot.UpdatedAt);
+    }
+
+    public void ResetTargets(string reason, DateTimeOffset now)
+    {
+        cameras.Clear();
+        scan = null;
+        scanStartedAt = DateTimeOffset.MinValue;
+        Event(reason, now);
+    }
+
+    public void Triggered(CameraWarning alert, DateTimeOffset now)
+        => Event(FormattableString.Invariant($"触发预警：{alert.CameraId}，距离={alert.DistanceMeters:F0} m，距离类型={alert.DistanceKind}；提交固定提示音播放请求。"), now);
+}

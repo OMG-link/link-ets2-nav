@@ -140,6 +140,8 @@ Get-Content .\ETS2LA\ETS2LA\bin\Debug\net10.0\ets2la.log -Tail 30 -Wait
 
 相对路径均以宿主输出目录为基准，也可配置绝对路径。配置缺失或 `enabled=false` 时继续使用已有音频。TTS 配置在启用插件时读取；修改后停用再启用，更新 DLL 后需重启宿主。模型目录必须包含 `model.onnx`、`voices.bin`、`tokens.txt`、`lexicon-zh.txt` 和 `lexicon-us-en.txt`。
 
+默认文案为“五百米处，有测速照相。”和“二百米处，有测速照相。”；迟发现目标时使用“前方有测速照相。”。目前不附加限速数字：遥测中的车辆当前位置限速不等于前方探头处限速，不能直接替用。
+
 确认目标在前方后，立即按各阶段预计触发顺序生成 500 米、200 米等完整短句。当前使用同一种文案的目标共用同一缓存文件。缓存目录中的哈希文件名由内容和模型指纹决定，重启后仍可复用；文件损坏会重新合成。初次初始化和合成可能需要数秒，触发时未准备好则立即回退已有提示音，不补播迟到语音。日志会显示规划后的合成开始、文件就绪、实际播放请求和回退原因。
 
 诊断页的“试听预警音”仍试听 `LinkEts2Nav.Audio.json` 指定的静态回退音频；实际 500/200 米阶段使用对应的 TTS 缓存。暂停或无有效路线时不生成新的目标计划，不因缓存生成完成而自动播放。
@@ -150,4 +152,4 @@ Get-Content .\ETS2LA\ETS2LA\bin\Debug\net10.0\ets2la.log -Tail 30 -Wait
 dotnet run --project tools/LinkEts2Nav.Speech -- --model-dir "<model-directory>" --cache-dir "<cache-directory>" --voice zf_067 --threads 2
 ```
 
-worker 从标准输入按行读取 `{"id":"example","text":"前方五百米有测速，请注意限速。"}`，标准输出返回 `id/path/cacheHit/error` JSON。EOF 正常退出，合成诊断只写标准错误。调用时应使用结构化参数和 JSON 序列化，不能把动态文本拼进 shell 命令。
+worker 从标准输入按行读取 `{"id":"example","text":"五百米处，有测速照相。"}`，标准输出返回 `id/path/cacheHit/error` JSON。EOF 正常退出，合成诊断只写标准错误。调用时应使用结构化参数和 JSON 序列化，不能把动态文本拼进 shell 命令。

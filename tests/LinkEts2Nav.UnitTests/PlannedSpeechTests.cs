@@ -47,12 +47,12 @@ public sealed class PlannedSpeechTests : IDisposable
             message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.Writer.TryWrite(message); });
         speech.UpdatePlan(Snapshot(), [Plan(200, 900), Plan(500, 900), Plan(500, 1000, "other")], Now);
         var first = await synth.Next();
-        Assert.Equal("前方五百米有测速，请注意限速。", first.Text);
+        Assert.Equal("五百米处，有测速照相。", first.Text);
         string firstFile = File("500");
         first.Result.SetResult(firstFile);
         await ready.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         var second = await synth.Next();
-        Assert.Equal("前方二百米有测速，请注意限速。", second.Text);
+        Assert.Equal("二百米处，有测速照相。", second.Text);
         second.Result.SetResult(File("200"));
         await ready.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         speech.Announce(Warning(500, 499));
@@ -92,12 +92,12 @@ public sealed class PlannedSpeechTests : IDisposable
             message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.Writer.TryWrite(true); });
         speech.UpdatePlan(Snapshot(), [Plan(500, 300), Plan(200, 300), Plan(500, 1200, "other")], Now);
         var generic = await synth.Next();
-        Assert.Equal("前方有测速，请注意限速。", generic.Text);
+        Assert.Equal("前方有测速照相。", generic.Text);
         speech.UpdatePlan(Snapshot(), [Plan(500, 800)], Now);
         generic.Result.SetResult(File("generic"));
         await ready.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         var next = await synth.Next();
-        Assert.Equal("前方五百米有测速，请注意限速。", next.Text);
+        Assert.Equal("五百米处，有测速照相。", next.Text);
         speech.UpdatePlan(Snapshot(active: false), [Plan(200, 600)], Now);
         next.Result.SetResult(File("500"));
         await ready.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
@@ -159,10 +159,10 @@ public sealed class PlannedSpeechTests : IDisposable
     }
 
     [Theory]
-    [InlineData(500, 499, "前方五百米有测速，请注意限速。")]
-    [InlineData(200, 199, "前方二百米有测速，请注意限速。")]
-    [InlineData(500, 300, "前方有测速，请注意限速。")]
-    [InlineData(200, 60, "前方有测速，请注意限速。")]
+    [InlineData(500, 499, "五百米处，有测速照相。")]
+    [InlineData(200, 199, "二百米处，有测速照相。")]
+    [InlineData(500, 300, "前方有测速照相。")]
+    [InlineData(200, 60, "前方有测速照相。")]
     public void LateRecognitionDoesNotSpeakAnIncorrectFixedDistance(double stage, double actual, string expected)
         => Assert.Equal(expected, PlannedSpeechAnnouncer.Text(stage, actual));
 

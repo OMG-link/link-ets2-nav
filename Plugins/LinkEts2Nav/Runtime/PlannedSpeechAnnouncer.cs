@@ -39,9 +39,9 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
     public static string Text(double stage, double actualDistance)
     {
         // A late first observation must not claim that a camera is still 500/200 m away.
-        if (actualDistance < stage * .9) return "前方有测速，请注意限速。";
-        return stage == 500 ? "前方五百米有测速，请注意限速。" :
-            stage == 200 ? "前方二百米有测速，请注意限速。" : "前方有测速，请注意限速。";
+        if (actualDistance < stage * .9) return "前方有测速照相。";
+        return stage == 500 ? "五百米处，有测速照相。" :
+            stage == 200 ? "二百米处，有测速照相。" : "前方有测速照相。";
     }
 
     public void UpdatePlan(WarningSnapshot? snapshot, IReadOnlyList<PlannedCameraWarning> plans, DateTimeOffset now)

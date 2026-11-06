@@ -6,6 +6,8 @@
     <h1>Link ETS2 Nav</h1>
     <p>固定测速探头预警 · 开发诊断</p>
     <p>@snapshot.State</p>
+    <button disabled="@previewing" @onclick="PreviewAudio">@(previewing ? "试听中…" : "试听预警音")</button>
+    <p>@audioMessage</p>
     <dl>
         <dt>路线状态</dt><dd>@snapshot.RouteState</dd>
         <dt>车辆世界坐标（X, Y, Z）</dt><dd>@(snapshot.VehiclePosition ?? "未知")</dd>
@@ -60,6 +62,26 @@
 </div>
 
 @code {
+
+    private bool previewing;
+    private string audioMessage = "可先试听，确认预警音在游戏中可听见。";
+    private async Task PreviewAudio()
+    {
+        if (previewing) return;
+        previewing = true;
+        audioMessage = "正在提交试听请求……";
+        ETS2LA.Logging.Logger.Info("[[LinkEts2Nav]] 手动试听预警音（不计为探头预警）。");
+        try
+        {
+            var announcer = new Ets2LaWarningAnnouncer(cancellationToken: stop.Token);
+            bool queued = await Task.Run(() => announcer.TryPlay(), stop.Token);
+            audioMessage = queued ? "试听请求已提交；若未听到声音，请检查宿主音频设置和日志。" : "试听未能提交，请查看音频错误日志。";
+            await Task.Delay(TimeSpan.FromSeconds(6), stop.Token);
+        }
+        catch (OperationCanceledException) { }
+        finally { previewing = false; }
+    }
+
     private NavDiagnosticSnapshot snapshot = NavDiagnostics.Current;
     private readonly CancellationTokenSource stop = new();
     private Task? refresh;

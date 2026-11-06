@@ -1,5 +1,4 @@
 using ETS2LA.Backend.Events;
-using ETS2LA.Audio;
 using ETS2LA.Game;
 using ETS2LA.Logging;
 using ETS2LA.Shared;
@@ -87,10 +86,7 @@ public sealed class NavPlugin : Plugin
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
         var logOutput = new NavigationLogReporter();
         logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
-        var pipeline = new WarningPipeline(new LoggedAnnouncer(new Ets2LaWarningAnnouncer(() =>
-        {
-            if (!token.IsCancellationRequested) AudioHandler.Current.Play(DefaultAudio.PreAlert);
-        }), logOutput));
+        var pipeline = new WarningPipeline(new LoggedAnnouncer(new Ets2LaWarningAnnouncer(cancellationToken: token), logOutput));
         void Publish(NavDiagnosticSnapshot snapshot, bool isWarning = false)
         {
             if (token.IsCancellationRequested) return;
@@ -122,7 +118,7 @@ public sealed class NavPlugin : Plugin
                 var data = source.Capture();
                 var now = DateTimeOffset.UtcNow;
                 logOutput.ReportFines(source.Store.DrainFines(), data.DroppedFineCount, now);
-                if (!data.IsVehicleUsable || data.Vehicle is not { } vehicle)
+                if (!data.CanPrepareMap(now) || data.Vehicle is not { } vehicle)
                 {
                     string reason = data.Vehicle switch
                     {
@@ -191,6 +187,8 @@ public sealed class NavPlugin : Plugin
                     var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
                     if (nearby is null || Vector3.Distance(position, scannedPosition) >= 25 || now - scanTime >= TimeSpan.FromSeconds(3))
                     {
+                        if (vehicle.Paused && nearby is null)
+                            logOutput.Status("游戏已暂停：正在预加载附近地图，预警暂挂。", now);
                         logOutput.ScanStarted(position, now);
                         var scanStarted = System.Diagnostics.Stopwatch.StartNew();
                         nearby = scanner.ReadNearby(position, 1100, token);
@@ -204,6 +202,8 @@ public sealed class NavPlugin : Plugin
                     token.ThrowIfCancellationRequested();
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var diagnostic = pipeline.Process(latest, calibrated, DateTimeOffset.UtcNow);
+                    if (latest.Vehicle is { Paused: true })
+                        diagnostic = diagnostic with { State = "附近地图已准备；游戏已暂停，预警暂挂。" };
                     if (calibrationError is not null) diagnostic = diagnostic with { State = diagnostic.State + " " + calibrationError };
                     Publish(diagnostic);
                 }

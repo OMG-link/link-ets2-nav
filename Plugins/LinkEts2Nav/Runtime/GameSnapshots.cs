@@ -62,7 +62,13 @@ public sealed record FineObservation(string Offence, ulong Amount, VehicleSnapsh
 
 public sealed record GameDataSnapshot(VehicleSnapshot? Vehicle, RouteSnapshot Route,
     RouteAvailability RouteAvailability, string SessionId, bool IsVehicleUsable, FineObservation? LatestFine = null,
-    FineObservation? LatestCameraFine = null, IReadOnlyList<FineObservation>? FineHistory = null, long DroppedFineCount = 0);
+    FineObservation? LatestCameraFine = null, IReadOnlyList<FineObservation>? FineHistory = null, long DroppedFineCount = 0)
+{
+    /// <summary>Paused fresh placement can warm read-only map data, but never authorizes a warning.</summary>
+    public bool CanPrepareMap(DateTimeOffset now) => Vehicle is { SdkActive: true, IsFinite: true } pose
+        && now >= pose.ReceivedAt && now - pose.ReceivedAt <= TimeSpan.FromSeconds(2)
+        && (IsVehicleUsable || pose.Paused);
+}
 
 /// <summary>Copies event data into immutable snapshots; stale routes never mean no route.</summary>
 public sealed class GameSnapshotStore

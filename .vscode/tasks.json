@@ -1,39 +1,108 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Run ETS2LA",
-            "type": "shell",
-            "command": "./ETS2LA.bat",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
-            },
-            "problemMatcher": [],
-            "linux": {
-                "command": "./ETS2LA.sh"
-            }
-        },
-        {
-            "label": "Build your projects, update .DLLs in ETS2LA",
-            "type": "shell",
-            "command": "./BuildYourPlugins.bat",
-            "group": {
-                "kind": "build",
-                "isDefault": false
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
-            },
-            "problemMatcher": [],
-            "linux": {
-                "command": "./BuildYourPlugins.sh"
-            }
-        }
-    ]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Nav: Check",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/dev.ps1",
+        "-Action",
+        "Check"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Nav: Restore",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/dev.ps1",
+        "-Action",
+        "Restore"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Nav: Build",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/dev.ps1",
+        "-Action",
+        "Build"
+      ],
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Nav: Deploy",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/dev.ps1",
+        "-Action",
+        "Deploy"
+      ],
+      "problemMatcher": [
+        "$msCompile"
+      ]
+    },
+    {
+      "label": "Nav: Run",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/dev.ps1",
+        "-Action",
+        "Run"
+      ],
+      "problemMatcher": [
+        "$msCompile"
+      ]
+    },
+    {
+      "label": "Nav: Test",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/dev.ps1",
+        "-Action",
+        "Test"
+      ],
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "group": "test"
+    }
+  ]
 }

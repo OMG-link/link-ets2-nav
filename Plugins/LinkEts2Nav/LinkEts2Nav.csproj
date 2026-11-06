@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../ETS2LA/ETS2LA.Shared/ETS2LA.Shared.csproj" Private="false" />
+    <ProjectReference Include="../../ETS2LA/ETS2LA.Logging/ETS2LA.Logging.csproj" Private="false" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Link ETS2 Nav in ETS2LA",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "Nav: Deploy",
+      "program": "${workspaceFolder}/ETS2LA/ETS2LA/bin/Debug/net10.0/ETS2LA.dll",
+      "cwd": "${workspaceFolder}/ETS2LA/ETS2LA/bin/Debug/net10.0",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}

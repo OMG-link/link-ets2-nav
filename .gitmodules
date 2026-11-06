@@ -1,0 +1,3 @@
+[submodule "ETS2LA"]
+	path = ETS2LA
+	url = https://github.com/ETS2LA/ETS2LA.git

@@ -1,12 +1,11 @@
 {
-    "files.exclude": {
-        "**/.git": true,
-        "**/.svn": true,
-        "**/.hg": true,
-        "**/.DS_Store": true,
-        "**/Thumbs.db": true,
-        "**/__pycache__": true
-    },
-    "hide-files.files": [],
-    "debug.onTaskErrors": "showErrors"
+  "dotnet.defaultSolution": "LinkEts2Nav.slnx",
+  "files.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  },
+  "search.exclude": {
+    "ETS2LA/**": true,
+    "examples/**": true
+  }
 }

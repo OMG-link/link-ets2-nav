@@ -1,0 +1,30 @@
+<Solution>
+  <Folder Name="/ETS2LA/">
+    <Project Path="ETS2LA/ETS2LA.Audio/ETS2LA.Audio.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Backend/ETS2LA.Backend.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Controls/ETS2LA.Controls.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Game/ETS2LA.Game.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Logging/ETS2LA.Logging.csproj" />
+    <Project Path="ETS2LA/ETS2LA.ML/ETS2LA.ML.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Networking/ETS2LA.Networking.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Notifications/ETS2LA.Notifications.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Overlay/ETS2LA.Overlay.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Settings/ETS2LA.Settings.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Shared/ETS2LA.Shared.csproj" />
+    <Project Path="ETS2LA/ETS2LA.State/ETS2LA.State.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Telemetry/ETS2LA.Telemetry.csproj" />
+    <Project Path="ETS2LA/ETS2LA.Translations/ETS2LA.Translations.csproj" />
+    <Project Path="ETS2LA/ETS2LA.UI/ETS2LA.UI.csproj" />
+    <Project Path="ETS2LA/ETS2LA/ETS2LA.csproj" />
+  </Folder>
+  <Folder Name="/ETS2LA/TruckLib/">
+    <Project Path="ETS2LA/TruckLib/TruckLib/TruckLib.csproj" />
+  </Folder>
+  <Folder Name="/Plugins/">
+    <Project Path="Plugins/LinkEts2Nav/LinkEts2Nav.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/LinkEts2Nav.UnitTests/LinkEts2Nav.UnitTests.csproj" />
+    <Project Path="tests/DevHost.IntegrationTests/DevHost.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

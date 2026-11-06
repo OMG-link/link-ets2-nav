@@ -1,0 +1,59 @@
+<Project>
+  <!-- Local build adaptations. Never edit the upstream submodule to apply them. -->
+  <PropertyGroup>
+    <NavOverrides>$(MSBuildThisFileDirectory)artifacts/host-overrides/</NavOverrides>
+    <NavUi>$(MSBuildThisFileDirectory)dev-host/ui/</NavUi>
+  </PropertyGroup>
+  <!-- Keep diagnostics enabled for our plugin/tests; suppress known upstream diagnostics only. -->
+  <PropertyGroup>
+    <NavShowUpstreamWarnings Condition="'$(NavShowUpstreamWarnings)' == ''">false</NavShowUpstreamWarnings>
+    <NavIsUpstreamProject>$([System.String]::Copy('$(MSBuildProjectDirectory)').StartsWith('$(MSBuildThisFileDirectory)ETS2LA$([System.IO.Path]::DirectorySeparatorChar)'))</NavIsUpstreamProject>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(NavShowUpstreamWarnings)' != 'true' And '$(NavIsUpstreamProject)' == 'true'">
+    <NoWarn>$(NoWarn);CS0114;CS0414;CS0618;CS0649;CS4014;CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;CS8622;CS8625;CS8629;CA1416</NoWarn>
+  </PropertyGroup>
+  <!-- Advisory-specific suppression also covers warnings propagated to our projects.
+       Audit remains enabled so newly reported vulnerabilities still surface. -->
+  <ItemGroup Condition="'$(NavShowUpstreamWarnings)' != 'true'">
+    <!-- MySqlConnector 2.4.0, via ETS2LA localization dependencies. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-473q-m89c-ghf8" />
+    <!-- System.Security.Cryptography.Pkcs 9.0.4, via ETS2LA localization dependencies. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2fmv-rv2c-59x7" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-846f-f764-76mx" />
+    <!-- Microsoft.Build.Tasks.Git 10.0.300, via TruckLib SourceLink. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-23fw-v26w-5fgq" />
+  </ItemGroup>
+  <Target Name="PrepareNavLocalHost" BeforeTargets="PrepareForBuild"
+          Condition="'$(MSBuildProjectName)' == 'ETS2LA.Networking' Or '$(MSBuildProjectName)' == 'ETS2LA.Backend' Or '$(MSBuildProjectName)' == 'ETS2LA.State' Or '$(MSBuildProjectName)' == 'ETS2LA.Controls'">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)dev-host/prepare-local-host.ps1&quot; -ProjectName &quot;$(MSBuildProjectName)&quot;" />
+  </Target>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.Networking'">
+    <Compile Remove="Networking.cs;Plugins/client.cs" />
+    <Compile Include="$(NavOverrides)Networking.cs" />
+    <Compile Include="$(NavOverrides)PluginClient.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.Backend'">
+    <Compile Remove="PluginHandler/Handler.cs" />
+    <Compile Include="$(NavOverrides)PluginHandler.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.State'">
+    <Compile Remove="Program.cs" />
+    <Compile Include="$(NavOverrides)ApplicationState.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.Controls'">
+    <Compile Remove="Windows/SharpDXControlsBackend.cs;Linux/SDL3ControlsBackend.cs" />
+    <Compile Include="$(NavOverrides)SharpDXControlsBackend.cs" Condition="'$(OS)' == 'Windows_NT'" />
+    <Compile Include="$(NavOverrides)SDL3ControlsBackend.cs" Condition="'$(OS)' == 'Unix'" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.Game'">
+    <Compile Remove="Output/Output.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)dev-host/GameOutput.cs" Link="Output/Output.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.UI'">
+    <Content Remove="Pages/Home.razor;Pages/Start.razor;Pages/Plugins/Catalogue.razor" />
+    <Content Include="$(NavUi)Home.razor" Link="Pages/Home.razor" TargetPath="Pages/Home.razor" />
+    <Content Include="$(NavUi)Start.razor" Link="Pages/Start.razor" TargetPath="Pages/Start.razor" />
+    <Content Include="$(NavUi)Catalogue.razor" Link="Pages/Plugins/Catalogue.razor" TargetPath="Pages/Plugins/Catalogue.razor" />
+  </ItemGroup>
+</Project>

@@ -14,6 +14,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
     public static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
     public static string FileName(string text) => Hash(Encoding.UTF8.GetBytes(text)) + ".wav";
     public static readonly int[] CommonLimits = [30, 40, 50, 60, 70, 80, 90, 100];
+    public const string UncalibratedText = "正靠近未校准的探头，无法获取其监测方向，请减速慢行。";
     public static IEnumerable<string> DefaultTexts()
     {
         foreach (string prefix in new[] { "五百米处，有测速照相", "二百米处，有测速照相", "二百米内，有测速照相", "前方有测速照相" })
@@ -27,6 +28,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         yield return "米内，有测速照相。";
         yield return "米内，有测速照相，限速";
         yield return "前方有测速照相，限速";
+        yield return UncalibratedText;
     }
     public static string Number(int number)
     {

@@ -9,6 +9,7 @@ namespace LinkEts2Nav.Runtime;
 public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner? planner = null)
 {
     private readonly CameraWarningEngine engine = new();
+    private readonly CameraWarningEngine uncalibrated = new(kind: CameraWarningKind.UncalibratedProximity);
     private TruckLib.ScsMap.Map? previousMap;
     private RoadPathSource? paths;
     private SpeedLimitResolver? speedLimits;
@@ -32,11 +33,15 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
         bool hasRoute = data.RouteAvailability == RouteAvailability.Available;
         bool usableRoute = hasRoute || data.RouteAvailability == RouteAvailability.None;
         var candidates = new List<CameraCandidate>();
+        var unknownCameras = new List<CameraCandidate>();
         var diagnostics = new List<CameraDiagnostic>();
         foreach (var camera in nearby.Cameras)
         {
             double directDistance = Vector3.Distance(position, camera.MonitoredPosition);
             var candidate = new CameraCandidate(camera.Id, CameraApproach.Unknown, directDistance);
+            if (!camera.DirectionVerified && camera.ActivePartVerified)
+                unknownCameras.Add(new(camera.Id, CameraApproach.UncalibratedNearby,
+                    Vector3.Distance(position, camera.LocatorPosition)));
             string decision;
             if (!usableRoute) decision = $"路线数据缺失或过期（SDK节点={data.Route.Nodes.Count}，遥测剩余={vehicle.NavigationDistanceRemainingMeters:F0} m）";
             else if (!camera.DirectionVerified) decision = "监测位置和方向尚未校准";
@@ -63,16 +68,21 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
         // Raw pose age, not processing time, controls whether alerts may fire.
         var warningSnapshot = new WarningSnapshot(data.SessionId, data.Route.Revision, hasRoute,
             usableRoute && vehicle.SpeedMetersPerSecond >= 0, vehicle.ReceivedAt, candidates);
-        planner?.UpdatePlan(warningSnapshot, engine.GetPlans(warningSnapshot, now), now);
-        var warnings = engine.Update(warningSnapshot, now);
+        var proximitySnapshot = new WarningSnapshot(data.SessionId, data.Route.Revision, false,
+            vehicle.SpeedMetersPerSecond >= 0, vehicle.ReceivedAt, unknownCameras);
+        // Proximity notices do not assert route membership or a measured traffic direction.
+        var plans = engine.GetPlans(warningSnapshot, now)
+            .Concat(uncalibrated.GetPlans(proximitySnapshot, now)).ToArray();
+        planner?.UpdatePlan(proximitySnapshot, plans, now);
+        var warnings = engine.Update(warningSnapshot, now).Concat(uncalibrated.Update(proximitySnapshot, now));
         foreach (var warning in warnings)
         {
             announcer.Announce(warning);
             lastWarning = $"{warning.CameraId} · {warning.StageDistanceMeters:F0} m 阶段 · 实距 {warning.DistanceMeters:F0} m · {warning.DistanceKind}";
         }
         string state = nearby.Cameras.Any(c => c.DirectionVerified)
-            ? "预警运行中；只有位置和方向已验证的目标会播报。"
-            : "附近探头识别运行中；监测位置和方向未经校准，自动播报尚未启用。";
+            ? "预警运行中；已校准目标按路线预警，未校准目标仅作500米接近提醒。"
+            : "附近探头识别运行中；未校准目标仅作500米接近提醒。";
         if (nearby.Diagnostics.Count > 0) state += " " + nearby.Diagnostics[0];
         return new(now, state, data.RouteAvailability.ToString(), nearby.Cameras.Count,
             diagnostics.OrderBy(d => d.DistanceMeters).Take(30).ToArray(), lastWarning,
@@ -82,6 +92,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
     public void Reset()
     {
         engine.Reset();
+        uncalibrated.Reset();
         planner?.ClearPlan();
         previousMap = null;
         paths = null;

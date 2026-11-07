@@ -70,7 +70,7 @@ public sealed class WarningPipelineTests
     }
 
     [Fact]
-    public void UnverifiedLocatorNeverProducesAudioEvenWhenItLooksForward()
+    public void InactiveLocatorNeverProducesAudioEvenWhenItLooksForward()
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(500));

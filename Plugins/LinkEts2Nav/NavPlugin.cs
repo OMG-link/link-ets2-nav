@@ -168,7 +168,7 @@ public sealed class NavPlugin : Plugin
                         calibrations = File.Exists(calibrationPath) ? CameraCalibrationSet.Load(calibrationPath) : CameraCalibrationSet.Empty;
                         calibrationError = null;
                         logOutput.Change("calibration", calibrations.Count == 0
-                            ? "校准配置为空或不存在：当前仅识别探头，未校准目标不会播报。配置位置：" + calibrationPath
+                            ? "校准配置为空或不存在：有效探头仅作500米未校准接近提醒。配置位置：" + calibrationPath
                             : $"已加载 {calibrations.Count} 条模型校准配置。", now);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)

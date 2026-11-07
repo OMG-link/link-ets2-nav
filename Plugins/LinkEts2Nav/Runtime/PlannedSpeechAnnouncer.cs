@@ -38,8 +38,11 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
         worker = Task.Run(PrepareAsync);
     }
 
-    public static string Text(double stage, double actualDistance, bool firstConfirmedInside200Meters = false, int? speedLimitKph = null)
+    public const string UncalibratedText = "正靠近未校准的探头，无法获取其监测方向，请减速慢行。";
+
+    public static string Text(double stage, double actualDistance, bool firstConfirmedInside200Meters = false, int? speedLimitKph = null, CameraWarningKind kind = CameraWarningKind.Calibrated)
     {
+        if (kind == CameraWarningKind.UncalibratedProximity) return UncalibratedText;
         string text = BaseText(stage, actualDistance, firstConfirmedInside200Meters);
         return speedLimitKph is > 0 and <= 300 ? text.TrimEnd('。') + "，限速" + Number(speedLimitKph.Value) + "。" : text;
     }
@@ -72,7 +75,7 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
         if (stop.IsCancellationRequested || snapshot is not { IsActive: true } || age < TimeSpan.Zero || age > TimeSpan.FromSeconds(2))
         { ClearPlan(); return; }
         var ordered = plans.OrderBy(p => p.DistanceUntilTriggerMeters)
-            .Select(p => Text(p.StageDistanceMeters, Math.Min(p.DistanceMeters, p.StageDistanceMeters), p.FirstConfirmedInside200Meters, p.SpeedLimitKph))
+            .Select(p => Text(p.StageDistanceMeters, Math.Min(p.DistanceMeters, p.StageDistanceMeters), p.FirstConfirmedInside200Meters, p.SpeedLimitKph, p.Kind))
             .Distinct(StringComparer.Ordinal).ToArray();
         bool updated;
         lock (gate)
@@ -93,7 +96,7 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
     public void Announce(CameraWarning warning)
     {
         if (stop.IsCancellationRequested) return;
-        string text = Text(warning.StageDistanceMeters, warning.DistanceMeters, warning.FirstConfirmedInside200Meters, warning.SpeedLimitKph);
+        string text = Text(warning.StageDistanceMeters, warning.DistanceMeters, warning.FirstConfirmedInside200Meters, warning.SpeedLimitKph, warning.Kind);
         string? file;
         lock (gate) ready.TryGetValue(text, out file);
         if ((file is null || !File.Exists(file)) && warning.SpeedLimitKph.HasValue)

@@ -37,6 +37,19 @@ public sealed class PlannedSpeechTests : IDisposable
     }
 
     [Fact]
+    public async Task UncalibratedNoticePlaysExactPreGeneratedSentenceEvenInside200Meters()
+    {
+        string path = File("uncalibrated");
+        var played = new List<string>();
+        var fallback = new Fallback();
+        await using var speech = new PlannedSpeechAnnouncer(new Synthesizer(), fallback, played.Add,
+            preGenerated: new Dictionary<string, string> { [PlannedSpeechAnnouncer.UncalibratedText] = path });
+        speech.Announce(new("unknown", 150, WarningDistanceKind.Euclidean)
+            { Kind = CameraWarningKind.UncalibratedProximity });
+        Assert.Equal(path, Assert.Single(played));
+        Assert.Empty(fallback.Warnings);
+    }
+    [Fact]
     public async Task PlansStartImmediatelyInTriggerOrderAndShareWholeSentenceCache()
     {
         var synth = new Synthesizer();

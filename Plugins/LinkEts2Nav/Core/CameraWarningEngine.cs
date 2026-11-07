@@ -1,13 +1,16 @@
 namespace LinkEts2Nav.Core;
 
-/// <summary>Evidence produced by directed road/route matching, never by proximity alone.</summary>
+/// <summary>Directed matching evidence, or an explicitly separate uncalibrated proximity notice.</summary>
 public enum CameraApproach
 {
     Unknown,
     RouteAhead,
     UnavoidableAhead,
-    Behind
+    Behind,
+    UncalibratedNearby
 }
+
+public enum CameraWarningKind { Calibrated, UncalibratedProximity }
 
 public enum WarningDistanceKind { Road, Euclidean }
 
@@ -38,6 +41,7 @@ public sealed record CameraWarning(
     double DistanceMeters,
     WarningDistanceKind DistanceKind)
 {
+    public CameraWarningKind Kind { get; init; }
     public double StageDistanceMeters { get; init; } = 500;
     public bool FirstConfirmedInside200Meters { get; init; }
     public int? SpeedLimitKph { get; init; }
@@ -51,6 +55,7 @@ public sealed record PlannedCameraWarning(
     WarningDistanceKind DistanceKind,
     double DistanceUntilTriggerMeters)
 {
+    public CameraWarningKind Kind { get; init; }
     public bool FirstConfirmedInside200Meters { get; init; }
     public int? SpeedLimitKph { get; init; }
 }
@@ -62,6 +67,7 @@ public sealed record PlannedCameraWarning(
 public sealed class CameraWarningEngine
 {
     private readonly double[] stages;
+    private readonly CameraWarningKind kind;
     private readonly double rearmDistance;
     private readonly TimeSpan maximumAge;
     private const double PassageRadiusMeters = 20;
@@ -75,7 +81,7 @@ public sealed class CameraWarningEngine
     public CameraWarningEngine(
         double triggerDistanceMeters = 500,
         double rearmDistanceMeters = 50,
-        TimeSpan? maximumAge = null)
+        TimeSpan? maximumAge = null, CameraWarningKind kind = CameraWarningKind.Calibrated)
     {
         if (!double.IsFinite(triggerDistanceMeters) || triggerDistanceMeters <= 0)
             throw new ArgumentOutOfRangeException(nameof(triggerDistanceMeters));
@@ -86,7 +92,8 @@ public sealed class CameraWarningEngine
             throw new ArgumentOutOfRangeException(nameof(maximumAge));
         // A shorter custom first threshold stays a single stage rather than creating
         // a second warning farther away than the caller's requested first warning.
-        stages = triggerDistanceMeters > 200 ? [triggerDistanceMeters, 200] : [triggerDistanceMeters];
+        this.kind = kind;
+        stages = kind == CameraWarningKind.UncalibratedProximity ? [triggerDistanceMeters] : triggerDistanceMeters > 200 ? [triggerDistanceMeters, 200] : [triggerDistanceMeters];
         rearmDistance = rearmDistanceMeters;
     }
 
@@ -115,7 +122,8 @@ public sealed class CameraWarningEngine
                 || !double.IsFinite(candidate.EuclideanDistanceMeters) || candidate.EuclideanDistanceMeters < 0)
                 continue;
 
-            var required = snapshot.HasNavigationRoute ? CameraApproach.RouteAhead : CameraApproach.UnavoidableAhead;
+            var required = kind == CameraWarningKind.UncalibratedProximity ? CameraApproach.UncalibratedNearby
+                : snapshot.HasNavigationRoute ? CameraApproach.RouteAhead : CameraApproach.UnavoidableAhead;
             double distance = candidate.RoadDistanceMeters ?? candidate.EuclideanDistanceMeters;
             double lowerBound = candidate.RouteDistanceLowerBoundMeters ?? 0;
             if (!double.IsFinite(lowerBound) || lowerBound < 0) continue;
@@ -165,6 +173,7 @@ public sealed class CameraWarningEngine
                     candidate.RoadDistanceMeters.HasValue ? WarningDistanceKind.Road : WarningDistanceKind.Euclidean,
                     Math.Max(0, triggerDistance - stages[index]))
                 {
+                    Kind = kind,
                     FirstConfirmedInside200Meters = firstConfirmedDistances[candidate.Id] < 200,
                     SpeedLimitKph = candidate.SpeedLimitKph
                 });
@@ -187,6 +196,7 @@ public sealed class CameraWarningEngine
             consumed[plan.CameraId] = mask | ((1 << (index + 1)) - 1);
             result.Add(new CameraWarning(plan.CameraId, plan.DistanceMeters, plan.DistanceKind)
             {
+                Kind = plan.Kind,
                 StageDistanceMeters = plan.StageDistanceMeters,
                 FirstConfirmedInside200Meters = plan.FirstConfirmedInside200Meters,
                 SpeedLimitKph = plan.SpeedLimitKph

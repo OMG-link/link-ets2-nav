@@ -122,15 +122,16 @@ public sealed class NavPlugin : Plugin
         var calibrationPath = Path.Combine(AppContext.BaseDirectory, "Settings", "LinkEts2Nav.CameraCalibrations.json");
         var calibrationCheck = DateTimeOffset.MinValue;
         string? calibrationError = null;
-        OfficialArchiveMount? mount = null;
-        NearbyCameraScanner? scanner = null;
-        NearbyMapSnapshot? nearby = null;
+        var mapScanner = new BackgroundMapScanner(cancellationToken: token);
+        string[] gameLog = [];
+        long resourceVersion = 0;
+        long observedScanRevision = 0;
         Installation? installation = null;
         string signature = "";
         string session = "";
         var mountCheck = DateTimeOffset.MinValue;
-        var scanTime = DateTimeOffset.MinValue;
-        var scannedPosition = new Vector3(float.PositiveInfinity);
+        var setupRetryAfter = DateTimeOffset.MinValue;
+        var scanBusySince = DateTimeOffset.MinValue;
         try
         {
             do
@@ -177,56 +178,76 @@ public sealed class NavPlugin : Plugin
                 if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2)
                 {
                     speech?.ClearPlan();
+                    if (installation is not null) { mapScanner.Invalidate(); pipeline.Reset(); installation = null; }
                     Publish(new(now, "等待 ETS2 当前地图就绪。", data.RouteAvailability.ToString(), 0, []));
                     continue;
                 }
                 try
                 {
+                    if (now < setupRetryAfter) { speech?.ClearPlan(); continue; }
                     if (!ReferenceEquals(installation, currentInstallation) || now >= mountCheck)
                     {
                         mountCheck = now.AddSeconds(5);
-                        var log = currentInstallation.GetLogFileContents();
+                        var log = currentInstallation.GetLogFileContents().ToArray();
                         string nextSignature = OfficialArchiveMount.ResolveGameLog(currentInstallation.Path, log).Signature;
-                        if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature || mount is null)
+                        if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature)
                         {
-                            mount?.Dispose(); mount = null; scanner = null; nearby = null;
+                            mapScanner.Invalidate();
                             pipeline.Reset();
-                            logOutput.Change("mount-attempt", "准备按当前游戏日志挂载地图资源：" + currentInstallation.Path, now);
-                            mount = OfficialArchiveMount.FromGameLog(currentInstallation.Path, log);
-                            logOutput.ResetTargets($"地图资源就绪：独立挂载 {mount.ArchivePaths.Count} 个官方归档。", now);
-                            scanner = new NearbyCameraScanner(mount.FileSystem);
+                            logOutput.ResetTargets("准备在后台挂载当前地图资源：" + currentInstallation.Path, now);
+                            gameLog = log;
+                            resourceVersion++;
                             installation = currentInstallation;
                             signature = nextSignature;
                         }
                     }
-                    if (mount is null || scanner is null) { speech?.ClearPlan(); continue; }
                     if (session != data.SessionId)
                     {
                         logOutput.ResetTargets("车辆会话变化：已重置目标和预警状态（首次连接、读档或传送等）。", now);
                         session = data.SessionId;
-                        nearby = null;
+                        mapScanner.Invalidate();
                         pipeline.Reset();
                     }
                     var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
-                    if (nearby is null || Vector3.Distance(position, scannedPosition) >= 25 || now - scanTime >= TimeSpan.FromSeconds(3))
-                    {
-                        if (vehicle.Paused && nearby is null)
-                            logOutput.Status("游戏已暂停：正在预加载附近地图，预警暂挂。", now);
+                    if (mapScanner.Request(new(resourceVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        session, currentInstallation.Path, gameLog, position), now))
                         logOutput.ScanStarted(position, now);
-                        var scanStarted = System.Diagnostics.Stopwatch.StartNew();
-                        nearby = scanner.ReadNearby(position, 1100, token);
-                        logOutput.Scanned(nearby, position, scanStarted.Elapsed, DateTimeOffset.UtcNow);
-                        scannedPosition = position;
-                        scanTime = now;
+                    var scan = mapScanner.Capture();
+                    if (!scan.IsScanning) scanBusySince = DateTimeOffset.MinValue;
+                    else if (scanBusySince == DateTimeOffset.MinValue) scanBusySince = now;
+                    var nearby = scan.Map;
+                    if (scan.Revision != observedScanRevision)
+                    {
+                        observedScanRevision = scan.Revision;
+                        if (scan.Error is not null)
+                            logOutput.Change("scan-error", "后台地图扫描失败：" + scan.Error
+                                + (nearby is null ? "；稍后重试。" : "；继续使用已准备地图，稍后重试。"), now, isWarning: true);
+                        else if (nearby is not null)
+                        {
+                            logOutput.Change("scan-error", "后台地图快照已就绪。", now);
+                            logOutput.Scanned(nearby, scan.Position, scan.Elapsed, now);
+                        }
                     }
-                    // Disk reads may take time; recapture to honor pause, teleport and sample freshness.
+                    if (nearby is null)
+                    {
+                        speech?.ClearPlan();
+                        string reason = scan.Error is not null ? "地图暂不可用：" + scan.Error
+                            : vehicle.Paused ? "游戏已暂停：正在后台预加载附近地图，预警暂挂。"
+                            : "正在后台准备附近地图，等待首次扫描完成。";
+                        Publish(new(now, reason, data.RouteAvailability.ToString(), 0, []), isWarning: scan.Error is not null);
+                        continue;
+                    }
+                    // Warning matching never awaits a scan. Capture current telemetry independently.
                     var latest = source.Capture();
-                    if (latest.SessionId != session) { nearby = null; speech?.ClearPlan(); continue; }
+                    if (latest.SessionId != session) { mapScanner.Invalidate(); speech?.ClearPlan(); continue; }
                     token.ThrowIfCancellationRequested();
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var diagnostic = pipeline.Process(latest, calibrated, DateTimeOffset.UtcNow);
                     if (latest.Vehicle is { Paused: true })
                         diagnostic = diagnostic with { State = "附近地图已准备；游戏已暂停，预警暂挂。" };
+                    if (scan.IsScanning && now - scanBusySince >= TimeSpan.FromSeconds(1)
+                        && latest.Vehicle is not { Paused: true })
+                        diagnostic = diagnostic with { State = diagnostic.State + "；地图正在后台刷新，使用已准备快照。" };
                     if (calibrationError is not null) diagnostic = diagnostic with { State = diagnostic.State + " " + calibrationError };
                     Publish(diagnostic);
                 }
@@ -235,8 +256,10 @@ public sealed class NavPlugin : Plugin
                     speech?.ClearPlan();
                     Publish(new(DateTimeOffset.UtcNow, "地图暂不可用：" + ex.GetType().Name + ": " + ex.Message,
                         data.RouteAvailability.ToString(), 0, []), isWarning: true);
-                    // No tight retry loop if archives or map resources are unavailable.
-                    await Task.Delay(TimeSpan.FromSeconds(5), token).ConfigureAwait(false);
+                    mapScanner.Invalidate();
+                    pipeline.Reset();
+                    // Back off setup retries without blocking the telemetry/diagnostic loop.
+                    setupRetryAfter = DateTimeOffset.UtcNow.AddSeconds(5);
                 }
             } while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false));
         }
@@ -244,7 +267,7 @@ public sealed class NavPlugin : Plugin
         {
             source.Dispose();
             logOutput.ReportFines(source.Store.DrainFines(), source.Capture().DroppedFineCount, DateTimeOffset.UtcNow);
-            mount?.Dispose();
+            await mapScanner.DisposeAsync().ConfigureAwait(false);
             logOutput.Event("后台扫描已停止。", DateTimeOffset.UtcNow);
         }
     }

@@ -29,6 +29,49 @@ public sealed class SpeedLimitDefinitionTests
         public string GetParent(string p)=>p[..(p.LastIndexOf('/')+1)];
     }
     [Fact]
+    public void MissingCityCountryIsUnknownRatherThanAScanFailure()
+    {
+        var fs=new Fs();
+        fs.Files["/def/city.sii"]="""SiiNunit { city_data : city.test { } }""";
+        var map=new TruckLib.ScsMap.Map();
+        var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);
+        road.RoadType="un11";
+        CityArea.Add(map,new(500,0,0),"test",1000,1000);
+        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        Assert.Null(data.Error);
+        Assert.Null(data.Roads[road.Uid].Country);
+        Assert.Null(Assert.Single(data.Regions).Country);
+    }
+    [Fact]
+    public void CountriesInOneWindowStayBoundToTheirOwnRoadComponents()
+    {
+        var fs=new Fs();
+        fs.Files["/def/city.sii"]="""SiiNunit { city_data : city.test { country: norway } city_data : city.other { country: estonia } }""";
+        fs.Files["/def/country.sii"]="""SiiNunit { country_data : country.data.norway { country_id: 35 } country_data : country.data.estonia { country_id: 22 } }""";
+        var map=new TruckLib.ScsMap.Map();
+        var first=Road.Add(map,new(0,0,0),new(1000,0,0),default); first.RoadType="un11";
+        var other=Road.Add(map,new(10000,0,0),new(11000,0,0),default); other.RoadType="un11";
+        CityArea.Add(map,new(500,0,0),"test",1000,1000);
+        CityArea.Add(map,new(10500,0,0),"other",1000,1000);
+        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        Assert.Null(data.Country);
+        Assert.Equal("norway",data.Roads[first.Uid].Country);
+        Assert.Equal("estonia",data.Roads[other.Uid].Country);
+    }
+
+    [Fact]
+    public void CountryIdDefinitionsResolveBorderEvidenceOutsideAnyCity()
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var road=Road.Add(map,new(0,0,0),new(1000,0,0),default); road.RoadType="un11";
+        road.Node.IsCountryBorder=true;
+        road.Node.ForwardItem=road;
+        road.Node.ForwardCountry=35;
+        var data=new SpeedLimitDefinitionReader(new Fs()).Build(map,TestContext.Current.CancellationToken);
+        Assert.Equal("norway",data.Roads[road.Uid].Country);
+    }
+
+    [Fact]
     public void ParsesTokenCountryLaneClassAndSignSemantics()
     {
         var map=new TruckLib.ScsMap.Map();
@@ -36,9 +79,10 @@ public sealed class SpeedLimitDefinitionTests
         road.RoadType="un11";
         CityArea.Add(map,new(500,0,0),"test",1000,1000);
         Sign.Add(map,new(400,0,5),"test");
-        var data=new SpeedLimitDefinitionReader(new Fs()).Build(map);
+        var data=new SpeedLimitDefinitionReader(new Fs()).Build(map,TestContext.Current.CancellationToken);
         Assert.Null(data.Error);
-        Assert.Equal("norway",data.Country);
+        Assert.Null(data.Country);
+        Assert.Equal("norway",data.Roads[road.Uid].Country);
         Assert.Equal("local_road",data.Roads[road.Uid].SpeedClass);
         Assert.Equal(50,data.Limits["norway/local_road"].Urban);
         Assert.Equal(60,Assert.Single(data.Signs).Action.SetKph);
@@ -55,7 +99,7 @@ public sealed class SpeedLimitDefinitionTests
                 """SiiNunit { country_speed_limit : .speed_limit.truck { vehicle_speed_class: truck lane_speed_class[]: local_road limit[]: 70 urban_limit[]: 40 max_limit[]: 70 } }"""));
             var map=new TruckLib.ScsMap.Map();
             CityArea.Add(map,new(0,0,0),"test",1000,1000);
-            var data=new SpeedLimitDefinitionReader(new Fs(),[root]).Build(map);
+            var data=new SpeedLimitDefinitionReader(new Fs(),[root]).Build(map,TestContext.Current.CancellationToken);
             Assert.Null(data.Error);
             Assert.Equal(40,data.Limits["norway/local_road"].Urban);
         }

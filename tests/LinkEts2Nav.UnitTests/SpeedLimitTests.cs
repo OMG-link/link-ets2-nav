@@ -22,6 +22,34 @@ public sealed class SpeedLimitTests
     private static SpeedLimitResult Resolve((TruckLib.ScsMap.Map Map,Road Road,SpeedLimitData Data) scene)
         =>new SpeedLimitResolver(scene.Data,new RoadPathSource(scene.Map)).Resolve(new("camera",new(700,0,0),Vector3.UnitX));
 
+    [Fact]
+    public void UncertainRoadCountryCannotBeOverriddenByCityOrGlobalFallback()
+    {
+        var s=Scene();
+        s.Data=s.Data with { Roads=new Dictionary<ulong,LimitRoad>{
+            [s.Road.Uid]=s.Data.Roads[s.Road.Uid] with { CountryUncertain=true } },
+            Regions=[new("city",[new(650,0,-100),new(1000,0,-100),new(1000,0,100),new(650,0,100)],0,true){Country="norway"}] };
+        Assert.Null(Resolve(s).Kph);
+    }
+    [Fact]
+    public void RoadCountryResolvesRuralLimitWithoutMapWindowCountry()
+    {
+        var s=Scene();
+        s.Data=s.Data with { Country=null, Roads=new Dictionary<ulong,LimitRoad>{
+            [s.Road.Uid]=s.Data.Roads[s.Road.Uid] with { Country="norway" } } };
+        Assert.Equal(80,Resolve(s).Kph);
+    }
+
+    [Fact]
+    public void ConflictingRoadAndContainingCityCountriesRemainUnknown()
+    {
+        var s=Scene();
+        s.Data=s.Data with { Country=null, Roads=new Dictionary<ulong,LimitRoad>{
+            [s.Road.Uid]=s.Data.Roads[s.Road.Uid] with { Country="norway" } },
+            Regions=[new("foreign-city",[new(650,0,-100),new(1000,0,-100),new(1000,0,100),new(650,0,100)],0,true){Country="finland"}] };
+        Assert.Null(Resolve(s).Kph);
+    }
+
     [Fact] public void DefaultRuralAndCityLimitsUseCameraPosition()
     {
         var s=Scene();

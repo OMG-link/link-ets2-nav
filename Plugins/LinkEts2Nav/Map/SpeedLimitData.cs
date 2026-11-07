@@ -12,10 +12,15 @@ public sealed record LimitSign(string Id, Vector3 Position, Vector3 Direction, b
     public string? RoadId { get; init; }
     public bool OwnershipAmbiguous { get; init; }
 }
-public sealed record LimitRoad(DirectedRoad Geometry, string? SpeedClass);
+public sealed record LimitRoad(DirectedRoad Geometry, string? SpeedClass)
+{
+    public string? Country { get; init; }
+    public bool CountryUncertain { get; init; }
+}
 public sealed record LimitRegion(string Id, IReadOnlyList<Vector3> Points, float Height, bool Urban, int? SetKph = null)
 {
     public string? Country { get; init; }
+
     public bool Contains(Vector3 p)
     {
         if (Points.Count < 3) return false;

@@ -15,6 +15,7 @@ public sealed class SpeedLimitDefinitionReader
     private readonly Dictionary<string,string?> roadClasses=new(StringComparer.Ordinal);
     private readonly Dictionary<string,TruckSpeedLimit> limits=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> rules=new(StringComparer.Ordinal);
+    private readonly Dictionary<byte,string> countryNames=new();
     private string? error;
 
     public SpeedLimitDefinitionReader(IFileSystem original,IReadOnlyList<string>? mods=null)
@@ -39,7 +40,14 @@ public sealed class SpeedLimitDefinitionReader
                 signs[u.Name.Split('.').Last()]=Action(Link(Value(u,"traffic_rule")),[]);
             foreach(var u in Files("/def/","city").Where(u=>u.Class=="city_data"))
                 cityCountries[u.Name.Split('.').Last()]=Link(Value(u,"country")).Split('.').Last();
-            var countries=Files("/def/","country").Where(u=>u.Class=="country_data").Select(u=>u.Name.Split('.').Last())
+            var countryUnits=Files("/def/","country").Where(u=>u.Class=="country_data").ToArray();
+            foreach(var group in countryUnits.Select(u=>(Name:u.Name.Split('.').Last(),Ids:Numbers(u,"country_id")))
+                .Where(p=>p.Ids.Length==1&&p.Ids[0] is >0 and <=255).GroupBy(p=>(byte)p.Ids[0]))
+            {
+                var names=group.Select(p=>p.Name).Distinct(StringComparer.Ordinal).ToArray();
+                if(names.Length==1)countryNames[group.Key]=names[0];
+            }
+            var countries=countryUnits.Select(u=>u.Name.Split('.').Last())
                 .Concat(cityCountries.Values).Where(p=>!string.IsNullOrEmpty(p)).Distinct().ToArray();
             foreach(string country in countries)
             {
@@ -60,7 +68,9 @@ public sealed class SpeedLimitDefinitionReader
         { error="限速定义加载失败："+ex.GetType().Name+": "+ex.Message; }
     }
 
-    public SpeedLimitData Build(TruckLib.ScsMap.Map map)
+    public SpeedLimitData Build(TruckLib.ScsMap.Map map) => Build(map,CancellationToken.None);
+
+    public SpeedLimitData Build(TruckLib.ScsMap.Map map,CancellationToken cancellationToken)
     {
         if(error is not null)return SpeedLimitData.Empty with{Error=error};
         var roads=new Dictionary<ulong,LimitRoad>();
@@ -85,13 +95,14 @@ public sealed class SpeedLimitDefinitionReader
                 OwnershipAmbiguous=owners.Length==0||owners.Length>1&&owners[1].Projection!.Value.Error-owners[0].Projection!.Value.Error<2 };
         }).ToList();
         var regions=new List<LimitRegion>();
-        var countries=new HashSet<string>(StringComparer.Ordinal);
+
         foreach(var city in map.MapItems.Values.OfType<CityArea>().Where(c=>c.Node is Node))
         {
             if(city.Node.Rotation!=Quaternion.Identity)continue;
             var p=city.Node.Position;float x=city.Width/2,z=city.Height/2;
             var country=cityCountries.GetValueOrDefault(city.Name.ToString());
-            if(!string.IsNullOrEmpty(country))countries.Add(country);
+            if(string.IsNullOrWhiteSpace(country))country=null;
+
             regions.Add(new(city.Uid.ToString("X16"),[p+new Vector3(-x,0,-z),p+new Vector3(x,0,-z),
                 p+new Vector3(x,0,z),p+new Vector3(-x,0,z)],0,true){Country=country});
         }
@@ -102,7 +113,18 @@ public sealed class SpeedLimitDefinitionReader
                 regions.Add(new(area.Uid.ToString("X16"),area.Nodes.Select(n=>n.Position).ToArray(),area.Range,
                     action.Urban==true,action.SetKph));
         }
-        return new(roads,placedSigns,regions,limits,countries.Count==1?countries.Single():null);
+        var countryIndex=RoadCountryIndex.Build(map,countryNames,cancellationToken);
+        // Only a road actually inside a city's polygon may borrow its country evidence.
+        // A city on another island or across a border is never a map-window default.
+        foreach(var region in regions.Where(r=>r.Country is not null))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach(var (uid,road) in roads)
+                if(road.Geometry.Points.Any(region.Contains))countryIndex.AddSeed(uid,region.Country!);
+        }
+        foreach(ulong uid in roads.Keys.ToArray())
+            roads[uid]=roads[uid] with { Country=countryIndex.GetCountry(uid), CountryUncertain=countryIndex.IsUncertain(uid) };
+        return new(roads,placedSigns,regions,limits,null);
     }
     private LimitAction Action(string name,HashSet<string> seen)
     {

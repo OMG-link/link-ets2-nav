@@ -41,7 +41,7 @@ public sealed class SpeedLimitResolver(SpeedLimitData data, RoadPathSource paths
             {
                 if(i>0)along+=Vector3.Distance(road.Points[i-1],road.Points[i]);
                 if(offset+along>cameraAt.Value)break;
-                var value=BaseAt(road.Points[i],metadata?.SpeedClass);
+                var value=BaseAt(road.Points[i],metadata?.SpeedClass,metadata?.Country);
                 events.Add((offset+along,0,null,value.Kph,value.Reason));
             }
             foreach(var sign in data.Signs)
@@ -70,9 +70,10 @@ public sealed class SpeedLimitResolver(SpeedLimitData data, RoadPathSource paths
         }
         // Evaluate the exact monitored point too, including a city/area boundary between samples.
         var last=forward.LastOrDefault(r=>matcher.ProjectDistance(camera.MonitoringPosition,camera.TravelDirection,[r]).HasValue);
-        var lastClass=last is not null&&ulong.TryParse(last.Id,NumberStyles.HexNumber,CultureInfo.InvariantCulture,out var lastUid)
-            ?data.Roads.GetValueOrDefault(lastUid)?.SpeedClass:null;
-        var atCamera=BaseAt(camera.MonitoringPosition,lastClass);
+        var lastMetadata=last is not null&&ulong.TryParse(last.Id,NumberStyles.HexNumber,CultureInfo.InvariantCulture,out var lastUid)
+            ?data.Roads.GetValueOrDefault(lastUid):null;
+        var lastClass=lastMetadata?.SpeedClass;
+        var atCamera=BaseAt(camera.MonitoringPosition,lastClass,lastMetadata?.Country);
         events.Add((cameraAt.Value,0,null,atCamera.Kph,atCamera.Reason));
         int? currentBase=null,posted=null;bool? urban=null;bool unknown=false;
         string reason="缺少限速依据";
@@ -101,8 +102,9 @@ public sealed class SpeedLimitResolver(SpeedLimitData data, RoadPathSource paths
                 reason=item.Reason;
             }
         }
+        if(lastMetadata?.CountryUncertain==true)return new(null,"道路国家证据冲突或国界国家ID未知");
         if(unknown)return new(null,reason);
-        var country=CountryAt(camera.MonitoringPosition);
+        var country=CountryAt(camera.MonitoringPosition,lastMetadata?.Country);
         if(country is null)return new(null,"国家归属未知");
         if(lastClass is null)return new(null,"监测道路车道类别或变体未支持");
         if(!data.Limits.TryGetValue(country+"/"+lastClass,out var rule))return new(null,"缺少货车限速规则："+country+"/"+lastClass);
@@ -116,14 +118,17 @@ public sealed class SpeedLimitResolver(SpeedLimitData data, RoadPathSource paths
         return new(limit,"实验估算："+reason+"；"+country+"/"+lastClass);
     }
 
-    private string? CountryAt(Vector3 point)
+    private string? CountryAt(Vector3 point,string? roadCountry=null)
     {
         var countries=data.Regions.Where(r=>r.Country is not null&&r.Contains(point)).Select(r=>r.Country!).Distinct().ToArray();
-        return countries.Length==1?countries[0]:countries.Length>1?null:data.Country;
+        if(countries.Length>1)return null;
+        string? regionCountry=countries.Length==1?countries[0]:null;
+        if(roadCountry is not null&&regionCountry is not null&&roadCountry!=regionCountry)return null;
+        return roadCountry??regionCountry??data.Country;
     }
-    private SpeedLimitResult BaseAt(Vector3 p,string? cls)
+    private SpeedLimitResult BaseAt(Vector3 p,string? cls,string? roadCountry=null)
     {
-        string? country=CountryAt(p);
+        string? country=CountryAt(p,roadCountry);
         if(country is null||cls is null||!data.Limits.TryGetValue(country+"/"+cls,out var rule))return new(null,"国家或道路类别未知");
         bool urban=data.Regions.Any(r=>r.Urban&&r.Contains(p));
         int value=urban?rule.Urban:rule.Rural;

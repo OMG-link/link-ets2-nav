@@ -90,7 +90,7 @@ public sealed class NearbyCameraScanner
             junctionDiagnostics = issues.Distinct().ToArray();
             map = nextMap;
             loadedSectors = sectors;
-            speedLimits = speedReader!.Build(nextMap);
+            speedLimits = speedReader!.Build(nextMap,cancellationToken);
         }
         var diagnostics = new List<string>(definitionDiagnostics);
         diagnostics.AddRange(junctionDiagnostics);

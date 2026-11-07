@@ -26,8 +26,10 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
     private readonly Task worker;
 
     public PlannedSpeechAnnouncer(ISpeechSynthesizer synthesizer, IWarningAnnouncer fallback,
-        Action<string> play, Action<string>? log = null, CancellationToken cancellationToken = default)
+        Action<string> play, Action<string>? log = null, CancellationToken cancellationToken = default, IReadOnlyDictionary<string, string>? preGenerated = null)
     {
+        if (preGenerated is not null)
+            foreach (var entry in preGenerated) ready[entry.Key] = entry.Value;
         this.synthesizer = synthesizer;
         this.fallback = fallback;
         this.play = play;
@@ -38,6 +40,7 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
 
     public static string Text(double stage, double actualDistance)
     {
+        if (stage == 200 || actualDistance < 200) return "二百米内，有测速照相。";
         // A late first observation must not claim that a camera is still 500/200 m away.
         if (actualDistance < stage * .9) return "前方有测速照相。";
         return stage == 500 ? "五百米处，有测速照相。" :

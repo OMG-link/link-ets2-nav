@@ -22,6 +22,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             foreach (int speed in CommonLimits)
                 yield return distance + "米处，有测速照相，限速" + Number(speed) + "公里。";
         }
+        yield return "二百米内，有测速照相。";
         yield return "前方有测速照相。";
         yield return "米处，有测速照相。";
         yield return "米处，有测速照相，限速";

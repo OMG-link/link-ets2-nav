@@ -88,8 +88,9 @@ public sealed class NavPlugin : Plugin
             var options = SpeechOptions.Load(AppContext.BaseDirectory);
             if (!options.Enabled) return null;
             log.Event("TTS 已启用：按预警触发顺序预生成，音色=" + options.Voice + "，文件缓存=" + options.CacheDirectory, DateTimeOffset.UtcNow);
-            return new(new KokoroSpeechProcess(options), fallback, path => AudioHandler.Current.Queue(path),
-                message => log.Event(message, DateTimeOffset.UtcNow), token);
+            return new(new KokoroSpeechProcess(options), new Ets2LaWarningAnnouncer(audioFile: () => null, cancellationToken: token), path => AudioHandler.Current.Queue(path),
+                message => log.Event(message, DateTimeOffset.UtcNow), token,
+                PreGeneratedSpeech.Load(options.PackDirectory, message => log.Event(message, DateTimeOffset.UtcNow)));
         }
         catch (Exception ex)
         {

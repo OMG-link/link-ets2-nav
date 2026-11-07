@@ -49,19 +49,19 @@ public sealed class DirectedPathMatcher
         ArgumentNullException.ThrowIfNull(camera);
         ArgumentNullException.ThrowIfNull(orderedForwardRoads);
         var directDistance = Vector3.Distance(vehiclePosition, camera.MonitoringPosition);
-        CameraCandidate Unknown() => new(camera.Id, CameraApproach.Unknown, directDistance);
+        CameraCandidate Unknown(string reason) => new(camera.Id, CameraApproach.Unknown, directDistance) { MatchFailure = reason };
         if (!Finite(vehiclePosition) || !Finite(camera.MonitoringPosition)
             || !TryNormalizeHorizontal(vehicleDirection, out var vehicleHeading)
             || !TryNormalizeHorizontal(camera.TravelDirection, out var cameraHeading))
-            return Unknown();
+            return Unknown("车辆或监测点位置、方向无效");
 
         var segments = BuildSegments(orderedForwardRoads);
         if (segments is null)
-            return Unknown();
+            return Unknown("必经路径几何不连续");
         var player = Project(vehiclePosition, vehicleHeading, segments);
         var monitor = Project(camera.MonitoringPosition, cameraHeading, segments);
-        if (player is null || monitor is null)
-            return Unknown();
+        if (player is null) return Unknown("车辆在必经路径上的投影不确定");
+        if (monitor is null) return Unknown("监测点在必经路径上的投影不确定");
 
         var alongDistance = monitor.Value.AlongDistance - player.Value.AlongDistance;
         return new CameraCandidate(camera.Id,

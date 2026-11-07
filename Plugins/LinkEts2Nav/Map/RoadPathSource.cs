@@ -172,6 +172,10 @@ public sealed class RoadPathSource
     {
         var candidates = roads.Where(r => r.Node is not null && r.ForwardNode is not null && Near(r, position))
             .Select(r => (Road: r, Sample: Orient(r, r.Node.Uid)))
+            // Clamped distance to a road endpoint is not proof that the vehicle has
+            // entered that road: it may still be on the junction immediately before it.
+            .Where(p => matcher.ProjectDistance(position, heading, [p.Sample]).HasValue
+                || matcher.ProjectDistance(position, -heading, [p.Sample]).HasValue)
             .Select(p => (p.Road, p.Sample, Score: Distance(position, [p.Sample])))
             .Where(p => p.Score < 12).OrderBy(p => p.Score).Take(3).ToArray();
         if (candidates.Length == 0)

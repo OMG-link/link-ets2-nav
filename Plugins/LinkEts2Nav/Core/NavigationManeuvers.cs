@@ -19,14 +19,22 @@ public sealed class NavigationManeuverDetector
     private const double ForkAngleDegrees = 55;
 
     public NavigationManeuver? FindNext(IReadOnlyList<DirectedRoad> route, double vehicleAlong,
+        IReadOnlyList<DirectedRoad> graph) => FindSequence(route, vehicleAlong, graph).FirstOrDefault();
+
+    /// <summary>
+    /// Known decisions in route order. An unsupported nearer choice truncates the
+    /// sequence; already confirmed earlier decisions remain available to callers.
+    /// </summary>
+    public IReadOnlyList<NavigationManeuver> FindSequence(IReadOnlyList<DirectedRoad> route, double vehicleAlong,
         IReadOnlyList<DirectedRoad> graph)
     {
         ArgumentNullException.ThrowIfNull(route);
         ArgumentNullException.ThrowIfNull(graph);
-        if (!double.IsFinite(vehicleAlong) || vehicleAlong < 0 || route.Count < 2) return null;
-        if (route.Any(r => !Valid(r))) return null;
+        var result = new List<NavigationManeuver>();
+        if (!double.IsFinite(vehicleAlong) || vehicleAlong < 0 || route.Count < 2) return result;
+        if (route.Any(r => !Valid(r))) return result;
         for (int i = 1; i < route.Count; i++)
-            if (!Connected(route[i - 1], route[i])) return null;
+            if (!Connected(route[i - 1], route[i])) return result;
 
         double offset = 0;
         for (int i = 0; i < route.Count; i++)
@@ -37,35 +45,35 @@ public sealed class NavigationManeuverDetector
             {
                 // Do not replace a winding junction by its net entry/exit angle,
                 // or skip an unknown near junction to announce a later choice.
-                if (ComplexInternalBend(current)) return null;
+                if (ComplexInternalBend(current)) return result;
                 var connections = graph.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)
                     && PrefabKey(e) == prefab && e.StartNodeUid == current.StartNodeUid
                     && e.EndNodeUid != current.StartNodeUid).GroupBy(e => e.EndNodeUid).ToArray();
-                if (!connections.Any(g => g.Key == current.EndNodeUid)) return null;
+                if (!connections.Any(g => g.Key == current.EndNodeUid)) return result;
                 if (connections.Length >= 2)
                 {
                     if (i == 0 || i + 1 >= route.Count || offset < vehicleAlong
                         || PrefabKey(route[i - 1]) is not null || PrefabKey(route[i + 1]) is not null)
-                        return null;
+                        return result;
                     var incoming = route[i - 1];
                     var outgoing = route[i + 1];
                     var exits = new List<DirectedRoad>();
                     foreach (var connection in connections)
                     {
                         var validConnections = connection.Where(Valid).ToArray();
-                        if (validConnections.Length == 0) return null;
+                        if (validConnections.Length == 0) return result;
                         if (connection.Key == current.EndNodeUid) { exits.Add(outgoing); continue; }
                         var roads = graph.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)
                             && PrefabKey(e) is null && e.StartNodeUid == connection.Key && e.Id != incoming.Id)
                             .GroupBy(e => (e.Id, e.StartNodeUid, e.EndNodeUid)).Select(g => g.First()).ToArray();
                         if (roads.Length != 1 || !Valid(roads[0])
-                            || !validConnections.Any(c => Connected(c, roads[0]))) return null;
+                            || !validConnections.Any(c => Connected(c, roads[0]))) return result;
                         exits.Add(roads[0]);
                     }
-                    if (!KnownDirections(incoming, outgoing, exits)) return null;
+                    if (!KnownDirections(incoming, outgoing, exits)) return result;
                     if (Classify(incoming, outgoing, exits) is { } kind)
-                        return new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
-                            kind, offset - vehicleAlong, incoming.Id, outgoing.Id);
+                        result.Add(new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
+                            kind, offset - vehicleAlong, incoming.Id, outgoing.Id));
                 }
             }
             else if (PrefabKey(current) is null && i + 1 < route.Count
@@ -76,19 +84,19 @@ public sealed class NavigationManeuverDetector
                     && PrefabKey(e) is null && e.StartNodeUid == current.EndNodeUid && e.Id != current.Id
                     && e.EndNodeUid != current.StartNodeUid)
                     .GroupBy(e => (e.Id, e.StartNodeUid, e.EndNodeUid)).Select(g => g.First()).ToArray();
-                if (!exits.Any(e => SameEdge(e, outgoing))) return null;
+                if (!exits.Any(e => SameEdge(e, outgoing))) return result;
                 if (exits.Length >= 2)
                 {
                     if (exits.Any(e => !Valid(e) || !Connected(current, e))
-                        || !KnownDirections(current, outgoing, exits)) return null;
+                        || !KnownDirections(current, outgoing, exits)) return result;
                     if (Classify(current, outgoing, exits) is { } kind)
-                        return new($"node:{current.EndNodeUid:X16}:{outgoing.EndNodeUid:X16}",
-                            kind, end - vehicleAlong, current.Id, outgoing.Id);
+                        result.Add(new($"node:{current.EndNodeUid:X16}:{outgoing.EndNodeUid:X16}",
+                            kind, end - vehicleAlong, current.Id, outgoing.Id));
                 }
             }
             offset = end;
         }
-        return null;
+        return result;
     }
 
     private static bool KnownDirections(DirectedRoad incoming, DirectedRoad selected,

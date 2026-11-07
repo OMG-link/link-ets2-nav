@@ -43,6 +43,38 @@ public sealed class NavigationManeuverTests
     }
 
     [Fact]
+    public void OrderedSequenceContainsStraightThenLeftAndFindNextRemainsCompatible()
+    {
+        var entry = R("entry", 1, 2, P(0, 0), P(0, -100));
+        var middle = R("middle", 2, 3, P(0, -100), P(0, -200));
+        var firstSide = R("first-side", 2, 4, P(0, -100), P(100, -100));
+        var selected = R("selected", 3, 5, P(0, -200), P(-100, -200));
+        var secondStraight = R("second-straight", 3, 6, P(0, -200), P(0, -300));
+        DirectedRoad[] route = [entry, middle, selected];
+        DirectedRoad[] graph = [entry, middle, firstSide, selected, secondStraight];
+        var sequence = Detector.FindSequence(route, 10, graph);
+        Assert.Equal(new[] { ManeuverKind.Straight, ManeuverKind.TurnLeft }, sequence.Select(m => m.Kind));
+        Assert.Equal(new[] { 90d, 190d }, sequence.Select(m => m.DistanceMeters));
+        Assert.Equal(sequence[0], Detector.FindNext(route, 10, graph));
+    }
+
+    [Fact]
+    public void SequenceRetainsKnownEarlierDecisionButStopsAtUnknownNearerChoice()
+    {
+        var entry = R("entry", 1, 2, P(0, 0), P(0, -100));
+        var middle = R("middle", 2, 3, P(0, -100), P(0, -200));
+        var firstSide = R("first-side", 2, 4, P(0, -100), P(100, -100));
+        var beyond = R("beyond", 3, 5, P(0, -200), P(0, -300));
+        var brokenSide = R("broken-side", 3, 6, P(10, -200), P(100, -200));
+        var farTurn = R("far-turn", 5, 7, P(0, -300), P(-100, -300));
+        var farStraight = R("far-straight", 5, 8, P(0, -300), P(0, -400));
+        DirectedRoad[] route = [entry, middle, beyond, farTurn];
+        DirectedRoad[] graph = [entry, middle, firstSide, beyond, brokenSide, farTurn, farStraight];
+        var sequence = Detector.FindSequence(route, 0, graph);
+        Assert.Equal(ManeuverKind.Straight, Assert.Single(sequence).Kind);
+        Assert.Equal(sequence[0], Detector.FindNext(route, 0, graph));
+    }
+    [Fact]
     public void InvalidNearOrdinaryForkBlocksALaterKnownTurn()
     {
         var entry = R("entry", 1, 2, P(0, 100), P(0, 0));

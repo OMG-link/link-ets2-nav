@@ -107,6 +107,7 @@ public sealed class JunctionNavigationTests
         Assert.Empty(engine.Update(Data(49,CameraApproach.Behind),Now));
         Assert.Empty(engine.Update(Data(30),Now));
         Assert.Empty(engine.Update(Data(50,CameraApproach.Behind),Now));
+        Assert.Empty(engine.Update(Data(600,CameraApproach.Behind),Now));
         Assert.Single(engine.Update(Data(490),Now));
     }
 

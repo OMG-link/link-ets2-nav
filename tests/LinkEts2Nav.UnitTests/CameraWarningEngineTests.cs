@@ -115,6 +115,7 @@ public sealed class CameraWarningEngineTests
         Assert.Empty(engine.Update(Snapshot(Camera(10, approach: CameraApproach.Behind)), Now));
         Assert.Empty(engine.Update(Snapshot(Camera(49)), Now));
         Assert.Empty(engine.Update(Snapshot(Camera(50, approach: CameraApproach.Behind)), Now));
+        Assert.Empty(engine.Update(Snapshot(Camera(400, approach: CameraApproach.Behind)), Now));
         Assert.Equal(500, Assert.Single(engine.Update(Snapshot(Camera(300)), Now)).StageDistanceMeters);
         Assert.Equal(200, Assert.Single(engine.Update(Snapshot(Camera(100)), Now)).StageDistanceMeters);
     }

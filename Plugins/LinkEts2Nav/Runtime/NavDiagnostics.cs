@@ -2,7 +2,8 @@ namespace LinkEts2Nav.Runtime;
 
 public sealed record CameraDiagnostic(string Id, string Hookup, double DistanceMeters,
     bool DirectionVerified, string Decision, double? RoadDistanceMeters = null,
-    string SourceDescriptor = "", string Variant = "", string MetadataFingerprint = "");
+    string SourceDescriptor = "", string Variant = "", string MetadataFingerprint = "",
+    double? RouteDistanceLowerBoundMeters = null);
 
 public sealed record NavDiagnosticSnapshot(DateTimeOffset UpdatedAt, string State,
     string RouteState, int CameraCount, IReadOnlyList<CameraDiagnostic> Cameras, string? LastWarning = null, string? VehiclePosition = null, FineObservation? LatestFine = null,

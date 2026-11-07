@@ -44,7 +44,8 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
                     new(camera.Id, camera.MonitoredPosition, camera.TravelDirection), data.Route, data.RouteAvailability);
                 decision = candidate.Approach switch
                 {
-                    CameraApproach.RouteAhead => candidate.RoadDistanceMeters.HasValue ? "位于导航前方" : "位于导航前方（直线距离回退）",
+                    CameraApproach.RouteAhead => candidate.RoadDistanceMeters.HasValue ? "位于导航前方" :
+                        "位于导航前方（直线距离回退，受已知道路长度下限约束）",
                     CameraApproach.UnavoidableAhead => "当前道路必经",
                     CameraApproach.Behind => "已在身后",
                     _ => candidate.MatchFailure ?? "方向或位置匹配不确定"
@@ -52,7 +53,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
             }
             candidates.Add(candidate);
             diagnostics.Add(new(camera.Id, camera.Hookup, directDistance, camera.DirectionVerified, decision,
-                candidate.RoadDistanceMeters, camera.SourceDescriptor, camera.ModelVariant, camera.MetadataFingerprint));
+                candidate.RoadDistanceMeters, camera.SourceDescriptor, camera.ModelVariant, camera.MetadataFingerprint, candidate.RouteDistanceLowerBoundMeters));
         }
         // Raw pose age, not processing time, controls whether alerts may fire.
         var warningSnapshot = new WarningSnapshot(data.SessionId, data.Route.Revision, hasRoute,

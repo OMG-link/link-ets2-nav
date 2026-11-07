@@ -19,6 +19,8 @@ public sealed record CameraCandidate(
     double? RoadDistanceMeters = null)
 {
     public string? MatchFailure { get; init; }
+    // A conservative route-length bound, never an asserted complete road distance.
+    public double? RouteDistanceLowerBoundMeters { get; init; }
 }
 
 /// <summary>A consistent input sample. SessionId must change after teleport, load or map change.</summary>
@@ -62,6 +64,7 @@ public sealed class CameraWarningEngine
     private const double PassageRadiusMeters = 20;
     private readonly HashSet<string> nearPassage = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> consumed = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, double> departedPeaks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, double> firstConfirmedDistances = new(StringComparer.Ordinal);
     private string? sessionId;
     private int AllStages => (1 << stages.Length) - 1;
@@ -110,13 +113,30 @@ public sealed class CameraWarningEngine
                 continue;
 
             var required = snapshot.HasNavigationRoute ? CameraApproach.RouteAhead : CameraApproach.UnavoidableAhead;
+            double distance = candidate.RoadDistanceMeters ?? candidate.EuclideanDistanceMeters;
+            double lowerBound = candidate.RouteDistanceLowerBoundMeters ?? 0;
+            if (!double.IsFinite(lowerBound) || lowerBound < 0) continue;
+            double triggerDistance = Math.Max(distance, lowerBound);
             // Hysteresis: a proven approach/pass must enter the 20 m vicinity before
             // leaving >=50 m can rearm. Large distance alone cannot repeat a warning.
             if (candidate.EuclideanDistanceMeters <= PassageRadiusMeters
-                && (candidate.Approach == required || candidate.Approach == CameraApproach.Behind))
+                && (candidate.Approach == CameraApproach.Behind
+                    || candidate.Approach == required && triggerDistance <= PassageRadiusMeters))
                 nearPassage.Add(candidate.Id);
             if (candidate.EuclideanDistanceMeters >= rearmDistance && nearPassage.Remove(candidate.Id))
             {
+                departedPeaks[candidate.Id] = candidate.EuclideanDistanceMeters;
+            }
+            if (departedPeaks.TryGetValue(candidate.Id, out double peak))
+            {
+                peak = Math.Max(peak, candidate.EuclideanDistanceMeters);
+                departedPeaks[candidate.Id] = peak;
+                // Leaving the 50 m boundary is not itself a new approach. Require a
+                // signed continuous-road match, or at least 5 m of renewed approach.
+                bool approaching = candidate.RoadDistanceMeters is > 0
+                    || candidate.EuclideanDistanceMeters <= peak - 5;
+                if (candidate.Approach != required || !approaching) continue;
+                departedPeaks.Remove(candidate.Id);
                 consumed.Remove(candidate.Id);
                 firstConfirmedDistances.Remove(candidate.Id);
             }
@@ -126,22 +146,21 @@ public sealed class CameraWarningEngine
                 continue;
             }
             if (candidate.Approach != required) continue;
-            double distance = candidate.RoadDistanceMeters ?? candidate.EuclideanDistanceMeters;
             if (!double.IsFinite(distance) || distance <= 0) continue;
 
-            firstConfirmedDistances.TryAdd(candidate.Id, distance);
+            firstConfirmedDistances.TryAdd(candidate.Id, triggerDistance);
             consumed.TryGetValue(candidate.Id, out int mask);
             // If both boundaries were crossed between samples, only the nearer stage
             // remains relevant. Do not queue an already obsolete 500 m announcement.
             int firstRelevant = 0;
             for (int index = 1; index < stages.Length; index++)
-                if (distance <= stages[index]) firstRelevant = index;
+                if (triggerDistance <= stages[index]) firstRelevant = index;
             for (int index = firstRelevant; index < stages.Length; index++)
             {
                 if ((mask & (1 << index)) != 0) continue;
                 result.Add(new(candidate.Id, stages[index], distance,
                     candidate.RoadDistanceMeters.HasValue ? WarningDistanceKind.Road : WarningDistanceKind.Euclidean,
-                    Math.Max(0, distance - stages[index]))
+                    Math.Max(0, triggerDistance - stages[index]))
                 {
                     FirstConfirmedInside200Meters = firstConfirmedDistances[candidate.Id] < 200
                 });
@@ -176,6 +195,7 @@ public sealed class CameraWarningEngine
         consumed.Clear();
         nearPassage.Clear();
         firstConfirmedDistances.Clear();
+        departedPeaks.Clear();
         sessionId = null;
     }
 }

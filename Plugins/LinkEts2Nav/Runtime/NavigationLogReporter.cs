@@ -87,7 +87,8 @@ public sealed class NavigationLogReporter
             string action = cameras.ContainsKey(camera.Id) ? "目标判定变化" : "发现探头";
             cameras[camera.Id] = current;
             string roadDistance = camera.RoadDistanceMeters is { } distance ? $"{distance:F0} m" : "未知";
-            Event(FormattableString.Invariant($"{action}：{camera.Id}，挂点={camera.Hookup}，直线={camera.DistanceMeters:F0} m，沿路={roadDistance}，方向已验证={camera.DirectionVerified}；{camera.Decision}；模型={camera.SourceDescriptor}，变体={camera.Variant}。"), snapshot.UpdatedAt);
+            string routeBound = camera.RouteDistanceLowerBoundMeters is { } bound ? $"，已知路线长度下限={bound:F0} m" : "";
+            Event(FormattableString.Invariant($"{action}：{camera.Id}，挂点={camera.Hookup}，直线={camera.DistanceMeters:F0} m，沿路={roadDistance}{routeBound}，方向已验证={camera.DirectionVerified}；{camera.Decision}；模型={camera.SourceDescriptor}，变体={camera.Variant}。"), snapshot.UpdatedAt);
         }
     }
 

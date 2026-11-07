@@ -98,7 +98,20 @@ public sealed class RoadPathSource
         var monitor = cameraChunks[0];
         if (player.Index == monitor.Index)
             return matcher.Match(position, heading, camera, player.Path, true);
-        return new(camera.Id, monitor.Index > player.Index ? CameraApproach.RouteAhead : CameraApproach.Behind, direct);
+        if (monitor.Index < player.Index) return new(camera.Id, CameraApproach.Behind, direct);
+        // The route can visit a physically nearby camera only after a long detour.
+        // Unknown gaps do not erase the length of all the already known road pieces.
+        double lowerBound = Math.Max(0, player.Path.Sum(PolylineLength)
+            - matcher.ProjectDistance(position, heading, player.Path)!.Value);
+        for (int i = player.Index + 1; i <= monitor.Index; i++)
+        {
+            lowerBound += Vector3.Distance(chunks[i - 1][^1].Points[^1], chunks[i][0].Points[0]);
+            lowerBound += i == monitor.Index
+                ? matcher.ProjectDistance(camera.MonitoringPosition, camera.TravelDirection, monitor.Path)!.Value
+                : chunks[i].Sum(PolylineLength);
+        }
+        return new(camera.Id, CameraApproach.RouteAhead, direct)
+        { RouteDistanceLowerBoundMeters = lowerBound };
     }
 
     private List<List<DirectedRoad>> GetRouteChunks(Vector3 position, RouteSnapshot route)

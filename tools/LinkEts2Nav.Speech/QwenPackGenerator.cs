@@ -24,30 +24,14 @@ internal static class QwenPackGenerator
         }
         if (string.IsNullOrWhiteSpace(key) || key.Any(char.IsControl)) throw new InvalidDataException("Missing or invalid qwen key.");
         string output = Path.GetFullPath(args[4]);
-        Directory.CreateDirectory(output);
-        string manifestPath = Path.Combine(output, "manifest.json");
-        PackManifest? previous = File.Exists(manifestPath)
-            ? JsonSerializer.Deserialize<PackManifest>(await File.ReadAllTextAsync(manifestPath)) : null;
-        var entries = new List<PackEntry>();
-        foreach (string text in SpeechPack.DefaultTexts())
-        {
-            string file = SpeechPack.FileName(text), path = Path.Combine(output, file);
-            var cached = previous is { Schema: 1, Model: Model, Voice: Voice }
-                ? previous.Entries.SingleOrDefault(e => e.Text == text && e.File == file) : null;
-            if (cached is not null && File.Exists(path) && SpeechPack.Hash(await File.ReadAllBytesAsync(path)) == cached.Sha256)
-            { PcmAudio.Read(path); entries.Add(cached); Console.WriteLine("Cached: " + text); continue; }
-            Console.WriteLine("Generating: " + text);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            byte[] pcm = await GenerateAsync(key, text, timeout.Token);
-            PcmAudio.Write(path, pcm);
-            entries.Add(new(text, file, SpeechPack.Hash(await File.ReadAllBytesAsync(path))));
-            // Checkpoint each success; interrupted runs resume without rebilling completed entries.
-            string temporary = manifestPath + ".tmp";
-            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(new PackManifest(1, Model, Voice, entries.ToArray()),
-                new JsonSerializerOptions { WriteIndented = true }));
-            File.Move(temporary, manifestPath, true);
-        }
-        Console.WriteLine("Speech pack ready: " + entries.Count + " entries.");
+        var pack = await SpeechPackBuilder.BuildAsync(output, Model, Voice, SpeechPack.DefaultTexts(),
+            async (text, token) =>
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(90));
+                return await GenerateAsync(key, text, timeout.Token);
+            }, Console.WriteLine);
+        Console.WriteLine("Speech pack ready: " + pack.Entries.Length + " entries.");
         return 0;
     }
 

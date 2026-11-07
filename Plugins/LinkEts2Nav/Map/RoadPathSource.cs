@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using LinkEts2Nav.Core;
 using LinkEts2Nav.Runtime;
 using TruckLib.ScsMap;
@@ -14,12 +14,14 @@ public sealed class RoadPathSource
     private readonly Dictionary<ulong, List<Road>> incidentRoads = new();
     private readonly HashSet<(ulong, ulong)> ambiguous = new();
     private readonly Road[] roads;
+    private readonly Dictionary<(ulong, ulong), DirectedRoad> junctionLinks = new();
+    private readonly HashSet<ulong> boundaryNodes = new();
     private readonly DirectedPathMatcher matcher = new();
     private RouteSnapshot? cachedRoute;
     private Vector3 cachedPosition;
     private List<List<DirectedRoad>> cachedChunks = [];
 
-    public RoadPathSource(GameMap map)
+    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null)
     {
         roads = map.MapItems.Values.OfType<Road>().ToArray();
         foreach (var road in roads)
@@ -29,6 +31,15 @@ public sealed class RoadPathSource
             AddIncidentRoad(road.ForwardNode.Uid, road);
             AddLink((road.Node.Uid, road.ForwardNode.Uid), road);
             AddLink((road.ForwardNode.Uid, road.Node.Uid), road);
+            boundaryNodes.Add(road.Node.Uid);
+            boundaryNodes.Add(road.ForwardNode.Uid);
+        }
+        foreach (var group in (junctions ?? []).GroupBy(p => (p.StartNodeUid, p.EndNodeUid)))
+        {
+            boundaryNodes.Add(group.Key.StartNodeUid);
+            boundaryNodes.Add(group.Key.EndNodeUid);
+            if (group.Count() != 1 || links.ContainsKey(group.Key)) ambiguous.Add(group.Key);
+            else junctionLinks[group.Key] = group.First();
         }
     }
 
@@ -64,12 +75,13 @@ public sealed class RoadPathSource
         RouteSnapshot route, RouteAvailability availability)
     {
         var direct = Vector3.Distance(position, camera.MonitoringPosition);
-        CameraCandidate Unknown() => new(camera.Id, CameraApproach.Unknown, direct);
+        CameraCandidate Unknown(string reason = "位置或方向投影不确定") => new(camera.Id, CameraApproach.Unknown, direct) { MatchFailure = reason };
         if (availability == RouteAvailability.None)
         {
             var path = CurrentRoad(position, heading);
             return IsPositionOnPath(camera.MonitoringPosition, path)
-                ? matcher.Match(position, heading, camera, path, false) : Unknown();
+                ? matcher.Match(position, heading, camera, path, false)
+                : Unknown("无导航：监测点不在当前唯一必经连接链，可能存在分岔");
         }
         if (availability != RouteAvailability.Available) return Unknown();
         var chunks = GetRouteChunks(position, route);
@@ -80,7 +92,8 @@ public sealed class RoadPathSource
             .Where(p => IsPositionOnPath(camera.MonitoringPosition, p.Path)
                 && matcher.ProjectDistance(camera.MonitoringPosition, camera.TravelDirection, p.Path).HasValue)
             .ToArray();
-        if (playerChunks.Length != 1 || cameraChunks.Length != 1) return Unknown();
+        if (playerChunks.Length != 1) return Unknown($"车辆未唯一匹配导航道路或路口（匹配 {playerChunks.Length} 段）");
+        if (cameraChunks.Length != 1) return Unknown($"监测点未唯一匹配导航方向（匹配 {cameraChunks.Length} 段）");
         var player = playerChunks[0];
         var monitor = cameraChunks[0];
         if (player.Index == monitor.Index)
@@ -104,9 +117,25 @@ public sealed class RoadPathSource
         for (int i = 1; i < nodes.Length; i++)
         {
             var key = (nodes[i - 1].Uid, nodes[i].Uid);
-            if (ambiguous.Contains(key) || !links.TryGetValue(key, out var road) || !Near(road, position))
-            { chunk = null; continue; }
-            var directed = Orient(road, key.Item1);
+            DirectedRoad? directed = null;
+            if (!ambiguous.Contains(key))
+            {
+                if (links.TryGetValue(key, out var road) && Near(road, position)) directed = Orient(road, key.Item1);
+                else if (junctionLinks.TryGetValue(key, out var junction)) directed = junction;
+                else
+                {
+                    // Native routes may contain internal junction nodes between map control nodes.
+                    // Skip only unrecognized internal UIDs, never another known road boundary.
+                    for (int next = i + 1; next < Math.Min(nodes.Length, i + 16); next++)
+                    {
+                        if (boundaryNodes.Contains(nodes[next - 1].Uid)) break;
+                        var span = (nodes[i - 1].Uid, nodes[next].Uid);
+                        if (junctionLinks.TryGetValue(span, out junction) && !ambiguous.Contains(span))
+                        { directed = junction; i = next; break; }
+                    }
+                }
+            }
+            if (directed is null) { chunk = null; continue; }
             if (chunk is null) { chunk = new(); cachedChunks.Add(chunk); }
             chunk.Add(directed);
         }
@@ -121,7 +150,8 @@ public sealed class RoadPathSource
         var candidates = roads.Where(r => r.Node is not null && r.ForwardNode is not null && Near(r, position))
             .Select(r => (Road: r, Score: Distance(position, [Orient(r, r.Node.Uid)])))
             .Where(p => p.Score < 12).OrderBy(p => p.Score).Take(3).ToArray();
-        if (candidates.Length == 0) return false;
+        if (candidates.Length == 0) return path.Where(p => p.Id.StartsWith("prefab:", StringComparison.Ordinal))
+            .Any(p => Distance(position, [p]) < 12);
         if (candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3)
         {
             if (candidates.Length > 2 && candidates[2].Score - candidates[0].Score < 3
@@ -144,7 +174,16 @@ public sealed class RoadPathSource
             .Select(r => (Road: r, Sample: Orient(r, r.Node.Uid)))
             .Select(p => (p.Road, p.Sample, Score: Distance(position, [p.Sample])))
             .Where(p => p.Score < 12).OrderBy(p => p.Score).Take(3).ToArray();
-        if (candidates.Length == 0) return [];
+        if (candidates.Length == 0)
+        {
+            var junctions = junctionLinks.Values.Where(p => !ambiguous.Contains((p.StartNodeUid, p.EndNodeUid))
+                && matcher.ProjectDistance(position, heading, [p]).HasValue)
+                .Select(p => (Path: p, Error: Distance(position, [p]))).Where(p => p.Error < 12).ToArray();
+            // Inside a junction, heading/projection may narrow the legal exits, but
+            // several remaining exits are still a real choice without navigation.
+            if (junctions.Length == 0 || junctions.Select(p => p.Path.EndNodeUid).Distinct().Count() != 1) return [];
+            return Extend(junctions.MinBy(p => p.Error).Path, position);
+        }
         var candidate = candidates[0];
         if (candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3)
         {
@@ -171,14 +210,36 @@ public sealed class RoadPathSource
             .OrderBy(p => SegmentDistance(position, p.First, p.Second)).First();
         var tangent = Vector3.Normalize(nearest.Second - nearest.First);
         var start = Vector3.Dot(tangent, heading) >= 0 ? candidate.Road.Node.Uid : candidate.Road.ForwardNode.Uid;
-        var current = Orient(candidate.Road, start);
+        return Extend(Orient(candidate.Road, start), position);
+    }
+
+    private IReadOnlyList<DirectedRoad> Extend(DirectedRoad current, Vector3 position)
+    {
         var path = new List<DirectedRoad> { current };
-        var visited = new HashSet<ulong> { candidate.Road.Uid };
+        var visited = new HashSet<ulong>();
+        var visitedJunctions = new HashSet<string>(StringComparer.Ordinal);
+        if (current.Id.StartsWith("prefab:", StringComparison.Ordinal)) visitedJunctions.Add(current.Id.Split(':')[1]);
+        else if (ulong.TryParse(current.Id, System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture, out var uid)) visited.Add(uid);
         double coveredAhead = DistanceToEnd(position, current);
         while (coveredAhead < 1000 && path.Count < 128)
         {
-            if (!incidentRoads.TryGetValue(current.EndNodeUid, out var connected)) break;
-            var successors = connected.Where(r => r.Uid.ToString("X16") != current.Id).ToArray();
+            incidentRoads.TryGetValue(current.EndNodeUid, out var connected);
+            var successors = (connected ?? []).Where(r => r.Uid.ToString("X16") != current.Id).ToArray();
+            if (successors.Length == 0)
+            {
+                var exits = junctionLinks.Values.Where(p => p.StartNodeUid == current.EndNodeUid
+                    && !ambiguous.Contains((p.StartNodeUid, p.EndNodeUid))
+                    && !visitedJunctions.Contains(p.Id.Split(':')[1])).ToArray();
+                if (exits.Length != 1) break;
+                var junction = exits[0];
+                if (Vector3.Distance(current.Points[^1], junction.Points[0]) > 2) break;
+                visitedJunctions.Add(junction.Id.Split(':')[1]);
+                path.Add(junction);
+                coveredAhead += PolylineLength(junction);
+                current = junction;
+                continue;
+            }
             // Only a unique Road continuation can extend the proof of inevitability.
             if (successors.Length != 1 || !visited.Add(successors[0].Uid)) break;
             var next = Orient(successors[0], current.EndNodeUid);

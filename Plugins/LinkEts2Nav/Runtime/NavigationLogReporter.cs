@@ -63,7 +63,7 @@ public sealed class NavigationLogReporter
         if (scan == signature && now - scanAt < Interval) return;
         scan = signature;
         scanAt = now;
-        Event(FormattableString.Invariant($"扫描完成：{nearby.Sectors.Count} 个区块，{nearby.Map.MapItems.Count} 个地图条目，附近 {nearby.Cameras.Count} 个测速挂点；耗时 {elapsed.TotalMilliseconds:F0} ms；X={position.X:F1}, Z={position.Z:F1}。"), now);
+        Event(FormattableString.Invariant($"扫描完成：{nearby.Sectors.Count} 个区块，{nearby.Map.MapItems.Count} 个地图条目，{nearby.PrefabPaths.Count} 条路口连接，附近 {nearby.Cameras.Count} 个测速挂点；耗时 {elapsed.TotalMilliseconds:F0} ms；X={position.X:F1}, Z={position.Z:F1}。"), now);
         if (nearby.Diagnostics.Count > 0)
             warning(Stamp($"扫描有 {nearby.Diagnostics.Count} 条资源诊断：{string.Join(" | ", nearby.Diagnostics.Take(3))}", now));
     }

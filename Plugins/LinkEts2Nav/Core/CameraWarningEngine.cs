@@ -16,7 +16,10 @@ public sealed record CameraCandidate(
     string Id,
     CameraApproach Approach,
     double EuclideanDistanceMeters,
-    double? RoadDistanceMeters = null);
+    double? RoadDistanceMeters = null)
+{
+    public string? MatchFailure { get; init; }
+}
 
 /// <summary>A consistent input sample. SessionId must change after teleport, load or map change.</summary>
 public sealed record WarningSnapshot(
@@ -52,18 +55,20 @@ public sealed class CameraWarningEngine
     private readonly double[] stages;
     private readonly double rearmDistance;
     private readonly TimeSpan maximumAge;
+    private const double PassageRadiusMeters = 20;
+    private readonly HashSet<string> nearPassage = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> consumed = new(StringComparer.Ordinal);
     private string? sessionId;
     private int AllStages => (1 << stages.Length) - 1;
 
     public CameraWarningEngine(
         double triggerDistanceMeters = 500,
-        double rearmDistanceMeters = 600,
+        double rearmDistanceMeters = 50,
         TimeSpan? maximumAge = null)
     {
         if (!double.IsFinite(triggerDistanceMeters) || triggerDistanceMeters <= 0)
             throw new ArgumentOutOfRangeException(nameof(triggerDistanceMeters));
-        if (!double.IsFinite(rearmDistanceMeters) || rearmDistanceMeters <= triggerDistanceMeters)
+        if (!double.IsFinite(rearmDistanceMeters) || rearmDistanceMeters <= PassageRadiusMeters)
             throw new ArgumentOutOfRangeException(nameof(rearmDistanceMeters));
         this.maximumAge = maximumAge ?? TimeSpan.FromSeconds(2);
         if (this.maximumAge <= TimeSpan.Zero)
@@ -99,17 +104,19 @@ public sealed class CameraWarningEngine
                 || !double.IsFinite(candidate.EuclideanDistanceMeters) || candidate.EuclideanDistanceMeters < 0)
                 continue;
 
-            // Actual physical separation, not route recalculation or a missing match,
-            // begins the next encounter. A confirmed passage expires every remaining stage.
-            if (candidate.EuclideanDistanceMeters >= rearmDistance)
+            var required = snapshot.HasNavigationRoute ? CameraApproach.RouteAhead : CameraApproach.UnavoidableAhead;
+            // Hysteresis: a proven approach/pass must enter the 20 m vicinity before
+            // leaving >=50 m can rearm. Large distance alone cannot repeat a warning.
+            if (candidate.EuclideanDistanceMeters <= PassageRadiusMeters
+                && (candidate.Approach == required || candidate.Approach == CameraApproach.Behind))
+                nearPassage.Add(candidate.Id);
+            if (candidate.EuclideanDistanceMeters >= rearmDistance && nearPassage.Remove(candidate.Id))
                 consumed.Remove(candidate.Id);
             if (candidate.Approach == CameraApproach.Behind)
             {
-                if (candidate.EuclideanDistanceMeters < rearmDistance)
-                    consumed[candidate.Id] = AllStages;
+                if (nearPassage.Contains(candidate.Id)) consumed[candidate.Id] = AllStages;
                 continue;
             }
-            var required = snapshot.HasNavigationRoute ? CameraApproach.RouteAhead : CameraApproach.UnavoidableAhead;
             if (candidate.Approach != required) continue;
             double distance = candidate.RoadDistanceMeters ?? candidate.EuclideanDistanceMeters;
             if (!double.IsFinite(distance) || distance <= 0) continue;
@@ -154,6 +161,7 @@ public sealed class CameraWarningEngine
     public void Reset()
     {
         consumed.Clear();
+        nearPassage.Clear();
         sessionId = null;
     }
 }

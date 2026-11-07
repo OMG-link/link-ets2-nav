@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Numerics;
+using PrefabDescriptor = TruckLib.Models.Ppd.PrefabDescriptor;
+using LinkEts2Nav.Core;
 using System.Security.Cryptography;
 using System.Text;
 using TruckLib;
@@ -11,7 +13,10 @@ using ScsModel = TruckLib.ScsMap.Model;
 namespace LinkEts2Nav.Map;
 
 public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservation> Cameras,
-    IReadOnlyList<string> Diagnostics, IReadOnlyList<SectorCoordinate> Sectors);
+    IReadOnlyList<string> Diagnostics, IReadOnlyList<SectorCoordinate> Sectors)
+{
+    public IReadOnlyList<DirectedRoad> PrefabPaths { get; init; } = [];
+}
 
 /// <summary>
 /// Own one instance per mounted map. Call on a background worker; instances are not thread-safe.
@@ -21,6 +26,10 @@ public sealed class NearbyCameraScanner
 {
     private readonly IFileSystem fileSystem;
     private readonly string mapPath;
+    private readonly Dictionary<string, string> prefabPaths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PrefabDescriptor?> prefabDescriptors = new(StringComparer.Ordinal);
+    private IReadOnlyList<DirectedRoad> junctionGeometry = [];
+    private string[] junctionDiagnostics = [];
     private readonly Dictionary<string, string> modelPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> signPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (float MeasurementDistance, bool ReverseDirection)> cameraDefinitions = new(StringComparer.Ordinal);
@@ -54,10 +63,31 @@ public sealed class NearbyCameraScanner
             var nextMap = new CameraMap();
             nextMap.Read(mapPath, fileSystem, sectors);
             cancellationToken.ThrowIfCancellationRequested();
+            var junctions = new List<DirectedRoad>();
+            var issues = new List<string>();
+            foreach (var prefab in nextMap.MapItems.Values.OfType<Prefab>())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!prefabPaths.TryGetValue(prefab.Model.ToString(), out string? resource)) continue;
+                try
+                {
+                    if (!prefabDescriptors.TryGetValue(resource, out var descriptor))
+                        prefabDescriptors[resource] = descriptor = PrefabDescriptor.Open(resource, fileSystem);
+                    if (descriptor is not null) junctions.AddRange(PrefabPathGeometry.Build(prefab, descriptor));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    prefabDescriptors[resource] = null;
+                    issues.Add($"Prefab {resource}: {ex.Message}");
+                }
+            }
+            junctionGeometry = junctions;
+            junctionDiagnostics = issues.Distinct().ToArray();
             map = nextMap;
             loadedSectors = sectors;
         }
         var diagnostics = new List<string>(definitionDiagnostics);
+        diagnostics.AddRange(junctionDiagnostics);
         var cameras = new List<CameraObservation>();
         float radiusSquared = (radiusMeters + 100) * (radiusMeters + 100);
         foreach (var item in map.MapItems.Values)
@@ -128,7 +158,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors);
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { PrefabPaths = junctionGeometry };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)
@@ -204,13 +234,18 @@ public sealed class NearbyCameraScanner
             catch (Exception ex) { definitionDiagnostics.Add($"{path}: {ex.Message}"); }
         }
         foreach (var path in fileSystem.GetFiles("/def/world/").Where(p => p.EndsWith(".sii", StringComparison.OrdinalIgnoreCase) &&
-                     (Path.GetFileName(p).StartsWith("model.", StringComparison.Ordinal) || Path.GetFileName(p).StartsWith("sign.", StringComparison.Ordinal))))
+                     (Path.GetFileName(p).StartsWith("model.", StringComparison.Ordinal) || Path.GetFileName(p).StartsWith("sign.", StringComparison.Ordinal) || Path.GetFileName(p).StartsWith("prefab.", StringComparison.Ordinal))))
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 foreach (var unit in SiiFile.Open(path, fileSystem).Units)
                 {
+                    if (unit.Class == "prefab_model" && unit.Attributes.TryGetValue("prefab_desc", out var prefabDescriptor))
+                    {
+                        prefabPaths[unit.Name.Split('.').Last()] = Convert.ToString((object)prefabDescriptor, CultureInfo.InvariantCulture)?.Trim('"') ?? "";
+                        continue;
+                    }
                     if (!unit.Attributes.TryGetValue("model_desc", out var descriptor)) continue;
                     var token = unit.Name.Split('.').Last();
                     if (unit.Class == "model_def") modelPaths[token] = Convert.ToString((object)descriptor, CultureInfo.InvariantCulture)?.Trim('"') ?? "";

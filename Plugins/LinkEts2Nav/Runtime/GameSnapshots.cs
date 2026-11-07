@@ -79,6 +79,8 @@ public sealed class GameSnapshotStore
     private readonly FineObservationTracker fines = new();
     private RouteSnapshot route = new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.Unknown, default);
     private long session;
+    private DateTimeOffset? zeroNavigationSince;
+    private int zeroNavigationSamples;
     private readonly string instanceId = Guid.NewGuid().ToString("N");
 
     public void UpdateVehicle(VehicleSnapshot next)
@@ -100,10 +102,18 @@ public sealed class GameSnapshotStore
                 if (discontinuity)
                 {
                     session++;
+                    zeroNavigationSince = null;
+                    zeroNavigationSamples = 0;
                     fines.ResetSession();
                     route = new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.Unknown, default);
                 }
             }
+            if (next.SdkActive && !next.Paused && next.IsFinite && next.NavigationDistanceRemainingMeters == 0)
+            {
+                zeroNavigationSince ??= next.ReceivedAt;
+                if (vehicle is null || next.SimulationTime != vehicle.SimulationTime) zeroNavigationSamples++;
+            }
+            else { zeroNavigationSince = null; zeroNavigationSamples = 0; }
             vehicle = next;
         }
     }
@@ -137,9 +147,16 @@ public sealed class GameSnapshotStore
             var availability = route.Availability;
             if (availability != RouteAvailability.Unknown && !IsFresh(route.ReceivedAt, now, TimeSpan.FromSeconds(3)))
                 availability = RouteAvailability.Stale;
-            if (usable && ((availability == RouteAvailability.None && vehicle!.NavigationDistanceRemainingMeters > 1)
-                || (availability == RouteAvailability.Available && vehicle!.NavigationDistanceRemainingMeters <= 0)))
+            if (usable && availability == RouteAvailability.None && vehicle!.NavigationDistanceRemainingMeters > 1)
                 availability = RouteAvailability.Invalid;
+            if (usable && availability == RouteAvailability.Available && vehicle!.NavigationDistanceRemainingMeters <= 0)
+            {
+                // The route mmap can keep publishing the last node list after GPS is cleared.
+                // Only sustained, progressing telemetry explicitly reporting zero overrides it.
+                bool cleared = zeroNavigationSamples >= 3 && zeroNavigationSince is { } since
+                    && now >= since && now - since >= TimeSpan.FromSeconds(1);
+                availability = cleared ? RouteAvailability.None : RouteAvailability.Invalid;
+            }
             return new(vehicle, route, availability, $"{instanceId}:{session}", usable,
                 fines.Latest, fines.LatestCamera, fines.GetHistory(), fines.DroppedCount);
         }

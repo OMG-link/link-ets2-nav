@@ -25,7 +25,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
         if (!ReferenceEquals(previousMap, nearby.Map))
         {
             previousMap = nearby.Map;
-            paths = new RoadPathSource(nearby.Map);
+            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths);
         }
         bool hasRoute = data.RouteAvailability == RouteAvailability.Available;
         bool usableRoute = hasRoute || data.RouteAvailability == RouteAvailability.None;
@@ -36,7 +36,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
             double directDistance = Vector3.Distance(position, camera.MonitoredPosition);
             var candidate = new CameraCandidate(camera.Id, CameraApproach.Unknown, directDistance);
             string decision;
-            if (!usableRoute) decision = "路线数据缺失或过期";
+            if (!usableRoute) decision = $"路线数据缺失或过期（SDK节点={data.Route.Nodes.Count}，遥测剩余={vehicle.NavigationDistanceRemainingMeters:F0} m）";
             else if (!camera.DirectionVerified) decision = "监测位置和方向尚未校准";
             else
             {
@@ -47,7 +47,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
                     CameraApproach.RouteAhead => candidate.RoadDistanceMeters.HasValue ? "位于导航前方" : "位于导航前方（直线距离回退）",
                     CameraApproach.UnavoidableAhead => "当前道路必经",
                     CameraApproach.Behind => "已在身后",
-                    _ => "方向或位置匹配不确定"
+                    _ => candidate.MatchFailure ?? "方向或位置匹配不确定"
                 };
             }
             candidates.Add(candidate);

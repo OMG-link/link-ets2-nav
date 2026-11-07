@@ -38,9 +38,10 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
         worker = Task.Run(PrepareAsync);
     }
 
-    public static string Text(double stage, double actualDistance)
+    public static string Text(double stage, double actualDistance, bool firstConfirmedInside200Meters = false)
     {
-        if (stage == 200 || actualDistance < 200) return "二百米内，有测速照相。";
+        if (stage == 200) return firstConfirmedInside200Meters
+            ? "二百米内，有测速照相。" : "二百米处，有测速照相。";
         // A late first observation must not claim that a camera is still 500/200 m away.
         if (actualDistance < stage * .9) return "前方有测速照相。";
         return stage == 500 ? "五百米处，有测速照相。" :
@@ -53,7 +54,7 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
         if (stop.IsCancellationRequested || snapshot is not { IsActive: true } || age < TimeSpan.Zero || age > TimeSpan.FromSeconds(2))
         { ClearPlan(); return; }
         var ordered = plans.OrderBy(p => p.DistanceUntilTriggerMeters)
-            .Select(p => Text(p.StageDistanceMeters, Math.Min(p.DistanceMeters, p.StageDistanceMeters)))
+            .Select(p => Text(p.StageDistanceMeters, Math.Min(p.DistanceMeters, p.StageDistanceMeters), p.FirstConfirmedInside200Meters))
             .Distinct(StringComparer.Ordinal).ToArray();
         bool updated;
         lock (gate)
@@ -74,7 +75,7 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
     public void Announce(CameraWarning warning)
     {
         if (stop.IsCancellationRequested) return;
-        string text = Text(warning.StageDistanceMeters, warning.DistanceMeters);
+        string text = Text(warning.StageDistanceMeters, warning.DistanceMeters, warning.FirstConfirmedInside200Meters);
         string? file;
         lock (gate) ready.TryGetValue(text, out file);
         if (file is not null && File.Exists(file))

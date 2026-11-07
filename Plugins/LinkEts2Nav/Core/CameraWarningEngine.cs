@@ -36,6 +36,7 @@ public sealed record CameraWarning(
     WarningDistanceKind DistanceKind)
 {
     public double StageDistanceMeters { get; init; } = 500;
+    public bool FirstConfirmedInside200Meters { get; init; }
 }
 
 /// <summary>A pending stage ordered by remaining travel before its trigger, not by camera proximity.</summary>
@@ -44,7 +45,10 @@ public sealed record PlannedCameraWarning(
     double StageDistanceMeters,
     double DistanceMeters,
     WarningDistanceKind DistanceKind,
-    double DistanceUntilTriggerMeters);
+    double DistanceUntilTriggerMeters)
+{
+    public bool FirstConfirmedInside200Meters { get; init; }
+}
 
 /// <summary>
 /// Pure decision logic; does not read the game, play audio or infer road membership.
@@ -58,6 +62,7 @@ public sealed class CameraWarningEngine
     private const double PassageRadiusMeters = 20;
     private readonly HashSet<string> nearPassage = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> consumed = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, double> firstConfirmedDistances = new(StringComparer.Ordinal);
     private string? sessionId;
     private int AllStages => (1 << stages.Length) - 1;
 
@@ -111,7 +116,10 @@ public sealed class CameraWarningEngine
                 && (candidate.Approach == required || candidate.Approach == CameraApproach.Behind))
                 nearPassage.Add(candidate.Id);
             if (candidate.EuclideanDistanceMeters >= rearmDistance && nearPassage.Remove(candidate.Id))
+            {
                 consumed.Remove(candidate.Id);
+                firstConfirmedDistances.Remove(candidate.Id);
+            }
             if (candidate.Approach == CameraApproach.Behind)
             {
                 if (nearPassage.Contains(candidate.Id)) consumed[candidate.Id] = AllStages;
@@ -121,6 +129,7 @@ public sealed class CameraWarningEngine
             double distance = candidate.RoadDistanceMeters ?? candidate.EuclideanDistanceMeters;
             if (!double.IsFinite(distance) || distance <= 0) continue;
 
+            firstConfirmedDistances.TryAdd(candidate.Id, distance);
             consumed.TryGetValue(candidate.Id, out int mask);
             // If both boundaries were crossed between samples, only the nearer stage
             // remains relevant. Do not queue an already obsolete 500 m announcement.
@@ -132,7 +141,10 @@ public sealed class CameraWarningEngine
                 if ((mask & (1 << index)) != 0) continue;
                 result.Add(new(candidate.Id, stages[index], distance,
                     candidate.RoadDistanceMeters.HasValue ? WarningDistanceKind.Road : WarningDistanceKind.Euclidean,
-                    Math.Max(0, distance - stages[index])));
+                    Math.Max(0, distance - stages[index]))
+                {
+                    FirstConfirmedInside200Meters = firstConfirmedDistances[candidate.Id] < 200
+                });
             }
         }
         return result.OrderBy(plan => plan.DistanceUntilTriggerMeters)
@@ -152,7 +164,8 @@ public sealed class CameraWarningEngine
             consumed[plan.CameraId] = mask | ((1 << (index + 1)) - 1);
             result.Add(new CameraWarning(plan.CameraId, plan.DistanceMeters, plan.DistanceKind)
             {
-                StageDistanceMeters = plan.StageDistanceMeters
+                StageDistanceMeters = plan.StageDistanceMeters,
+                FirstConfirmedInside200Meters = plan.FirstConfirmedInside200Meters
             });
         }
         return result;
@@ -162,6 +175,7 @@ public sealed class CameraWarningEngine
     {
         consumed.Clear();
         nearPassage.Clear();
+        firstConfirmedDistances.Clear();
         sessionId = null;
     }
 }

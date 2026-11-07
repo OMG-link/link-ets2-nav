@@ -31,15 +31,93 @@ public sealed class NavigationManeuverTests
     {
         var entry = R("entry", 1, 2, P(0, 100), P(0, 0));
         var near = R("prefab:NEAR:0:1", 2, 3, P(0, 0), P(0, -40));
-        var nearOther = R("prefab:NEAR:0:2", 2, 4, P(0, 0), P(40, 0));
+        var nearOther = invalidAlternativeDirection
+            ? R("prefab:NEAR:0:2", 2, 4, P(0, 0), P(40, 0))
+            : R("prefab:NEAR:0:2", 2, 4, P(0, 0));
         var middle = R("middle", 3, 5, P(0, -40), P(0, -140));
         var farTurn = R("far-turn", 5, 6, P(0, -140), P(-100, -140));
         var farStraight = R("far-straight", 5, 7, P(0, -140), P(0, -240));
         var graph = new List<DirectedRoad> { entry, near, nearOther, middle, farTurn, farStraight };
         if (invalidAlternativeDirection)
             graph.Add(R("vertical-exit", 4, 8, P(40, 0), new Vector3(40, 20, 0)));
-        // The other near exit is either missing, or has no usable horizontal direction.
+        // The other near exit has invalid curve geometry or no usable horizontal direction.
         Assert.Null(Detector.FindNext([entry, near, middle, farTurn], 0, graph));
+    }
+
+    [Fact]
+    public void InvalidNativeCurveCannotBorrowLateralReferenceConnectorsForDirection()
+    {
+        var entry = R("entry", 1, 2, P(0, 100), P(0, 0));
+        var broken = R("prefab:BROKEN:0:1", 2, 3,
+            P(0, 0), P(0, 0), new Vector3(0, 10, 0), P(0, -40));
+        var side = R("prefab:BROKEN:0:2", 2, 4, P(0, 0), P(40, 0));
+        var exit = R("exit", 3, 5, P(0, -40), P(0, -140));
+        Assert.Null(Detector.FindNext([entry, broken, exit], 0, [entry, broken, side, exit]));
+    }
+    [Fact]
+    public void NeighboringPrefabMaySupplyAnAlternativeBranchWithoutAnExternalRoad()
+    {
+        var entry = R("entry", 1, 2, P(0, 100), P(0, 0));
+        var near = R("prefab:NEAR:0:1", 2, 3, P(0, 0), P(0, -40));
+        var nearSide = R("prefab:NEAR:0:2", 2, 4, P(0, 0), P(40, 0));
+        var sideNeighbor = R("prefab:SIDE:0:1", 4, 8, P(40, 0), P(80, 0));
+        var middle = R("middle", 3, 5, P(0, -40), P(0, -140));
+        var farTurn = R("far-turn", 5, 6, P(0, -140), P(-100, -140));
+        var farStraight = R("far-straight", 5, 7, P(0, -140), P(0, -240));
+        var sequence = Detector.FindSequence([entry, near, middle, farTurn], 0,
+            [entry, near, nearSide, sideNeighbor, middle, farTurn, farStraight]);
+        Assert.Equal(new[] { ManeuverKind.Straight, ManeuverKind.TurnLeft }, sequence.Select(m => m.Kind));
+        Assert.Equal("prefab:NEAR", sequence[0].JunctionId);
+        Assert.True(sequence[0].HasSeparateApproachRoad);
+    }
+
+    [Fact]
+    public void AdjacentPrefabTurnsUseNativeCurvesAndAreNotAssumedSeparateCountableIntersections()
+    {
+        var (route, graph) = AdjacentTurns();
+        var sequence = Detector.FindSequence(route, 0, graph);
+        Assert.Equal(new[] { ManeuverKind.TurnRight, ManeuverKind.TurnRight }, sequence.Select(m => m.Kind));
+        Assert.Equal(new[] { "prefab:FIRST", "prefab:SECOND" }, sequence.Select(m => m.JunctionId));
+        Assert.True(sequence[0].HasSeparateApproachRoad);
+        Assert.False(sequence[1].HasSeparateApproachRoad);
+    }
+
+    [Fact]
+    public void AlreadyEnteredOrdinaryPrefabDoesNotHideTheNextDecision()
+    {
+        var (route, graph) = AdjacentTurns();
+        var sequence = Detector.FindSequence(route, 105, graph);
+        var next = Assert.Single(sequence);
+        Assert.Equal("prefab:SECOND", next.JunctionId);
+        Assert.Equal(ManeuverKind.TurnRight, next.Kind);
+        Assert.True(next.DistanceMeters > 0);
+    }
+
+    [Fact]
+    public void GraphReferenceChangeRebuildsItsLookupIndex()
+    {
+        var entry = R("entry", 1, 2, P(0, 100), P(0, 0));
+        var straight = R("straight", 2, 3, P(0, 0), P(0, -100));
+        var side = R("side", 2, 4, P(0, 0), P(100, 0));
+        DirectedRoad[] fork = [entry, straight, side];
+        DirectedRoad[] forced = [entry, straight];
+        Assert.NotNull(Detector.FindNext([entry, straight], 0, fork));
+        Assert.Null(Detector.FindNext([entry, straight], 0, forced));
+        Assert.NotNull(Detector.FindNext([entry, straight], 0, fork));
+    }
+
+    private static (DirectedRoad[] Route, DirectedRoad[] Graph) AdjacentTurns()
+    {
+        var entry = R("entry", 1, 2, P(0, 100), P(0, 0));
+        var first = R("prefab:FIRST:0:1", 2, 3, P(0, 0), P(0, -1),
+            P(0, -5), P(5, -10), P(15, -10), P(20, -10));
+        var firstStraight = R("prefab:FIRST:0:2", 2, 4, P(0, 0), P(0, -40));
+        var second = R("prefab:SECOND:0:1", 3, 5, P(20, -10), P(21, -10),
+            P(25, -10), P(30, -5), P(30, 5), P(30, 10));
+        var secondStraight = R("prefab:SECOND:0:2", 3, 6,
+            P(20, -10), P(21, -10), P(49, -10), P(50, -10));
+        var exit = R("exit", 5, 7, P(30, 10), P(30, 110));
+        return ([entry, first, second, exit], [entry, first, firstStraight, second, secondStraight, exit]);
     }
 
     [Fact]
@@ -209,13 +287,14 @@ public sealed class NavigationManeuverTests
     }
 
     [Fact]
-    public void UnknownPrefabAlternativeCannotBeUsedToInventAnInstruction()
+    public void ExplicitPrefabCurveCanConfirmAnExitWithoutAnExternalRoad()
     {
         var entry = R("entry", 1, 2, P(0, 0), P(0, -100));
         var chosen = R("prefab:A:0:1", 2, 3, P(0, -100), P(0, -140));
         var other = R("prefab:A:0:2", 2, 4, P(0, -100), P(40, -100));
         var exit = R("exit", 3, 5, P(0, -140), P(0, -240));
-        Assert.Null(Detector.FindNext([entry, chosen, exit], 0, [entry, chosen, other, exit]));
+        Assert.Equal(ManeuverKind.Straight,
+            Detector.FindNext([entry, chosen, exit], 0, [entry, chosen, other, exit])!.Kind);
     }
 
     [Fact]

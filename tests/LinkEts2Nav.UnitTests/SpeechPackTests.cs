@@ -32,6 +32,14 @@ public sealed class SpeechPackTests : IDisposable
         return (path, false);
     }
 
+    [Theory]
+    [InlineData(1000, "一千")]
+    [InlineData(1050, "一千零五十")]
+    [InlineData(2000, "二千")]
+    [InlineData(2150, "二千一百五十")]
+    public void NavigationDistancesSupportThousands(int value, string expected)
+        => Assert.Equal(expected, SpeechPack.Number(value));
+
     [Fact]
     public void CommonSentenceUsesCloudFileWithoutLocalInferenceAndRepairsCache()
     {
@@ -121,7 +129,7 @@ public sealed class SpeechPackTests : IDisposable
     public void PackNumbersAndAllCommonCombinationsAreWellFormed(int number, string expected)
     {
         Assert.Equal(expected, SpeechPack.Number(number));
-        Assert.Equal(108, SpeechPack.DefaultTexts().Distinct().Count());
+        Assert.Equal(120, SpeechPack.DefaultTexts().Distinct().Count());
         Assert.Contains("二百米处，有测速照相，限速九十。", SpeechPack.DefaultTexts());
     }
 

@@ -25,6 +25,70 @@ public sealed class NavigationRuntimeTests
         bool paused=false,bool stale=false)=>new(
         new(0,0,z,.5,20,1000,true,paused,1,stale?Now.AddSeconds(-3):Now),
         route,availability,"session",!paused);
+    private sealed class DelayedSynth : ISpeechSynthesizer
+    {
+        public TaskCompletionSource<string> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<string> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public async Task<string> SynthesizeAsync(string text, CancellationToken token)
+        {
+            Started.TrySetResult(text);
+            return await Result.Task.WaitAsync(token);
+        }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FailedSynth : ISpeechSynthesizer
+    {
+        public Task<string> SynthesizeAsync(string text, CancellationToken token)
+            => Task.FromException<string>(new IOException("test synthesis failure"));
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    [Fact]
+    public async Task FailedSynthesisFallsBackOnceRatherThanWaitingForever()
+    {
+        var scene = Scene();
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var queue = new SpeechAnnouncementQueue(new FailedSynth(), _ => {},
+            message => { if (message.StartsWith("TTS 合成失败")) failed.TrySetResult(); });
+        int beeps = 0;
+        var runtime = new NavigationRuntime(queue, () => beeps++);
+        runtime.Process(Data(scene.Route,621), scene.Map, Now);
+        await failed.Task.WaitAsync(TestContext.Current.CancellationToken);
+        runtime.Process(Data(scene.Route,621), scene.Map, Now);
+        runtime.Process(Data(scene.Route,622), scene.Map, Now);
+        Assert.Equal(1, beeps);
+    }
+
+    [Fact]
+    public async Task DynamicInstructionWaitsForReadyAudioWithoutConsumingItAsABeep()
+    {
+        var scene = Scene();
+        var synth = new DelayedSynth();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var played = new List<string>();
+        int beeps = 0;
+        string file = Path.GetTempFileName();
+        try
+        {
+            await using var queue = new SpeechAnnouncementQueue(synth, played.Add,
+                message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.TrySetResult(); });
+            var runtime = new NavigationRuntime(queue, () => beeps++);
+            runtime.Process(Data(scene.Route,621), scene.Map, Now);
+            string text = await synth.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
+            Assert.Contains("右转", text);
+            Assert.Empty(played);
+            Assert.Equal(0, beeps);
+            synth.Result.TrySetResult(file);
+            await ready.Task.WaitAsync(TestContext.Current.CancellationToken);
+            runtime.Process(Data(scene.Route,621), scene.Map, Now);
+            runtime.Process(Data(scene.Route,622), scene.Map, Now);
+            Assert.Single(played);
+            Assert.Equal(0, beeps);
+        }
+        finally { File.Delete(file); }
+    }
+
     [Fact]
     public void FirstDetectionAt79MetersDoesNotRepeatAt50Meters()
     {
@@ -34,7 +98,7 @@ public sealed class NavigationRuntimeTests
         runtime.Process(Data(scene.Route,651),scene.Map,Now);
         runtime.Process(Data(scene.Route,680),scene.Map,Now);
         Assert.Equal(1,calls);
-        Assert.Contains(logs,l=>l.Contains("导航指令：前方五十米，右转。"));
+        Assert.Contains(logs,l=>l.Contains("导航指令：五十米后，在下一个路口右转。"));
     }
     [Fact]
     public void OfficialRouteProducesThreeRightTurnStagesWithoutCameraOrLaneData()
@@ -49,7 +113,7 @@ public sealed class NavigationRuntimeTests
         runtime.Process(Data(scene.Route,651),scene.Map,Now);
         runtime.Process(Data(scene.Route,653),scene.Map,Now);
         Assert.Equal(3,calls);
-        Assert.Contains(logs,l=>l.Contains("导航指令：前方五百米，右转。"));
+        Assert.Contains(logs,l=>l.Contains("导航指令：六百米后，在下一个路口右转。"));
         Assert.Contains(logs,l=>l.Contains("导航指令：前方五十米，右转。"));
     }
     [Fact]
@@ -65,7 +129,7 @@ public sealed class NavigationRuntimeTests
     [Fact]
     public void EveryRuntimePhraseExistsInPreGeneratedPack()
     {
-        Assert.Equal(66,NavigationPrompts.AllTexts().Distinct().Count());
+        Assert.Equal(78,NavigationPrompts.AllTexts().Distinct().Count());
         foreach(string text in NavigationPrompts.AllTexts())
             Assert.Contains(text,LinkEts2Nav.Speech.SpeechPack.DefaultTexts());
     }

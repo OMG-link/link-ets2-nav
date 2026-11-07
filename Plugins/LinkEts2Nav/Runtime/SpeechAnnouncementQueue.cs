@@ -57,6 +57,8 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
         lock (gate) return ready.TryGetValue(text, out string? file) && File.Exists(file);
     }
 
+    public bool HasFailed(string text) { lock (gate) return failed.Contains(text); }
+
     public bool TryAnnounce(string text, string context = "预警")
     {
         if (IsStopped) return false;

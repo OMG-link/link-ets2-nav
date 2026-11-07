@@ -29,9 +29,9 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         yield return "米内，有测速照相，限速";
         yield return "前方有测速照相，限速";
         yield return UncalibratedText;
-        foreach (string action in new[] { "左转", "右转", "靠左行驶", "靠右行驶", "直行", "掉头" })
+        foreach (string action in new[] { "左转", "右转", "向左前方行驶", "向右前方行驶", "直行", "掉头" })
         {
-            foreach (int distance in Enumerable.Range(1, 10).Select(n => n * 50))
+            foreach (int distance in Enumerable.Range(1, 10).Select(n => n * 50).Concat(new[] { 1000, 2000 }))
                 yield return "前方" + Number(distance) + "米，" + action + "。";
             yield return action == "直行" ? "保持直行。" : "即将" + action + "。";
         }
@@ -39,11 +39,14 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
 
     public static string Number(int number)
     {
-        if (number is < 1 or > 999) throw new ArgumentOutOfRangeException(nameof(number));
+        if (number is < 1 or > 9999) throw new ArgumentOutOfRangeException(nameof(number));
         const string digits = "零一二三四五六七八九";
-        string text = number >= 100 ? digits[number / 100] + "百" : "";
+        string text = number >= 1000 ? digits[number / 1000] + "千" : "";
+        int hundreds = number / 100 % 10;
+        if (hundreds > 0) text += digits[hundreds] + "百";
+        else if (number >= 1000 && number % 100 > 0) text += "零";
         int rest = number % 100;
-        if (number >= 100 && rest is > 0 and < 10) text += "零";
+        if (hundreds > 0 && rest is > 0 and < 10) text += "零";
         if (rest >= 10) text += (rest / 10 == 1 && number < 100 ? "" : digits[rest / 10].ToString()) + "十";
         if (rest % 10 != 0) text += digits[rest % 10];
         return text;

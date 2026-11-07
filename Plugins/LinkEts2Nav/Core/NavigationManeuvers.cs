@@ -5,18 +5,27 @@ namespace LinkEts2Nav.Core;
 public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn }
 
 public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double DistanceMeters,
-    string EntryId, string ExitId);
+    string EntryId, string ExitId)
+{
+    /// <summary>Multiple connection curves inside one prefab share this physical-junction group.</summary>
+    public string? JunctionId { get; init; }
+    /// <summary>False when an adjacent prefab, rather than an explicit approach road, precedes this decision.</summary>
+    public bool HasSeparateApproachRoad { get; init; } = true;
+}
 
 /// <summary>
 /// Derives instructions from a continuous directed route and its legal outgoing connections.
-/// The graph must already exclude prohibited travel directions and vehicle restrictions.
-/// Geometry alone cannot identify lanes, a roundabout or an exit number.
+/// Own one detector on a serialized loop. Graph snapshots must be immutable; their lookup
+/// index is cached by reference. Geometry cannot identify lanes or a roundabout exit number.
 /// </summary>
 public sealed class NavigationManeuverDetector
 {
     private const float MaximumJoinGap = 2;
     private const double TurnAngleDegrees = 45;
     private const double ForkAngleDegrees = 55;
+    private IReadOnlyList<DirectedRoad>? indexedGraph;
+    private Dictionary<ulong, DirectedRoad[]> roadStarts = new();
+    private Dictionary<(string Prefab, ulong Start), DirectedRoad[][]> prefabStarts = new();
 
     public NavigationManeuver? FindNext(IReadOnlyList<DirectedRoad> route, double vehicleAlong,
         IReadOnlyList<DirectedRoad> graph) => FindSequence(route, vehicleAlong, graph).FirstOrDefault();
@@ -35,6 +44,7 @@ public sealed class NavigationManeuverDetector
         if (route.Any(r => !Valid(r))) return result;
         for (int i = 1; i < route.Count; i++)
             if (!Connected(route[i - 1], route[i])) return result;
+        Index(graph);
 
         double offset = 0;
         for (int i = 0; i < route.Count; i++)
@@ -43,55 +53,90 @@ public sealed class NavigationManeuverDetector
             double end = offset + Length(current);
             if (PrefabKey(current) is { } prefab && end >= vehicleAlong)
             {
-                // Do not replace a winding junction by its net entry/exit angle,
-                // or skip an unknown near junction to announce a later choice.
+                // Unsupported winding geometry remains a barrier while the vehicle
+                // approaches or traverses it. A normal, already entered turn does not.
                 if (ComplexInternalBend(current)) return result;
-                var connections = graph.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)
-                    && PrefabKey(e) == prefab && e.StartNodeUid == current.StartNodeUid
-                    && e.EndNodeUid != current.StartNodeUid).GroupBy(e => e.EndNodeUid).ToArray();
-                if (!connections.Any(g => g.Key == current.EndNodeUid)) return result;
+                if (offset < vehicleAlong) { offset = end; continue; }
+                if (!NativeGeometrySupported(current)) return result;
+                var connections = prefabStarts.GetValueOrDefault((prefab, current.StartNodeUid)) ?? [];
+                if (!connections.Any(g => g[0].EndNodeUid == current.EndNodeUid)) return result;
                 if (connections.Length >= 2)
                 {
-                    if (i == 0 || i + 1 >= route.Count || offset < vehicleAlong
-                        || PrefabKey(route[i - 1]) is not null || PrefabKey(route[i + 1]) is not null)
-                        return result;
-                    var incoming = route[i - 1];
-                    var outgoing = route[i + 1];
-                    var exits = new List<DirectedRoad>();
-                    foreach (var connection in connections)
+                    var previous = i > 0 ? route[i - 1] : null;
+                    var following = i + 1 < route.Count ? route[i + 1] : null;
+                    // At an adjacent prefab boundary use the current PPD curve's
+                    // native tangent, never the lateral road-reference connector.
+                    var entry = previous is not null && PrefabKey(previous) is null
+                        ? Tangent(previous, false)
+                        : NativeTangent(current, true) ?? (previous is null ? null : TravelTangent(previous, false));
+                    if (entry is null) return result;
+                    var exits = new List<(ulong End, Vector2 Direction)>();
+                    Vector2? chosen = null;
+                    foreach (var group in connections)
                     {
-                        var validConnections = connection.Where(Valid).ToArray();
-                        if (validConnections.Length == 0) return result;
-                        if (connection.Key == current.EndNodeUid) { exits.Add(outgoing); continue; }
-                        var roads = graph.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)
-                            && PrefabKey(e) is null && e.StartNodeUid == connection.Key && e.Id != incoming.Id)
-                            .GroupBy(e => (e.Id, e.StartNodeUid, e.EndNodeUid)).Select(g => g.First()).ToArray();
-                        if (roads.Length != 1 || !Valid(roads[0])
-                            || !validConnections.Any(c => Connected(c, roads[0]))) return result;
-                        exits.Add(roads[0]);
+                        var valid = group.Where(Valid).Where(NativeGeometrySupported).ToArray();
+                        if (valid.Length == 0) return result;
+                        Vector2? direction;
+                        if (group[0].EndNodeUid == current.EndNodeUid)
+                        {
+                            direction = following is not null && PrefabKey(following) is null
+                                ? Tangent(following, true) : TravelTangent(current, false);
+                            chosen = direction;
+                        }
+                        else
+                        {
+                            var outside = (roadStarts.GetValueOrDefault(group[0].EndNodeUid) ?? [])
+                                .Where(e => previous is null || e.Id != previous.Id)
+                                .GroupBy(e => (e.Id, e.StartNodeUid, e.EndNodeUid)).Select(g => g.First()).ToArray();
+                            if (outside.Length > 1) return result;
+                            if (outside.Length == 1)
+                            {
+                                if (!Valid(outside[0]) || !valid.Any(c => Connected(c, outside[0]))) return result;
+                                direction = Tangent(outside[0], true);
+                            }
+                            else
+                            {
+                                // An explicit PPD exit is useful even when the next
+                                // item is another prefab or lies outside this window.
+                                var headings = valid.Select(c => TravelTangent(c, false)).ToArray();
+                                if (headings.Any(h => h is null)) return result;
+                                direction = headings[0];
+                                if (headings.Any(h => Vector2.Dot(direction!.Value, h!.Value) < .98f)) return result;
+                            }
+                        }
+                        if (direction is null) return result;
+                        exits.Add((group[0].EndNodeUid, direction.Value));
                     }
-                    if (!KnownDirections(incoming, outgoing, exits)) return result;
-                    if (Classify(incoming, outgoing, exits) is { } kind)
+                    if (chosen is null) return result;
+                    if (Classify(entry.Value, chosen.Value, exits) is { } kind)
                         result.Add(new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
-                            kind, offset - vehicleAlong, incoming.Id, outgoing.Id));
+                            kind, offset - vehicleAlong, previous?.Id ?? current.Id, following?.Id ?? current.Id)
+                        {
+                            JunctionId = "prefab:" + prefab,
+                            HasSeparateApproachRoad = previous is not null && PrefabKey(previous) is null
+                        });
                 }
             }
             else if (PrefabKey(current) is null && i + 1 < route.Count
                 && PrefabKey(route[i + 1]) is null && end >= vehicleAlong)
             {
                 var outgoing = route[i + 1];
-                var exits = graph.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)
-                    && PrefabKey(e) is null && e.StartNodeUid == current.EndNodeUid && e.Id != current.Id
-                    && e.EndNodeUid != current.StartNodeUid)
+                var exits = (roadStarts.GetValueOrDefault(current.EndNodeUid) ?? [])
+                    .Where(e => e.Id != current.Id && e.EndNodeUid != current.StartNodeUid)
                     .GroupBy(e => (e.Id, e.StartNodeUid, e.EndNodeUid)).Select(g => g.First()).ToArray();
                 if (!exits.Any(e => SameEdge(e, outgoing))) return result;
                 if (exits.Length >= 2)
                 {
-                    if (exits.Any(e => !Valid(e) || !Connected(current, e))
-                        || !KnownDirections(current, outgoing, exits)) return result;
-                    if (Classify(current, outgoing, exits) is { } kind)
+                    if (exits.Any(e => !Valid(e) || !Connected(current, e))) return result;
+                    var entry = Tangent(current, false);
+                    var chosen = Tangent(outgoing, true);
+                    var directions = exits.Select(e => (e.EndNodeUid, Direction: Tangent(e, true))).ToArray();
+                    if (entry is null || chosen is null || directions.Any(e => e.Direction is null)) return result;
+                    if (Classify(entry.Value, chosen.Value,
+                        directions.Select(e => (e.EndNodeUid, e.Direction!.Value)).ToArray()) is { } kind)
                         result.Add(new($"node:{current.EndNodeUid:X16}:{outgoing.EndNodeUid:X16}",
-                            kind, end - vehicleAlong, current.Id, outgoing.Id));
+                            kind, end - vehicleAlong, current.Id, outgoing.Id)
+                        { JunctionId = $"node:{current.EndNodeUid:X16}" });
                 }
             }
             offset = end;
@@ -99,55 +144,48 @@ public sealed class NavigationManeuverDetector
         return result;
     }
 
-    private static bool KnownDirections(DirectedRoad incoming, DirectedRoad selected,
-        IReadOnlyList<DirectedRoad> exits)
-        => Tangent(incoming, fromStart: false).HasValue && Tangent(selected, fromStart: true).HasValue
-            && exits.All(e => Tangent(e, fromStart: true).HasValue);
+    private void Index(IReadOnlyList<DirectedRoad> graph)
+    {
+        if (ReferenceEquals(indexedGraph, graph)) return;
+        var edges = graph.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)).ToArray();
+        roadStarts = edges.Where(e => PrefabKey(e) is null).GroupBy(e => e.StartNodeUid)
+            .ToDictionary(g => g.Key, g => g.ToArray());
+        prefabStarts = edges.Where(e => PrefabKey(e) is not null)
+            .GroupBy(e => (Prefab: PrefabKey(e)!, Start: e.StartNodeUid))
+            .ToDictionary(g => g.Key, g => g.Where(e => e.EndNodeUid != e.StartNodeUid)
+                .GroupBy(e => e.EndNodeUid).Select(x => x.ToArray()).ToArray());
+        indexedGraph = graph;
+    }
 
     private static bool ComplexInternalBend(DirectedRoad prefab)
     {
         Vector2? previous = null;
         double absoluteDegrees = 0;
-        // The first and last segments join road reference nodes to lane geometry.
-        // Their lateral offsets must not count as actual junction curvature.
         for (int i = 1; i < prefab.Points.Count - 2; i++)
         {
             var delta = prefab.Points[i + 1] - prefab.Points[i];
             var horizontal = new Vector2(delta.X, delta.Z);
             if (horizontal.LengthSquared() <= .000001f) continue;
             var direction = Vector2.Normalize(horizontal);
-            if (previous is { } before)
-                absoluteDegrees += Math.Abs(Angle(before, direction));
+            if (previous is { } before) absoluteDegrees += Math.Abs(Angle(before, direction));
             if (absoluteDegrees > 160) return true;
             previous = direction;
         }
         return false;
     }
 
-    private static ManeuverKind? Classify(DirectedRoad incoming, DirectedRoad selected,
-        IReadOnlyList<DirectedRoad> exits)
+    private static ManeuverKind? Classify(Vector2 entry, Vector2 selected,
+        IReadOnlyList<(ulong End, Vector2 Direction)> exits)
     {
-        // A forced bend is not a choice and must not become a turn instruction.
-        if (exits.Select(e => e.EndNodeUid).Distinct().Count() < 2) return null;
-        if (Tangent(incoming, fromStart: false) is not { } entry
-            || Tangent(selected, fromStart: true) is not { } exit) return null;
-        var choices = new List<(ulong End, double Angle)>();
-        foreach (var road in exits)
-        {
-            if (Tangent(road, fromStart: true) is not { } tangent) return null;
-            choices.Add((road.EndNodeUid, Angle(entry, tangent)));
-        }
-        double chosen = Angle(entry, exit);
+        if (exits.Select(e => e.End).Distinct().Count() < 2) return null;
+        var choices = exits.Select(e => (e.End, Angle: Angle(entry, e.Direction))).ToList();
+        double chosen = Angle(entry, selected);
         if (Math.Abs(chosen) >= 150) return ManeuverKind.UTurn;
-        // A different edge that merely returns the driver to the approach is not
-        // another forward choice, even when it has a distinct map item UID.
         choices.RemoveAll(c => Math.Abs(c.Angle) >= 150);
         if (choices.Select(c => c.End).Distinct().Count() < 2) return null;
         var angles = choices.Select(c => c.Angle).ToArray();
         if (chosen <= -TurnAngleDegrees) return ManeuverKind.TurnLeft;
         if (chosen >= TurnAngleDegrees) return ManeuverKind.TurnRight;
-        // A shallow Y is a keep instruction; a perpendicular side street does not
-        // make the through road a "keep left/right" fork.
         if (angles.All(a => Math.Abs(a) <= ForkAngleDegrees) && angles.Max() - angles.Min() >= 10)
         {
             bool left = angles.Any(a => a < chosen - 5);
@@ -161,6 +199,31 @@ public sealed class NavigationManeuverDetector
     private static double Angle(Vector2 incoming, Vector2 outgoing)
         => Math.Atan2(incoming.X * outgoing.Y - incoming.Y * outgoing.X,
             Vector2.Dot(incoming, outgoing)) * 180 / Math.PI;
+
+    private static bool NativeGeometrySupported(DirectedRoad edge)
+        => edge.Points.Count < 4 || NativeTangent(edge, true).HasValue && NativeTangent(edge, false).HasValue;
+
+    private static Vector2? TravelTangent(DirectedRoad edge, bool fromStart)
+        => PrefabKey(edge) is not null && edge.Points.Count >= 4
+            ? NativeTangent(edge, fromStart) : Tangent(edge, fromStart);
+
+    private static Vector2? NativeTangent(DirectedRoad prefab, bool fromStart)
+    {
+        // First/last points are road-control centers. Interior points are samples
+        // of directed PPD curves, and their endpoint tangents describe this junction.
+        if (prefab.Points.Count < 4) return null;
+        int start = fromStart ? 1 : prefab.Points.Count - 2;
+        int end = fromStart ? prefab.Points.Count - 2 : 1;
+        int step = fromStart ? 1 : -1;
+        for (int i = start; i != end; i += step)
+        {
+            var delta = fromStart ? prefab.Points[i + step] - prefab.Points[i]
+                : prefab.Points[i] - prefab.Points[i + step];
+            var horizontal = new Vector2(delta.X, delta.Z);
+            if (horizontal.LengthSquared() > .000001f) return Vector2.Normalize(horizontal);
+        }
+        return null;
+    }
 
     private static Vector2? Tangent(DirectedRoad road, bool fromStart)
     {

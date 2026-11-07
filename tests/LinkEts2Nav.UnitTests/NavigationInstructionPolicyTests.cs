@@ -4,296 +4,246 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class NavigationInstructionPolicyTests
 {
-    private static readonly DateTimeOffset Now = new(2026, 11, 7, 0, 0, 0, TimeSpan.Zero);
-    private static NavigationManeuver M(double distance, string id = "junction", ManeuverKind kind = ManeuverKind.TurnLeft)
-        => new(id, kind, distance, "entry", "exit");
-    private static IReadOnlyList<string> Plan(NavigationInstructionPolicy policy, double distance)
-        => policy.Plan(M(distance), "session", Now, Now, true);
-    private static IReadOnlyList<string> Update(NavigationInstructionPolicy policy, double distance)
-        => policy.Update(M(distance), "session", Now, Now, true);
+    private static readonly DateTimeOffset Now=new(2026,11,8,0,0,0,TimeSpan.Zero);
+    private static NavigationManeuver M(double distance,string id="action",ManeuverKind kind=ManeuverKind.TurnLeft)
+        =>new(id,kind,distance,"entry","exit");
+    private static IReadOnlyList<string> Plan(NavigationInstructionPolicy p,IReadOnlyList<NavigationManeuver> m)
+        =>p.PlanSequence(m,"session",Now,Now,true);
+    private static IReadOnlyList<string> Update(NavigationInstructionPolicy p,IReadOnlyList<NavigationManeuver> m,
+        Func<string,bool>? ready=null,int seconds=0)
+        =>p.UpdateSequence(m,"session",Now.AddSeconds(seconds),Now.AddSeconds(seconds),true,ready);
 
     [Fact]
-    public void NormalApproachSpeaks500200And50Once()
+    public void CountsStraightIntersectionsBeforeActionAndDoesNotTreatStraightAsTarget()
     {
-        var policy = new NavigationInstructionPolicy();
-        Assert.Contains("前方五百米，左转。", Plan(policy, 700));
-        Assert.Empty(Update(policy, 700));
-        Assert.Equal("前方五百米，左转。", Assert.Single(Update(policy, 500)));
-        Assert.Empty(Update(policy, 499));
-        Assert.Equal("前方二百米，左转。", Assert.Single(Update(policy, 200)));
-        Assert.Empty(Update(policy, 199));
-        Assert.Equal("前方五十米，左转。", Assert.Single(Update(policy, 50)));
-        Assert.Empty(Update(policy, 20));
-        Assert.Empty(Plan(policy, 0));
+        var p=new NavigationInstructionPolicy();
+        NavigationManeuver[] sequence=[M(100,"s1",ManeuverKind.Straight),M(200,"s2",ManeuverKind.Straight),M(650)];
+        Assert.Equal("六百五十米后，在第三个路口左转。",Plan(p,sequence)[0]);
+        Assert.Equal("六百五十米后，在第三个路口左转。",Assert.Single(Update(p,sequence)));
+        Assert.Empty(Update(p,[M(190,"s2",ManeuverKind.Straight),M(640)]));
     }
 
+    [Fact]
+    public void PhysicalJunctionIdsAreCountedOnce()
+    {
+        var p=new NavigationInstructionPolicy();
+        var s=M(100,"straight",ManeuverKind.Straight) with { JunctionId="physical" };
+        var turn=M(500) with { JunctionId="physical" };
+        Assert.Equal("五百米后，在下一个路口左转。",Assert.Single(Update(p,[s,turn])));
+    }
+
+    [Fact]
+    public void ConsecutivePrefabWithoutIndependentApproachOmitsUnprovenOrdinal()
+    {
+        var p=new NavigationInstructionPolicy();
+        var s=M(100,"s",ManeuverKind.Straight) with { HasSeparateApproachRoad=false };
+        Assert.Equal("五百米后，左转。",Assert.Single(Update(p,[s,M(500)])));
+    }
+
+    [Fact]
+    public void FirstLongDistanceBriefingAndSubsequentStandardGradients()
+    {
+        var p=new NavigationInstructionPolicy();
+        Assert.Equal("沿当前道路，继续行驶二点五公里。",Assert.Single(Update(p,[M(2500)])));
+        Assert.Empty(Update(p,[M(2001)]));
+        Assert.Equal("前方二千米，左转。",Assert.Single(Update(p,[M(1995)])));
+        Assert.Empty(Update(p,[M(1001)]));
+        Assert.Equal("前方一千米，左转。",Assert.Single(Update(p,[M(995)])));
+        Assert.Equal("八百米后，在下一个路口左转。",Assert.Single(Update(p,[M(800)])));
+        Assert.Empty(Update(p,[M(501)]));
+        Assert.Empty(Update(p,[M(498)]));
+        Assert.Empty(Update(p,[M(201)]));
+        Assert.Equal("前方二百米，左转。",Assert.Single(Update(p,[M(198)])));
+        Assert.Empty(Update(p,[M(51)]));
+        Assert.Equal("前方五十米，左转。",Assert.Single(Update(p,[M(49)])));
+        Assert.Empty(Update(p,[M(10)]));
+    }
+
+    [Fact]
+    public void FarContinuationTransitionsOnceToSpecificOrdinalBriefingAt800()
+    {
+        var p=new NavigationInstructionPolicy();
+        Assert.Equal("沿当前道路，继续行驶一点五公里。",Assert.Single(Update(p,[M(1500)])));
+        Assert.Equal("八百米后，在第三个路口左转。",Assert.Single(Update(p,
+            [M(100,"s1",ManeuverKind.Straight),M(300,"s2",ManeuverKind.Straight),M(800)])));
+        Assert.Empty(Update(p,[M(100,"s1",ManeuverKind.Straight),M(250,"s2",ManeuverKind.Straight),M(500)]));
+        Assert.Equal("二百米后，在第二个路口左转。",Assert.Single(Update(p,
+            [M(100,"s2",ManeuverKind.Straight),M(200)])));
+    }
+
+    [Fact]
+    public void StandardAndCatchUpRemindersRetainStillRelevantIntersectionOrdinal()
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(100,"s1",ManeuverKind.Straight),M(200,"s2",ManeuverKind.Straight),M(500)]);
+        Assert.Equal("二百米后，在第二个路口左转。",Assert.Single(Update(p,
+            [M(50,"s2",ManeuverKind.Straight),M(200)])));
+        var other=new NavigationInstructionPolicy();
+        Update(other,[M(100,"s1",ManeuverKind.Straight),M(500)]);
+        Assert.Equal("一百五十米后，在第二个路口左转。",Assert.Single(Update(other,
+            [M(20,"s1",ManeuverKind.Straight),M(175)])));
+    }
     [Theory]
-    [InlineData(275, "前方二百五十米，左转。", true)]
-    [InlineData(499, "前方四百五十米，左转。", true)]
-    [InlineData(250, "前方二百五十米，左转。", true)]
-    [InlineData(175, "前方一百五十米，左转。", false)]
-    [InlineData(100, "前方一百米，左转。", false)]
-    [InlineData(79, "前方五十米，左转。", false)]
-    [InlineData(75, "前方五十米，左转。", false)]
-    public void FirstCatchUpFloorsTo50AndSkipsNextLowerStage(double distance, string expected, bool later50)
+    [InlineData(275,"二百五十米后，在下一个路口左转。",true)]
+    [InlineData(175,"一百五十米后，在下一个路口左转。",false)]
+    [InlineData(79,"五十米后，在下一个路口左转。",false)]
+    public void FirstBetweenStagesRoundsAndSkipsFollowingLowerReminder(double distance,string text,bool later50)
     {
-        var policy = new NavigationInstructionPolicy();
-        Assert.Equal(expected, Plan(policy, distance)[0]);
-        Assert.Equal(expected, Assert.Single(Update(policy, distance)));
-        Assert.Empty(Update(policy, Math.Min(distance, 200)));
-        if (later50) Assert.Equal("前方五十米，左转。", Assert.Single(Update(policy, 50)));
-        else Assert.Empty(Update(policy, 50));
-        Assert.Empty(Update(policy, 10));
+        var p=new NavigationInstructionPolicy();
+        Assert.Equal(text,Assert.Single(Update(p,[M(distance)])));
+        Assert.Empty(Update(p,[M(Math.Min(distance,200))]));
+        if(later50)Assert.Equal("前方五十米，左转。",Assert.Single(Update(p,[M(50)])));
+        else Assert.Empty(Update(p,[M(50)]));
     }
 
     [Fact]
-    public void StraightFirstSeenAt79OnlyReports50MetersOnce()
+    public void FirstCloseStraightDoesNotHideTheSecondIntersectionTurn()
     {
-        var policy = new NavigationInstructionPolicy();
-        var first = M(79, kind: ManeuverKind.Straight);
-        Assert.Equal("前方五十米，直行。", Assert.Single(policy.Update(first,"session",Now,Now,true)));
-        Assert.Empty(policy.Update(first with { DistanceMeters=50 },"session",Now,Now,true));
-        Assert.Empty(policy.Update(first with { DistanceMeters=20 },"session",Now,Now,true));
-    }
-
-    [Theory]
-    [InlineData(500)]
-    [InlineData(200)]
-    [InlineData(50)]
-    public void ExactInitialStandardStagePreservesFollowingStages(int distance)
-    {
-        var policy = new NavigationInstructionPolicy();
-        Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,distance),Assert.Single(Update(policy,distance)));
-        if(distance>200) Assert.Equal("前方二百米，左转。",Assert.Single(Update(policy,200)));
-        if(distance>50) Assert.Equal("前方五十米，左转。",Assert.Single(Update(policy,50)));
-        Assert.Empty(Update(policy,20));
-    }
-
-    [Theory]
-    [InlineData(ManeuverKind.TurnLeft,"即将左转。")]
-    [InlineData(ManeuverKind.TurnRight,"即将右转。")]
-    [InlineData(ManeuverKind.KeepLeft,"即将靠左行驶。")]
-    [InlineData(ManeuverKind.KeepRight,"即将靠右行驶。")]
-    [InlineData(ManeuverKind.Straight,"保持直行。")]
-    [InlineData(ManeuverKind.UTurn,"即将掉头。")]
-    public void FirstBelow50UsesImmediateTextAndNoLater50(ManeuverKind kind,string expected)
-    {
-        var policy=new NavigationInstructionPolicy();
-        Assert.Equal(expected,Assert.Single(policy.Update(M(49,kind:kind),"session",Now,Now,true)));
-        Assert.Empty(policy.Update(M(10,kind:kind),"session",Now,Now,true));
-        Assert.Empty(policy.Update(M(50,kind:kind),"session",Now,Now,true));
+        var p=new NavigationInstructionPolicy();
+        Assert.Equal("在第二个路口左转。",Assert.Single(Update(p,
+            [M(10,"straight",ManeuverKind.Straight),M(35)])));
     }
 
     [Fact]
-    public void PlanCannotRegisterEarlierDistanceOrPretendAThresholdWasCrossed()
+    public void FirstActionUnder50UsesReadyImmediateWithoutDistance()
     {
-        var policy=new NavigationInstructionPolicy();
-        Plan(policy,700);
-        Plan(policy,501);
-        Assert.Equal("前方四百五十米，左转。",Assert.Single(Update(policy,498)));
-        Assert.Empty(Update(policy,200));
+        var p=new NavigationInstructionPolicy();
+        Assert.Equal("即将左转。",Assert.Single(Update(p,[M(30)])));
+        Assert.Empty(Update(p,[M(10)]));
     }
 
     [Fact]
-    public void PlanDoesNotOverwriteTheLastUpdateUsedForNormalCrossing()
+    public void ActualActionCompletionImmediatelyBriefsNextActionWithoutStraightCooldown()
     {
-        var policy=new NavigationInstructionPolicy();
-        Assert.Empty(Update(policy,501));
-        Assert.Equal("前方五百米，左转。",Plan(policy,498)[0]);
-        Assert.Equal("前方五百米，左转。",Assert.Single(Update(policy,498)));
-        Assert.Empty(Update(policy,201));
-        Assert.Equal("前方二百米，左转。",Plan(policy,198)[0]);
-        Assert.Equal("前方二百米，左转。",Assert.Single(Update(policy,198)));
-        Assert.Empty(Update(policy,51));
-        Assert.Equal("前方五十米，左转。",Assert.Single(Update(policy,49)));
-    }
-
-    [Theory]
-    [InlineData(480,"前方五百米，左转。",true)]
-    [InlineData(479.9,"前方四百五十米，左转。",false)]
-    public void NormalCrossingToleranceIs20Meters(double distance,string expected,bool later200)
-    {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,501);
-        Assert.Equal(expected,Assert.Single(Update(policy,distance)));
-        if(later200) Assert.Single(Update(policy,200));
-        else Assert.Empty(Update(policy,200));
-    }
-
-    [Theory]
-    [InlineData(49,"前方五十米，左转。")]
-    [InlineData(30,"前方五十米，左转。")]
-    [InlineData(29,"即将左转。")]
-    public void LastStandardCrossingKeeps50UnlessMoreThan20MetersLate(double distance,string expected)
-    {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,500);
-        Update(policy,200);
-        Assert.Empty(Update(policy,51));
-        Assert.Equal(expected,Plan(policy,distance)[0]);
-        Assert.Equal(expected,Assert.Single(Update(policy,distance)));
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(30)]);
+        Assert.Equal("六百米后，在下一个路口右转。",Assert.Single(Update(p,
+            [M(600,"next",ManeuverKind.TurnRight)],seconds:1)));
     }
 
     [Fact]
-    public void Rounded250CatchUpLeaves50AsTheNextNormalStandardCrossing()
+    public void NotReadyDoesNotConsumeFirstBriefingOrItsReminderStages()
     {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,275);
-        Assert.Empty(Update(policy,51));
-        Assert.Equal("前方五十米，左转。",Assert.Single(Update(policy,49)));
-    }
-
-    [Theory]
-    [InlineData(198,"前方一百五十米，左转。")]
-    [InlineData(49,"即将左转。")]
-    public void SkippingMultipleStandardsCannotMasqueradeAsNormalLowerCrossing(double distance,string expected)
-    {
-        var policy=new NavigationInstructionPolicy();
-        Assert.Empty(Update(policy,600));
-        Assert.Equal(expected,Plan(policy,distance)[0]);
-        Assert.Equal(expected,Assert.Single(Update(policy,distance)));
-        Assert.Empty(Update(policy,50));
-    }
-
-    [Theory]
-    [InlineData(200,"前方二百米，左转。")]
-    [InlineData(50,"前方五十米，左转。")]
-    public void ExactLowerStandardRemainsValidAfterSkippingHigherStandards(int distance,string expected)
-    {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,600);
-        Assert.Equal(expected,Assert.Single(Update(policy,distance)));
-    }
-    [Fact]
-    public void LargeJumpFrom700To275RoundsAndSkips200()
-    {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,700);
-        Assert.Equal("前方二百五十米，左转。",Assert.Single(Update(policy,275)));
-        Assert.Empty(Update(policy,200));
-        Assert.Single(Update(policy,50));
+        var p=new NavigationInstructionPolicy();
+        Assert.Empty(Update(p,[M(700)],_=>false));
+        Assert.Equal("六百五十米后，在下一个路口左转。",Assert.Single(Update(p,[M(675)])));
+        Assert.Empty(Update(p,[M(500)]));
+        Assert.Equal("前方二百米，左转。",Assert.Single(Update(p,[M(200)])));
     }
 
     [Fact]
-    public void RestoringAt150After500CatchUpSkips50()
+    public void NotReadyReminderRemainsPendingButCannotPlayAnObsoleteDistance()
     {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,500);
-        Update(policy,230);
-        Assert.Empty(policy.Update(null,"session",Now,Now,true));
-        Assert.Equal("前方一百五十米，左转。",Assert.Single(Update(policy,150)));
-        Assert.Empty(Update(policy,50));
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(2500)]);
+        Assert.Empty(Update(p,[M(2000)],_=>false));
+        Assert.Equal("前方一千七百五十米，左转。",Assert.Single(Update(p,[M(1750)])));
+        Assert.Empty(Update(p,[M(1000)]));
+        Assert.Single(Update(p,[M(500)]));
     }
 
     [Fact]
-    public void CrossingAllStagesAtOnceOnlyReportsImmediateCue()
+    public void PlanIsReadOnlyPreheatsTwoBinsAndNextActionAfterCurrentOne()
     {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,700);
-        Assert.Equal("即将左转。",Assert.Single(Update(policy,10)));
-        Assert.Empty(Update(policy,50));
-        Assert.Empty(Update(policy,200));
+        var p=new NavigationInstructionPolicy();
+        var plan=Plan(p,[M(275),M(800,"next",ManeuverKind.TurnRight)]);
+        Assert.Contains("二百五十米后，在下一个路口左转。",plan);
+        Assert.Contains("二百米后，在下一个路口左转。",plan);
+        Assert.Contains("一百五十米后，在下一个路口左转。",plan);
+        Assert.Contains("五百米后，在下一个路口右转。",plan);
+        Assert.Equal("二百五十米后，在下一个路口左转。",Assert.Single(Update(p,[M(275)])));
+        Assert.Empty(Update(p,[M(200)]));
     }
 
     [Fact]
-    public void MissingManeuverDoesNotEraseConsumedStage()
+    public void PlanningCannotOverwritePreviousActualUpdateForCrossings()
     {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,500);
-        Assert.Empty(policy.Update(null,"session",Now,Now,true));
-        Assert.Empty(policy.Plan(null,"session",Now,Now,true));
-        Assert.Empty(Update(policy,490));
-        Assert.Single(Update(policy,200));
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(2500)]);
+        Update(p,[M(2001)]);
+        Plan(p,[M(1995)]);
+        Assert.Equal("前方二千米，左转。",Assert.Single(Update(p,[M(1995)])));
+    }
+
+    [Fact]
+    public void NearStraightIsSingleCueAndCannotImmediatelyCrowdActionBriefing()
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(45,"straight",ManeuverKind.Straight),M(600)]);
+        Assert.Empty(Update(p,[M(40,"straight",ManeuverKind.Straight),M(590)],seconds:1));
+        Assert.Equal("保持直行。",Assert.Single(Update(p,[M(30,"straight",ManeuverKind.Straight),M(580)],seconds:6)));
+        Assert.Empty(Update(p,[M(20,"straight",ManeuverKind.Straight),M(570)],seconds:7));
+    }
+
+    [Fact]
+    public void StraightOnlyUsesUnmeasuredContinuationAndLocalPassageCue()
+    {
+        var p=new NavigationInstructionPolicy();
+        Assert.Equal("沿当前道路继续行驶。",Assert.Single(Update(p,[M(100,"s",ManeuverKind.Straight)])));
+        Assert.Empty(Update(p,[M(70,"s",ManeuverKind.Straight)],seconds:1));
+        Assert.Equal("保持直行。",Assert.Single(Update(p,[M(40,"s",ManeuverKind.Straight)],seconds:6)));
+    }
+
+    [Fact]
+    public void EmptyAndTemporaryMissingGeometryCannotEraseDeduplication()
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(500)]);
+        Assert.Empty(Update(p,[]));
+        Assert.Empty(Update(p,[M(490)]));
+        Assert.Equal("前方二百米，左转。",Assert.Single(Update(p,[M(200)])));
     }
 
     [Theory]
     [InlineData(false,0)]
     [InlineData(true,3)]
     [InlineData(true,-1)]
-    public void InvalidSamplesDoNotRegisterCrossingsOrConsume(bool active,int age)
+    public void InvalidSamplesCannotRegisterBriefingOrConsume(bool active,int age)
     {
-        var policy=new NavigationInstructionPolicy();
-        var observed=Now.AddSeconds(-age);
-        Assert.Empty(policy.Plan(M(501),"session",observed,Now,active));
-        Assert.Empty(policy.Update(M(501),"session",observed,Now,active));
-        Assert.Equal("前方四百五十米，左转。",Assert.Single(Update(policy,498)));
-    }
-
-    [Theory]
-    [InlineData(double.NaN)]
-    [InlineData(double.PositiveInfinity)]
-    [InlineData(-1)]
-    public void InvalidDistancesDoNotChangeState(double distance)
-    {
-        var policy=new NavigationInstructionPolicy();
-        Assert.Empty(Plan(policy,distance));
-        Assert.Empty(Update(policy,distance));
-        Assert.Single(Update(policy,500));
+        var p=new NavigationInstructionPolicy();
+        Assert.Empty(p.PlanSequence([M(100)],"session",Now.AddSeconds(-age),Now,active));
+        Assert.Empty(p.UpdateSequence([M(100)],"session",Now.AddSeconds(-age),Now,active));
+        Assert.Single(Update(p,[M(500)]));
     }
 
     [Fact]
-    public void SessionAndExplicitResetAllowInstructionsAgain()
+    public void OldObservationsCannotResetOrRebrief()
     {
-        var policy=new NavigationInstructionPolicy();
-        Assert.Single(Update(policy,500));
-        Assert.Empty(Update(policy,500));
-        Assert.Single(policy.Update(M(500),"next-session",Now,Now,true));
-        policy.Reset();
-        Assert.Single(policy.Update(M(500),"next-session",Now,Now,true));
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(30)]);
+        Assert.Empty(p.UpdateSequence([M(700)],"session",Now.AddSeconds(-1),Now,true));
+        Assert.Empty(Update(p,[M(500)]));
     }
 
     [Fact]
-    public void RearmRequiresNearVisitAndStrictlyMoreThan550Meters()
+    public void SessionAndNearThenFarEncounterCanRearm()
     {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,500);Update(policy,200);Update(policy,50);
-        Assert.Empty(Plan(policy,550));
-        Assert.Empty(Update(policy,550));
-        Assert.Empty(Plan(policy,50));
-        Assert.Contains("前方五百米，左转。",Plan(policy,551));
-        Assert.Empty(Update(policy,551));
-        Assert.Single(Update(policy,500));
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(30)]);
+        Assert.Empty(Update(p,[M(550)]));
+        Assert.Single(Update(p,[M(551)]));
+        Assert.Single(p.UpdateSequence([M(500)],"next-session",Now,Now,true));
     }
 
     [Fact]
-    public void MovingAwayBeforeNearVisitDoesNotRearm500()
+    public void InvalidSequenceCannotInventAnOrdinal()
     {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,500);Update(policy,200);
-        Assert.Empty(Update(policy,700));
-        Assert.Empty(Update(policy,500));
+        var p=new NavigationInstructionPolicy();
+        Assert.Empty(Update(p,[M(500),M(100,"second")]));
+        Assert.Empty(Update(p,[M(double.NaN)]));
+        Assert.Empty(Update(p,[M(10),M(20)]));
     }
 
     [Fact]
-    public void OldUpdateCannotResetEncounterOrManufactureCrossing()
+    public void FiniteVocabularyDoesNotEnumerateDynamicDistancesOrOrdinals()
     {
-        var policy=new NavigationInstructionPolicy();
-        Update(policy,500);Update(policy,200);Update(policy,50);
-        Assert.Empty(policy.Plan(M(700),"session",Now.AddSeconds(-1),Now,true));
-        Assert.Empty(policy.Update(M(700),"session",Now.AddSeconds(-1),Now,true));
-        Assert.Empty(Update(policy,500));
-    }
-
-    [Fact]
-    public void SeparateIdsHaveSeparateState()
-    {
-        var policy=new NavigationInstructionPolicy();
-        Assert.Single(Update(policy,500));
-        Assert.Single(policy.Update(M(500,"other"),"session",Now,Now,true));
-    }
-
-    [Fact]
-    public void VocabularyContains66UniqueSentencesAndRejectsUnsupportedDistances()
-    {
-        var texts=NavigationPrompts.AllTexts().ToArray();
-        Assert.Equal(66,texts.Length);
-        Assert.Equal(66,texts.Distinct().Count());
-        Assert.Contains("前方二百五十米，靠左行驶。",texts);
-        Assert.Contains("前方五百米，直行。",texts);
-        Assert.Contains("保持直行。",texts);
-        Assert.Contains("即将掉头。",texts);
-        Assert.Throws<ArgumentOutOfRangeException>(()=>NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,25));
-        Assert.Throws<ArgumentOutOfRangeException>(()=>NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,550));
-        Assert.Throws<ArgumentOutOfRangeException>(()=>NavigationPrompts.Action((ManeuverKind)999));
+        var text=NavigationPrompts.AllTexts().ToArray();
+        Assert.Equal(78,text.Length);
+        Assert.Equal(78,text.Distinct().Count());
+        Assert.Contains("前方二千米，向右前方行驶。",text);
+        Assert.Contains("保持直行。",text);
+        Assert.Equal("八百米后，在下一个路口右转。",NavigationPrompts.FirstLayer(ManeuverKind.TurnRight,800,1));
+        Assert.Equal("沿当前道路，继续行驶八百五十米。",NavigationPrompts.FirstLayer(ManeuverKind.TurnRight,850,1));
+        Assert.Equal("一千零一",NavigationPrompts.Number(1001));
     }
 }

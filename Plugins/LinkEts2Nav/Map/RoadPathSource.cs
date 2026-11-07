@@ -20,6 +20,7 @@ public sealed class RoadPathSource
     private RouteSnapshot? cachedRoute;
     private Vector3 cachedPosition;
     private List<List<DirectedRoad>> cachedChunks = [];
+    private IReadOnlyList<DirectedRoad>? navigationGraph;
 
     public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null)
     {
@@ -66,6 +67,13 @@ public sealed class RoadPathSource
         return matches.Length == 1 ? matches[0] : [];
     }
 
+
+    /// <summary>Nearby directed geometry, preserving the PPD's explicit junction connections.</summary>
+    public IReadOnlyList<DirectedRoad> GetNavigationGraph()
+        => navigationGraph ??= roads.Where(r => r.Node is not null && r.ForwardNode is not null
+                && !ambiguous.Contains((r.Node.Uid, r.ForwardNode.Uid)))
+            .SelectMany(r => new[] { Orient(r, r.Node.Uid), Orient(r, r.ForwardNode.Uid) })
+            .Concat(junctionLinks.Values).ToArray();
     /// <summary>
     /// Road distance is available only within one continuous route chunk. Across an unknown
     /// prefab, fallback is allowed only when both positions independently match a unique

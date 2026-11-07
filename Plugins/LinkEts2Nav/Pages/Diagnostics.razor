@@ -1,10 +1,11 @@
 @page "/link-ets2-nav"
 @using LinkEts2Nav.Runtime
+@using LinkEts2Nav.Core
 @implements IAsyncDisposable
 
 <div style="padding:32px;max-width:1100px">
     <h1>Link ETS2 Nav</h1>
-    <p>固定测速探头预警 · 开发诊断</p>
+    <p>测速预警与基础导航 · 开发诊断</p>
     <p>@snapshot.State</p>
     <button disabled="@previewing" @onclick="PreviewAudio">@(previewing ? "试听中…" : "试听预警音")</button>
     <p>@audioMessage</p>
@@ -15,6 +16,17 @@
         <dt>状态更新时间</dt><dd>@(snapshot.UpdatedAt == default ? "尚未收到数据" : snapshot.UpdatedAt.ToLocalTime().ToString("HH:mm:ss"))</dd>
         <dt>最近预警</dt><dd>@(snapshot.LastWarning ?? "无")</dd>
     </dl>
+    @if (snapshot.Navigation is { } navigation)
+    {
+        <h2>基础导航</h2>
+        <p>@navigation.State</p>
+        @if (navigation.Next is { } next)
+        {
+            <p>下一操作：@NavigationPrompts.Action(next.Kind) · 沿路 @next.DistanceMeters.ToString("F0") 米</p>
+            <small>@next.Id</small>
+        }
+        <p>最近指令：@(navigation.LastSpoken ?? "无")</p>
+    }
     @if (snapshot.LatestFine is { } fine)
     {
         <details>

@@ -29,6 +29,12 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         yield return "米内，有测速照相，限速";
         yield return "前方有测速照相，限速";
         yield return UncalibratedText;
+        foreach (string action in new[] { "左转", "右转", "靠左行驶", "靠右行驶", "直行", "掉头" })
+        {
+            yield return "前方三百米，" + action + "。";
+            yield return "前方五十米，" + action + "。";
+            yield return "前方" + action + "。";
+        }
     }
     public static string Number(int number)
     {

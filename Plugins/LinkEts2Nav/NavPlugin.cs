@@ -111,12 +111,16 @@ public sealed class NavPlugin : Plugin
         var fallback = new Ets2LaWarningAnnouncer(cancellationToken: token);
         await using var speech = CreateSpeech(fallback, logOutput, token);
         var pipeline = new WarningPipeline(new LoggedAnnouncer((IWarningAnnouncer?)speech ?? fallback, logOutput), speech);
+        var navigation = new NavigationRuntime(speech?.Queue, () => fallback.TryPlay(),
+            message => logOutput.Event(message, DateTimeOffset.UtcNow));
         void Publish(NavDiagnosticSnapshot snapshot, bool isWarning = false)
         {
             if (token.IsCancellationRequested) return;
             var fineState = source.Capture();
             snapshot = snapshot with { LatestFine = fineState.LatestFine, LatestCameraFine = fineState.LatestCameraFine,
                 FineHistory = fineState.FineHistory, DroppedFineCount = fineState.DroppedFineCount };
+            if (snapshot.Navigation is null)
+                snapshot = snapshot with { Navigation = navigation.Suspend("等待地图和行驶数据。", snapshot.UpdatedAt) };
             NavDiagnostics.Publish(snapshot);
             if (isWarning) logOutput.Status(snapshot.State, snapshot.UpdatedAt, isWarning: true);
             else logOutput.Report(snapshot);
@@ -182,7 +186,7 @@ public sealed class NavPlugin : Plugin
                 if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2)
                 {
                     speech?.ClearPlan();
-                    if (installation is not null) { mapScanner.Invalidate(); pipeline.Reset(); installation = null; }
+                    if (installation is not null) { mapScanner.Invalidate(); pipeline.Reset(); navigation.Reset(); installation = null; }
                     Publish(new(now, "等待 ETS2 当前地图就绪。", data.RouteAvailability.ToString(), 0, []));
                     continue;
                 }
@@ -197,7 +201,7 @@ public sealed class NavPlugin : Plugin
                         if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature)
                         {
                             mapScanner.Invalidate();
-                            pipeline.Reset();
+                            pipeline.Reset(); navigation.Reset();
                             logOutput.ResetTargets("准备在后台挂载当前地图资源：" + currentInstallation.Path, now);
                             gameLog = log;
                             resourceVersion++;
@@ -210,7 +214,7 @@ public sealed class NavPlugin : Plugin
                         logOutput.ResetTargets("车辆会话变化：已重置目标和预警状态（首次连接、读档或传送等）。", now);
                         session = data.SessionId;
                         mapScanner.Invalidate();
-                        pipeline.Reset();
+                        pipeline.Reset(); navigation.Reset();
                     }
                     var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
                     if (mapScanner.Request(new(resourceVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -247,6 +251,7 @@ public sealed class NavPlugin : Plugin
                     token.ThrowIfCancellationRequested();
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var diagnostic = pipeline.Process(latest, calibrated, DateTimeOffset.UtcNow);
+                    diagnostic = diagnostic with { Navigation = navigation.Process(latest, calibrated, DateTimeOffset.UtcNow) };
                     motionTrace.Record(latest, calibrated, diagnostic, signature, currentInstallation.Path);
                     if (latest.Vehicle is { Paused: true })
                         diagnostic = diagnostic with { State = "附近地图已准备；游戏已暂停，预警暂挂。" };
@@ -262,7 +267,7 @@ public sealed class NavPlugin : Plugin
                     Publish(new(DateTimeOffset.UtcNow, "地图暂不可用：" + ex.GetType().Name + ": " + ex.Message,
                         data.RouteAvailability.ToString(), 0, []), isWarning: true);
                     mapScanner.Invalidate();
-                    pipeline.Reset();
+                    pipeline.Reset(); navigation.Reset();
                     // Back off setup retries without blocking the telemetry/diagnostic loop.
                     setupRetryAfter = DateTimeOffset.UtcNow.AddSeconds(5);
                 }

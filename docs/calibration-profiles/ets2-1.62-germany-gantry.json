@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "descriptor": "/model/sign/traffic/de/3lane_speedlimit_100_no_overtaking_trucks_60_sc.pmd",
+      "hookup": "speedcam.20",
+      "locator": "0",
+      "variant": "default",
+      "metadataFingerprint": "44A97F000788032A63A000E81CBB4D7664F349A3DCBC1C197DF3F064F4FECA85",
+      "travelAxis": "+Z",
+      "monitoredOffset": {
+        "x": 0,
+        "y": 0,
+        "z": -20
+      },
+      "evidence": "ETS2 1.62; camera 2cb8aabca28d0000:0 produced speeding_camera140 at 2026-11-07T11:23:52.5565813Z, sampled pose(-2111.2,61.1,-4399),heading0.51949,speed123.9km/h,SDK limit60. Local +Z travel and -Z20m center give fine-pose residual6.48m, within trigger_distance8m. Camera 2cb8a94806cd0001:0 uses the same fingerprint; user reports opposite-facing pass without fine. Captured closest pass: travel dot -0.99485, distance17.11m,speed114.87km/h,SDK limit60. This is an independent opposite-facing instance outside the 8m monitoring vicinity, not a two-direction enforcement test on the same camera. Preliminary model calibration; sampled fine pose can lag offence."
+    }
+  ]
+}

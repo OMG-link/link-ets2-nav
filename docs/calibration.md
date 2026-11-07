@@ -68,4 +68,6 @@
 
 [ETS2 1.62 芬兰测速模型配置](calibration-profiles/ets2-1.62-finland.json) 覆盖模型 /model2/speedcamera/balt/speedcamera_01_fi.pmd 的 default 变体、speedcam.20 挂点和指定资源指纹。依据为一次方向吻合的测速罚款及现场资源数据；反向通行是否不触发、其他地图实例是否一致仍需实测。
 
+[ETS2 1.62 德国三车道龙门架测速模型配置](calibration-profiles/ets2-1.62-germany-gantry.json) 覆盖 3lane_speedlimit_100_no_overtaking_trucks_60_sc.pmd 的 default 变体及指定指纹。依据为一处顺向测速罚款和另一处相反朝向模型的无罚款通过样本。后者的轨迹未进入计算出的 8 米监测邻域，因此不能据此单独证明同一探头反向绝不测速；其他变体和指纹不自动启用。
+
 使用时将其中 entries 的记录合并到宿主 Settings/LinkEts2Nav.CameraCalibrations.json 的 entries 数组，保留已有其他模型记录。不要添加重复键。插件会自动重新读取配置，无需重启。该文件不会自动启用，也不为其他指纹或变体提供兜底。

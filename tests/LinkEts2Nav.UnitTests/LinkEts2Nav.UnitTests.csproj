@@ -19,5 +19,6 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../docs/calibration-profiles/ets2-1.62-finland.json" LogicalName="FinlandCalibration.json" />
+    <EmbeddedResource Include="../../docs/calibration-profiles/ets2-1.62-germany-gantry.json" LogicalName="GermanGantryCalibration.json" />
   </ItemGroup>
 </Project>

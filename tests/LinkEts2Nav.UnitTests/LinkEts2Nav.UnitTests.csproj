@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../Plugins/LinkEts2Nav/LinkEts2Nav.csproj" />
+    <ProjectReference Include="../../tools/LinkEts2Nav.Speech/LinkEts2Nav.Speech.csproj" />
   </ItemGroup>
 </Project>

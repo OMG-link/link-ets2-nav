@@ -7,10 +7,11 @@ Console.InputEncoding = new UTF8Encoding(false);
 Console.OutputEncoding = new UTF8Encoding(false);
 if (args.Contains("--help", StringComparer.Ordinal))
 {
-    Console.WriteLine("Usage: LinkEts2Nav.Speech --model-dir DIR --cache-dir DIR [--voice zf_067] [--threads 2]");
+    Console.WriteLine("Usage: LinkEts2Nav.Speech --model-dir DIR --cache-dir DIR [--voice zf_067] [--threads 2] [--pack-dir DIR]");
     Console.WriteLine("Reads UTF-8 JSON lines {\"id\":\"request-id\",\"text\":\"完整短句\"} from stdin, in order.");
     Console.WriteLine("Writes {id,path,cacheHit,error} JSON lines to stdout. error=null indicates success.");
     Console.WriteLine("Kokoro multi-lang v1.1-zh preset: zf_067 = speaker 36, speed 1.0, CPU only.");
+    Console.WriteLine("Generate cloud pack: --generate-pack --keys FILE --output DIR (explicit network calls, billed by provider).");
     Console.WriteLine("No playback or model downloads. EOF exits 0; startup errors exit 2; request errors keep the worker alive.");
     return 0;
 }
@@ -22,7 +23,9 @@ var json = new JsonSerializerOptions
 };
 try
 {
+    if (args.Length > 0 && args[0] == "--generate-pack") return await QwenPackGenerator.RunAsync(args);
     var options = WorkerOptions.Parse(args);
+    var pack = new SpeechPack(options.PackDirectory, options.CacheDirectory);
     using var synthesis = new KokoroSynthesis(options);
     while (true)
     {
@@ -38,7 +41,7 @@ try
                 throw new InvalidDataException("Request id must contain 1-128 printable characters.");
             if (string.IsNullOrWhiteSpace(request.Text) || request.Text.Length > 2048)
                 throw new InvalidDataException("Text must contain 1-2048 characters.");
-            var result = synthesis.Generate(request.Text.Trim().Normalize(NormalizationForm.FormC));
+            var result = pack.Generate(request.Text.Trim().Normalize(NormalizationForm.FormC), synthesis.Generate);
             Write(new Response(id, result.Path, result.CacheHit, null));
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)

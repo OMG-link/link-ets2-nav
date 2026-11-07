@@ -25,14 +25,14 @@ internal static class Protocol
     }
 }
 
-internal sealed record WorkerOptions(string ModelDirectory, string CacheDirectory, string Voice, int Threads)
+internal sealed record WorkerOptions(string ModelDirectory, string CacheDirectory, string Voice, int Threads, string? PackDirectory)
 {
     public static WorkerOptions Parse(string[] args)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         for (int i = 0; i < args.Length; i += 2)
         {
-            if (i + 1 >= args.Length || args[i] is not ("--model-dir" or "--cache-dir" or "--voice" or "--threads")
+            if (i + 1 >= args.Length || args[i] is not ("--model-dir" or "--cache-dir" or "--voice" or "--threads" or "--pack-dir")
                 || !values.TryAdd(args[i], args[i + 1]))
                 throw new ArgumentException("Unknown, repeated or incomplete speech worker option; use --help.");
         }
@@ -43,6 +43,6 @@ internal sealed record WorkerOptions(string ModelDirectory, string CacheDirector
         if (voice != "zf_067") throw new ArgumentException("This Kokoro v1.1-zh preset supports zf_067 only.");
         if (!int.TryParse(values.GetValueOrDefault("--threads", "2"), out int threads) || threads is < 1 or > 8)
             throw new ArgumentException("Threads must be between 1 and 8.");
-        return new(Path.GetFullPath(model), Path.GetFullPath(cache), voice, threads);
+        return new(Path.GetFullPath(model), Path.GetFullPath(cache), voice, threads, values.TryGetValue("--pack-dir", out var pack) ? Path.GetFullPath(pack) : null);
     }
 }

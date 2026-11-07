@@ -64,7 +64,7 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
             StandardErrorEncoding = Encoding.UTF8, WorkingDirectory = Path.GetDirectoryName(options.WorkerPath)!
         };
         foreach (string argument in new[] { options.WorkerPath, "--model-dir", options.ModelDirectory!,
-            "--cache-dir", options.CacheDirectory, "--voice", options.Voice, "--threads",
+            "--cache-dir", options.CacheDirectory, "--pack-dir", options.PackDirectory, "--voice", options.Voice, "--threads",
             options.Threads.ToString(System.Globalization.CultureInfo.InvariantCulture) }) start.ArgumentList.Add(argument);
         process?.Dispose();
         process = Process.Start(start) ?? throw new IOException("Could not start the speech worker.");

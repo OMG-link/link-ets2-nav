@@ -77,6 +77,13 @@ try {
     $speechDeployment = Join-Path $hostOutput 'Tools\LinkEts2Nav.Speech'
     New-Item -ItemType Directory -Path $speechDeployment -Force | Out-Null
     Get-ChildItem -LiteralPath $speechOutput -File | Copy-Item -Destination $speechDeployment -Force
+    $speechPack = Join-Path $projectRoot 'artifacts\speech\qwen-longanhuan-v3.1'
+    if (Test-Path -LiteralPath (Join-Path $speechPack 'manifest.json')) {
+        $packDeployment = Join-Path $hostOutput 'Assets\LinkEts2Nav\SpeechPack'
+        New-Item -ItemType Directory -Path $packDeployment -Force | Out-Null
+        Get-ChildItem -LiteralPath $speechPack -File | Copy-Item -Destination $packDeployment -Force
+        Write-Host "Local speech pack deployed to $packDeployment."
+    }
     Write-Host "Plugin deployed to $deployment. Enable it in ETS2LA's plugin manager."
     if ($Action -eq 'Run') {
         Push-Location $hostOutput

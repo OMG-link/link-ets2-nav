@@ -153,3 +153,27 @@ dotnet run --project tools/LinkEts2Nav.Speech -- --model-dir "<model-directory>"
 ```
 
 worker 从标准输入按行读取 `{"id":"example","text":"五百米处，有测速照相。"}`，标准输出返回 `id/path/cacheHit/error` JSON。EOF 正常退出，合成诊断只写标准错误。调用时应使用结构化参数和 JSON 序列化，不能把动态文本拼进 shell 命令。
+
+## 远端预生成与本地拼接
+
+Qwen 音频包只在开发者主动运行生成命令时联网；插件运行时不会读取 API 密钥，也不会调用远端服务。使用 `qwen-audio-3.1-tts-flash`、`longanhuan_v3.1` 和 [Qwen WebSocket 协议](https://help.aliyun.com/en/model-studio/qwen-audio-tts-websocket-api)。生成会产生服务商计费。
+
+在仓库根目录的 `.api-keys` 中写入 `qwen=你的密钥`。该文件被 Git 忽略，不复制到宿主或发布目录。随后执行：
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Speech -- --generate-pack --keys .api-keys --output artifacts/speech/qwen-longanhuan-v3.1
+```
+
+命令生成 28 个音频文件：500/200 米各自的无已知限速版本，以及限速 30、40、50、60、70、80、90、100、110、120、130 公里的整句；另有迟发现时的“前方有测速照相。”及三个模板片段“米处，有测速照相。”“米处，有测速照相，限速”“公里。”。每条成功后保存清单和 SHA-256；重复执行复用已验证的文件，不重复调用服务。生成异常时停止，修复后可重新执行。更换模型、音色或合成参数时应生成到新的目录，避免混用不同音频包。
+
+`Deploy`/`Run` 会将上述本地生成目录复制到宿主 `Assets/LinkEts2Nav/SpeechPack/`。也可手动复制整包，并在 `LinkEts2Nav.Speech.json` 中设置 `packDirectory`；默认值即该相对路径。音频和清单存放在忽略的产物目录，不随源码提交。自行分发音频包前须确认生成服务的相关授权。
+
+匹配完整文案时优先使用音频包。遇到特殊数字，例如“五百米处，有测速照相，限速六十五公里。”，则由本地 Kokoro 分别生成“五百”和“六十五”，再依次拼接远端模板片段，保存完整 WAV。两种来源统一为 24 kHz、单声道、16 位 PCM；拼接的是采样数据，保留原有停顿，音色接缝可能明显。没有可用模板、文案不匹配或音频包损坏时回退本地整句合成。缓存键包含模板及本地数字音频内容，内容变更后不会误用旧拼接音频。
+
+目前地图逻辑仍不提供可靠的探头限速，因此实际预警默认使用无已知限速版本；音频包包含限速文案并不意味着已获得该限速。可通过 worker JSON 输入离线测试特殊限速文案，无需启动游戏：
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Speech -- --model-dir "<model-directory>" --cache-dir "artifacts/speech/cache" --pack-dir "artifacts/speech/qwen-longanhuan-v3.1"
+```
+
+输入 `{"id":"special","text":"五百米处，有测速照相，限速六十五公里。"}`，返回完整缓存 WAV 路径；重复输入复用本地数字和完整拼接缓存。工具不会自动播放音频。

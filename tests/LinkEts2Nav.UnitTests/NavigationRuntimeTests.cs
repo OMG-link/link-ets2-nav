@@ -26,19 +26,30 @@ public sealed class NavigationRuntimeTests
         new(0,0,z,.5,20,1000,true,paused,1,stale?Now.AddSeconds(-3):Now),
         route,availability,"session",!paused);
     [Fact]
-    public void OfficialRouteProducesTwoRightTurnStagesWithoutCameraOrLaneData()
+    public void FirstDetectionAt79MetersDoesNotRepeatAt50Meters()
     {
         var scene=Scene();var calls=0;var logs=new List<string>();
         var runtime=new NavigationRuntime(fallback:()=>calls++,log:logs.Add);
-        var next=runtime.Process(Data(scene.Route,300),scene.Map,Now);
+        runtime.Process(Data(scene.Route,621),scene.Map,Now);
+        runtime.Process(Data(scene.Route,651),scene.Map,Now);
+        runtime.Process(Data(scene.Route,680),scene.Map,Now);
+        Assert.Equal(1,calls);
+        Assert.Contains(logs,l=>l.Contains("导航指令：前方五十米，右转。"));
+    }
+    [Fact]
+    public void OfficialRouteProducesThreeRightTurnStagesWithoutCameraOrLaneData()
+    {
+        var scene=Scene();var calls=0;var logs=new List<string>();
+        var runtime=new NavigationRuntime(fallback:()=>calls++,log:logs.Add);
+        var next=runtime.Process(Data(scene.Route,100),scene.Map,Now);
         Assert.Equal(ManeuverKind.TurnRight,next.Next!.Kind);
-        Assert.InRange(next.Next.DistanceMeters,399,401);
-        runtime.Process(Data(scene.Route,401),scene.Map,Now);
-        runtime.Process(Data(scene.Route,403),scene.Map,Now);
+        Assert.InRange(next.Next.DistanceMeters,599,601);
+        runtime.Process(Data(scene.Route,201),scene.Map,Now);
+        runtime.Process(Data(scene.Route,501),scene.Map,Now);
         runtime.Process(Data(scene.Route,651),scene.Map,Now);
         runtime.Process(Data(scene.Route,653),scene.Map,Now);
-        Assert.Equal(2,calls);
-        Assert.Contains(logs,l=>l.Contains("导航指令：前方三百米，右转。"));
+        Assert.Equal(3,calls);
+        Assert.Contains(logs,l=>l.Contains("导航指令：前方五百米，右转。"));
         Assert.Contains(logs,l=>l.Contains("导航指令：前方五十米，右转。"));
     }
     [Fact]
@@ -54,7 +65,7 @@ public sealed class NavigationRuntimeTests
     [Fact]
     public void EveryRuntimePhraseExistsInPreGeneratedPack()
     {
-        Assert.Equal(18,NavigationPrompts.AllTexts().Distinct().Count());
+        Assert.Equal(66,NavigationPrompts.AllTexts().Distinct().Count());
         foreach(string text in NavigationPrompts.AllTexts())
             Assert.Contains(text,LinkEts2Nav.Speech.SpeechPack.DefaultTexts());
     }

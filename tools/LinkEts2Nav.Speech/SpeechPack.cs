@@ -31,11 +31,12 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         yield return UncalibratedText;
         foreach (string action in new[] { "左转", "右转", "靠左行驶", "靠右行驶", "直行", "掉头" })
         {
-            yield return "前方三百米，" + action + "。";
-            yield return "前方五十米，" + action + "。";
-            yield return "前方" + action + "。";
+            foreach (int distance in Enumerable.Range(1, 10).Select(n => n * 50))
+                yield return "前方" + Number(distance) + "米，" + action + "。";
+            yield return action == "直行" ? "保持直行。" : "即将" + action + "。";
         }
     }
+
     public static string Number(int number)
     {
         if (number is < 1 or > 999) throw new ArgumentOutOfRangeException(nameof(number));

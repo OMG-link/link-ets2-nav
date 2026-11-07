@@ -35,7 +35,7 @@ public sealed class SpeechPackTests : IDisposable
     [Fact]
     public void CommonSentenceUsesCloudFileWithoutLocalInferenceAndRepairsCache()
     {
-        const string text = "五百米处，有测速照相，限速九十公里。";
+        const string text = "五百米处，有测速照相，限速九十。";
         var pack = Create(Entry(text, [10, 0, 11, 0]));
         var first = pack.Generate(text, Local);
         Assert.Empty(localRequests);
@@ -50,18 +50,18 @@ public sealed class SpeechPackTests : IDisposable
     [Fact]
     public void SpecialLimitJoinsOnlyLocalNumbersInCorrectOrderAndReusesCache()
     {
-        var pack = Create(Entry("米处，有测速照相，限速", [3, 0, 4, 0]), Entry("公里。", [5, 0]));
-        const string text = "五百米处，有测速照相，限速六十五公里。";
+        var pack = Create(Entry("米处，有测速照相，限速", [3, 0, 4, 0]));
+        const string text = "五百米处，有测速照相，限速六十五。";
         var first = pack.Generate(text, Local);
         Assert.Equal(new[] { "五百", "六十五" }, localRequests);
-        Assert.Equal(new byte[] { 1, 0, 2, 0, 3, 0, 4, 0, 9, 0, 5, 0 }, PcmAudio.Read(first.Path));
+        Assert.Equal(new byte[] { 1, 0, 2, 0, 3, 0, 4, 0, 9, 0 }, PcmAudio.Read(first.Path));
         var second = pack.Generate(text, Local);
         Assert.Equal(first.Path, second.Path);
         Assert.True(second.CacheHit);
         File.WriteAllText(first.Path, "broken");
         Assert.False(pack.Generate(text, Local).CacheHit);
         // Updating cloud content invalidates the combined cache.
-        pack = Create(Entry("米处，有测速照相，限速", [6, 0]), Entry("公里。", [5, 0]));
+        pack = Create(Entry("米处，有测速照相，限速", [6, 0]));
         Assert.NotEqual(first.Path, pack.Generate(text, Local).Path);
     }
 
@@ -92,8 +92,8 @@ public sealed class SpeechPackTests : IDisposable
     [Fact]
     public void MissingFragmentsOrPackUseWholeLocalSentence()
     {
-        var pack = Create(Entry("公里。", [1, 0]));
-        const string text = "五百米处，有测速照相，限速六十五公里。";
+        var pack = Create(Entry("不相关模板。", [1, 0]));
+        const string text = "五百米处，有测速照相，限速六十五。";
         pack.Generate(text, Local);
         Assert.Equal(text, Assert.Single(localRequests));
         localRequests.Clear();
@@ -121,8 +121,8 @@ public sealed class SpeechPackTests : IDisposable
     public void PackNumbersAndAllCommonCombinationsAreWellFormed(int number, string expected)
     {
         Assert.Equal(expected, SpeechPack.Number(number));
-        Assert.Equal(29, SpeechPack.DefaultTexts().Distinct().Count());
-        Assert.Contains("二百米处，有测速照相，限速九十公里。", SpeechPack.DefaultTexts());
+        Assert.Equal(41, SpeechPack.DefaultTexts().Distinct().Count());
+        Assert.Contains("二百米处，有测速照相，限速九十。", SpeechPack.DefaultTexts());
     }
 
     [Fact]
@@ -132,6 +132,27 @@ public sealed class SpeechPackTests : IDisposable
         File.WriteAllText(Path.Combine(Pack, "manifest.json"), """{"Schema":1,"Model":"test","Voice":"test","Entries":null}""");
         new SpeechPack(Pack, Cache).Generate("前方有测速照相。", Local);
         Assert.Equal("前方有测速照相。", Assert.Single(localRequests));
+    }
+    [Theory]
+    [InlineData("二百米内，有测速照相，限速一百一十。", "米内，有测速照相，限速", true)]
+    [InlineData("前方有测速照相，限速一百一十。", "前方有测速照相，限速", false)]
+    public void SpecialLimitsSupportLateWarningTemplates(string text, string fragment, bool distance)
+    {
+        var pack = Create(Entry(fragment, [3, 0]));
+        var result = pack.Generate(text, Local);
+        Assert.Equal(distance ? new[] { "二百", "一百一十" } : new[] { "一百一十" }, localRequests);
+        Assert.Equal(distance ? new byte[] { 9, 0, 3, 0, 9, 0 } : new byte[] { 3, 0, 9, 0 }, PcmAudio.Read(result.Path));
+    }
+
+    [Fact]
+    public void DefaultPackCoversAllWarningFormsWithoutUnitsAndStopsAt100()
+    {
+        Assert.Equal(new[] { 30, 40, 50, 60, 70, 80, 90, 100 }, SpeechPack.CommonLimits);
+        var texts = SpeechPack.DefaultTexts().ToArray();
+        Assert.DoesNotContain(texts, text => text.Contains("公里") || text.Contains("一百一十"));
+        foreach (string prefix in new[] { "五百米处，有测速照相", "二百米处，有测速照相", "二百米内，有测速照相", "前方有测速照相" })
+            foreach (int limit in SpeechPack.CommonLimits)
+                Assert.Contains(prefix + "，限速" + SpeechPack.Number(limit) + "。", texts);
     }
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
 }

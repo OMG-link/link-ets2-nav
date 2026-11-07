@@ -41,7 +41,7 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
     public static string Text(double stage, double actualDistance, bool firstConfirmedInside200Meters = false, int? speedLimitKph = null)
     {
         string text = BaseText(stage, actualDistance, firstConfirmedInside200Meters);
-        return speedLimitKph is > 0 and <= 300 ? text.TrimEnd('。') + "，限速" + Number(speedLimitKph.Value) + "公里。" : text;
+        return speedLimitKph is > 0 and <= 300 ? text.TrimEnd('。') + "，限速" + Number(speedLimitKph.Value) + "。" : text;
     }
 
     public static string Number(int value)

@@ -61,9 +61,9 @@ public sealed class SpeedLimitTests
         Assert.Equal(50,Assert.Single(e.Update(data,Now)).SpeedLimitKph);
     }
     [Theory]
-    [InlineData(500,499,false,50,"五百米处，有测速照相，限速五十公里。")]
-    [InlineData(200,199,false,80,"二百米处，有测速照相，限速八十公里。")]
-    [InlineData(200,150,true,65,"二百米内，有测速照相，限速六十五公里。")]
+    [InlineData(500,499,false,50,"五百米处，有测速照相，限速五十。")]
+    [InlineData(200,199,false,80,"二百米处，有测速照相，限速八十。")]
+    [InlineData(200,150,true,65,"二百米内，有测速照相，限速六十五。")]
     public void SpeechUsesCameraLimit(double stage,double distance,bool late,int limit,string text)
         =>Assert.Equal(text,PlannedSpeechAnnouncer.Text(stage,distance,late,limit));
     [Fact] public void CurrentLimitLoggingDoesNotRepeatAsVehicleMoves()

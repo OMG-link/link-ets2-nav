@@ -13,22 +13,21 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
 {
     public static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
     public static string FileName(string text) => Hash(Encoding.UTF8.GetBytes(text)) + ".wav";
-    public static readonly int[] CommonLimits = [30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130];
+    public static readonly int[] CommonLimits = [30, 40, 50, 60, 70, 80, 90, 100];
     public static IEnumerable<string> DefaultTexts()
     {
-        foreach (string distance in new[] { "五百", "二百" })
+        foreach (string prefix in new[] { "五百米处，有测速照相", "二百米处，有测速照相", "二百米内，有测速照相", "前方有测速照相" })
         {
-            yield return distance + "米处，有测速照相。";
+            yield return prefix + "。";
             foreach (int speed in CommonLimits)
-                yield return distance + "米处，有测速照相，限速" + Number(speed) + "公里。";
+                yield return prefix + "，限速" + Number(speed) + "。";
         }
-        yield return "二百米内，有测速照相。";
-        yield return "前方有测速照相。";
         yield return "米处，有测速照相。";
         yield return "米处，有测速照相，限速";
-        yield return "公里。";
+        yield return "米内，有测速照相。";
+        yield return "米内，有测速照相，限速";
+        yield return "前方有测速照相，限速";
     }
-
     public static string Number(int number)
     {
         if (number is < 1 or > 999) throw new ArgumentOutOfRangeException(nameof(number));
@@ -62,21 +61,23 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
                 return (target, false);
             }
 
-            // Capture the spoken number itself: no guessed speed limit or grammar rewriting.
-            var match = Regex.Match(text, @"^([零一二三四五六七八九十百0-9]+)米处，有测速照相(?:，限速([零一二三四五六七八九十百0-9]+)公里)?。$",
+            // Capture spoken numbers without inventing a speed limit.
+            var match = Regex.Match(text, @"^(?:(?<distance>[零一二三四五六七八九十百0-9]+)(?<where>米处|米内)，有测速照相|(?<ahead>前方有测速照相))(?:，限速(?<speed>[零一二三四五六七八九十百0-9]+))?。$",
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
             if (!match.Success) return local(text);
-            string middleText = match.Groups[2].Success ? "米处，有测速照相，限速" : "米处，有测速照相。";
+            bool hasSpeed = match.Groups["speed"].Success;
+            string middleText = match.Groups["ahead"].Success ? "前方有测速照相" :
+                match.Groups["where"].Value + "，有测速照相";
+            middleText += hasSpeed ? "，限速" : "。";
             var middle = pack.Entries.SingleOrDefault(e => e.Text == middleText);
-            var suffix = pack.Entries.SingleOrDefault(e => e.Text == "公里。");
-            if (middle is null || (match.Groups[2].Success && suffix is null)) return local(text);
-            // Validate every cloud fragment before spending time on local inference.
+            if (middle is null) return local(text);
+            // Validate the cloud fragment before spending time on local inference.
             string middlePath = Resolve(middle);
-            string? suffixPath = match.Groups[2].Success ? Resolve(suffix!) : null;
-            var identity = JsonSerializer.Serialize(new { schema = 1, text, pack.Model, pack.Voice,
-                middle.Sha256, suffix = suffixPath is null ? null : suffix!.Sha256 });
-            var paths = new List<string> { local(match.Groups[1].Value).Path, middlePath };
-            if (suffixPath is not null) { paths.Add(local(match.Groups[2].Value).Path); paths.Add(suffixPath); }
+            var identity = JsonSerializer.Serialize(new { schema = 2, text, pack.Model, pack.Voice, middle.Sha256 });
+            var paths = new List<string>();
+            if (match.Groups["distance"].Success) paths.Add(local(match.Groups["distance"].Value).Path);
+            paths.Add(middlePath);
+            if (hasSpeed) paths.Add(local(match.Groups["speed"].Value).Path);
             // Hash actual local samples too, so changing the local voice invalidates the assembled file.
             var samples = paths.Select(PcmAudio.Read).ToArray();
             string key = Hash(Encoding.UTF8.GetBytes(identity + string.Join("", samples.Select(Hash))));

@@ -11,6 +11,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
     private readonly CameraWarningEngine engine = new();
     private TruckLib.ScsMap.Map? previousMap;
     private RoadPathSource? paths;
+    private SpeedLimitResolver? speedLimits;
     private string? lastWarning;
 
     public NavDiagnosticSnapshot Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
@@ -26,6 +27,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
         {
             previousMap = nearby.Map;
             paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths);
+            speedLimits = new SpeedLimitResolver(nearby.SpeedLimits, paths);
         }
         bool hasRoute = data.RouteAvailability == RouteAvailability.Available;
         bool usableRoute = hasRoute || data.RouteAvailability == RouteAvailability.None;
@@ -51,9 +53,12 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
                     _ => candidate.MatchFailure ?? "方向或位置匹配不确定"
                 };
             }
+            var limit = camera.DirectionVerified ? speedLimits!.Resolve(new(camera.Id, camera.MonitoredPosition, camera.TravelDirection))
+                : new SpeedLimitResult(null, "探头方向未校准");
+            candidate = candidate with { SpeedLimitKph = limit.Kph };
             candidates.Add(candidate);
             diagnostics.Add(new(camera.Id, camera.Hookup, directDistance, camera.DirectionVerified, decision,
-                candidate.RoadDistanceMeters, camera.SourceDescriptor, camera.ModelVariant, camera.MetadataFingerprint, candidate.RouteDistanceLowerBoundMeters));
+                candidate.RoadDistanceMeters, camera.SourceDescriptor, camera.ModelVariant, camera.MetadataFingerprint, candidate.RouteDistanceLowerBoundMeters, limit.Kph, limit.Reason));
         }
         // Raw pose age, not processing time, controls whether alerts may fire.
         var warningSnapshot = new WarningSnapshot(data.SessionId, data.Route.Revision, hasRoute,

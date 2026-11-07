@@ -1,0 +1,41 @@
+using System.Numerics;
+using LinkEts2Nav.Core;
+namespace LinkEts2Nav.Map;
+
+public sealed record LimitAction(int? SetKph = null, bool Reset = false, bool? Urban = null, bool Unsupported = false)
+{
+    public bool Relevant => SetKph.HasValue || Reset || Urban.HasValue || Unsupported;
+}
+public sealed record LimitSign(string Id, Vector3 Position, Vector3 Direction, bool FollowRoad,
+    LimitAction Action, bool TemplateOverride = false)
+{
+    public string? RoadId { get; init; }
+    public bool OwnershipAmbiguous { get; init; }
+}
+public sealed record LimitRoad(DirectedRoad Geometry, string? SpeedClass);
+public sealed record LimitRegion(string Id, IReadOnlyList<Vector3> Points, float Height, bool Urban, int? SetKph = null)
+{
+    public string? Country { get; init; }
+    public bool Contains(Vector3 p)
+    {
+        if (Points.Count < 3) return false;
+        if (Height > 0 && (p.Y < Points[0].Y || p.Y > Points[0].Y + Height)) return false;
+        bool inside = false;
+        for (int i=0,j=Points.Count-1;i<Points.Count;j=i++)
+        {
+            var a=Points[i]; var b=Points[j];
+            if ((a.Z>p.Z)!=(b.Z>p.Z) && p.X<(b.X-a.X)*(p.Z-a.Z)/(b.Z-a.Z)+a.X) inside=!inside;
+        }
+        return inside;
+    }
+}
+public sealed record TruckSpeedLimit(int Rural, int Urban, int Maximum);
+public sealed record SpeedLimitData(
+    IReadOnlyDictionary<ulong,LimitRoad> Roads, IReadOnlyList<LimitSign> Signs,
+    IReadOnlyList<LimitRegion> Regions, IReadOnlyDictionary<string,TruckSpeedLimit> Limits,
+    string? Country, string? Error = null)
+{
+    public static SpeedLimitData Empty { get; } = new(new Dictionary<ulong,LimitRoad>(),[],[],
+        new Dictionary<string,TruckSpeedLimit>(),null,"限速资源尚未加载");
+}
+public sealed record SpeedLimitResult(int? Kph, string Reason);

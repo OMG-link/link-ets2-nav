@@ -141,6 +141,7 @@ public sealed class NavPlugin : Plugin
                 var now = DateTimeOffset.UtcNow;
                 if (!data.IsVehicleUsable) speech?.ClearPlan();
                 logOutput.ReportFines(source.Store.DrainFines(), data.DroppedFineCount, now);
+                logOutput.ReportCurrentLimit(data, now);
                 if (!data.CanPrepareMap(now) || data.Vehicle is not { } vehicle)
                 {
                     string reason = data.Vehicle switch

@@ -48,11 +48,11 @@
     @if (snapshot.Cameras.Count > 0)
     {
         <table style="width:100%;text-align:left">
-            <thead><tr><th>探头</th><th>挂点</th><th>直线距离</th><th>沿路距离</th><th>方向已验证</th><th>判定</th></tr></thead>
+            <thead><tr><th>探头</th><th>挂点</th><th>直线距离</th><th>沿路距离</th><th>方向已验证</th><th>限速估算</th><th>判定</th></tr></thead>
             <tbody>
                 @foreach (var camera in snapshot.Cameras)
                 {
-                    <tr><td><details><summary>@camera.Id</summary><p>@camera.SourceDescriptor · @camera.Variant</p><small>@camera.MetadataFingerprint</small></details></td><td>@camera.Hookup</td><td>@camera.DistanceMeters.ToString("F0") m</td><td>@(camera.RoadDistanceMeters?.ToString("F0") ?? "未知")</td><td>@(camera.DirectionVerified ? "是" : "否")</td><td>@camera.Decision</td></tr>
+                    <tr><td><details><summary>@camera.Id</summary><p>@camera.SourceDescriptor · @camera.Variant</p><small>@camera.MetadataFingerprint</small></details></td><td>@camera.Hookup</td><td>@camera.DistanceMeters.ToString("F0") m</td><td>@(camera.RoadDistanceMeters?.ToString("F0") ?? "未知")</td><td>@(camera.DirectionVerified ? "是" : "否")</td><td title="@camera.SpeedLimitReason">@(camera.SpeedLimitKph is { } limit ? $"{limit} km/h" : "未知")<br /><small>@camera.SpeedLimitReason</small></td><td>@camera.Decision</td></tr>
                 }
             </tbody>
         </table>

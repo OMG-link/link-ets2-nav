@@ -16,6 +16,7 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     IReadOnlyList<string> Diagnostics, IReadOnlyList<SectorCoordinate> Sectors)
 {
     public IReadOnlyList<DirectedRoad> PrefabPaths { get; init; } = [];
+    public SpeedLimitData SpeedLimits { get; init; } = SpeedLimitData.Empty;
 }
 
 /// <summary>
@@ -40,11 +41,15 @@ public sealed class NearbyCameraScanner
     private ScsMap? map;
     private SectorCoordinate[] loadedSectors = [];
     private bool definitionsLoaded;
+    private readonly IReadOnlyList<string> activeModPaths;
+    private SpeedLimitDefinitionReader? speedReader;
+    private SpeedLimitData speedLimits = SpeedLimitData.Empty;
 
-    public NearbyCameraScanner(IFileSystem fileSystem, string mapPath = "/map/europe.mbd")
+    public NearbyCameraScanner(IFileSystem fileSystem, string mapPath = "/map/europe.mbd", IReadOnlyList<string>? activeModPaths = null)
     {
         this.fileSystem = fileSystem;
         this.mapPath = mapPath;
+        this.activeModPaths = activeModPaths ?? [];
     }
 
     public NearbyMapSnapshot ReadNearby(Vector3 playerPosition, float radiusMeters = 1000,
@@ -85,9 +90,11 @@ public sealed class NearbyCameraScanner
             junctionDiagnostics = issues.Distinct().ToArray();
             map = nextMap;
             loadedSectors = sectors;
+            speedLimits = speedReader!.Build(nextMap);
         }
         var diagnostics = new List<string>(definitionDiagnostics);
         diagnostics.AddRange(junctionDiagnostics);
+        if(speedLimits.Error is not null) diagnostics.Add(speedLimits.Error);
         var cameras = new List<CameraObservation>();
         float radiusSquared = (radiusMeters + 100) * (radiusMeters + 100);
         foreach (var item in map.MapItems.Values)
@@ -158,7 +165,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { PrefabPaths = junctionGeometry };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { PrefabPaths = junctionGeometry, SpeedLimits = speedLimits };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)
@@ -254,6 +261,7 @@ public sealed class NearbyCameraScanner
             }
             catch (Exception ex) { definitionDiagnostics.Add($"{path}: {ex.Message}"); }
         }
+        speedReader = new SpeedLimitDefinitionReader(fileSystem, activeModPaths);
         definitionsLoaded = true;
     }
 
@@ -273,6 +281,6 @@ public sealed class NearbyCameraScanner
 
     private sealed class CameraMap : ScsMap
     {
-        protected override bool PostProcessItem(MapItem item) => item is ScsModel or Sign or Road or Prefab;
+        protected override bool PostProcessItem(MapItem item) => item is ScsModel or Sign or Road or Prefab or CityArea or TrafficArea;
     }
 }

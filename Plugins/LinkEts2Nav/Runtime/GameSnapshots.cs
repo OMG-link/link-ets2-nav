@@ -10,6 +10,7 @@ public sealed record VehicleSnapshot(
     double NavigationDistanceRemainingMeters, bool SdkActive, bool Paused,
     ulong SimulationTime, DateTimeOffset ReceivedAt)
 {
+    public double? CurrentSpeedLimitKph { get; init; }
     /// <summary>Horizontal world forward vector: SCS north=-Z, west=-X; heading is turns.</summary>
     public System.Numerics.Vector3 ForwardDirection => new(
         (float)-Math.Sin(HeadingTurns * Math.Tau), 0, (float)-Math.Cos(HeadingTurns * Math.Tau));

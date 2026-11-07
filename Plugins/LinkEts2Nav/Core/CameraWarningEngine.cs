@@ -19,6 +19,7 @@ public sealed record CameraCandidate(
     double? RoadDistanceMeters = null)
 {
     public string? MatchFailure { get; init; }
+    public int? SpeedLimitKph { get; init; }
     // A conservative route-length bound, never an asserted complete road distance.
     public double? RouteDistanceLowerBoundMeters { get; init; }
 }
@@ -39,6 +40,7 @@ public sealed record CameraWarning(
 {
     public double StageDistanceMeters { get; init; } = 500;
     public bool FirstConfirmedInside200Meters { get; init; }
+    public int? SpeedLimitKph { get; init; }
 }
 
 /// <summary>A pending stage ordered by remaining travel before its trigger, not by camera proximity.</summary>
@@ -50,6 +52,7 @@ public sealed record PlannedCameraWarning(
     double DistanceUntilTriggerMeters)
 {
     public bool FirstConfirmedInside200Meters { get; init; }
+    public int? SpeedLimitKph { get; init; }
 }
 
 /// <summary>
@@ -162,7 +165,8 @@ public sealed class CameraWarningEngine
                     candidate.RoadDistanceMeters.HasValue ? WarningDistanceKind.Road : WarningDistanceKind.Euclidean,
                     Math.Max(0, triggerDistance - stages[index]))
                 {
-                    FirstConfirmedInside200Meters = firstConfirmedDistances[candidate.Id] < 200
+                    FirstConfirmedInside200Meters = firstConfirmedDistances[candidate.Id] < 200,
+                    SpeedLimitKph = candidate.SpeedLimitKph
                 });
             }
         }
@@ -184,7 +188,8 @@ public sealed class CameraWarningEngine
             result.Add(new CameraWarning(plan.CameraId, plan.DistanceMeters, plan.DistanceKind)
             {
                 StageDistanceMeters = plan.StageDistanceMeters,
-                FirstConfirmedInside200Meters = plan.FirstConfirmedInside200Meters
+                FirstConfirmedInside200Meters = plan.FirstConfirmedInside200Meters,
+                SpeedLimitKph = plan.SpeedLimitKph
             });
         }
         return result;

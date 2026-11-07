@@ -33,7 +33,11 @@ public sealed class Ets2LaGameDataSource : IDisposable
             var observedAt = clock.GetUtcNow();
             Store.UpdateVehicle(new(position.X, position.Y, position.Z, data.truckPlacement.rotation.X,
                 data.truckFloat.speed, data.truckFloat.routeDistance, data.sdkActive, data.paused,
-                data.simulatedTime, observedAt));
+                data.simulatedTime, observedAt)
+            {
+                CurrentSpeedLimitKph = float.IsFinite(data.truckFloat.speedLimit) && data.truckFloat.speedLimit > 0
+                    ? data.truckFloat.speedLimit * 3.6 : null
+            });
             Store.ObserveFine(data.specialBool.fined, data.gameplayString.fineOffence,
                 data.gameplayLongLong.fineAmount, observedAt);
         }

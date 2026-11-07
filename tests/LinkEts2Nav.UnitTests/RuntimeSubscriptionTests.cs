@@ -16,9 +16,11 @@ public sealed class RuntimeSubscriptionTests
         var payload = new GameTelemetryData { sdkActive = true };
         payload.truckPlacement.coordinate.X = 123;
         payload.truckFloat.routeDistance = 1000;
+        payload.truckFloat.speedLimit = 50f / 3.6f;
         bus.Publish(Ets2LaGameDataSource.TelemetryTopic, payload);
         payload.truckPlacement.coordinate.X = 999;
         Assert.Equal(123, source.Capture().Vehicle!.X);
+        Assert.InRange(source.Capture().Vehicle!.CurrentSpeedLimitKph!.Value,49.99,50.01);
         bus.Publish(Ets2LaGameDataSource.NavigationTopic, new NavigationData
         {
             entries = [new NavigationEntry { nodeUid = 7, distanceToEnd = 500, timeToEnd = 30 }]
@@ -29,6 +31,7 @@ public sealed class RuntimeSubscriptionTests
         Assert.Equal(0, bus.SubscriptionCount);
         bus.Publish(Ets2LaGameDataSource.TelemetryTopic, payload);
         Assert.Equal(123, source.Capture().Vehicle!.X);
+        Assert.InRange(source.Capture().Vehicle!.CurrentSpeedLimitKph!.Value,49.99,50.01);
     }
 
     [Fact]

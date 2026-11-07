@@ -23,6 +23,7 @@ public sealed class OfficialArchiveMount : IDisposable
     public IFileSystem FileSystem { get; }
     public IReadOnlyList<string> ArchivePaths { get; }
     public bool ProfileResolved { get; private set; }
+    public IReadOnlyList<string> ActiveModPaths { get; private init; } = [];
 
     public OfficialArchiveMount(IEnumerable<string> paths)
     {
@@ -48,7 +49,7 @@ public sealed class OfficialArchiveMount : IDisposable
             if (conflict is not null)
                 throw new NotSupportedException($"Active mod overrides map, road or camera assets: {mod}; conflicting resource: {conflict}");
         }
-        return new(plan.ArchivePaths) { ProfileResolved = true };
+        return new(plan.ArchivePaths) { ProfileResolved = true, ActiveModPaths = plan.ModPaths };
     }
 
     /// <summary>

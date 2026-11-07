@@ -12,7 +12,8 @@ public sealed class NavigationLogReporter
     private readonly Action<string> info;
     private readonly Action<string> warning;
     private readonly Dictionary<string, string> changes = new();
-    private readonly Dictionary<string, (string Decision, bool Verified)> cameras = new();
+    private (string Session, double Limit)? currentLimit;
+    private readonly Dictionary<string, (string Decision, bool Verified, int? Limit, string? Reason)> cameras = new();
     private string? state;
     private DateTimeOffset stateAt = DateTimeOffset.MinValue;
     private string? scan;
@@ -82,22 +83,34 @@ public sealed class NavigationLogReporter
         }
         foreach (var camera in snapshot.Cameras)
         {
-            var current = (camera.Decision, camera.DirectionVerified);
+            var current = (camera.Decision, camera.DirectionVerified, camera.SpeedLimitKph, camera.SpeedLimitReason);
             if (cameras.TryGetValue(camera.Id, out var previous) && previous == current) continue;
             string action = cameras.ContainsKey(camera.Id) ? "目标判定变化" : "发现探头";
             cameras[camera.Id] = current;
             string roadDistance = camera.RoadDistanceMeters is { } distance ? $"{distance:F0} m" : "未知";
+            string limitText = camera.SpeedLimitKph is { } speed ? $"，限速估算={speed} km/h" : "，限速估算=未知";
+            limitText += "（" + camera.SpeedLimitReason + "）";
             string routeBound = camera.RouteDistanceLowerBoundMeters is { } bound ? $"，已知路线长度下限={bound:F0} m" : "";
-            Event(FormattableString.Invariant($"{action}：{camera.Id}，挂点={camera.Hookup}，直线={camera.DistanceMeters:F0} m，沿路={roadDistance}{routeBound}，方向已验证={camera.DirectionVerified}；{camera.Decision}；模型={camera.SourceDescriptor}，变体={camera.Variant}。"), snapshot.UpdatedAt);
+            Event(FormattableString.Invariant($"{action}：{camera.Id}，挂点={camera.Hookup}，直线={camera.DistanceMeters:F0} m，沿路={roadDistance}{routeBound}{limitText}，方向已验证={camera.DirectionVerified}；{camera.Decision}；模型={camera.SourceDescriptor}，变体={camera.Variant}。"), snapshot.UpdatedAt);
         }
+    }
+
+    public void ReportCurrentLimit(GameDataSnapshot data, DateTimeOffset now)
+    {
+        if (!data.CanPrepareMap(now) || data.Vehicle is not { CurrentSpeedLimitKph: { } speed } vehicle) return;
+        var key = (data.SessionId, speed);
+        if (currentLimit == key) return;
+        currentLimit = key;
+        Event(FormattableString.Invariant($"SDK 当前限速={speed:F1} km/h；X={vehicle.X:F1}, Y={vehicle.Y:F1}, Z={vehicle.Z:F1}；朝向={vehicle.HeadingTurns:F5} 圈；会话={data.SessionId}"), now);
     }
 
     public void ReportFines(IReadOnlyList<FineObservation> observations, long droppedCount, DateTimeOffset now)
     {
         foreach (var fine in observations)
         {
+            string currentSpeedLimit = fine.Vehicle.CurrentSpeedLimitKph is { } speedLimit ? $"{speedLimit:F1} km/h" : "未知";
             string signal = fine.IsSignalCertain ? "罚款位翻转" : "仅字段变化，事件次数不确定";
-            Event(FormattableString.Invariant($"观测罚单：{fine.Offence}，金额={fine.Amount}，X={fine.Vehicle.X:F1}, Y={fine.Vehicle.Y:F1}, Z={fine.Vehicle.Z:F1}；朝向={fine.Vehicle.HeadingTurns:F5} 圈；速度={fine.Vehicle.SpeedMetersPerSecond * 3.6:F1} km/h；序号={fine.Sequence}，标志={fine.EventFlag}，信号={signal}；观测时刻={fine.ObservedAt:O}；此位置可能有轮询延迟。"), now);
+            Event(FormattableString.Invariant($"观测罚单：{fine.Offence}，金额={fine.Amount}，X={fine.Vehicle.X:F1}, Y={fine.Vehicle.Y:F1}, Z={fine.Vehicle.Z:F1}；朝向={fine.Vehicle.HeadingTurns:F5} 圈；速度={fine.Vehicle.SpeedMetersPerSecond * 3.6:F1} km/h；当前位置限速={currentSpeedLimit}；序号={fine.Sequence}，标志={fine.EventFlag}，信号={signal}；观测时刻={fine.ObservedAt:O}；此位置可能有轮询延迟。"), now);
         }
         if (droppedCount > 0)
             Change("dropped-fines", $"罚款观察队列已溢出：累计 {droppedCount} 条未输出记录被丢弃，不能据此推断未发生罚款。", now, isWarning: true);

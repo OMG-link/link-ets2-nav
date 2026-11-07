@@ -38,7 +38,25 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
         worker = Task.Run(PrepareAsync);
     }
 
-    public static string Text(double stage, double actualDistance, bool firstConfirmedInside200Meters = false)
+    public static string Text(double stage, double actualDistance, bool firstConfirmedInside200Meters = false, int? speedLimitKph = null)
+    {
+        string text = BaseText(stage, actualDistance, firstConfirmedInside200Meters);
+        return speedLimitKph is > 0 and <= 300 ? text.TrimEnd('。') + "，限速" + Number(speedLimitKph.Value) + "公里。" : text;
+    }
+
+    public static string Number(int value)
+    {
+        if (value is < 1 or > 999) throw new ArgumentOutOfRangeException(nameof(value));
+        const string digits = "零一二三四五六七八九";
+        string result = value >= 100 ? digits[value / 100] + "百" : "";
+        int rest = value % 100;
+        if (value >= 100 && rest is > 0 and < 10) result += "零";
+        if (rest >= 10) result += (rest / 10 == 1 && value < 100 ? "" : digits[rest / 10].ToString()) + "十";
+        if (rest % 10 != 0) result += digits[rest % 10];
+        return result;
+    }
+
+    private static string BaseText(double stage, double actualDistance, bool firstConfirmedInside200Meters)
     {
         if (stage == 200) return firstConfirmedInside200Meters
             ? "二百米内，有测速照相。" : "二百米处，有测速照相。";
@@ -54,7 +72,7 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
         if (stop.IsCancellationRequested || snapshot is not { IsActive: true } || age < TimeSpan.Zero || age > TimeSpan.FromSeconds(2))
         { ClearPlan(); return; }
         var ordered = plans.OrderBy(p => p.DistanceUntilTriggerMeters)
-            .Select(p => Text(p.StageDistanceMeters, Math.Min(p.DistanceMeters, p.StageDistanceMeters), p.FirstConfirmedInside200Meters))
+            .Select(p => Text(p.StageDistanceMeters, Math.Min(p.DistanceMeters, p.StageDistanceMeters), p.FirstConfirmedInside200Meters, p.SpeedLimitKph))
             .Distinct(StringComparer.Ordinal).ToArray();
         bool updated;
         lock (gate)
@@ -75,9 +93,19 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
     public void Announce(CameraWarning warning)
     {
         if (stop.IsCancellationRequested) return;
-        string text = Text(warning.StageDistanceMeters, warning.DistanceMeters, warning.FirstConfirmedInside200Meters);
+        string text = Text(warning.StageDistanceMeters, warning.DistanceMeters, warning.FirstConfirmedInside200Meters, warning.SpeedLimitKph);
         string? file;
         lock (gate) ready.TryGetValue(text, out file);
+        if ((file is null || !File.Exists(file)) && warning.SpeedLimitKph.HasValue)
+        {
+            string basic = Text(warning.StageDistanceMeters, warning.DistanceMeters, warning.FirstConfirmedInside200Meters);
+            lock (gate) ready.TryGetValue(basic, out file);
+            if (file is not null && File.Exists(file))
+            {
+                log("带限速语音尚未就绪，使用对应的不含限速版本：" + text);
+                text = basic;
+            }
+        }
         if (file is not null && File.Exists(file))
         {
             try

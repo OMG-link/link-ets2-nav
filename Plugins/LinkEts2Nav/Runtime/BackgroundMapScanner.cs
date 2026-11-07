@@ -155,7 +155,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         public OfficialBackend(MapScanRequest request)
         {
             mount = OfficialArchiveMount.FromGameLog(request.GamePath, request.LogLines);
-            scanner = new NearbyCameraScanner(mount.FileSystem);
+            scanner = new NearbyCameraScanner(mount.FileSystem, activeModPaths: mount.ActiveModPaths);
         }
         public NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken)
             => scanner.ReadNearby(position, 1100, cancellationToken);

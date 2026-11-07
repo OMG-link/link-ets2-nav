@@ -17,4 +17,7 @@
     <ProjectReference Include="../../Plugins/LinkEts2Nav/LinkEts2Nav.csproj" />
     <ProjectReference Include="../../tools/LinkEts2Nav.Speech/LinkEts2Nav.Speech.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../docs/calibration-profiles/ets2-1.62-finland.json" LogicalName="FinlandCalibration.json" />
+  </ItemGroup>
 </Project>

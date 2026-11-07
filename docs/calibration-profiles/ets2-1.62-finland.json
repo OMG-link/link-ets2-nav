@@ -1,0 +1,19 @@
+﻿{
+    "schemaVersion":  1,
+    "entries":  [
+                    {
+                        "descriptor":  "/model2/speedcamera/balt/speedcamera_01_fi.pmd",
+                        "hookup":  "speedcam.20",
+                        "locator":  "0",
+                        "variant":  "default",
+                        "metadataFingerprint":  "81B0BA29911A5EAF00426E16743785D3BC0107FBE990436B126E04BCC165273E",
+                        "travelAxis":  "+Z",
+                        "monitoredOffset":  {
+                                                "x":  0,
+                                                "y":  0,
+                                                "z":  -20
+                                            },
+                        "evidence":  "ETS2 1.62; speeding_camera 140 at 2026-11-07T07:49:05.6368483Z, sampled pose (42972.7,12,-55573), heading 0.02 turns, speed 120km/h. Candidate 299b94880f010010:0: local +Z travel dot 0.9946; local -Z20m monitoring center is 7.43m from the sampled pose, consistent with trigger_distance8m and polling delay. Other preserved candidate is 751.64m away. Preliminary single-positive-pass calibration; opposite-direction non-enforcement and other map instances remain unverified."
+                    }
+                ]
+}

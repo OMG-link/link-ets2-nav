@@ -104,6 +104,9 @@ public sealed class NavPlugin : Plugin
         using var source = new Ets2LaGameDataSource(Events.Current);
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
         var logOutput = new NavigationLogReporter();
+        await using var motionTrace = new NavigationTraceRecorder(
+            Path.Combine(AppContext.BaseDirectory, "Cache", "LinkEts2Nav", "Diagnostics"),
+            message => logOutput.Event(message, DateTimeOffset.UtcNow));
         logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
         var fallback = new Ets2LaWarningAnnouncer(cancellationToken: token);
         await using var speech = CreateSpeech(fallback, logOutput, token);
@@ -244,6 +247,7 @@ public sealed class NavPlugin : Plugin
                     token.ThrowIfCancellationRequested();
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var diagnostic = pipeline.Process(latest, calibrated, DateTimeOffset.UtcNow);
+                    motionTrace.Record(latest, calibrated, diagnostic, signature, currentInstallation.Path);
                     if (latest.Vehicle is { Paused: true })
                         diagnostic = diagnostic with { State = "附近地图已准备；游戏已暂停，预警暂挂。" };
                     if (scan.IsScanning && now - scanBusySince >= TimeSpan.FromSeconds(1)

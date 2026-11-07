@@ -17,6 +17,48 @@ public sealed class JunctionNavigationTests
         OutputLines = Enumerable.Range(0, 8).Select(i => !input && i == 0 ? curve : -1).ToArray()
     };
 
+    [Theory]
+    [InlineData(18)]
+    [InlineData(20)]
+    [InlineData(24)]
+    public void ShortPrefabDoesNotLoseOwnershipBetweenNearbyRoadEndpoints(int gap)
+    {
+        var map = new TruckLib.ScsMap.Map();
+        var incoming = Road.Add(map, new(0, 0, 0), new(0, 0, 200), default);
+        var outgoing = Road.Add(map, new(0, 0, 200 + gap), new(0, 0, 800), default);
+        DirectedRoad[] links = [new("prefab:1:0:1", incoming.ForwardNode.Uid, outgoing.Node.Uid,
+            [new(0, 0, 200), new(0, 0, 200 + gap)])];
+        var source = new RoadPathSource(map, links);
+        var route = RouteSnapshot.Parse([new(incoming.Node.Uid, 800, 40), new(incoming.ForwardNode.Uid, 600, 30),
+            new(outgoing.Node.Uid, 600 - gap, 29), new(outgoing.ForwardNode.Uid, 0, 0)], Now);
+        var camera = new MonitoredCamera("camera", new(0, 0, 700), Vector3.UnitZ);
+        foreach (int z in Enumerable.Range(190, gap + 21))
+        {
+            var position = new Vector3(3.5f, 0, z);
+            var match = source.MatchCamera(position, Vector3.UnitZ, camera, route, RouteAvailability.Available);
+            Assert.Equal(CameraApproach.RouteAhead, match.Approach);
+            Assert.InRange(match.RoadDistanceMeters!.Value, 700 - z - .01, 700 - z + .01);
+            var without = source.MatchCamera(position, Vector3.UnitZ, camera,
+                RouteSnapshot.Parse([], Now), RouteAvailability.None);
+            Assert.Equal(CameraApproach.UnavoidableAhead, without.Approach);
+        }
+    }
+    [Fact]
+    public void NearbyPrefabCannotBorrowVehicleFromAnActualUnrelatedRoad()
+    {
+        var map = new TruckLib.ScsMap.Map();
+        var incoming = Road.Add(map, new(0, 0, 0), new(0, 0, 200), default);
+        var outgoing = Road.Add(map, new(0, 0, 220), new(0, 0, 800), default);
+        Road.Add(map, new(8, 0, 200), new(8, 0, 220), default);
+        DirectedRoad[] links = [new("prefab:1:0:1", incoming.ForwardNode.Uid, outgoing.Node.Uid,
+            [new(0, 0, 200), new(0, 0, 220)])];
+        var source = new RoadPathSource(map, links);
+        var route = RouteSnapshot.Parse([new(incoming.Node.Uid, 800, 40), new(incoming.ForwardNode.Uid, 600, 30),
+            new(outgoing.Node.Uid, 580, 29), new(outgoing.ForwardNode.Uid, 0, 0)], Now);
+        var match = source.MatchCamera(new(8, 0, 210), Vector3.UnitZ,
+            new("camera", new(0, 0, 700), Vector3.UnitZ), route, RouteAvailability.Available);
+        Assert.Equal(CameraApproach.Unknown, match.Approach);
+    }
     [Fact]
     public void ActualPpdNavigationCurveBridgesRouteAndMeasuresAcrossJunction()
     {

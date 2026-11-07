@@ -160,12 +160,24 @@ public sealed class RoadPathSource
     {
         if (path.Count == 0 || !float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
             return false;
-        var candidates = roads.Where(r => r.Node is not null && r.ForwardNode is not null && Near(r, position))
+        var nearby = roads.Where(r => r.Node is not null && r.ForwardNode is not null && Near(r, position))
             .Select(r => (Road: r, Score: Distance(position, [Orient(r, r.Node.Uid)])))
-            .Where(p => p.Score < 12).OrderBy(p => p.Score).Take(3).ToArray();
-        if (candidates.Length == 0) return path.Where(p => p.Id.StartsWith("prefab:", StringComparison.Ordinal))
-            .Any(p => Distance(position, [p]) < 12);
-        if (candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3)
+            .Where(p => p.Score < 12).OrderBy(p => p.Score).ToArray();
+        // A nearby clamped road endpoint is not ownership evidence inside a prefab.
+        // Apply the same finite-path projection rule used when selecting the current road.
+        var candidates = nearby.Where(p => HasProjection(position, Orient(p.Road, p.Road.Node.Uid)))
+            .Take(3).ToArray();
+        bool endpointsOnly = candidates.Length == 0;
+        if (endpointsOnly)
+        {
+            if (path.Where(p => p.Id.StartsWith("prefab:", StringComparison.Ordinal))
+                .Any(p => HasProjection(position, p))) return true;
+            // The outside wedge at an ordinary two-road bend can have no interior
+            // projection onto either road separately. Preserve its topological proof.
+            candidates = nearby.Take(3).ToArray();
+            if (candidates.Length < 2) return false;
+        }
+        if (endpointsOnly || candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3)
         {
             if (candidates.Length > 2 && candidates[2].Score - candidates[0].Score < 3
                 || !TryContinuousJoin(position, candidates[0].Road, candidates[1].Road, out var join))
@@ -179,6 +191,16 @@ public sealed class RoadPathSource
         }
         var selectedId = candidates[0].Road.Uid.ToString("X16");
         return path.Any(road => StringComparer.Ordinal.Equals(road.Id, selectedId));
+    }
+
+    private bool HasProjection(Vector3 position, DirectedRoad road)
+    {
+        var nearest = road.Points.Zip(road.Points.Skip(1))
+            .Where(p => Vector3.DistanceSquared(p.First, p.Second) > .000001f)
+            .OrderBy(p => SegmentDistance(position, p.First, p.Second)).FirstOrDefault();
+        var tangent = nearest.Second - nearest.First;
+        return matcher.ProjectDistance(position, tangent, [road]).HasValue
+            || matcher.ProjectDistance(position, -tangent, [road]).HasValue;
     }
 
     private IReadOnlyList<DirectedRoad> CurrentRoad(Vector3 position, Vector3 heading)

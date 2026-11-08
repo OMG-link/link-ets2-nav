@@ -57,10 +57,19 @@ public static class NavigationPrompts
         => "沿当前道路，继续行驶" + Distance(distance) + "。";
     public static string Continue() => "沿当前道路继续行驶。";
 
+    public static int DistanceStep(double distance) => distance > 10000 ? 1000 : distance > 1000 ? 100 : 50;
+
+    public static double RoundDistance(double distance)
+    {
+        if (!double.IsFinite(distance) || distance < 0) throw new ArgumentOutOfRangeException(nameof(distance));
+        int step = DistanceStep(distance);
+        return Math.Floor(distance / step) * step;
+    }
+
     private static string Distance(double distance)
     {
         if (!double.IsFinite(distance) || distance < 50) throw new ArgumentOutOfRangeException(nameof(distance));
-        double meters = Math.Floor(distance / 50) * 50;
+        double meters = RoundDistance(distance);
         if (meters < 1000) return Number((int)meters) + "米";
         double kilometers = meters / 1000;
         int whole = (int)Math.Min(int.MaxValue, Math.Floor(kilometers));
@@ -101,6 +110,8 @@ public sealed class NavigationInstructionPolicy
     {
         public double Minimum = distance;
         public double? Previous;
+        // One overview belongs to this approach, not to every changing distance sample.
+        public string? PendingContinuation;
         public bool FirstAnnounced;
         public bool FirstWasContinuation;
         public bool CloseBriefed;
@@ -133,7 +144,7 @@ public sealed class NavigationInstructionPolicy
             int ordinal = Ordinal(maneuvers,0,index);
             var due = Select(state,target,ordinal);
             if (due is { } current) result.Add(current.Text);
-            if (NeedsBriefing(state,target.DistanceMeters))
+            if (NeedsBriefing(state,target.DistanceMeters) && target.DistanceMeters <= 800)
             {
                 // Warm the next two rounded bins, not an unbounded distance vocabulary.
                 double rounded = Math.Floor(target.DistanceMeters/50)*50;
@@ -141,7 +152,8 @@ public sealed class NavigationInstructionPolicy
                     if (next >= 0) result.Add(NavigationPrompts.FirstLayer(target.Kind,next,ordinal));
             }
             int nextIndex = ActionIndex(maneuvers,index+1);
-            if (nextIndex >= 0)
+            if (nextIndex >= 0 && target.DistanceMeters <= 800
+                && maneuvers[nextIndex].DistanceMeters - target.DistanceMeters <= 800)
             {
                 var next = maneuvers[nextIndex];
                 result.Add(NavigationPrompts.FirstLayer(next.Kind,
@@ -175,6 +187,8 @@ public sealed class NavigationInstructionPolicy
         {
             var target = maneuvers[index];
             var state = states[target.Id];
+            if (!state.FirstAnnounced && target.DistanceMeters > 800)
+                state.PendingContinuation ??= NavigationPrompts.Continue(target.DistanceMeters);
             var due = Select(state,target,Ordinal(maneuvers,0,index));
             if (due is { } current && (canAnnounce?.Invoke(current.Text) ?? true))
             {
@@ -221,7 +235,9 @@ public sealed class NavigationInstructionPolicy
     {
         double distance=target.DistanceMeters;
         if (NeedsBriefing(state,distance))
-            return new(NavigationPrompts.FirstLayer(target.Kind,distance,ordinal),state.Consumed|InitialConsumption(state,distance));
+            return new(distance > 800 && state.PendingContinuation is { } overview
+                ? overview : NavigationPrompts.FirstLayer(target.Kind,distance,ordinal),
+                state.Consumed|InitialConsumption(state,distance));
         if (distance > Stages[0]) return null;
         int index=StageIndex(distance);
         if ((state.Consumed & (1<<index)) != 0) return null;
@@ -233,7 +249,7 @@ public sealed class NavigationInstructionPolicy
             return new(StageText(target.Kind,Stages[index],ordinal),consumed);
         if (distance<50) return new(ImmediateText(target.Kind,ordinal),AllStages);
         consumed|=(1<<Math.Min(index+2,Stages.Length))-1;
-        return new(StageText(target.Kind,(int)Math.Floor(distance/50)*50,ordinal),consumed);
+        return new(StageText(target.Kind,(int)NavigationPrompts.RoundDistance(distance),ordinal),consumed);
     }
 
     private static bool NeedsBriefing(Encounter state,double distance)

@@ -13,6 +13,38 @@ public sealed class NavigationInstructionPolicyTests
         Func<string,bool>? ready=null,int seconds=0)
         =>p.UpdateSequence(m,"session",Now.AddSeconds(seconds),Now.AddSeconds(seconds),true,ready);
 
+    [Theory]
+    [InlineData(999, "沿当前道路，继续行驶九百五十米。")]
+    [InlineData(1250, "沿当前道路，继续行驶一点二公里。")]
+    [InlineData(2650, "沿当前道路，继续行驶二点六公里。")]
+    [InlineData(9876, "沿当前道路，继续行驶九点八公里。")]
+    [InlineData(10000, "沿当前道路，继续行驶十公里。")]
+    [InlineData(10849, "沿当前道路，继续行驶十公里。")]
+    [InlineData(12345, "沿当前道路，继续行驶十二公里。")]
+    public void LongDistancesUseCoarserRounding(double distance,string expected)
+        => Assert.Equal(expected,NavigationPrompts.Continue(distance));
+
+    [Fact]
+    public void PendingHighwayOverviewDoesNotChaseEveryChangingDistance()
+    {
+        var p=new NavigationInstructionPolicy();
+        Assert.Empty(Update(p,[M(2650),M(6000,"later")],_=>false));
+        var plan=Plan(p,[M(2550),M(5900,"later")]);
+        Assert.Equal("沿当前道路，继续行驶二点六公里。",plan[0]);
+        Assert.Single(plan.Where(t=>t.StartsWith("沿当前道路")));
+        Assert.Equal(plan[0],Assert.Single(Update(p,[M(2550),M(5900,"later")])));
+        Assert.DoesNotContain(Plan(p,[M(2450),M(5800,"later")]),t=>t.StartsWith("沿当前道路"));
+        Assert.Empty(Update(p,[M(2450),M(5800,"later")]));
+    }
+
+    [Fact]
+    public void OldPendingHighwayOverviewCannotReplaceAnImminentAction()
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(2500)],_=>false);
+        Assert.Equal("七百五十米后，在下一个路口左转。",Assert.Single(Update(p,[M(750)])));
+    }
+
     [Fact]
     public void CountsStraightIntersectionsBeforeActionAndDoesNotTreatStraightAsTarget()
     {
@@ -137,7 +169,7 @@ public sealed class NavigationInstructionPolicyTests
         var p=new NavigationInstructionPolicy();
         Update(p,[M(2500)]);
         Assert.Empty(Update(p,[M(2000)],_=>false));
-        Assert.Equal("前方一千七百五十米，左转。",Assert.Single(Update(p,[M(1750)])));
+        Assert.Equal("前方一千七百米，左转。",Assert.Single(Update(p,[M(1750)])));
         Assert.Empty(Update(p,[M(1000)]));
         Assert.Single(Update(p,[M(500)]));
     }

@@ -150,21 +150,6 @@ public sealed class NavPlugin : Plugin
                 if (!data.IsVehicleUsable) speech?.ClearPlan();
                 logOutput.ReportFines(source.Store.DrainFines(), data.DroppedFineCount, now);
                 logOutput.ReportCurrentLimit(data, now);
-                if (!data.CanPrepareMap(now) || data.Vehicle is not { } vehicle)
-                {
-                    string reason = data.Vehicle switch
-                    {
-                        null => "尚未收到遥测：请确认游戏已进入存档、SDK 可用，且本插件已经启用。",
-                        { SdkActive: false } => "SDK 未激活：等待游戏或玩家资料加载。",
-                        { Paused: true } => "游戏已暂停：预警暂挂。",
-                        { IsFinite: false } => "遥测位置或速度无效：预警暂挂。",
-                        _ => "遥测已过期或 SDK 模拟时间未推进：预警暂挂。"
-                    };
-                    if (!token.IsCancellationRequested)
-                        Publish(new(now, reason,
-                            data.RouteAvailability.ToString(), 0, []));
-                    continue;
-                }
                 if (now >= calibrationCheck)
                 {
                     calibrationCheck = now.AddSeconds(5);
@@ -210,6 +195,29 @@ public sealed class NavPlugin : Plugin
                             installationMap = currentInstallation.GetMapData();
                             signature = nextSignature;
                         }
+                    }
+                    var preparation = mapScanner.Capture();
+                    if (preparation.IsPrepared)
+                        logOutput.Change("map-preparation", "全局地图准备已完成。", now);
+                    else if (preparation.Error is not null)
+                        logOutput.Change("map-preparation", "全局地图准备失败，将重试：" + preparation.Error, now, isWarning: true);
+                    if (mapScanner.Prepare(new(resourceVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        "", currentInstallation.Path, gameLog, default) { HostMap = installationMap }, now))
+                        logOutput.Event("开始全局地图准备（不等待车辆位置）。", now);
+                    if (!data.CanPrepareMap(now) || data.Vehicle is not { } vehicle)
+                    {
+                        string reason = data.Vehicle switch
+                        {
+                            null => "尚未收到遥测：请确认游戏已进入存档、SDK 可用，且本插件已经启用。",
+                            { SdkActive: false } => "SDK 未激活：等待游戏或玩家资料加载。",
+                            { Paused: true } => "游戏已暂停：预警暂挂。",
+                            { IsFinite: false } => "遥测位置或速度无效：预警暂挂。",
+                            _ => "遥测已过期或 SDK 模拟时间未推进：预警暂挂。"
+                        };
+                        if (!token.IsCancellationRequested)
+                            Publish(new(now, reason,
+                                data.RouteAvailability.ToString(), 0, []));
+                        continue;
                     }
                     if (session != data.SessionId)
                     {

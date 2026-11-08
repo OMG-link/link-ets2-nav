@@ -24,6 +24,27 @@ public sealed class BackgroundMapScannerTests
     }
 
     [Fact]
+    public async Task PreparationWithoutPositionCreatesBackendButDoesNotScanAndIsReused()
+    {
+        int created = 0, reads = 0;
+        await using var scanner = new BackgroundMapScanner(_ =>
+        {
+            Interlocked.Increment(ref created);
+            return new Backend((_, _) => { Interlocked.Increment(ref reads); return Map("ready"); });
+        }, TestContext.Current.CancellationToken);
+        Assert.True(scanner.Prepare(Request(), DateTimeOffset.UtcNow));
+        await WaitFor(() => scanner.Capture().Revision == 1);
+        Assert.Equal(1, created);
+        Assert.Equal(0, reads);
+        Assert.Null(scanner.Capture().Map);
+        Assert.False(scanner.Prepare(Request(), DateTimeOffset.UtcNow));
+        scanner.Request(Request(x: 100), DateTimeOffset.UtcNow);
+        await WaitFor(() => scanner.Capture().Map is not null);
+        Assert.Equal(1, created);
+        Assert.Equal(1, reads);
+    }
+
+    [Fact]
     public async Task SlowRefreshKeepsReadyMapReadableAndWarningsRunning()
     {
         var first = Map("first");

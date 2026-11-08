@@ -9,6 +9,7 @@ public sealed record MapScanRequest(string ResourceId, string SessionId, string 
     IReadOnlyList<string> LogLines, Vector3 Position)
 {
     public TruckLib.ScsMap.Map? HostMap { get; init; }
+    public bool PreparationOnly { get; init; }
 }
 
 public interface IMapScanBackend : IDisposable
@@ -17,7 +18,10 @@ public interface IMapScanBackend : IDisposable
 }
 
 public sealed record MapScanState(NearbyMapSnapshot? Map, Vector3 Position, TimeSpan Elapsed,
-    long Revision, string? Error, bool IsScanning);
+    long Revision, string? Error, bool IsScanning)
+{
+    public bool IsPrepared { get; init; }
+}
 
 /// <summary>
 /// A single worker owns all archive streams and mutable scanner caches. Only completed snapshots
@@ -42,12 +46,22 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     public BackgroundMapScanner(Func<MapScanRequest, IMapScanBackend>? factory = null,
         CancellationToken cancellationToken = default)
     {
-        this.factory = factory ?? (request => new OfficialBackend(request));
         stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        this.factory = factory ?? (request => new OfficialBackend(request, stop.Token));
         worker = Task.Run(WorkAsync);
     }
 
     public MapScanState Capture() { lock (gate) return state; }
+
+    /// <summary>Prepare resources without requiring or fabricating a vehicle position.</summary>
+    public bool Prepare(MapScanRequest request, DateTimeOffset now)
+    {
+        lock (gate)
+        {
+            if (resourceId == request.ResourceId && (state.IsPrepared || state.Error is null || now < retryAfter)) return false;
+            return Request(request with { PreparationOnly = true, SessionId = sessionId ?? "" }, now);
+        }
+    }
 
     /// <summary>Latest requested position replaces queued work; at most one scan runs at a time.</summary>
     public bool Request(MapScanRequest request, DateTimeOffset now)
@@ -117,7 +131,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                         backend = factory(item.Request);
                         backendResource = item.Request.ResourceId;
                     }
-                    completed = backend.Read(item.Request.Position, stop.Token);
+                    if (!item.Request.PreparationOnly) completed = backend.Read(item.Request.Position, stop.Token);
                     stop.Token.ThrowIfCancellationRequested();
                 }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
@@ -127,7 +141,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                     // A load, teleport or mount change invalidates an in-flight result.
                     if (stop.IsCancellationRequested || item.Generation != generation) continue;
                     if (error is null)
-                        state = new(completed, item.Request.Position, watch.Elapsed, state.Revision + 1, null, pending.HasValue);
+                        state = new(completed, item.Request.Position, watch.Elapsed, state.Revision + 1, null, pending.HasValue) { IsPrepared = true };
                     else
                     {
                         // Keep an already usable snapshot when a refresh fails. Retry without
@@ -155,10 +169,15 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     {
         private readonly OfficialArchiveMount mount;
         private readonly NearbyCameraScanner scanner;
-        public OfficialBackend(MapScanRequest request)
+        public OfficialBackend(MapScanRequest request, CancellationToken token)
         {
             mount = OfficialArchiveMount.FromGameLog(request.GamePath, request.LogLines);
-            scanner = new NearbyCameraScanner(mount.FileSystem, activeModPaths: mount.ActiveModPaths, hostMap: request.HostMap);
+            try
+            {
+                scanner = new NearbyCameraScanner(mount.FileSystem, activeModPaths: mount.ActiveModPaths, hostMap: request.HostMap);
+                scanner.Prepare(token);
+            }
+            catch { mount.Dispose(); throw; }
         }
         public NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken)
             => scanner.ReadNearby(position, 1100, cancellationToken);

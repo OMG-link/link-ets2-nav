@@ -17,7 +17,7 @@ public sealed class NavigationLogIntegrationTests(LocalHostFixture fixture) : IC
         {
             if (!entry.Item2.Contains("[LinkEts2Nav]")) return;
             if (entry.Item2.Contains("后台扫描已启动")) started.TrySetResult();
-            if (entry.Item2.Contains("尚未收到遥测")) waiting.TrySetResult();
+            if (entry.Item2.Contains("等待 ETS2 当前地图就绪")) waiting.TrySetResult();
             if (entry.Item2.Contains("后台扫描已停止")) stopped.TrySetResult();
         }
         Logger.OnLog += Observe;

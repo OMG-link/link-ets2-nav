@@ -70,6 +70,15 @@ public sealed class SpeedLimitDefinitionReader
         { error="限速定义加载失败："+ex.GetType().Name+": "+ex.Message; }
     }
 
+    public void PrepareHost(TruckLib.ScsMap.Map? hostMap, CancellationToken cancellationToken = default)
+    {
+        if (hostMap is not null && !ReferenceEquals(indexedHost, hostMap))
+        {
+            hostCountries = RoadCountryIndex.Build(hostMap, countryNames, cancellationToken);
+            indexedHost = hostMap;
+        }
+    }
+
     public SpeedLimitData Build(TruckLib.ScsMap.Map map) => Build(map,CancellationToken.None);
 
     public SpeedLimitData Build(TruckLib.ScsMap.Map map,CancellationToken cancellationToken, TruckLib.ScsMap.Map? hostMap = null)
@@ -115,11 +124,7 @@ public sealed class SpeedLimitDefinitionReader
                 regions.Add(new(area.Uid.ToString("X16"),area.Nodes.Select(n=>n.Position).ToArray(),area.Range,
                     action.Urban==true,action.SetKph));
         }
-        if (hostMap is not null && !ReferenceEquals(indexedHost, hostMap))
-        {
-            hostCountries = RoadCountryIndex.Build(hostMap, countryNames, cancellationToken);
-            indexedHost = hostMap;
-        }
+        PrepareHost(hostMap, cancellationToken);
         var countryIndex=RoadCountryIndex.Build(map,countryNames,cancellationToken);
         // Global evidence is authoritative, including ambiguity; local city seeds cannot override it.
         if (hostMap is not null && hostCountries is not null)

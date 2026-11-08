@@ -56,6 +56,12 @@ public sealed class NearbyCameraScanner
         this.activeModPaths = activeModPaths ?? [];
     }
 
+    public void Prepare(CancellationToken cancellationToken = default)
+    {
+        LoadDefinitions(cancellationToken);
+        speedReader!.PrepareHost(hostMap, cancellationToken);
+    }
+
     public NearbyMapSnapshot ReadNearby(Vector3 playerPosition, float radiusMeters = 1000,
         CancellationToken cancellationToken = default)
     {
@@ -64,7 +70,7 @@ public sealed class NearbyCameraScanner
         if (!float.IsFinite(playerPosition.X) || !float.IsFinite(playerPosition.Z))
             throw new ArgumentException("Player placement must be finite.", nameof(playerPosition));
         cancellationToken.ThrowIfCancellationRequested();
-        LoadDefinitions(cancellationToken);
+        Prepare(cancellationToken);
         // Halo covers references and locators on models whose origins are in an adjacent sector.
         var sectors = SectorsNear(playerPosition, radiusMeters + 100);
         if (map == null || !sectors.SequenceEqual(loadedSectors))

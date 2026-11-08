@@ -53,5 +53,62 @@ public sealed class NavigationTraceRecorderTests : IDisposable
             writer.Record(Data(), Map(), Diagnostic(), "resource", "game");
         Assert.Single(errors);
     }
+    [Fact]
+    public async Task SnapshotFreezesBothRotationsAndFutureDrivingCannotOverwriteIt()
+    {
+        string saved=Path.Combine(root,"saved");
+        Directory.CreateDirectory(saved);
+        await using var writer=new NavigationTraceRecorder(root,maximumBytes:1);
+        Assert.True(writer.Record(Data(1),Map(),Diagnostic(),"resource","game"));
+        Assert.True(writer.Record(Data(2),Map(),Diagnostic(),"resource","game"));
+        Assert.Equal(2,await writer.SaveSnapshotAsync(saved,TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5),TestContext.Current.CancellationToken));
+        Assert.True(writer.Record(Data(3),Map(),Diagnostic(),"resource","game"));
+        string next=Path.Combine(root,"next");Directory.CreateDirectory(next);
+        await writer.SaveSnapshotAsync(next,TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5),TestContext.Current.CancellationToken);
+        var positions=Directory.GetFiles(saved).Select(file=>
+        {
+            using var frame=JsonDocument.Parse(Assert.Single(File.ReadAllLines(file)));
+            Assert.Equal(2,frame.RootElement.GetProperty("Route").GetProperty("Nodes").GetArrayLength());
+            return frame.RootElement.GetProperty("Vehicle").GetProperty("X").GetDouble();
+        }).Order().ToArray();
+        Assert.Equal(new double[]{1,2},positions);
+    }
+
+    [Fact]
+    public async Task FailedSnapshotDoesNotStopRecordingOrLaterCaptures()
+    {
+        await using var writer=new NavigationTraceRecorder(root);
+        Assert.True(writer.Record(Data(),Map(),Diagnostic(),"resource","game"));
+        await Assert.ThrowsAsync<DirectoryNotFoundException>(()=>writer.SaveSnapshotAsync(Path.Combine(root,"missing"),TestContext.Current.CancellationToken));
+        Assert.True(writer.Record(Data(2),Map(),Diagnostic(),"resource","game"));
+        string saved=Path.Combine(root,"saved");Directory.CreateDirectory(saved);
+        Assert.Equal(1,await writer.SaveSnapshotAsync(saved,TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5),TestContext.Current.CancellationToken));
+        Assert.Equal(2,File.ReadAllLines(Path.Combine(saved,"motion.jsonl")).Length);
+    }
+
+    [Fact]
+    public async Task SaveIncludesUserCommentAndDiagnosticMetadata()
+    {
+        await using var writer=new NavigationTraceRecorder(root);
+        writer.Record(Data(),Map(),Diagnostic(),"resource","game");
+        string? saved=null;
+        ReplayCapture.Attach(writer);
+        try
+        {
+            saved=await ReplayCapture.SaveAsync("匝道播报过早\n第二行评论").WaitAsync(TimeSpan.FromSeconds(10),TestContext.Current.CancellationToken);
+            Assert.Equal("匝道播报过早\n第二行评论",File.ReadAllText(Path.Combine(saved,"comment.txt")));
+            using var metadata=JsonDocument.Parse(File.ReadAllText(Path.Combine(saved,"incident.json")));
+            Assert.Equal("匝道播报过早\n第二行评论",metadata.RootElement.GetProperty("Comment").GetString());
+            Assert.True(File.Exists(Path.Combine(saved,"motion.jsonl")));
+            Assert.False(saved.EndsWith(".partial",StringComparison.Ordinal));
+        }
+        finally
+        {
+            ReplayCapture.Detach(writer);
+            if(saved is not null && Path.GetFullPath(saved).StartsWith(Path.Combine(AppContext.BaseDirectory,"Cache","LinkEts2Nav","Replays")+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))
+                Directory.Delete(saved,true);
+        }
+    }
+
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
 }

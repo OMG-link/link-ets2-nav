@@ -107,6 +107,7 @@ public sealed class NavPlugin : Plugin
         await using var motionTrace = new NavigationTraceRecorder(
             Path.Combine(AppContext.BaseDirectory, "Cache", "LinkEts2Nav", "Diagnostics"),
             message => logOutput.Event(message, DateTimeOffset.UtcNow));
+        ReplayCapture.Attach(motionTrace);
         logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
         var fallback = new Ets2LaWarningAnnouncer(cancellationToken: token);
         await using var speech = CreateSpeech(fallback, logOutput, token);
@@ -288,6 +289,7 @@ public sealed class NavPlugin : Plugin
             source.Dispose();
             logOutput.ReportFines(source.Store.DrainFines(), source.Capture().DroppedFineCount, DateTimeOffset.UtcNow);
             await mapScanner.DisposeAsync().ConfigureAwait(false);
+            ReplayCapture.Detach(motionTrace);
             logOutput.Event("后台扫描已停止。", DateTimeOffset.UtcNow);
         }
     }

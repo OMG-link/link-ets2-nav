@@ -9,6 +9,13 @@
     <p>@snapshot.State</p>
     <button disabled="@previewing" @onclick="PreviewAudio">@(previewing ? "试听中…" : "试听预警音")</button>
     <p>@audioMessage</p>
+    <div style="margin:16px 0">
+        <label for="replay-comment">回放评论（可选）</label><br />
+        <textarea id="replay-comment" @bind="replayComment" @bind:event="oninput" maxlength="4000"
+                  rows="3" style="width:100%" placeholder="描述刚才遇到的问题，也可以直接保存"></textarea><br />
+        <button disabled="@(savingReplay || !ReplayCapture.IsAvailable)" @onclick="SaveReplay">@(savingReplay ? "保存中…" : "保存回放")</button>
+        <p role="status">@replayMessage</p>
+    </div>
     <dl>
         <dt>路线状态</dt><dd>@snapshot.RouteState</dd>
         <dt>车辆世界坐标（X, Y, Z）</dt><dd>@(snapshot.VehiclePosition ?? "未知")</dd>
@@ -74,6 +81,24 @@
 </div>
 
 @code {
+
+    private bool savingReplay;
+    private string replayComment = "";
+    private string replayMessage = "保存最近的滚动驾驶记录、诊断和日志；评论会一并保留。";
+    private async Task SaveReplay()
+    {
+        if (savingReplay) return;
+        savingReplay = true;
+        replayMessage = "正在保存……";
+        try
+        {
+            string directory = await ReplayCapture.SaveAsync(replayComment);
+            replayMessage = "已保存：" + directory;
+            replayComment = "";
+        }
+        catch (Exception ex) { replayMessage = "保存失败：" + ex.Message; }
+        finally { savingReplay = false; }
+    }
 
     private bool previewing;
     private string audioMessage = "可先试听，确认预警音在游戏中可听见。";

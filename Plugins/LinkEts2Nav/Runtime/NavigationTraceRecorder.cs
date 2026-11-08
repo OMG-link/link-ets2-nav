@@ -7,7 +7,7 @@ namespace LinkEts2Nav.Runtime;
 /// <summary>Bounded local motion samples; file IO never runs on the warning loop.</summary>
 public sealed class NavigationTraceRecorder : IAsyncDisposable
 {
-    private readonly Channel<Frame> queue = Channel.CreateBounded<Frame>(new BoundedChannelOptions(64)
+    private readonly Channel<object> queue = Channel.CreateBounded<object>(new BoundedChannelOptions(64)
         { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
     private readonly Task worker;
     private long sequence;
@@ -31,7 +31,20 @@ public sealed class NavigationTraceRecorder : IAsyncDisposable
 
     public bool Record(GameDataSnapshot data, NearbyMapSnapshot map, NavDiagnosticSnapshot diagnostic,
         string resourceId, string gamePath)
-        => queue.Writer.TryWrite(new(Interlocked.Increment(ref sequence), data, map, diagnostic, resourceId, gamePath));
+        => queue.Writer.TryWrite(new Frame(Interlocked.Increment(ref sequence), data, map, diagnostic, resourceId, gamePath));
+
+    private sealed record SnapshotRequest(string Directory, TaskCompletionSource<int> Completion);
+
+    public async Task<int> SaveSnapshotAsync(string directory, CancellationToken cancellationToken = default)
+    {
+        var completion = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await queue.Writer.WriteAsync(new SnapshotRequest(directory, completion), cancellationToken);
+        // If recording has failed or stopped, never leave a queued save waiting forever.
+        var finished = await Task.WhenAny(completion.Task, worker);
+        if (finished == worker && !completion.Task.IsCompleted)
+            throw new IOException("运动记录已停止，无法固定保存回放。");
+        return await completion.Task;
+    }
 
     private async Task WriteAsync(string directory, long maximumBytes)
     {
@@ -44,8 +57,25 @@ public sealed class NavigationTraceRecorder : IAsyncDisposable
         string? lastNodes = null;
         try
         {
-            await foreach (var frame in queue.Reader.ReadAllAsync().ConfigureAwait(false))
+            await foreach (var work in queue.Reader.ReadAllAsync().ConfigureAwait(false))
             {
+                if (work is SnapshotRequest request)
+                {
+                    try
+                    {
+                        int count = 0;
+                        foreach (string source in new[] { previous, current })
+                            if (File.Exists(source))
+                            {
+                                await ReplayCapture.CopySharedAsync(source, Path.Combine(request.Directory, Path.GetFileName(source)));
+                                count++;
+                            }
+                        request.Completion.TrySetResult(count);
+                    }
+                    catch (Exception ex) { request.Completion.TrySetException(ex); }
+                    continue;
+                }
+                var frame = (Frame)work;
                 var data = frame.Data;
                 string nodes = JsonSerializer.Serialize(data.Route.Nodes, Json);
                 string Serialize(bool includeNodes) => JsonSerializer.Serialize(new

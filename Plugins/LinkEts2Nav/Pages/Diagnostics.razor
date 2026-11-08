@@ -3,17 +3,23 @@
 @using LinkEts2Nav.Core
 @implements IAsyncDisposable
 
+<style>
+    .link-nav-action { cursor:pointer; border:1px solid #6b7280; border-radius:6px; padding:8px 16px; color:inherit; background:rgba(100,116,139,.16); }
+    .link-nav-action:hover:not(:disabled) { background:rgba(59,130,246,.3); border-color:#60a5fa; }
+    .link-nav-action:focus-visible { outline:2px solid #60a5fa; outline-offset:3px; }
+    .link-nav-action:disabled { cursor:not-allowed; opacity:.5; }
+</style>
 <div style="padding:32px;max-width:1100px">
     <h1>Link ETS2 Nav</h1>
     <p>测速预警与基础导航 · 开发诊断</p>
     <p>@snapshot.State</p>
-    <button disabled="@previewing" @onclick="PreviewAudio">@(previewing ? "试听中…" : "试听预警音")</button>
+    <button type="button" class="link-nav-action" disabled="@previewing" @onclick="PreviewAudio">@(previewing ? "试听中…" : "试听预警音")</button>
     <p>@audioMessage</p>
     <div style="margin:16px 0">
         <label for="replay-comment">回放评论（可选）</label><br />
         <textarea id="replay-comment" @bind="replayComment" @bind:event="oninput" maxlength="4000"
-                  rows="3" style="width:100%" placeholder="描述刚才遇到的问题，也可以直接保存"></textarea><br />
-        <button disabled="@(savingReplay || !ReplayCapture.IsAvailable)" @onclick="SaveReplay">@(savingReplay ? "保存中…" : "保存回放")</button>
+                  disabled="@savingReplay" rows="3" style="width:100%;padding:8px;border:1px solid #6b7280;border-radius:6px;background:transparent;color:inherit" placeholder="描述刚才遇到的问题，也可以直接保存"></textarea><br />
+        <button type="button" class="link-nav-action" disabled="@(savingReplay || !ReplayCapture.IsAvailable)" @onclick="SaveReplay">@(savingReplay ? "保存中…" : "保存回放")</button>
         <p role="status">@replayMessage</p>
     </div>
     <dl>
@@ -90,13 +96,18 @@
         if (savingReplay) return;
         savingReplay = true;
         replayMessage = "正在保存……";
+        ETS2LA.Logging.Logger.Info("[[LinkEts2Nav]] 收到手动保存回放请求。");
         try
         {
             string directory = await ReplayCapture.SaveAsync(replayComment);
             replayMessage = "已保存：" + directory;
             replayComment = "";
         }
-        catch (Exception ex) { replayMessage = "保存失败：" + ex.Message; }
+        catch (Exception ex)
+        {
+            replayMessage = "保存失败：" + ex.Message;
+            ETS2LA.Logging.Logger.Warn("[[LinkEts2Nav]] " + replayMessage);
+        }
         finally { savingReplay = false; }
     }
 

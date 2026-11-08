@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace LinkEts2Nav.Core;
 
@@ -34,27 +34,27 @@ public static class NavigationPrompts
 
     public static string AtDistance(ManeuverKind kind, int meters) => AtDistance(kind,meters,0);
 
-    public static string AtDistance(ManeuverKind kind, int meters, int ordinal)
+    public static string AtDistance(ManeuverKind kind, int meters, int ordinal, string? instruction = null)
     {
         if (meters is < 50 or > 2000 || meters % 50 != 0)
             throw new ArgumentOutOfRangeException(nameof(meters));
-        return Distance(meters, round: false) + "后，" + (ordinal>1 ? "在第"+Number(ordinal)+"个路口" : "") + Action(kind) + "。";
+        return Distance(meters, round: false) + "后，" + (ordinal>1 ? "在第"+Number(ordinal)+"个路口" : "") + (instruction ?? Action(kind)) + "。";
     }
 
-    public static string Execute(ManeuverKind kind) => Action(kind) + "。";
+    public static string Execute(ManeuverKind kind, string? instruction = null) => (instruction ?? Action(kind)) + "。";
 
-    public static string Immediate(ManeuverKind kind)
-        => kind == ManeuverKind.Straight ? "保持直行。" : "即将" + Action(kind) + "。";
+    public static string Immediate(ManeuverKind kind, string? instruction = null)
+        => kind == ManeuverKind.Straight ? "保持直行。" : "即将" + (instruction ?? Action(kind)) + "。";
 
     // Zero ordinal means topology could not prove how many physical intersections lie ahead.
-    public static string FirstLayer(ManeuverKind kind, double distance, int junctionOrdinal)
+    public static string FirstLayer(ManeuverKind kind, double distance, int junctionOrdinal, string? instruction = null)
     {
         if (!double.IsFinite(distance) || distance < 0) throw new ArgumentOutOfRangeException(nameof(distance));
         if (distance > 800) return Continue(distance);
         int meters = (int)Math.Floor(distance / 50) * 50;
-        if (meters < 50 && junctionOrdinal <= 1) return Immediate(kind);
+        if (meters < 50 && junctionOrdinal <= 1) return Immediate(kind,instruction);
         string where = junctionOrdinal <= 1 ? "" : "在第" + Number(junctionOrdinal) + "个路口";
-        return (meters >= 50 ? MeterNumber(meters) + "米后，" : "") + where + Action(kind) + "。";
+        return (meters >= 50 ? MeterNumber(meters) + "米后，" : "") + where + (instruction ?? Action(kind)) + "。";
     }
 
     public static string Continue(double distance)
@@ -165,20 +165,20 @@ public sealed class NavigationInstructionPolicy
                 // Warm the next two rounded bins, not an unbounded distance vocabulary.
                 double rounded = Math.Floor(target.DistanceMeters/50)*50;
                 foreach (double next in new[] { rounded-50,rounded-100 })
-                    if (next >= 50) result.Add(NavigationPrompts.FirstLayer(target.Kind,next,ordinal));
+                    if (next >= 50) result.Add(NavigationPrompts.FirstLayer(target.Kind,next,ordinal,target.Instruction));
             }
             int consumed = due?.Consumed ?? state.Consumed;
             foreach (int stageIndex in Enumerable.Range(0,Stages.Length))
                 if ((consumed & (1<<stageIndex)) == 0)
-                    result.Add(StageText(target.Kind,Stages[stageIndex],ordinal, state.ActionAnnounced || due is { Overview:false },maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation)));
-            if (!state.Executed) result.Add(NavigationPrompts.Execute(target.Kind));
+                    result.Add(StageText(target,Stages[stageIndex],ordinal, state.ActionAnnounced || due is { Overview:false },maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation)));
+            if (!state.Executed) result.Add(NavigationPrompts.Execute(target.Kind,target.Instruction));
             int nextIndex = ActionIndex(maneuvers,index+1);
             if (nextIndex >= 0 && target.DistanceMeters <= 800
                 && maneuvers[nextIndex].DistanceMeters - target.DistanceMeters <= 800)
             {
                 var next = maneuvers[nextIndex];
                 result.Add(NavigationPrompts.FirstLayer(next.Kind,
-                    Math.Max(0,next.DistanceMeters-target.DistanceMeters),Ordinal(maneuvers,index+1,nextIndex)));
+                    Math.Max(0,next.DistanceMeters-target.DistanceMeters),Ordinal(maneuvers,index+1,nextIndex),next.Instruction));
             }
         }
         else if (hasConfirmedContinuation && !continuationCovered && (maneuvers.Count==0 || maneuvers[0].DistanceMeters>50))
@@ -234,7 +234,7 @@ public sealed class NavigationInstructionPolicy
                     int stage=Stages[i];
                     bool crossed=target.DistanceMeters==stage || state.Previous is { } previous
                         && previous>stage && target.DistanceMeters<=stage && target.DistanceMeters>=stage-20;
-                    string text=NavigationPrompts.AtDistance(target.Kind,stage);
+                    string text=NavigationPrompts.AtDistance(target.Kind,stage,0,target.Instruction);
                     if(crossed && (canAnnounce?.Invoke(text) ?? true))
                     {
                         due=new(text,state.Consumed|((1<<(i+1))-1));
@@ -285,11 +285,11 @@ public sealed class NavigationInstructionPolicy
     private static Decision? Select(Encounter state,NavigationManeuver target,int ordinal,bool precedingStraight)
     {
         double distance=target.DistanceMeters;
-        if(distance<=20) return state.Executed ? null : new(NavigationPrompts.Execute(target.Kind),AllStages,true);
+        if(distance<=20) return state.Executed ? null : new(NavigationPrompts.Execute(target.Kind,target.Instruction),AllStages,true);
         if(distance<50) return null;
         if (NeedsBriefing(state))
             return new(distance > 800 && state.PendingContinuation is { } overview
-                ? overview : NavigationPrompts.FirstLayer(target.Kind,distance,ordinal),
+                ? overview : NavigationPrompts.FirstLayer(target.Kind,distance,ordinal,target.Instruction),
                 state.Consumed|InitialConsumption(distance),Overview:distance>800);
         if (distance > Stages[0]) return null;
         int index=StageIndex(distance);
@@ -297,7 +297,7 @@ public sealed class NavigationInstructionPolicy
         int consumed=state.Consumed | ((1<<(index+1))-1);
         bool crossing=state.Previous.HasValue && distance>=Stages[index]-20;
         if (distance==Stages[index] || crossing)
-            return new(StageText(target.Kind,Stages[index],ordinal,state.ActionAnnounced,precedingStraight),consumed);
+            return new(StageText(target,Stages[index],ordinal,state.ActionAnnounced,precedingStraight),consumed);
         if (distance<100) return null;
         // Missing a standard reminder does not authorize a new 400/150/50 m stage.
         // Leave later standards and the independent execution cue available.
@@ -305,10 +305,10 @@ public sealed class NavigationInstructionPolicy
     }
 
     private static bool NeedsBriefing(Encounter state) => !state.FirstAnnounced;
-    private static string StageText(ManeuverKind kind,int meters,int ordinal,bool hasPreviousAnnouncement=false,bool precedingStraight=false)
-        => !hasPreviousAnnouncement ? NavigationPrompts.AtDistance(kind,meters,ordinal)
-            : precedingStraight ? NavigationPrompts.AtDistance(kind,meters).TrimEnd('。')+"，前方路口直行。"
-            : NavigationPrompts.AtDistance(kind,meters);
+    private static string StageText(NavigationManeuver target,int meters,int ordinal,bool hasPreviousAnnouncement=false,bool precedingStraight=false)
+        => !hasPreviousAnnouncement ? NavigationPrompts.AtDistance(target.Kind,meters,ordinal,target.Instruction)
+            : precedingStraight ? NavigationPrompts.AtDistance(target.Kind,meters,0,target.Instruction).TrimEnd('。')+"，前方路口直行。"
+            : NavigationPrompts.AtDistance(target.Kind,meters,0,target.Instruction);
     private static int InitialConsumption(double distance)
     {
         // A road-level overview does not replace the upcoming maneuver reminders.
@@ -401,3 +401,4 @@ public sealed class NavigationInstructionPolicy
         encounters.Clear();session=null;observed=null;lastSpoken=null;continuationAnnounced=false;legTargetId=null;
     }
 }
+

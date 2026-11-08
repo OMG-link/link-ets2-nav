@@ -9,6 +9,8 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
 {
     /// <summary>Multiple connection curves inside one prefab share this physical-junction group.</summary>
     public string? JunctionId { get; init; }
+    /// <summary>Optional action-specific wording; distance scheduling remains shared.</summary>
+    public string? Instruction { get; init; }
     /// <summary>False when an adjacent prefab, rather than an explicit approach road, precedes this decision.</summary>
     public bool HasSeparateApproachRoad { get; init; } = true;
     /// <summary>True when a straight decision explicitly continues the main road.</summary>

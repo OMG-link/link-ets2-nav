@@ -45,6 +45,31 @@ public sealed class NavigationRuntimeTests
     }
 
     [Theory]
+    [InlineData(true,true,true)]
+    [InlineData(false,true,false)]
+    [InlineData(true,false,false)]
+    public void YardExitUsesVerifiedAreaAndRoutePrefixWithoutInventingInternalRoads(bool inArea,bool towardExit,bool expected)
+    {
+        var scene=Scene();var source=scene.Route.Nodes.Skip(1).ToArray();
+        var route=RouteSnapshot.Parse(source,Now);
+        var area=new FreeNavigationArea("yard",[new(-15,0,650),new(15,0,650),new(15,0,700),new(-15,0,700)],
+            [source[0].Uid]);
+        var nearby=scene.Map with{FreeNavigationAreas=[area]};
+        var data=Data(route,670);
+        data=data with{Vehicle=data.Vehicle! with{X=inArea ? 0 : 30,HeadingTurns=towardExit ? .5 : 0}};
+        int calls=0;var runtime=new NavigationRuntime(fallback:()=>calls++);
+        var first=runtime.Process(data,nearby,Now);
+        if(expected)
+        {
+            Assert.NotNull(first.Next);Assert.Equal(30,first.Next.DistanceMeters,1);Assert.Equal(0,calls);
+            var near=data with{Vehicle=data.Vehicle! with{Z=680}};
+            Assert.Equal("右转。",runtime.Process(near,nearby,Now).LastSpoken);Assert.Equal(1,calls);
+            runtime.Process(near,nearby,Now);Assert.Equal(1,calls);
+        }
+        else Assert.Null(first.Next);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public void StraightOrSingleConnectionPassageDoesNotBlockNextTurnsStandardReminder(bool hasChoice)

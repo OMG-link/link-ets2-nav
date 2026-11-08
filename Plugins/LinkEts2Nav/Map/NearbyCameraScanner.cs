@@ -17,6 +17,7 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
 {
     public IReadOnlyList<DirectedRoad> PrefabPaths { get; init; } = [];
     public SpeedLimitData SpeedLimits { get; init; } = SpeedLimitData.Empty;
+    public IReadOnlyList<FreeNavigationArea> FreeNavigationAreas { get; init; } = [];
 }
 
 /// <summary>
@@ -32,6 +33,7 @@ public sealed class NearbyCameraScanner
     private readonly Dictionary<string, string> prefabPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PrefabDescriptor?> prefabDescriptors = new(StringComparer.Ordinal);
     private IReadOnlyList<DirectedRoad> junctionGeometry = [];
+    private IReadOnlyList<FreeNavigationArea> freeNavigationAreas = [];
     private string[] junctionDiagnostics = [];
     private readonly Dictionary<string, string> modelPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> signPaths = new(StringComparer.Ordinal);
@@ -80,6 +82,7 @@ public sealed class NearbyCameraScanner
             hostView?.MergeInto(nextMap, sectors);
             cancellationToken.ThrowIfCancellationRequested();
             var junctions = new List<DirectedRoad>();
+            var areas = new List<FreeNavigationArea>();
             var issues = new List<string>();
             foreach (var prefab in nextMap.MapItems.Values.OfType<Prefab>())
             {
@@ -89,7 +92,11 @@ public sealed class NearbyCameraScanner
                 {
                     if (!prefabDescriptors.TryGetValue(resource, out var descriptor))
                         prefabDescriptors[resource] = descriptor = PrefabDescriptor.Open(resource, fileSystem);
-                    if (descriptor is not null) junctions.AddRange(PrefabPathGeometry.Build(prefab, descriptor));
+                    if (descriptor is not null)
+                    {
+                        junctions.AddRange(PrefabPathGeometry.Build(prefab, descriptor));
+                        areas.AddRange(FreeNavigationArea.Build(prefab,descriptor));
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -98,6 +105,7 @@ public sealed class NearbyCameraScanner
                 }
             }
             junctionGeometry = junctions;
+            freeNavigationAreas = areas;
             junctionDiagnostics = issues.Distinct().ToArray();
             map = nextMap;
             loadedSectors = sectors;
@@ -176,7 +184,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { PrefabPaths = junctionGeometry, SpeedLimits = speedLimits };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, FreeNavigationAreas = freeNavigationAreas };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)

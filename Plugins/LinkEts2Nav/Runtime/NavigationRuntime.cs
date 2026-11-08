@@ -42,12 +42,37 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
         var route = paths!.GetPath(position, vehicle.ForwardDirection, data.Route, data.RouteAvailability);
         var along = matcher.ProjectDistance(position, vehicle.ForwardDirection, route);
+        bool yardApproach=false;double exitDistance=0;
+        if(along is null)
+        {
+            var areas=nearby.FreeNavigationAreas.Where(a=>a.Contains(position)).ToArray();
+            var first=data.Route.Nodes.OrderByDescending(n=>n.DistanceToEndMeters).FirstOrDefault();
+            if(areas.Length==1 && first is not null && areas[0].ExitNodes.Contains(first.Uid))
+            {
+                var prefix=paths.GetRoutePrefix(position,data.Route,first.Uid);
+                if(prefix.Count>0 && prefix[0].Id.StartsWith("prefab:",StringComparison.Ordinal))
+                {
+                    var exit=prefix[0].Points[0];var delta=exit-position;
+                    exitDistance=new Vector2(delta.X,delta.Z).Length();
+                    if(exitDistance>0 && exitDistance<=100 && Math.Abs(delta.Y)<=3
+                        && Vector3.Dot(Vector3.Normalize(new(delta.X,0,delta.Z)),vehicle.ForwardDirection)>=.5f)
+                    { route=prefix;along=0;yardApproach=true; }
+                }
+            }
+        }
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
         var upcoming = detector.FindSequence(route, along.Value, paths.GetNavigationGraph(), out double confirmedUntil, out bool hasUnresolvedJoin);
+        if(yardApproach)
+        {
+            string group="prefab:"+route[0].Id.Split(':')[1];
+            if(!upcoming.Any(m=>m.JunctionId==group && m.Kind!=ManeuverKind.Straight && m.DistanceMeters==0))
+                return Suspend("货场出口路径已找到，但出口操作尚无法确认。",now);
+            upcoming=upcoming.Select(m=>m with{DistanceMeters=m.DistanceMeters+exitDistance}).ToArray();
+        }
         double confirmedAhead = Math.Max(0, confirmedUntil - along.Value);
-        bool confirmedContinuation = !hasUnresolvedJoin && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
+        bool confirmedContinuation = !yardApproach && !hasUnresolvedJoin && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
-        string? currentJunction=CurrentJunction(route,along.Value);
+        string? currentJunction=yardApproach ? null : CurrentJunction(route,along.Value);
         bool finishingTrackedTurn=currentJunction is not null && currentJunction==approachingJunction && !approachingStraight;
         if(!finishingTrackedTurn && upcoming.FirstOrDefault() is { DistanceMeters: <=50, JunctionId: not null } approach)
         {
@@ -71,7 +96,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             }
             lastSpoken = text;
         }
-        string state = defer ? "正在通过当前路口，驶出后继续提示下一动作。" : next is not null ? "沿游戏导航路线提供基础路口提示。"
+        string state = yardApproach ? "货场出口方向提示（距出口采用直线距离）。" : defer ? "正在通过当前路口，驶出后继续提示下一动作。" : next is not null ? "沿游戏导航路线提供基础路口提示。"
             : confirmedContinuation ? "已确认前方长直路，沿当前道路行驶，等待下一操作提示。"
             : "当前连续路径内没有可确认的普通路口操作。";
         Report(state, next, now);

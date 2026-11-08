@@ -68,6 +68,12 @@ public sealed class RoadPathSource
     }
 
 
+    public IReadOnlyList<DirectedRoad> GetRoutePrefix(Vector3 position,RouteSnapshot route,ulong firstNode)
+    {
+        var matches=GetRouteChunks(position,route).Where(p=>p.Count>0 && p[0].StartNodeUid==firstNode).ToArray();
+        return matches.Length==1 ? matches[0] : [];
+    }
+
     /// <summary>Nearby directed geometry, preserving the PPD's explicit junction connections.</summary>
     public IReadOnlyList<DirectedRoad> GetNavigationGraph()
         => navigationGraph ??= roads.Where(r => r.Node is not null && r.ForwardNode is not null

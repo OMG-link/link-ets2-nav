@@ -103,6 +103,46 @@
         "$msCompile"
       ],
       "group": "test"
+    },
+    {
+      "label": "Nav: Test Unit",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/dev.ps1",
+        "-Action",
+        "Test",
+        "-TestScope",
+        "Unit"
+      ],
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "group": "test"
+    },
+    {
+      "label": "Nav: Test Integration",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/dev.ps1",
+        "-Action",
+        "Test",
+        "-TestScope",
+        "Integration"
+      ],
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "group": "test"
     }
   ]
 }

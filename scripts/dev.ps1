@@ -3,9 +3,17 @@ param(
     [ValidateSet('Check', 'Restore', 'Build', 'Deploy', 'Run', 'Test')]
     [string]$Action = 'Check',
     [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Debug'
+    [string]$Configuration = 'Debug',
+    [ValidateSet('All', 'Unit', 'Integration')]
+    [string]$TestScope = 'All',
+    [string]$TestFilter,
+    [switch]$NoRestore,
+    [switch]$NoBuild
 )
 $ErrorActionPreference = 'Stop'
+if ($Action -ne 'Test' -and ($PSBoundParameters.ContainsKey('TestScope') -or $TestFilter -or $NoRestore -or $NoBuild)) {
+    throw 'TestScope, TestFilter, NoRestore and NoBuild are only available with -Action Test.'
+}
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $frameworkRoot = Join-Path $projectRoot 'ETS2LA'
 $pluginProject = Join-Path $projectRoot 'Plugins\LinkEts2Nav\LinkEts2Nav.csproj'
@@ -23,7 +31,9 @@ function Invoke-Checked {
 Push-Location $projectRoot
 try {
     $missing = @()
-    foreach ($tool in @('git', 'bun', 'dotnet')) {
+    $requiredTools = @('git', 'dotnet')
+    if ($Action -ne 'Test' -or ($TestScope -ne 'Unit' -and -not $NoBuild)) { $requiredTools += 'bun' }
+    foreach ($tool in $requiredTools) {
         if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
             $missing += $tool
             Write-Host "MISSING: $tool"
@@ -45,6 +55,28 @@ try {
     }
     if ($Action -eq 'Check') { Write-Host 'Development prerequisites found.'; exit 0 }
 
+    if ($Action -eq 'Test') {
+        $testTarget = switch ($TestScope) {
+            'Unit' { Join-Path $projectRoot 'tests/LinkEts2Nav.UnitTests/LinkEts2Nav.UnitTests.csproj' }
+            'Integration' { Join-Path $projectRoot 'tests/DevHost.IntegrationTests/DevHost.IntegrationTests.csproj' }
+            'All' { Join-Path $projectRoot 'tests/Tests.slnx' }
+        }
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        if (-not $NoRestore -and -not $NoBuild) {
+            # Shared projects still use GetText.Extractor, but tests do not need the host executable.
+            Push-Location $frameworkRoot
+            try { Invoke-Checked dotnet @('tool', 'restore') }
+            finally { Pop-Location }
+            Invoke-Checked dotnet @('restore', $testTarget)
+        }
+        $testArguments = @('test', $testTarget, '-c', $Configuration, '--no-restore')
+        if ($NoBuild) { $testArguments += '--no-build' }
+        if ($TestFilter) { $testArguments += @('--filter', $TestFilter) }
+        Invoke-Checked dotnet $testArguments
+        Write-Host ('Test scope {0} completed in {1:N1}s.' -f $TestScope, $timer.Elapsed.TotalSeconds)
+        exit 0
+    }
+
     # Host builds invoke GetText.Extractor; restore its manifest from the host root.
     Push-Location $frameworkRoot
     try { Invoke-Checked dotnet @('tool', 'restore') }
@@ -52,14 +84,10 @@ try {
     Invoke-Checked dotnet @('restore', $hostProject)
     Invoke-Checked dotnet @('restore', $pluginProject)
     Invoke-Checked dotnet @('restore', $speechProject, '-r', 'win-x64')
-    if ($Action -eq 'Restore' -or $Action -eq 'Test') {
+    if ($Action -eq 'Restore') {
         Invoke-Checked dotnet @('restore', (Join-Path $projectRoot 'LinkEts2Nav.slnx'))
     }
     if ($Action -eq 'Restore') { exit 0 }
-    if ($Action -eq 'Test') {
-        Invoke-Checked dotnet @('test', (Join-Path $projectRoot 'LinkEts2Nav.slnx'), '-c', $Configuration, '--no-restore')
-        exit 0
-    }
 
     Invoke-Checked dotnet @('build', $hostProject, '-c', $Configuration, '--no-restore')
     Invoke-Checked dotnet @('build', $pluginProject, '-c', $Configuration, '--no-restore')

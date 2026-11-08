@@ -56,6 +56,23 @@ README 面向用户，保留功能、安装、使用和限制说明。开发指�
 
 使用 xUnit.net v3 3.2.2，通过 VSTest 适配器运行，可使用 `dotnet test` 与 VS Code 测试面板；依赖由 NuGet 恢复，无需系统级安装。测试项目不随插件部署。
 
+测试入口使用 `tests/Tests.slnx`，只构建两类测试及其实际依赖，不构建宿主主程序或地图检查工具。默认 `Test` 仍执行全部单元测试和集成测试；日常按改动范围选择：
+
+```powershell
+# 插件算法、地图匹配、语音规则
+.\scripts\dev.ps1 -Action Test -TestScope Unit
+# 开发宿主覆盖、插件加载、页面行为
+.\scripts\dev.ps1 -Action Test -TestScope Integration
+# 依赖已恢复，只重建并执行本次相关用例
+.\scripts\dev.ps1 -Action Test -TestScope Unit -NoRestore -TestFilter 'FullyQualifiedName~JunctionNavigationTests|FullyQualifiedName~NavigationInstructionPolicyTests'
+# 源码未变，仅重跑已有测试产物；不会重新构建，也不会恢复依赖
+.\scripts\dev.ps1 -Action Test -TestScope Unit -NoBuild -TestFilter 'FullyQualifiedName~NavigationInstructionPolicyTests'
+# 提交前的全量验证
+.\scripts\dev.ps1 -Action Test
+```
+
+`TestFilter` 使用 `dotnet test --filter` 的语法。改过源码后应保留构建；`NoBuild` 只用于重跑已构建的同配置产物，不能用于验证新代码。首次运行、依赖或 SDK／上游版本变更后不要跳过恢复。单元测试入口不需要 Bun；集成测试涉及 UI 构建时仍需要。算法修改先运行相关单元测试，涉及宿主覆盖时补集成测试，提交前执行全量入口。
+
 宿主集成测试禁止并行执行，诱饵文件仅创建于测试输出目录并在结束时清理。插件测试产物由 MSBuild 自动复制，不需要手工指定宿主路径。页面测试使用 Blazor HtmlRenderer。
 
 单元测试覆盖预警状态机、路线与道路匹配、遥测时效、真实资源格式的合成样本以及官方归档选择。测试不依赖本机安装游戏，不播放真实音频。

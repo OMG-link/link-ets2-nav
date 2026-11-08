@@ -31,7 +31,7 @@ public sealed class NavigationInstructionPolicyTests
         Assert.Empty(Update(p,[M(2650),M(6000,"later")],_=>false));
         var plan=Plan(p,[M(2550),M(5900,"later")]);
         Assert.Equal("沿当前道路，继续行驶二点六公里。",plan[0]);
-        Assert.Single(plan.Where(t=>t.StartsWith("沿当前道路")));
+        Assert.Single(plan,t=>t.StartsWith("沿当前道路"));
         Assert.Equal(plan[0],Assert.Single(Update(p,[M(2550),M(5900,"later")])));
         Assert.DoesNotContain(Plan(p,[M(2450),M(5800,"later")]),t=>t.StartsWith("沿当前道路"));
         Assert.Empty(Update(p,[M(2450),M(5800,"later")]));

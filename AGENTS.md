@@ -15,6 +15,8 @@
 
 - 构建：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1 -Action Build`。
 - 测试：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1 -Action Test`。
+- 日常可用 `-Action Test -TestScope Unit|Integration` 缩小项目范围，用 `-TestFilter` 指定相关用例；依赖未变时可加 `-NoRestore`。提交前运行默认全量测试入口。
+- `-NoBuild` 仅用于源码未变时重跑已有同配置测试产物，不得用于验证新代码。
 - 集成测试位于 `tests/DevHost.IntegrationTests/`；单元测试位于 `tests/LinkEts2Nav.UnitTests/`。
 - 不启动游戏或安装游戏通信 DLL，除非任务明确需要。
 

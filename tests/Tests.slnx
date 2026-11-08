@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="LinkEts2Nav.UnitTests/LinkEts2Nav.UnitTests.csproj" />
+  <Project Path="DevHost.IntegrationTests/DevHost.IntegrationTests.csproj" />
+</Solution>

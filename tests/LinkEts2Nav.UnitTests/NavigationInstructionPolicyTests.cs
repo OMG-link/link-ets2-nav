@@ -81,9 +81,11 @@ public sealed class NavigationInstructionPolicyTests
         Assert.Equal("前方二千米，左转。",Assert.Single(Update(p,[M(1995)])));
         Assert.Empty(Update(p,[M(1001)]));
         Assert.Equal("前方一千米，左转。",Assert.Single(Update(p,[M(995)])));
-        Assert.Equal("八百米后，在下一个路口左转。",Assert.Single(Update(p,[M(800)])));
+        Assert.Empty(Update(p,[M(800)]));
+        Assert.Empty(Update(p,[M(750)]));
+        Assert.Empty(Update(p,[M(550)]));
         Assert.Empty(Update(p,[M(501)]));
-        Assert.Empty(Update(p,[M(498)]));
+        Assert.Equal("前方五百米，左转。",Assert.Single(Update(p,[M(498)])));
         Assert.Empty(Update(p,[M(201)]));
         Assert.Equal("前方二百米，左转。",Assert.Single(Update(p,[M(198)])));
         Assert.Empty(Update(p,[M(51)]));
@@ -92,15 +94,45 @@ public sealed class NavigationInstructionPolicyTests
     }
 
     [Fact]
-    public void FarContinuationTransitionsOnceToSpecificOrdinalBriefingAt800()
+    public void FarContinuationKeepsOnlyStandardRemindersAndTheirOrdinals()
     {
         var p=new NavigationInstructionPolicy();
-        Assert.Equal("沿当前道路，继续行驶一点五公里。",Assert.Single(Update(p,[M(1500)])));
-        Assert.Equal("八百米后，在第三个路口左转。",Assert.Single(Update(p,
-            [M(100,"s1",ManeuverKind.Straight),M(300,"s2",ManeuverKind.Straight),M(800)])));
-        Assert.Empty(Update(p,[M(100,"s1",ManeuverKind.Straight),M(250,"s2",ManeuverKind.Straight),M(500)]));
+        Update(p,[M(1500)]);
+        Assert.Equal("前方一千米，左转。",Assert.Single(Update(p,[M(1000)])));
+        Assert.Empty(Update(p,[M(100,"s1",ManeuverKind.Straight),M(300,"s2",ManeuverKind.Straight),M(800)]));
+        Assert.Equal("五百米后，在第三个路口左转。",Assert.Single(Update(p,
+            [M(100,"s1",ManeuverKind.Straight),M(250,"s2",ManeuverKind.Straight),M(500)])));
         Assert.Equal("二百米后，在第二个路口左转。",Assert.Single(Update(p,
             [M(100,"s2",ManeuverKind.Straight),M(200)])));
+    }
+
+    [Fact]
+    public void HighwayOverviewNeverSchedulesAnAdditional800MeterBriefing()
+    {
+        var p=new NavigationInstructionPolicy();
+        Assert.Equal(NavigationPrompts.Continue(1400),Assert.Single(Update(p,[M(1400)])));
+        Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,1000),Assert.Single(Update(p,[M(1000)])));
+        foreach(double distance in new[]{900d,800,775,750,700,600,550,501})
+        {
+            var plan=Plan(p,[M(distance)]);
+            Assert.Equal(new[]{NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,500),
+                NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,200),
+                NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,50),
+                NavigationPrompts.Immediate(ManeuverKind.TurnLeft)},plan);
+            Assert.Empty(Update(p,[M(distance)]));
+        }
+        Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,500),Assert.Single(Update(p,[M(499)])));
+    }
+
+    [Fact]
+    public void GenericOverviewAndNewlyDiscoveredNearActionDoNotBothBriefTheSameLeg()
+    {
+        var p=new NavigationInstructionPolicy();
+        p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true);
+        Assert.DoesNotContain(Plan(p,[M(750)]),t=>t.Contains("七百五十")||t.Contains("六百五十"));
+        Assert.Empty(Update(p,[M(750)]));
+        Assert.Empty(Update(p,[M(550)]));
+        Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,500),Assert.Single(Update(p,[M(500)])));
     }
 
     [Fact]
@@ -301,7 +333,8 @@ public sealed class NavigationInstructionPolicyTests
         Assert.Empty(Update(p,[M(2500)]));
         Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,2000),Assert.Single(Update(p,[M(2000)])));
         Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,1000),Assert.Single(Update(p,[M(1000)])));
-        Assert.Equal(NavigationPrompts.FirstLayer(ManeuverKind.TurnLeft,800,1),Assert.Single(Update(p,[M(800)])));
+        Assert.Empty(Update(p,[M(800)]));
+        Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,500),Assert.Single(Update(p,[M(500)])));
         Assert.Empty(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true));
     }
 
@@ -339,7 +372,7 @@ public sealed class NavigationInstructionPolicyTests
     }
 
     [Fact]
-    public void PreparedBoundaryCanReplaceCloseBriefEvenWhenOverviewConsumedThatBoundary()
+    public void HighwayOverviewLeavesItsNextStandardBoundaryAvailable()
     {
         var p=new NavigationInstructionPolicy();
         Update(p,[M(900,kind:ManeuverKind.TurnRight)]);

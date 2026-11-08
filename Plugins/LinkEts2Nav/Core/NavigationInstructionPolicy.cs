@@ -55,7 +55,7 @@ public static class NavigationPrompts
 
     public static string Continue(double distance)
         => "沿当前道路，继续行驶" + Distance(distance) + "。";
-    public static string Continue() => "沿当前道路继续行驶。";
+    public static string Continue() => "在听到下一条语音提示前，请沿当前道路行驶。";
 
     public static int DistanceStep(double distance) => distance > 10000 ? 1000 : distance > 1000 ? 100 : 50;
 
@@ -123,6 +123,7 @@ public sealed class NavigationInstructionPolicy
     private string? session;
     private DateTimeOffset? observed, lastSpoken;
     private bool continuationAnnounced;
+    private string? legTargetId;
 
     public IReadOnlyList<string> Plan(NavigationManeuver? maneuver,string sessionId,
         DateTimeOffset observedAt,DateTimeOffset now,bool active)
@@ -132,15 +133,22 @@ public sealed class NavigationInstructionPolicy
         => UpdateSequence(maneuver is null ? [] : [maneuver],sessionId,observedAt,now,active,canAnnounce);
 
     public IReadOnlyList<string> PlanSequence(IReadOnlyList<NavigationManeuver> maneuvers,string sessionId,
-        DateTimeOffset observedAt,DateTimeOffset now,bool active)
+        DateTimeOffset observedAt,DateTimeOffset now,bool active,bool hasConfirmedContinuation=false)
     {
-        if (!Valid(maneuvers,sessionId,observedAt,now,active)) return [];
+        if (!Valid(maneuvers,sessionId,observedAt,now,active,hasConfirmedContinuation)) return [];
+        bool continuationCovered = StringComparer.Ordinal.Equals(session,sessionId)
+            && continuationAnnounced && !StartsNewLeg(maneuvers);
         var result = new List<string>();
         int index = ActionIndex(maneuvers,0);
         if (index >= 0)
         {
             var target = maneuvers[index];
             var state = Preview(target,sessionId);
+            if (continuationCovered && !state.FirstAnnounced && target.DistanceMeters>800)
+            {
+                state = Copy(state);
+                CoverFarOverview(state,target.DistanceMeters);
+            }
             int ordinal = Ordinal(maneuvers,0,index);
             var due = Select(state,target,ordinal);
             if (due is { } current) result.Add(current.Text);
@@ -165,20 +173,25 @@ public sealed class NavigationInstructionPolicy
                     result.Add(StageText(target.Kind,Stages[stageIndex],ordinal));
             if (consumed != AllStages) result.Add(ImmediateText(target.Kind,ordinal));
         }
-        else if (!(StringComparer.Ordinal.Equals(session,sessionId) && continuationAnnounced)
-            && maneuvers[0].DistanceMeters > 50)
+        else if (!continuationCovered && (maneuvers.Count==0 || maneuvers[0].DistanceMeters>50))
             result.Add(NavigationPrompts.Continue());
-        var straight = maneuvers.Take(index >= 0 ? index : maneuvers.Count).FirstOrDefault(m => m.Kind==ManeuverKind.Straight);
+        var straight = maneuvers.Take(index >= 0 ? index : maneuvers.Count).FirstOrDefault(m => m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation);
         if (straight is not null && !Preview(straight,sessionId).FirstAnnounced)
             result.Add(NavigationPrompts.Immediate(ManeuverKind.Straight));
         return result.Distinct(StringComparer.Ordinal).ToArray();
     }
 
     public IReadOnlyList<string> UpdateSequence(IReadOnlyList<NavigationManeuver> maneuvers,string sessionId,
-        DateTimeOffset observedAt,DateTimeOffset now,bool active,Func<string,bool>? canAnnounce=null)
+        DateTimeOffset observedAt,DateTimeOffset now,bool active,Func<string,bool>? canAnnounce=null,
+        bool hasConfirmedContinuation=false)
     {
-        if (!Valid(maneuvers,sessionId,observedAt,now,active)) return [];
+        if (!Valid(maneuvers,sessionId,observedAt,now,active,hasConfirmedContinuation)) return [];
         if (!StringComparer.Ordinal.Equals(session,sessionId)) { Reset(); session=sessionId; }
+        bool newLeg=StartsNewLeg(maneuvers);
+        if(newLeg) { continuationAnnounced=false; legTargetId=null; }
+        int targetIndex=ActionIndex(maneuvers,0);
+        if(targetIndex>=0 && (legTargetId is null || !maneuvers.Any(m=>m.Id==legTargetId)))
+            legTargetId=maneuvers[targetIndex].Id;
         // Preserve the previous UPDATE distances until decisions have been made.
         var states = maneuvers.ToDictionary(m=>m.Id,m=>Current(m,now),StringComparer.Ordinal);
         var output = new List<string>(1);
@@ -187,10 +200,32 @@ public sealed class NavigationInstructionPolicy
         {
             var target = maneuvers[index];
             var state = states[target.Id];
+            if(continuationAnnounced && !state.FirstAnnounced && target.DistanceMeters>800)
+                CoverFarOverview(state,target.DistanceMeters);
             if (!state.FirstAnnounced && target.DistanceMeters > 800)
                 state.PendingContinuation ??= NavigationPrompts.Continue(target.DistanceMeters);
-            var due = Select(state,target,Ordinal(maneuvers,0,index));
-            if (due is { } current && (canAnnounce?.Invoke(current.Text) ?? true))
+            int ordinal=Ordinal(maneuvers,0,index);
+            var due = Select(state,target,ordinal);
+            bool ready=due is { } candidate && (canAnnounce?.Invoke(candidate.Text) ?? true);
+            if (!ready && NeedsBriefing(state,target.DistanceMeters) && target.DistanceMeters<=800 && (ordinal==1 || index==0))
+            {
+                // A prepared fixed boundary cue can replace a still-generating close briefing.
+                // Never remove an intersection ordinal or announce a boundary not actually crossed.
+                for(int i=2;i<Stages.Length;i++)
+                {
+                    int stage=Stages[i];
+                    bool crossed=target.DistanceMeters==stage || state.Previous is { } previous
+                        && previous>stage && target.DistanceMeters<=stage && target.DistanceMeters>=stage-20;
+                    string text=NavigationPrompts.AtDistance(target.Kind,stage);
+                    if(crossed && (canAnnounce?.Invoke(text) ?? true))
+                    {
+                        due=new(text,state.Consumed|((1<<(i+1))-1));
+                        ready=true;
+                        break;
+                    }
+                }
+            }
+            if (ready && due is { } current)
             {
                 if (NeedsBriefing(state,target.DistanceMeters))
                 {
@@ -199,21 +234,22 @@ public sealed class NavigationInstructionPolicy
                 }
                 state.FirstAnnounced=true;
                 state.Consumed=current.Consumed;
-                continuationAnnounced=false;
+                if(state.FirstWasContinuation && target.DistanceMeters>800) continuationAnnounced=true;
                 output.Add(current.Text);
             }
         }
-        if (output.Count == 0 && (lastSpoken is null || now-lastSpoken.Value >= StraightQuietPeriod))
+        if (output.Count == 0)
         {
             var straight = maneuvers.Take(index >= 0 ? index : maneuvers.Count)
-                .FirstOrDefault(m=>m.Kind==ManeuverKind.Straight);
-            if (straight is not null && straight.DistanceMeters <= 50 && !states[straight.Id].FirstAnnounced)
+                .FirstOrDefault(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation);
+            bool quiet=lastSpoken is null || now-lastSpoken.Value>=StraightQuietPeriod;
+            if (quiet && straight is not null && straight.DistanceMeters <= 50 && !states[straight.Id].FirstAnnounced)
             {
                 string text=NavigationPrompts.Immediate(ManeuverKind.Straight);
                 if (canAnnounce?.Invoke(text) ?? true)
                 { states[straight.Id].FirstAnnounced=true; output.Add(text); }
             }
-            else if (index < 0 && !continuationAnnounced)
+            else if (index < 0 && !continuationAnnounced && (quiet || newLeg))
             {
                 string text=NavigationPrompts.Continue();
                 if (canAnnounce?.Invoke(text) ?? true) { continuationAnnounced=true; output.Add(text); }
@@ -295,10 +331,10 @@ public sealed class NavigationInstructionPolicy
         return state;
     }
     private bool Valid(IReadOnlyList<NavigationManeuver> list,string sessionId,
-        DateTimeOffset observedAt,DateTimeOffset now,bool active)
+        DateTimeOffset observedAt,DateTimeOffset now,bool active,bool hasConfirmedContinuation=false)
     {
         if (!active || now<observedAt || now-observedAt>MaximumAge || string.IsNullOrWhiteSpace(sessionId)
-            || list.Count==0 || StringComparer.Ordinal.Equals(session,sessionId) && observed is { } last && observedAt<last)
+            || list.Count==0 && !hasConfirmedContinuation || StringComparer.Ordinal.Equals(session,sessionId) && observed is { } last && observedAt<last)
             return false;
         double previous=-1;var ids=new HashSet<string>(StringComparer.Ordinal);
         foreach(var m in list)
@@ -308,6 +344,29 @@ public sealed class NavigationInstructionPolicy
             previous=m.DistanceMeters;
         }
         return true;
+    }
+    private bool StartsNewLeg(IReadOnlyList<NavigationManeuver> list)
+    {
+        if(legTargetId is null || !encounters.TryGetValue(legTargetId,out var previous)
+            || previous.Minimum>50) return false;
+        var same=list.FirstOrDefault(m=>m.Id==legTargetId);
+        return same is null || same.DistanceMeters>550;
+    }
+
+    private static Encounter Copy(Encounter original) => new(original.Minimum)
+    {
+        Previous=original.Previous,PendingContinuation=original.PendingContinuation,
+        FirstAnnounced=original.FirstAnnounced,FirstWasContinuation=original.FirstWasContinuation,
+        CloseBriefed=original.CloseBriefed,Consumed=original.Consumed,LastSeen=original.LastSeen
+    };
+
+    private static void CoverFarOverview(Encounter state,double distance)
+    {
+        state.FirstAnnounced=true;
+        state.FirstWasContinuation=true;
+        // Existing road-level guidance covers this new far target's overview only.
+        // Expire boundaries already behind the player, but leave future standards pending.
+        for(int i=0;i<Stages.Length;i++) if(Stages[i]>distance) state.Consumed|=1<<i;
     }
     private static int ActionIndex(IReadOnlyList<NavigationManeuver> list,int start)
     {
@@ -322,6 +381,6 @@ public sealed class NavigationInstructionPolicy
     }
     public void Reset()
     {
-        encounters.Clear();session=null;observed=null;lastSpoken=null;continuationAnnounced=false;
+        encounters.Clear();session=null;observed=null;lastSpoken=null;continuationAnnounced=false;legTargetId=null;
     }
 }

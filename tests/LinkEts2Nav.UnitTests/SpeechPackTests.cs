@@ -129,7 +129,7 @@ public sealed class SpeechPackTests : IDisposable
     public void PackNumbersAndAllCommonCombinationsAreWellFormed(int number, string expected)
     {
         Assert.Equal(expected, SpeechPack.Number(number));
-        Assert.Equal(120, SpeechPack.DefaultTexts().Distinct().Count());
+        Assert.Equal(121, SpeechPack.DefaultTexts().Distinct().Count());
         Assert.Contains("二百米处，有测速照相，限速九十。", SpeechPack.DefaultTexts());
     }
 

@@ -29,6 +29,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         yield return "米内，有测速照相，限速";
         yield return "前方有测速照相，限速";
         yield return UncalibratedText;
+        yield return "在听到下一条语音提示前，请沿当前道路行驶。";
         foreach (string action in new[] { "左转", "右转", "向左前方行驶", "向右前方行驶", "直行", "掉头" })
         {
             foreach (int distance in Enumerable.Range(1, 10).Select(n => n * 50).Concat(new[] { 1000, 2000 }))

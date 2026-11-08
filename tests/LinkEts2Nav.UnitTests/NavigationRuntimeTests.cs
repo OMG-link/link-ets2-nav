@@ -45,6 +45,40 @@ public sealed class NavigationRuntimeTests
     }
 
     [Fact]
+    public void LongConfirmedRoadAnnouncesOnceWithoutInventingTheNextTurnDistance()
+    {
+        var map = new TruckLib.ScsMap.Map();
+        var road = Road.Add(map,new(0,0,0),new(0,0,4000),default);
+        var route = RouteSnapshot.Parse([new(road.Node.Uid,4000,200),new(road.ForwardNode.Uid,0,0)],Now);
+        var nearby = new NearbyMapSnapshot(map,[],[],[]);
+        int calls = 0;
+        var runtime = new NavigationRuntime(fallback:()=>calls++);
+        var first = runtime.Process(Data(route,100),nearby,Now);
+        Assert.Equal(NavigationPrompts.Continue(),first.LastSpoken);
+        Assert.Null(first.Next);
+        Assert.InRange(first.ConfirmedAheadMeters!.Value,3899,3901);
+        runtime.Process(Data(route,200),nearby,Now);
+        runtime.Process(Data(route,200,paused:true),nearby,Now);
+        runtime.Process(Data(route,300),nearby,Now);
+        Assert.Equal(1,calls);
+    }
+
+    [Fact]
+    public void UnknownNearbyJunctionCannotBorrowLongRoadFallbackFromALaterChunk()
+    {
+        var map = new TruckLib.ScsMap.Map();
+        var incoming = Road.Add(map,new(0,0,0),new(0,0,400),default);
+        var outgoing = Road.Add(map,new(0,0,450),new(0,0,4000),default);
+        var route = RouteSnapshot.Parse([new(incoming.Node.Uid,4000,200),new(incoming.ForwardNode.Uid,3600,180),
+            new(outgoing.Node.Uid,3550,175),new(outgoing.ForwardNode.Uid,0,0)],Now);
+        int calls = 0;
+        var runtime = new NavigationRuntime(fallback:()=>calls++);
+        var result = runtime.Process(Data(route,100),new(map,[],[],[]),Now);
+        Assert.Null(result.LastSpoken);
+        Assert.Equal(0,calls);
+    }
+
+    [Fact]
     public async Task FailedSynthesisFallsBackOnceRatherThanWaitingForever()
     {
         var scene = Scene();
@@ -130,6 +164,7 @@ public sealed class NavigationRuntimeTests
     public void EveryRuntimePhraseExistsInPreGeneratedPack()
     {
         Assert.Equal(78,NavigationPrompts.AllTexts().Distinct().Count());
+        Assert.Contains(NavigationPrompts.Continue(),LinkEts2Nav.Speech.SpeechPack.DefaultTexts());
         foreach(string text in NavigationPrompts.AllTexts())
             Assert.Contains(text,LinkEts2Nav.Speech.SpeechPack.DefaultTexts());
     }

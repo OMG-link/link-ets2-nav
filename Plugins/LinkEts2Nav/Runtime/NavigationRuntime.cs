@@ -7,6 +7,7 @@ namespace LinkEts2Nav.Runtime;
 public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next = null, string? LastSpoken = null)
 {
     public IReadOnlyList<NavigationManeuver> Upcoming { get; init; } = [];
+    public double? ConfirmedAheadMeters { get; init; }
 }
 
 /// <summary>Ordinary junction instructions along the game's selected route; no lane guidance.</summary>
@@ -39,12 +40,14 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         var route = paths!.GetPath(position, vehicle.ForwardDirection, data.Route, data.RouteAvailability);
         var along = matcher.ProjectDistance(position, vehicle.ForwardDirection, route);
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
-        var upcoming = detector.FindSequence(route, along.Value, paths.GetNavigationGraph());
+        var upcoming = detector.FindSequence(route, along.Value, paths.GetNavigationGraph(), out double confirmedUntil);
+        double confirmedAhead = Math.Max(0, confirmedUntil - along.Value);
+        bool confirmedContinuation = !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
-        var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true);
+        var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation);
         speech?.UpdatePlan("navigation", plan, priority: 10);
         foreach (string text in policy.UpdateSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true,
-            speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text)))
+            speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text), confirmedContinuation))
         {
             log?.Invoke("导航指令：" + text + " 当前路口=" + upcoming.FirstOrDefault()?.Id + "；下一动作=" + next?.Id);
             if (speech is null || !speech.TryAnnounce(text, "导航"))
@@ -54,9 +57,11 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             }
             lastSpoken = text;
         }
-        string state = next is null ? "当前连续路径内没有可确认的普通路口操作。" : "沿游戏导航路线提供基础路口提示。";
+        string state = next is not null ? "沿游戏导航路线提供基础路口提示。"
+            : confirmedContinuation ? "已确认前方长直路，沿当前道路行驶，等待下一操作提示。"
+            : "当前连续路径内没有可确认的普通路口操作。";
         Report(state, next, now);
-        return new(state, next, lastSpoken) { Upcoming = upcoming };
+        return new(state, next, lastSpoken) { Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead };
     }
 
     public NavigationDiagnostic Suspend(string state, DateTimeOffset now)

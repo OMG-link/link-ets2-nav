@@ -10,6 +10,41 @@ public sealed class NavigationManeuverTests
         => new(id, start, end, points);
     private static readonly NavigationManeuverDetector Detector = new();
 
+    [Theory]
+    [InlineData(.072, 32.684, null, null, null, ManeuverKind.Straight, true)]
+    [InlineData(20, -20, "main", "main", "ramp", ManeuverKind.Straight, true)]
+    [InlineData(1, 30, "same", "same", "same", ManeuverKind.Straight, true)]
+    [InlineData(-20, 20, "same", "same", "same", ManeuverKind.KeepLeft, false)]
+    [InlineData(1.77168, 8.65269, "ger18", "ger16", "ger2", ManeuverKind.Straight, true)]
+    [InlineData(1, 30, "ramp", "main", "ramp", ManeuverKind.KeepLeft, false)]
+    [InlineData(-20, 20, null, null, null, ManeuverKind.KeepLeft, false)]
+    public void MainRoadContinuationUsesUniqueTypeBeforeNearStraightGeometry(double selectedAngle,
+        double otherAngle, string? entryType, string? selectedType, string? otherType,
+        ManeuverKind expected, bool continuation)
+    {
+        Vector3 Exit(double angle) => P((float)(100 * Math.Sin(angle * Math.PI / 180)),
+            -100 - (float)(100 * Math.Cos(angle * Math.PI / 180)));
+        var entry = R("entry", 1, 2, P(0, 0), P(0, -100)) with { RoadType = entryType };
+        var selected = R("selected", 2, 3, P(0, -100), Exit(selectedAngle)) with { RoadType = selectedType };
+        var other = R("other", 2, 4, P(0, -100), Exit(otherAngle)) with { RoadType = otherType };
+        var result = Detector.FindNext([entry, selected], 0, [entry, selected, other]);
+        Assert.Equal(expected, result!.Kind);
+        Assert.Equal(continuation, result.IsMainRoadContinuation);
+    }
+
+    [Fact]
+    public void PrefabMainRoadUsesItsExternalRoadTypes()
+    {
+        var entry = R("entry", 1, 2, P(0, 100), P(0, 0)) with { RoadType = "main" };
+        var chosen = R("prefab:FORK:0:1", 2, 3, P(0, 0), P(0, -30));
+        var side = R("prefab:FORK:0:2", 2, 4, P(0, 0), P(30, 0));
+        var main = R("main", 3, 5, P(0, -30), P(30, -130)) with { RoadType = "main" };
+        var ramp = R("ramp", 4, 6, P(30, 0), P(0, -100)) with { RoadType = "ramp" };
+        var result = Detector.FindNext([entry, chosen, main], 0, [entry, chosen, side, main, ramp]);
+        Assert.Equal(ManeuverKind.Straight, result!.Kind);
+        Assert.True(result.IsMainRoadContinuation);
+    }
+
     [Fact]
     public void SingleLongRoadConfirmsItsEntireLengthWithoutAnInstruction()
     {
@@ -89,9 +124,9 @@ public sealed class NavigationManeuverTests
     }
 
     [Theory]
-    [InlineData(1,false,ManeuverKind.KeepLeft)]
+    [InlineData(1,false,ManeuverKind.Straight)]
     [InlineData(1,true,ManeuverKind.KeepRight)]
-    [InlineData(-1,false,ManeuverKind.KeepRight)]
+    [InlineData(-1,false,ManeuverKind.Straight)]
     [InlineData(-1,true,ManeuverKind.KeepLeft)]
     public void ShallowCollectorSplitUsesRelativeExitOrder(int mirror,bool collector,ManeuverKind expected)
     {

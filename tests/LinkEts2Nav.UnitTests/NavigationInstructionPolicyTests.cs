@@ -211,7 +211,7 @@ public sealed class NavigationInstructionPolicyTests
     public void StraightOnlyUsesUnmeasuredContinuationAndLocalPassageCue()
     {
         var p=new NavigationInstructionPolicy();
-        Assert.Equal("沿当前道路继续行驶。",Assert.Single(Update(p,[M(100,"s",ManeuverKind.Straight)])));
+        Assert.Equal(NavigationPrompts.Continue(),Assert.Single(Update(p,[M(100,"s",ManeuverKind.Straight)])));
         Assert.Empty(Update(p,[M(70,"s",ManeuverKind.Straight)],seconds:1));
         Assert.Equal("保持直行。",Assert.Single(Update(p,[M(40,"s",ManeuverKind.Straight)],seconds:6)));
     }
@@ -277,5 +277,108 @@ public sealed class NavigationInstructionPolicyTests
         Assert.Equal("八百米后，在下一个路口右转。",NavigationPrompts.FirstLayer(ManeuverKind.TurnRight,800,1));
         Assert.Equal("沿当前道路，继续行驶八百五十米。",NavigationPrompts.FirstLayer(ManeuverKind.TurnRight,850,1));
         Assert.Equal("一千零一",NavigationPrompts.Number(1001));
+    }
+    [Fact]
+    public void ConfirmedEmptyCorridorSpeaksOnceButUnknownEmptyDoesNot()
+    {
+        var p=new NavigationInstructionPolicy();
+        Assert.Empty(Plan(p,[]));
+        Assert.Empty(Update(p,[]));
+        Assert.Contains(NavigationPrompts.Continue(),p.PlanSequence([],"session",Now,Now,true,true));
+        Assert.Empty(p.UpdateSequence([],"session",Now,Now,true,_=>false,true));
+        Assert.Equal(NavigationPrompts.Continue(),Assert.Single(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true)));
+        Assert.Empty(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true));
+        Assert.Empty(p.UpdateSequence([],"session",Now,Now,false,hasConfirmedContinuation:true));
+        Assert.Empty(Update(p,[]));
+        Assert.Empty(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true));
+    }
+
+    [Fact]
+    public void GenericContinuationCoversFarOverviewButAllowsSpecificUpcomingGuidance()
+    {
+        var p=new NavigationInstructionPolicy();
+        p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true);
+        Assert.Empty(Update(p,[M(2500)]));
+        Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,2000),Assert.Single(Update(p,[M(2000)])));
+        Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,1000),Assert.Single(Update(p,[M(1000)])));
+        Assert.Equal(NavigationPrompts.FirstLayer(ManeuverKind.TurnLeft,800,1),Assert.Single(Update(p,[M(800)])));
+        Assert.Empty(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true));
+    }
+
+    [Fact]
+    public void DistanceOverviewSuppressesGenericUntilTargetActuallyPassed()
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(1500)]);
+        Assert.Empty(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true));
+        Update(p,[M(30)]);
+        Assert.Equal(NavigationPrompts.Continue(),Assert.Single(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true)));
+        Assert.Empty(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true));
+        Assert.Empty(Update(p,[M(1500,"next")]));
+    }
+
+    [Fact]
+    public void NewPassedTargetLegMayAnnounceAnotherFarOverview()
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(1500)]);
+        Update(p,[M(30)]);
+        Assert.Equal(NavigationPrompts.Continue(1500),Assert.Single(Update(p,[M(1500,"next")])));
+    }
+
+    [Fact]
+    public void PreparedBoundaryCueCanCompleteUnreadyCloseBriefingExactlyOnce()
+    {
+        var p=new NavigationInstructionPolicy();
+        string fixedCue=NavigationPrompts.AtDistance(ManeuverKind.TurnRight,500);
+        bool Ready(string text)=>text==fixedCue;
+        Assert.Empty(Update(p,[M(501,kind:ManeuverKind.TurnRight)],Ready));
+        Assert.Equal(fixedCue,Assert.Single(Update(p,[M(499,kind:ManeuverKind.TurnRight)],Ready)));
+        Assert.Empty(Update(p,[M(498,kind:ManeuverKind.TurnRight)],Ready));
+        Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnRight,200),Assert.Single(Update(p,[M(200,kind:ManeuverKind.TurnRight)])));
+    }
+
+    [Fact]
+    public void PreparedBoundaryCanReplaceCloseBriefEvenWhenOverviewConsumedThatBoundary()
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(900,kind:ManeuverKind.TurnRight)]);
+        string fixedCue=NavigationPrompts.AtDistance(ManeuverKind.TurnRight,500);
+        bool Ready(string text)=>text==fixedCue;
+        Assert.Empty(Update(p,[M(501,kind:ManeuverKind.TurnRight)],Ready));
+        Assert.Equal(fixedCue,Assert.Single(Update(p,[M(499,kind:ManeuverKind.TurnRight)],Ready)));
+        Assert.Empty(Update(p,[M(498,kind:ManeuverKind.TurnRight)],Ready));
+    }
+
+    [Fact]
+    public void PreparedBoundaryCannotDropIntersectionOrdinalOrInventCrossing()
+    {
+        var p=new NavigationInstructionPolicy();
+        string fixedCue=NavigationPrompts.AtDistance(ManeuverKind.TurnRight,500);
+        bool Ready(string text)=>text==fixedCue;
+        Assert.Empty(Update(p,[M(100,"straight",ManeuverKind.Straight),M(501,kind:ManeuverKind.TurnRight)],Ready));
+        Assert.Empty(Update(p,[M(90,"straight",ManeuverKind.Straight),M(499,kind:ManeuverKind.TurnRight)],Ready));
+        var q=new NavigationInstructionPolicy();
+        Assert.Empty(Update(q,[M(650,kind:ManeuverKind.TurnRight)],Ready));
+        Assert.Empty(Update(q,[M(600,kind:ManeuverKind.TurnRight)],Ready));
+    }
+    [Fact]
+    public void MainRoadContinuationDoesNotProduceLocalStraightCueButCountsInOrdinal()
+    {
+        var p=new NavigationInstructionPolicy();
+        NavigationManeuver Main(double distance)=>M(distance,"main",ManeuverKind.Straight) with { IsMainRoadContinuation=true };
+        Assert.Equal(NavigationPrompts.FirstLayer(ManeuverKind.TurnLeft,600,2),Assert.Single(Update(p,[Main(45),M(600)])));
+        Assert.DoesNotContain(NavigationPrompts.Immediate(ManeuverKind.Straight),Plan(p,[Main(40),M(590)]));
+        Assert.Empty(Update(p,[Main(30),M(580)],seconds:6));
+    }
+    [Fact]
+    public void UnknownOrdinalWithPrecedingStraightCannotUseFixedBoundaryFallback()
+    {
+        var p=new NavigationInstructionPolicy();
+        string fixedCue=NavigationPrompts.AtDistance(ManeuverKind.TurnRight,500);
+        bool Ready(string text)=>text==fixedCue;
+        NavigationManeuver Target(double distance)=>M(distance,kind:ManeuverKind.TurnRight) with { HasSeparateApproachRoad=false };
+        Assert.Empty(Update(p,[M(100,"straight",ManeuverKind.Straight),Target(501)],Ready));
+        Assert.Empty(Update(p,[M(90,"straight",ManeuverKind.Straight),Target(499)],Ready));
     }
 }

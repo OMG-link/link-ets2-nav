@@ -90,18 +90,20 @@ public sealed class NavigationManeuverDetector
                         ? Tangent(previous, false)
                         : NativeTangent(current, true) ?? (previous is null ? null : TravelTangent(previous, false));
                     if (entry is null) return result;
-                    var exits = new List<(ulong End, Vector2 Direction)>();
+                    var exits = new List<(ulong End, Vector2 Direction, string? RoadType)>();
                     Vector2? chosen = null;
                     foreach (var group in connections)
                     {
                         var valid = group.Where(Valid).Where(NativeGeometrySupported).ToArray();
                         if (valid.Length == 0) return result;
                         Vector2? direction;
+                        string? roadType = null;
                         if (group[0].EndNodeUid == current.EndNodeUid)
                         {
                             direction = following is not null && PrefabKey(following) is null
                                 ? Tangent(following, true) : TravelTangent(current, false);
                             chosen = direction;
+                            roadType = following?.RoadType;
                         }
                         else
                         {
@@ -113,6 +115,7 @@ public sealed class NavigationManeuverDetector
                             {
                                 if (!Valid(outside[0]) || !valid.Any(c => Connected(c, outside[0]))) return result;
                                 direction = Tangent(outside[0], true);
+                                roadType = outside[0].RoadType;
                             }
                             else
                             {
@@ -125,15 +128,16 @@ public sealed class NavigationManeuverDetector
                             }
                         }
                         if (direction is null) return result;
-                        exits.Add((group[0].EndNodeUid, direction.Value));
+                        exits.Add((group[0].EndNodeUid, direction.Value, roadType));
                     }
                     if (chosen is null) return result;
-                    if (Classify(entry.Value, chosen.Value, exits) is { } kind)
+                    if (Classify(entry.Value, chosen.Value, exits, previous?.RoadType, current.EndNodeUid, out bool mainContinuation) is { } kind)
                         result.Add(new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
                             kind, offset - vehicleAlong, previous?.Id ?? current.Id, following?.Id ?? current.Id)
                         {
                             JunctionId = "prefab:" + prefab,
-                            HasSeparateApproachRoad = previous is not null && PrefabKey(previous) is null
+                            HasSeparateApproachRoad = previous is not null && PrefabKey(previous) is null,
+                            IsMainRoadContinuation = mainContinuation
                         });
                 }
             }
@@ -150,13 +154,14 @@ public sealed class NavigationManeuverDetector
                     if (exits.Any(e => !Valid(e) || !Connected(current, e))) return result;
                     var entry = Tangent(current, false);
                     var chosen = Tangent(outgoing, true);
-                    var directions = exits.Select(e => (e.EndNodeUid, Direction: Tangent(e, true))).ToArray();
+                    var directions = exits.Select(e => (e.EndNodeUid, Direction: Tangent(e, true), e.RoadType)).ToArray();
                     if (entry is null || chosen is null || directions.Any(e => e.Direction is null)) return result;
                     if (Classify(entry.Value, chosen.Value,
-                        directions.Select(e => (e.EndNodeUid, e.Direction!.Value)).ToArray()) is { } kind)
+                        directions.Select(e => (e.EndNodeUid, e.Direction!.Value, e.RoadType)).ToArray(),
+                        current.RoadType, outgoing.EndNodeUid, out bool mainContinuation) is { } kind)
                         result.Add(new($"node:{current.EndNodeUid:X16}:{outgoing.EndNodeUid:X16}",
                             kind, end - vehicleAlong, current.Id, outgoing.Id)
-                        { JunctionId = $"node:{current.EndNodeUid:X16}" });
+                        { JunctionId = $"node:{current.EndNodeUid:X16}", IsMainRoadContinuation = mainContinuation });
                 }
             }
             confirmedUntil = end;
@@ -196,10 +201,12 @@ public sealed class NavigationManeuverDetector
     }
 
     private static ManeuverKind? Classify(Vector2 entry, Vector2 selected,
-        IReadOnlyList<(ulong End, Vector2 Direction)> exits)
+        IReadOnlyList<(ulong End, Vector2 Direction, string? RoadType)> exits,
+        string? entryType, ulong selectedEnd, out bool mainContinuation)
     {
+        mainContinuation = false;
         if (exits.Select(e => e.End).Distinct().Count() < 2) return null;
-        var choices = exits.Select(e => (e.End, Angle: Angle(entry, e.Direction))).ToList();
+        var choices = exits.Select(e => (e.End, Angle: Angle(entry, e.Direction), e.RoadType)).ToList();
         double chosen = Angle(entry, selected);
         if (Math.Abs(chosen) >= 150) return ManeuverKind.UTurn;
         choices.RemoveAll(c => Math.Abs(c.Angle) >= 150);
@@ -209,6 +216,29 @@ public sealed class NavigationManeuverDetector
         if (chosen >= TurnAngleDegrees) return ManeuverKind.TurnRight;
         if (angles.All(a => Math.Abs(a) <= ForkAngleDegrees) && angles.Max() - angles.Min() >= MinimumForkSpreadDegrees)
         {
+            // A unique road-type continuation takes precedence over a nearly straight
+            // ramp. Otherwise geometry can still identify an unambiguous straight exit.
+            bool typed = !string.IsNullOrWhiteSpace(entryType)
+                && choices.All(c => !string.IsNullOrWhiteSpace(c.RoadType));
+            ulong? mainEnd = null;
+            if (typed)
+            {
+                var matching = choices.Where(c => c.RoadType == entryType).ToArray();
+                if (matching.Length == 1 && Math.Abs(matching[0].Angle) < TurnAngleDegrees
+                    && choices.Any(c => c.RoadType != entryType)) mainEnd = matching[0].End;
+            }
+            if (mainEnd is null)
+            {
+                var straight = choices.Where(c => Math.Abs(c.Angle) <= 5).ToArray();
+                if (straight.Length == 1 && choices.Where(c => c.End != straight[0].End)
+                    .All(c => Math.Abs(c.Angle) - Math.Abs(straight[0].Angle) >= 5))
+                    mainEnd = straight[0].End;
+            }
+            if (mainEnd == selectedEnd)
+            {
+                mainContinuation = true;
+                return ManeuverKind.Straight;
+            }
             bool left = angles.Any(a => a < chosen - ExitOrderingToleranceDegrees);
             bool right = angles.Any(a => a > chosen + ExitOrderingToleranceDegrees);
             if (!left && right) return ManeuverKind.KeepLeft;

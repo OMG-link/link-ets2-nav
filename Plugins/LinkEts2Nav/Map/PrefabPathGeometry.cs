@@ -13,25 +13,9 @@ public static class PrefabPathGeometry
     {
         int count = descriptor.Nodes.Count;
         if (count < 2 || prefab.Nodes.Count != count || prefab.Origin >= count || descriptor.NavCurves.Count == 0) return [];
-        var control = Enumerable.Range(0, count).Select(i => descriptor.Nodes[(i + prefab.Origin) % count]).ToArray();
-        var localOrigin = control[0].Position;
-        var worldOrigin = prefab.Nodes[0].Position;
-        int other = Enumerable.Range(1, count - 1).MaxBy(i => Horizontal(control[i].Position - localOrigin));
-        var localDelta = control[other].Position - localOrigin;
-        var worldDelta = prefab.Nodes[other].Position - worldOrigin;
-        float localLength = Horizontal(localDelta), worldLength = Horizontal(worldDelta);
-        if (localLength < 1 || Math.Abs(worldLength - localLength) > .5f) return [];
-        float yaw = MathF.Atan2(worldDelta.Z, worldDelta.X) - MathF.Atan2(localDelta.Z, localDelta.X);
-        float sin = MathF.Sin(yaw), cos = MathF.Cos(yaw);
-        Vector3 World(Vector3 point)
-        {
-            var p = point - localOrigin;
-            return worldOrigin + new Vector3(p.X * cos - p.Z * sin, p.Y, p.X * sin + p.Z * cos);
-        }
-        // Horizontal deformation is unsupported; editor control-node heights may vary.
-        // Preserve the native vertical profile and apply each connection's endpoint grades below.
-        for (int i = 0; i < count; i++)
-            if (!Finite(prefab.Nodes[i].Position) || Horizontal(World(control[i].Position) - prefab.Nodes[i].Position) > .5f) return [];
+        if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return [];
+        var control=placement.ControlNodes;
+        Vector3 World(Vector3 point)=>placement.ToWorld(point);
 
         var laneConnections = PrefabLaneTopology.Build(prefab, descriptor);
         var curves = descriptor.NavCurves;

@@ -26,7 +26,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
     {
         var vehicle = data.Vehicle;
         if (!data.IsVehicleUsable || vehicle is not { SdkActive: true, Paused: false, IsFinite: true }
-            || vehicle.SpeedMetersPerSecond < 0 || now < vehicle.ReceivedAt || now - vehicle.ReceivedAt > TimeSpan.FromSeconds(2))
+            || vehicle.SpeedMetersPerSecond < -.1 || now < vehicle.ReceivedAt || now - vehicle.ReceivedAt > TimeSpan.FromSeconds(2))
             return Suspend("等待有效的行驶数据。", now);
         if (data.RouteAvailability != RouteAvailability.Available)
             return Suspend(data.RouteAvailability == RouteAvailability.None

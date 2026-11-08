@@ -44,6 +44,18 @@ public sealed class NavigationRuntimeTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
+    [Theory]
+    [InlineData(-.0006,false)]
+    [InlineData(0,false)]
+    [InlineData(-.5,true)]
+    public void StationaryVelocityNoiseDoesNotSuspendNavigationButRealReverseDoes(double speed,bool suspend)
+    {
+        var scene=Scene();var data=Data(scene.Route,500);
+        data=data with{Vehicle=data.Vehicle! with{SpeedMetersPerSecond=speed}};
+        var result=new NavigationRuntime().Process(data,scene.Map,Now);
+        Assert.Equal(suspend,result.Next is null);
+    }
+
     [Fact]
     public void LongConfirmedRoadAnnouncesOnceWithoutInventingTheNextTurnDistance()
     {

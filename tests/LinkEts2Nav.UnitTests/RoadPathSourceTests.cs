@@ -15,6 +15,31 @@ public sealed class RoadPathSourceTests
     private static RouteSnapshot Route(params (ulong Uid, float Distance)[] nodes) =>
         RouteSnapshot.Parse(nodes.Select(node => new RouteNode(node.Uid, node.Distance, node.Distance / 20)), Now);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void IdenticalAdjacentSdkNodesDoNotInvalidateOtherwiseMonotonicRoute(bool reversed)
+    {
+        var map=new GameMap();var road=AddRoad(map,Point(0),Point(500));
+        var entries=new[]{new RouteNode(road.Node.Uid,500,25),new RouteNode(road.Node.Uid,500,25),
+            new RouteNode(road.ForwardNode.Uid,0,0)};
+        if(reversed)Array.Reverse(entries);
+        var route=RouteSnapshot.Parse(entries,Now);
+        var path=new RoadPathSource(map).GetPath(Point(50),Vector3.UnitX,route,route.Availability);
+        Assert.Single(path);
+        Assert.Equal(3,route.Nodes.Count); // Preserve the raw SDK payload for diagnostics.
+    }
+    [Fact]
+    public void SameDistanceDifferentUidOrConflictingRepeatedNodeIsNotSilentlyRemoved()
+    {
+        var map=new GameMap();var road=AddRoad(map,Point(0),Point(500));
+        var source=new RoadPathSource(map);
+        foreach(var route in new[]{
+            Route((road.Node.Uid,500),(999,500),(road.ForwardNode.Uid,0)),
+            Route((road.Node.Uid,500),(road.Node.Uid,600),(road.ForwardNode.Uid,0))})
+            Assert.Empty(source.GetPath(Point(50),Vector3.UnitX,route,route.Availability));
+    }
+
     [Fact]
     public void NavigationGraphPreservesRoadTypeInBothTravelDirections()
     {

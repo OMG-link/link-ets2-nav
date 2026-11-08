@@ -129,7 +129,10 @@ public sealed class RoadPathSource
         cachedPosition = position;
         cachedChunks = [];
         if (route.Nodes.Count < 2) return cachedChunks;
-        var nodes = route.Nodes.ToArray();
+        // The SDK can repeat an identical boundary record at a junction. Collapse
+        // only adjacent value-identical entries; loops and inconsistent distances remain visible.
+        var nodes = route.Nodes.Where((node,index)=>index==0 || node!=route.Nodes[index-1]).ToArray();
+        if(nodes.Length<2) return cachedChunks;
         bool decreasing = nodes.Zip(nodes.Skip(1)).All(p => p.First.DistanceToEndMeters > p.Second.DistanceToEndMeters);
         bool increasing = nodes.Zip(nodes.Skip(1)).All(p => p.First.DistanceToEndMeters < p.Second.DistanceToEndMeters);
         if (!decreasing && !increasing) return cachedChunks;

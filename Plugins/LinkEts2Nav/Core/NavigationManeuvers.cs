@@ -37,15 +37,28 @@ public sealed class NavigationManeuverDetector
     /// sequence; already confirmed earlier decisions remain available to callers.
     /// </summary>
     public IReadOnlyList<NavigationManeuver> FindSequence(IReadOnlyList<DirectedRoad> route, double vehicleAlong,
-        IReadOnlyList<DirectedRoad> graph)
+        IReadOnlyList<DirectedRoad> graph) => FindSequence(route, vehicleAlong, graph, out _);
+
+    /// <summary>
+    /// Also reports the absolute route arc length verified before an unknown junction.
+    /// Invalid or disconnected input confirms no distance.
+    /// </summary>
+    public IReadOnlyList<NavigationManeuver> FindSequence(IReadOnlyList<DirectedRoad> route, double vehicleAlong,
+        IReadOnlyList<DirectedRoad> graph, out double confirmedUntil)
     {
+        confirmedUntil = 0;
         ArgumentNullException.ThrowIfNull(route);
         ArgumentNullException.ThrowIfNull(graph);
         var result = new List<NavigationManeuver>();
-        if (!double.IsFinite(vehicleAlong) || vehicleAlong < 0 || route.Count < 2) return result;
+        if (!double.IsFinite(vehicleAlong) || vehicleAlong < 0 || route.Count == 0) return result;
         if (route.Any(r => !Valid(r))) return result;
         for (int i = 1; i < route.Count; i++)
             if (!Connected(route[i - 1], route[i])) return result;
+        if (route.Count == 1)
+        {
+            if (PrefabKey(route[0]) is null) confirmedUntil = Length(route[0]);
+            return result;
+        }
         Index(graph);
 
         double offset = 0;
@@ -53,12 +66,15 @@ public sealed class NavigationManeuverDetector
         {
             var current = route[i];
             double end = offset + Length(current);
+            // A road is known up to its exit even if the choice beyond it is unknown.
+            // A prefab requires its connection to be validated before advancing.
+            if (PrefabKey(current) is null) confirmedUntil = end;
             if (PrefabKey(current) is { } prefab && end >= vehicleAlong)
             {
                 // Unsupported winding geometry remains a barrier while the vehicle
                 // approaches or traverses it. A normal, already entered turn does not.
                 if (ComplexInternalBend(current)) return result;
-                if (offset < vehicleAlong) { offset = end; continue; }
+                if (offset < vehicleAlong) { confirmedUntil = end; offset = end; continue; }
                 if (!NativeGeometrySupported(current)) return result;
                 var connections = prefabStarts.GetValueOrDefault((prefab, current.StartNodeUid)) ?? [];
                 if (!connections.Any(g => g[0].EndNodeUid == current.EndNodeUid)) return result;
@@ -141,6 +157,7 @@ public sealed class NavigationManeuverDetector
                         { JunctionId = $"node:{current.EndNodeUid:X16}" });
                 }
             }
+            confirmedUntil = end;
             offset = end;
         }
         return result;

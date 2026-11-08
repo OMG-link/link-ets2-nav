@@ -10,6 +10,44 @@ public sealed class NavigationManeuverTests
         => new(id, start, end, points);
     private static readonly NavigationManeuverDetector Detector = new();
 
+    [Fact]
+    public void SingleLongRoadConfirmsItsEntireLengthWithoutAnInstruction()
+    {
+        var road = R("highway", 1, 2, P(0, 0), P(0, -2000));
+        Assert.Empty(Detector.FindSequence([road], 100, [road], out double confirmed));
+        Assert.Equal(2000, confirmed);
+    }
+
+    [Fact]
+    public void UnknownPrefabConfirmsOnlyItsApproachRoad()
+    {
+        var road = R("entry", 1, 2, P(0, 0), P(0, -100));
+        var unknown = R("prefab:UNKNOWN:0:1", 2, 3, P(0, -100), P(0, -140));
+        var beyond = R("beyond", 3, 4, P(0, -140), P(0, -1000));
+        Assert.Empty(Detector.FindSequence([road, unknown, beyond], 20, [road, beyond], out double confirmed));
+        Assert.Equal(100, confirmed);
+    }
+
+    [Fact]
+    public void KnownForcedPrefabExtendsConfirmedDistanceThroughFollowingRoad()
+    {
+        var road = R("entry", 1, 2, P(0, 0), P(0, -100));
+        var bridge = R("prefab:KNOWN:0:1", 2, 3, P(0, -100), P(0, -140));
+        var beyond = R("beyond", 3, 4, P(0, -140), P(0, -1000));
+        DirectedRoad[] route = [road, bridge, beyond];
+        Assert.Empty(Detector.FindSequence(route, 20, route, out double confirmed));
+        Assert.Equal(1000, confirmed);
+    }
+
+    [Fact]
+    public void DisconnectedRouteConfirmsNoDistanceEvenBeforeItsGap()
+    {
+        var first = R("first", 1, 2, P(0, 0), P(0, -100));
+        var disconnected = R("other", 3, 4, P(0, -100), P(0, -200));
+        Assert.Empty(Detector.FindSequence([first, disconnected], 20, [first, disconnected], out double confirmed));
+        Assert.Equal(0, confirmed);
+    }
+
     [Theory]
     [InlineData(-100, ManeuverKind.TurnLeft)]
     [InlineData(100, ManeuverKind.TurnRight)]

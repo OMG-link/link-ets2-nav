@@ -44,6 +44,33 @@ public sealed class NavigationRuntimeTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
+    [Fact]
+    public void NextBriefingWaitsUntilThePreviousJunctionIsFullyTraversed()
+    {
+        var scene=Scene();var map=scene.Map.Map;
+        var firstExit=map.MapItems.Values.OfType<Road>().Single(r=>r.ForwardNode.Uid==scene.Route.Nodes[3].Uid);
+        var nextExit=Road.Add(map,new(-600,0,770),new(-600,0,1200),default);
+        var otherExit=Road.Add(map,new(-640,0,730),new(-1000,0,730),default);
+        DirectedRoad[] links=[..scene.Map.PrefabPaths,
+            new("prefab:DEF:0:1",firstExit.ForwardNode.Uid,nextExit.Node.Uid,[new(-600,0,730),new(-600,0,770)]),
+            new("prefab:DEF:0:2",firstExit.ForwardNode.Uid,otherExit.Node.Uid,[new(-600,0,730),new(-640,0,730)])];
+        var nearby=scene.Map with{PrefabPaths=links};
+        var nodes=scene.Route.Nodes.Take(4).Select((n,i)=>n with{DistanceToEndMeters=2000-i*400}).ToList();
+        nodes.Add(new(nextExit.Node.Uid,400,20));nodes.Add(new(nextExit.ForwardNode.Uid,0,0));
+        var route=RouteSnapshot.Parse(nodes,Now);
+        int calls=0;var runtime=new NavigationRuntime(fallback:()=>calls++);
+        runtime.Process(Data(route,680),nearby,Now);
+        Assert.Equal(1,calls);
+        var inside=Data(route,725);inside=inside with{Vehicle=inside.Vehicle! with{X=-10,HeadingTurns=.25}};
+        var crossing=runtime.Process(inside,nearby,Now);
+        Assert.True(crossing.DeferredUntilJunctionExit);
+        Assert.Equal(1,calls);
+        var outside=inside with{Vehicle=inside.Vehicle! with{X=-50,Z=730}};
+        var completed=runtime.Process(outside,nearby,Now);
+        Assert.False(completed.DeferredUntilJunctionExit);
+        Assert.Equal(2,calls);
+    }
+
     [Theory]
     [InlineData(-.0006,false)]
     [InlineData(0,false)]

@@ -8,6 +8,7 @@ public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next
 {
     public IReadOnlyList<NavigationManeuver> Upcoming { get; init; } = [];
     public double? ConfirmedAheadMeters { get; init; }
+    public bool DeferredUntilJunctionExit { get; init; }
 }
 
 /// <summary>Ordinary junction instructions along the game's selected route; no lane guidance.</summary>
@@ -44,9 +45,14 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         double confirmedAhead = Math.Max(0, confirmedUntil - along.Value);
         bool confirmedContinuation = !hasUnresolvedJoin && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
+        string? currentJunction=CurrentJunction(route,along.Value);
+        // Entering a turn's PPD curve is not completion. Keep preparing future audio,
+        // but defer the next briefing until exit; an imminent execution cue remains urgent.
+        bool defer=currentJunction is not null && currentJunction!=next?.JunctionId
+            && !(next is { Kind: not ManeuverKind.Straight, DistanceMeters: <=20 });
         var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation);
         speech?.UpdatePlan("navigation", plan, priority: 10);
-        foreach (string text in policy.UpdateSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true,
+        foreach (string text in policy.UpdateSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, !defer,
             speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text), confirmedContinuation))
         {
             log?.Invoke("导航指令：" + text + " 当前路口=" + upcoming.FirstOrDefault()?.Id + "；下一动作=" + next?.Id);
@@ -57,11 +63,28 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             }
             lastSpoken = text;
         }
-        string state = next is not null ? "沿游戏导航路线提供基础路口提示。"
+        string state = defer ? "正在通过当前路口，驶出后继续提示下一动作。" : next is not null ? "沿游戏导航路线提供基础路口提示。"
             : confirmedContinuation ? "已确认前方长直路，沿当前道路行驶，等待下一操作提示。"
             : "当前连续路径内没有可确认的普通路口操作。";
         Report(state, next, now);
-        return new(state, next, lastSpoken) { Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead };
+        return new(state, next, lastSpoken) { Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
+    }
+
+    private static string? CurrentJunction(IReadOnlyList<DirectedRoad> route,double along)
+    {
+        double offset=0;
+        foreach(var edge in route)
+        {
+            double end=offset+edge.Points.Zip(edge.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+            if(along>offset && along<end)
+            {
+                if(!edge.Id.StartsWith("prefab:",StringComparison.Ordinal))return null;
+                var parts=edge.Id.Split(':');
+                return parts.Length==4 ? "prefab:"+parts[1] : null;
+            }
+            offset=end;
+        }
+        return null;
     }
 
     public NavigationDiagnostic Suspend(string state, DateTimeOffset now)

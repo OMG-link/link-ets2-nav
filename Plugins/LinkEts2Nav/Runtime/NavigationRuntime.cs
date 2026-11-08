@@ -21,6 +21,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
     private string? lastSpoken, signature;
+    private string? approachingJunction;
+    private bool approachingStraight;
     private DateTimeOffset reportedAt;
 
     public NavigationDiagnostic Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
@@ -46,9 +48,15 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         bool confirmedContinuation = !hasUnresolvedJoin && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
         string? currentJunction=CurrentJunction(route,along.Value);
+        bool finishingTrackedTurn=currentJunction is not null && currentJunction==approachingJunction && !approachingStraight;
+        if(!finishingTrackedTurn && upcoming.FirstOrDefault() is { DistanceMeters: <=50, JunctionId: not null } approach)
+        {
+            approachingJunction=approach.JunctionId;
+            approachingStraight=approach.Kind==ManeuverKind.Straight;
+        }
         // Entering a turn's PPD curve is not completion. Keep preparing future audio,
         // but defer the next briefing until exit; an imminent execution cue remains urgent.
-        bool defer=currentJunction is not null && currentJunction!=next?.JunctionId
+        bool defer=currentJunction is not null && currentJunction==approachingJunction && !approachingStraight && currentJunction!=next?.JunctionId
             && !(next is { Kind: not ManeuverKind.Straight, DistanceMeters: <=20 });
         var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation);
         speech?.UpdatePlan("navigation", plan, priority: 10);
@@ -110,6 +118,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         speech?.ClearPlan("navigation");
         map = null;
         paths = null;
-        lastSpoken = signature = null;
+        lastSpoken = signature = approachingJunction = null;
+        approachingStraight=false;
     }
 }

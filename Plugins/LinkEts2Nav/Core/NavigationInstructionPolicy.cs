@@ -32,11 +32,13 @@ public static class NavigationPrompts
         return result;
     }
 
-    public static string AtDistance(ManeuverKind kind, int meters)
+    public static string AtDistance(ManeuverKind kind, int meters) => AtDistance(kind,meters,0);
+
+    public static string AtDistance(ManeuverKind kind, int meters, int ordinal)
     {
         if (meters is < 50 or > 2000 || meters % 50 != 0)
             throw new ArgumentOutOfRangeException(nameof(meters));
-        return Distance(meters, round: false) + "后，" + Action(kind) + "。";
+        return Distance(meters, round: false) + "后，" + (ordinal>1 ? "在第"+Number(ordinal)+"个路口" : "") + Action(kind) + "。";
     }
 
     public static string Execute(ManeuverKind kind) => Action(kind) + "。";
@@ -165,6 +167,11 @@ public sealed class NavigationInstructionPolicy
                 foreach (double next in new[] { rounded-50,rounded-100 })
                     if (next >= 50) result.Add(NavigationPrompts.FirstLayer(target.Kind,next,ordinal));
             }
+            int consumed = due?.Consumed ?? state.Consumed;
+            foreach (int stageIndex in Enumerable.Range(0,Stages.Length))
+                if ((consumed & (1<<stageIndex)) == 0)
+                    result.Add(StageText(target.Kind,Stages[stageIndex],ordinal, state.FirstAnnounced || due is not null));
+            if (!state.Executed) result.Add(NavigationPrompts.Execute(target.Kind));
             int nextIndex = ActionIndex(maneuvers,index+1);
             if (nextIndex >= 0 && target.DistanceMeters <= 800
                 && maneuvers[nextIndex].DistanceMeters - target.DistanceMeters <= 800)
@@ -173,11 +180,6 @@ public sealed class NavigationInstructionPolicy
                 result.Add(NavigationPrompts.FirstLayer(next.Kind,
                     Math.Max(0,next.DistanceMeters-target.DistanceMeters),Ordinal(maneuvers,index+1,nextIndex)));
             }
-            int consumed = due?.Consumed ?? state.Consumed;
-            foreach (int stageIndex in Enumerable.Range(0,Stages.Length))
-                if ((consumed & (1<<stageIndex)) == 0)
-                    result.Add(StageText(target.Kind,Stages[stageIndex],ordinal, state.FirstAnnounced || due is not null));
-            if (!state.Executed) result.Add(NavigationPrompts.Execute(target.Kind));
         }
         else if (hasConfirmedContinuation && !continuationCovered && (maneuvers.Count==0 || maneuvers[0].DistanceMeters>50))
             result.Add(NavigationPrompts.Continue());
@@ -202,7 +204,17 @@ public sealed class NavigationInstructionPolicy
         var states = maneuvers.ToDictionary(m=>m.Id,m=>Current(m,now),StringComparer.Ordinal);
         var output = new List<string>(1);
         int index = ActionIndex(maneuvers,0);
-        if (index >= 0)
+        var passage=maneuvers.Take(index>=0 ? index : 0)
+            .FirstOrDefault(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation && m.DistanceMeters<=100);
+        bool passageQuiet=lastSpoken is null || now-lastSpoken.Value>=StraightQuietPeriod;
+        if(index>=0 && states[maneuvers[index].Id].FirstAnnounced && passage is not null && passageQuiet
+            && !states[passage.Id].FirstAnnounced && maneuvers[index].DistanceMeters>100)
+        {
+            string text=NavigationPrompts.Immediate(ManeuverKind.Straight);
+            if(canAnnounce?.Invoke(text)??true)
+            { states[passage.Id].FirstAnnounced=true; output.Add(text); }
+        }
+        if (index >= 0 && output.Count==0)
         {
             var target = maneuvers[index];
             var state = states[target.Id];
@@ -282,20 +294,18 @@ public sealed class NavigationInstructionPolicy
         int index=StageIndex(distance);
         if ((state.Consumed & (1<<index)) != 0) return null;
         int consumed=state.Consumed | ((1<<(index+1))-1);
-        int pending=0;while ((state.Consumed & (1<<pending)) != 0) pending++;
-        bool crossing=index==pending && state.Previous is { } previous && previous>Stages[index]
-            && distance>=Stages[index]-20;
+        bool crossing=state.Previous.HasValue && distance>=Stages[index]-20;
         if (distance==Stages[index] || crossing)
             return new(StageText(target.Kind,Stages[index],ordinal, hasPreviousAnnouncement: true),consumed);
         if (distance<100) return null;
-        consumed|=(1<<Math.Min(index+2,Stages.Length))-1;
-        return new(StageText(target.Kind,(int)NavigationPrompts.RoundDistance(distance),ordinal, hasPreviousAnnouncement: true),consumed);
+        // Missing a standard reminder does not authorize a new 400/150/50 m stage.
+        // Leave later standards and the independent execution cue available.
+        return null;
     }
 
     private static bool NeedsBriefing(Encounter state) => !state.FirstAnnounced;
     private static string StageText(ManeuverKind kind,int meters,int ordinal,bool hasPreviousAnnouncement=false)
-        => meters<=800 && ordinal>1 ? NavigationPrompts.FirstLayer(kind,meters,ordinal)
-            : NavigationPrompts.AtDistance(kind,meters);
+        => NavigationPrompts.AtDistance(kind,meters,ordinal);
     private static int InitialConsumption(double distance)
     {
         // A road-level overview does not replace the upcoming maneuver reminders.

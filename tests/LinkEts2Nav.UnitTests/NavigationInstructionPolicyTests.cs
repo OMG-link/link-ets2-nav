@@ -225,8 +225,9 @@ public sealed class NavigationInstructionPolicyTests
             [M(50,"s2",ManeuverKind.Straight),M(200)])));
         var other=new NavigationInstructionPolicy();
         Update(other,[M(100,"s1",ManeuverKind.Straight),M(500)]);
-        Assert.Equal("一百五十米后，在第二个路口左转。",Assert.Single(Update(other,
-            [M(20,"s1",ManeuverKind.Straight),M(175)])));
+        Assert.Empty(Update(other,[M(20,"s1",ManeuverKind.Straight),M(175)]));
+        Assert.Equal("一百米后，在第二个路口左转。",Assert.Single(Update(other,
+            [M(10,"s1",ManeuverKind.Straight),M(100)])));
     }
     [Theory]
     [InlineData(275,"两百五十米后，在下一个路口左转。",true)]
@@ -285,8 +286,8 @@ public sealed class NavigationInstructionPolicyTests
         var p=new NavigationInstructionPolicy();
         Update(p,[M(2500)]);
         Assert.Empty(Update(p,[M(2000)],_=>false));
-        Assert.Equal("一点七公里后，左转。",Assert.Single(Update(p,[M(1750)])));
-        Assert.Empty(Update(p,[M(1000)]));
+        Assert.Empty(Update(p,[M(1750)]));
+        Assert.Equal("一公里后，左转。",Assert.Single(Update(p,[M(1000)])));
         Assert.Single(Update(p,[M(500)]));
     }
 

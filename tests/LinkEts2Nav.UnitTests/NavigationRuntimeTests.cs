@@ -44,6 +44,30 @@ public sealed class NavigationRuntimeTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void StraightOrSingleConnectionPassageDoesNotBlockNextTurnsStandardReminder(bool hasChoice)
+    {
+        var scene=Scene();var map=scene.Map.Map;
+        var incoming=map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Uid==scene.Route.Nodes[0].Uid);
+        var straight=map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Position.Z==760);
+        straight.ForwardNode.Position=new(0,0,1200);
+        var turn=Road.Add(map,new(-40,0,1240),new(-600,0,1240),default);
+        var continuation=Road.Add(map,new(0,0,1260),new(0,0,1600),default);
+        DirectedRoad[] links=[..scene.Map.PrefabPaths.Where(p=>hasChoice || p.EndNodeUid==straight.Node.Uid),
+            new("prefab:DEF:0:1",straight.ForwardNode.Uid,turn.Node.Uid,[new(0,0,1200),new(-40,0,1240)]),
+            new("prefab:DEF:0:2",straight.ForwardNode.Uid,continuation.Node.Uid,[new(0,0,1200),new(0,0,1260)])];
+        var route=RouteSnapshot.Parse([new(incoming.Node.Uid,2000,100),new(incoming.ForwardNode.Uid,1600,80),
+            new(straight.Node.Uid,1500,75),new(straight.ForwardNode.Uid,1000,50),new(turn.Node.Uid,900,45),new(turn.ForwardNode.Uid,0,0)],Now);
+        var nearby=scene.Map with{PrefabPaths=links};var runtime=new NavigationRuntime();
+        runtime.Process(Data(route,100),nearby,Now);
+        runtime.Process(Data(route,650),nearby,Now);
+        var inside=runtime.Process(Data(route,710),nearby,Now);
+        Assert.False(inside.DeferredUntilJunctionExit);
+        Assert.Equal("五百米后，右转。",inside.LastSpoken);
+    }
+
     [Fact]
     public void NextBriefingWaitsUntilThePreviousJunctionIsFullyTraversed()
     {

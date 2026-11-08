@@ -33,9 +33,19 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         foreach (string action in new[] { "左转", "右转", "向左前方行驶", "向右前方行驶", "直行", "掉头" })
         {
             foreach (int distance in Enumerable.Range(1, 10).Select(n => n * 50).Concat(new[] { 1000, 2000 }))
-                yield return "前方" + Number(distance) + "米，" + action + "。";
+                yield return NavigationDistance(distance) + "后，" + action + "。";
             yield return action == "直行" ? "保持直行。" : "即将" + action + "。";
         }
+    }
+
+    public static string NavigationDistance(int meters)
+    {
+        if (meters < 1000) return Number(meters) + "米";
+        const string digits = "零一二三四五六七八九";
+        string text = Number(meters / 1000);
+        string fraction = (meters % 1000).ToString("000", System.Globalization.CultureInfo.InvariantCulture).TrimEnd('0');
+        if (fraction.Length > 0) text += "点" + string.Concat(fraction.Select(c => digits[c - '0']));
+        return text + "公里";
     }
 
     public static string Number(int number)

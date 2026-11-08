@@ -35,7 +35,7 @@ public static class NavigationPrompts
     {
         if (meters is < 50 or > 2000 || meters % 50 != 0)
             throw new ArgumentOutOfRangeException(nameof(meters));
-        return "前方" + Number(meters) + "米，" + Action(kind) + "。";
+        return Distance(meters, round: false) + "后，" + Action(kind) + "。";
     }
 
     public static string Immediate(ManeuverKind kind)
@@ -66,10 +66,10 @@ public static class NavigationPrompts
         return Math.Floor(distance / step) * step;
     }
 
-    private static string Distance(double distance)
+    private static string Distance(double distance, bool round = true)
     {
         if (!double.IsFinite(distance) || distance < 50) throw new ArgumentOutOfRangeException(nameof(distance));
-        double meters = RoundDistance(distance);
+        double meters = round ? RoundDistance(distance) : distance;
         if (meters < 1000) return Number((int)meters) + "米";
         double kilometers = meters / 1000;
         int whole = (int)Math.Min(int.MaxValue, Math.Floor(kilometers));

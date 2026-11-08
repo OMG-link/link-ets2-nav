@@ -157,7 +157,7 @@ public sealed class SpeechPackTests : IDisposable
     {
         Assert.Equal(new[] { 30, 40, 50, 60, 70, 80, 90, 100 }, SpeechPack.CommonLimits);
         var texts = SpeechPack.DefaultTexts().ToArray();
-        Assert.DoesNotContain(texts, text => text.Contains("公里") || text.Contains("一百一十"));
+        Assert.DoesNotContain(texts, text => text.Contains("测速照相") && (text.Contains("公里") || text.Contains("一百一十")));
         foreach (string prefix in new[] { "五百米处，有测速照相", "二百米处，有测速照相", "二百米内，有测速照相", "前方有测速照相" })
             foreach (int limit in SpeechPack.CommonLimits)
                 Assert.Contains(prefix + "，限速" + SpeechPack.Number(limit) + "。", texts);

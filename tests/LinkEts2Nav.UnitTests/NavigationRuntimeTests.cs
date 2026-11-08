@@ -148,7 +148,7 @@ public sealed class NavigationRuntimeTests
         runtime.Process(Data(scene.Route,653),scene.Map,Now);
         Assert.Equal(3,calls);
         Assert.Contains(logs,l=>l.Contains("导航指令：六百米后，在下一个路口右转。"));
-        Assert.Contains(logs,l=>l.Contains("导航指令：前方五十米，右转。"));
+        Assert.Contains(logs,l=>l.Contains("导航指令：五十米后，右转。"));
     }
     [Fact]
     public void MissingNavigationPauseAndStalePoseNeverAnnounce()

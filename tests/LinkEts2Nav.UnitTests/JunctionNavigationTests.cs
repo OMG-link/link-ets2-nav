@@ -177,6 +177,58 @@ public sealed class JunctionNavigationTests
         Assert.Empty(PrefabPathGeometry.Build(prefab,descriptor));
     }
 
+    [Theory]
+    [InlineData(-2.496f)]
+    [InlineData(.519f)]
+    public void GradedPrefabConnectsEndpointsAndProjectsAlongSlope(float grade)
+    {
+        var map = new TruckLib.ScsMap.Map();
+        var a = map.AddNode(new(0, 10, 0), true);
+        var b = map.AddNode(new(0, 10 + grade, 40), false);
+        var descriptor = new PrefabDescriptor
+        {
+            Nodes = [Control(Vector3.Zero, true, 0), Control(new(0, 0, 40), false, 0)],
+            NavCurves = [new NavCurve { StartPosition = Vector3.Zero, EndPosition = new(0, 0, 40),
+                StartRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI),
+                EndRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI), Length = 40 }]
+        };
+        var link = Assert.Single(PrefabPathGeometry.Build(new Prefab { Nodes = [a, b] }, descriptor));
+        Assert.Equal(a.Position, link.Points[1]);
+        Assert.Equal(b.Position.Y, link.Points[^2].Y, 4);
+        foreach (var point in link.Points)
+            Assert.Equal(10 + grade * point.Z / 40, point.Y, 4);
+        Assert.InRange(new DirectedPathMatcher().ProjectDistance(new(0, 10 + grade / 2, 20),
+            Vector3.UnitZ, [link])!.Value, 19.9, 20.2);
+        // Changing a two-node bearing can be a valid rotation; stretching cannot.
+        b.Position += new Vector3(0, 0, 4);
+        Assert.Empty(PrefabPathGeometry.Build(new Prefab { Nodes = [a, b] }, descriptor));
+    }
+
+    [Fact]
+    public void GradingRetainsTheNativeCrestAcrossAChainOfCurves()
+    {
+        var map = new TruckLib.ScsMap.Map();
+        var a = map.AddNode(new(0, 10, 0), true);
+        var b = map.AddNode(new(0, 14, 40), false);
+        var forward = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI);
+        var descriptor = new PrefabDescriptor
+        {
+            Nodes = [Control(Vector3.Zero,true,0),Control(new(0,0,40),false,1)],
+            NavCurves = [
+                new NavCurve { StartPosition=Vector3.Zero,EndPosition=new(0,2,20),Length=20.1f,
+                    StartRotation=forward,EndRotation=forward },
+                new NavCurve { StartPosition=new(0,2,20),EndPosition=new(0,0,40),Length=20.1f,
+                    StartRotation=forward,EndRotation=forward }]
+        };
+        descriptor.NavCurves[0].NextLines.Add(1);
+        var link = Assert.Single(PrefabPathGeometry.Build(new Prefab { Nodes=[a,b] },descriptor));
+        var crest = link.Points.MinBy(p => Math.Abs(p.Z-20));
+        // Base 10 + native crest 2 + half of the four-metre endpoint grade.
+        Assert.Equal(14,crest.Y,3);
+        Assert.Equal(10,link.Points[1].Y,3);
+        Assert.Equal(14,link.Points[^2].Y,3);
+    }
+
     [Fact]
     public void FrozenSimulationCannotConfirmThatNavigationWasCleared()
     {

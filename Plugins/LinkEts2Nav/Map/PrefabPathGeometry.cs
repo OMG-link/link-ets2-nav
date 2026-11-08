@@ -28,9 +28,10 @@ public static class PrefabPathGeometry
             var p = point - localOrigin;
             return worldOrigin + new Vector3(p.X * cos - p.Z * sin, p.Y, p.X * sin + p.Z * cos);
         }
-        // Reject deformed/unsupported placements rather than silently using a wrong transform.
+        // Horizontal deformation is unsupported; editor control-node heights may vary.
+        // Preserve the native vertical profile and apply each connection's endpoint grades below.
         for (int i = 0; i < count; i++)
-            if (!Finite(prefab.Nodes[i].Position) || Vector3.Distance(World(control[i].Position), prefab.Nodes[i].Position) > .5f) return [];
+            if (!Finite(prefab.Nodes[i].Position) || Horizontal(World(control[i].Position) - prefab.Nodes[i].Position) > .5f) return [];
 
         var curves = descriptor.NavCurves;
         bool Valid(int i) => i >= 0 && i < curves.Count && Finite(curves[i].StartPosition)
@@ -92,7 +93,23 @@ public static class PrefabPathGeometry
                 if (Math.Abs(measured - curve.Length) > Math.Max(2, curve.Length * .25)) valid = false;
                 if (!valid) break;
             }
-            if (!valid || points.Count < 3 || Vector3.Distance(points[0], points[1]) > 20
+            if (!valid || points.Count < 3) continue;
+            // Grade the actual sampled lane chain, never an invented node-to-node edge.
+            // Arc-length interpolation also handles curved/sloping native geometry.
+            double total = 0;
+            var along = new double[points.Count];
+            for (int i = 2; i < points.Count; i++)
+                along[i] = total += Vector3.Distance(points[i - 1], points[i]);
+            if (!double.IsFinite(total) || total <= .001) continue;
+            float startHeight = prefab.Nodes[from].Position.Y - World(control[from].Position).Y;
+            float endHeight = prefab.Nodes[to].Position.Y - World(control[to].Position).Y;
+            for (int i = 1; i < points.Count; i++)
+            {
+                var point = points[i];
+                point.Y += startHeight + (endHeight - startHeight) * (float)(along[i] / total);
+                points[i] = point;
+            }
+            if (Vector3.Distance(points[0], points[1]) > 20
                 || Vector3.Distance(points[^1], prefab.Nodes[to].Position) > 20) continue;
             // Short lane-to-reference joins only connect the actual PPD lane endpoints
             // to the map control-node centers; the junction itself follows its curves.

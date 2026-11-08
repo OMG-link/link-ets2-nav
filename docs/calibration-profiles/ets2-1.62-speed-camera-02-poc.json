@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "descriptor": "/model2/speedcamera/speed_camera_02_poc.pmd",
+      "hookup": "speedcam.20",
+      "locator": "0",
+      "variant": "default",
+      "metadataFingerprint": "7249A8F9162EA2C1292C183C854DB1D6F9A672D9EEE7C0BFBC9CAFA1C0D42EE6",
+      "travelAxis": "+Z",
+      "monitoredOffset": {
+        "x": 0,
+        "y": 0,
+        "z": -20
+      },
+      "evidence": "ETS2 1.62; paired independent instances on 2026-11-08. Camera 5c505ce18b070001:0 is associated with speeding_camera140 at 11:04:58.4789326Z; sampled fine pose(13506.8,-1.8,-28906.5), heading0.00371 turns, speed107.9km/h, SDK limit70. Local +Z travel and -Z20m estimated monitoring center give fine-pose residual7.316m, consistent with an 8m vicinity. Its closest recorded pass is2.397m at11:04:58.6869717Z, travel dot+.99844. Earlier opposite-facing camera 5c505cb545070001:0 was passed without a recorded camera fine at11:04:56.4855964Z; closest3.473m, dot-.99920, speed107.36km/h, SDK limit70. This supports directional calibration for this exact model/hookup/variant/fingerprint. The -Z20m offset is a model-specific estimate compatible with available observations, not an exact measurement; polling delay and enforcement cooldown limit negative evidence. Different instances are not a same-camera two-direction A/B test. Preliminary model calibration; other matching instances still need validation."
+    }
+  ]
+}

@@ -11,6 +11,8 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     public string? JunctionId { get; init; }
     /// <summary>False when an adjacent prefab, rather than an explicit approach road, precedes this decision.</summary>
     public bool HasSeparateApproachRoad { get; init; } = true;
+    /// <summary>True when a straight decision explicitly continues the main road.</summary>
+    public bool IsMainRoadContinuation { get; init; }
 }
 
 /// <summary>

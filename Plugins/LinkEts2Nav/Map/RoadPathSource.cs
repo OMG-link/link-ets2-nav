@@ -339,10 +339,11 @@ public sealed class RoadPathSource
         {
             int count = Math.Clamp((int)Math.Ceiling(road.Length / 8), 16, 256);
             var points = Enumerable.Range(0, count + 1).Select(i => road.InterpolateCurve((float)i / count).Position).ToArray();
-            sample = new(road.Uid.ToString("X16"), road.Node.Uid, road.ForwardNode.Uid, points);
+            sample = new(road.Uid.ToString("X16"), road.Node.Uid, road.ForwardNode.Uid, points)
+            { RoadType = road.RoadType.ToString() };
             samples.Add(road.Uid, sample);
         }
-        return start == sample.StartNodeUid ? sample : new(sample.Id, sample.EndNodeUid, sample.StartNodeUid, sample.Points.Reverse().ToArray());
+        return start == sample.StartNodeUid ? sample : sample with { StartNodeUid = sample.EndNodeUid, EndNodeUid = sample.StartNodeUid, Points = sample.Points.Reverse().ToArray() };
     }
 
     private static double Distance(Vector3 point, IReadOnlyList<DirectedRoad> path)

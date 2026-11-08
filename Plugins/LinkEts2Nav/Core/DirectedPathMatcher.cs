@@ -7,7 +7,11 @@ public sealed record DirectedRoad(
     string Id,
     ulong StartNodeUid,
     ulong EndNodeUid,
-    IReadOnlyList<Vector3> Points);
+    IReadOnlyList<Vector3> Points)
+{
+    /// <summary>Map road-type token; absent for prefab connections or unavailable metadata.</summary>
+    public string? RoadType { get; init; }
+}
 
 /// <summary>The road monitoring position and permitted traffic direction, not the model's facing.</summary>
 public sealed record MonitoredCamera(string Id, Vector3 MonitoringPosition, Vector3 TravelDirection);

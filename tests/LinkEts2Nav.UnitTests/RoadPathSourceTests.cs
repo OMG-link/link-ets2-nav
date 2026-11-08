@@ -16,6 +16,22 @@ public sealed class RoadPathSourceTests
         RouteSnapshot.Parse(nodes.Select(node => new RouteNode(node.Uid, node.Distance, node.Distance / 20)), Now);
 
     [Fact]
+    public void NavigationGraphPreservesRoadTypeInBothTravelDirections()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(500));
+        road.RoadType = new TruckLib.Token("highway");
+        var graph = new RoadPathSource(map).GetNavigationGraph();
+        Assert.Equal(2, graph.Count);
+        Assert.All(graph, edge => Assert.Equal("highway", edge.RoadType));
+        var forward = Assert.Single(graph, edge => edge.StartNodeUid == road.Node.Uid);
+        var reverse = Assert.Single(graph, edge => edge.StartNodeUid == road.ForwardNode.Uid);
+        Assert.Equal(forward.Points.Reverse(), reverse.Points);
+        Assert.Equal(forward.EndNodeUid, reverse.StartNodeUid);
+        Assert.Equal(forward.StartNodeUid, reverse.EndNodeUid);
+    }
+
+    [Fact]
     public void DescendingRouteNodesIdentifyActualRoadAndTraversalDirection()
     {
         var map = new GameMap();

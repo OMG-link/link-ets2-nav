@@ -33,6 +33,7 @@ public static class PrefabPathGeometry
         for (int i = 0; i < count; i++)
             if (!Finite(prefab.Nodes[i].Position) || Horizontal(World(control[i].Position) - prefab.Nodes[i].Position) > .5f) return [];
 
+        var laneConnections = PrefabLaneTopology.Build(prefab, descriptor);
         var curves = descriptor.NavCurves;
         bool Valid(int i) => i >= 0 && i < curves.Count && Finite(curves[i].StartPosition)
             && Finite(curves[i].EndPosition) && float.IsFinite(curves[i].Length) && curves[i].Length > .001f;
@@ -115,7 +116,7 @@ public static class PrefabPathGeometry
             // to the map control-node centers; the junction itself follows its curves.
             points.Add(prefab.Nodes[to].Position);
             result.Add(new($"prefab:{prefab.Uid:X16}:{from}:{to}",
-                prefab.Nodes[from].Uid, prefab.Nodes[to].Uid, points));
+                prefab.Nodes[from].Uid, prefab.Nodes[to].Uid, points) { LaneConnections = laneConnections });
         }
         return result;
     }

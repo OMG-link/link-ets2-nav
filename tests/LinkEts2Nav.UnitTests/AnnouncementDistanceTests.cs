@@ -22,7 +22,7 @@ public sealed class AnnouncementDistanceTests
         var warning = Assert.Single(engine.Update(Snapshot(distance), Now));
         Assert.Equal(200, warning.StageDistanceMeters);
         Assert.False(warning.FirstConfirmedInside200Meters);
-        Assert.Equal("二百米处，有测速照相。", PlannedSpeechAnnouncer.Text(
+        Assert.Equal("两百米处，有测速照相。", PlannedSpeechAnnouncer.Text(
             warning.StageDistanceMeters, warning.DistanceMeters, warning.FirstConfirmedInside200Meters));
     }
 
@@ -40,7 +40,7 @@ public sealed class AnnouncementDistanceTests
         // GetPlans is called by both planner and Update; the first observation must survive both.
         var warning = Assert.Single(engine.Update(snapshot, Now));
         Assert.True(warning.FirstConfirmedInside200Meters);
-        Assert.Equal("二百米内，有测速照相。", PlannedSpeechAnnouncer.Text(
+        Assert.Equal("两百米内，有测速照相。", PlannedSpeechAnnouncer.Text(
             warning.StageDistanceMeters, warning.DistanceMeters, warning.FirstConfirmedInside200Meters));
         Assert.Empty(engine.Update(snapshot, Now));
     }
@@ -50,7 +50,7 @@ public sealed class AnnouncementDistanceTests
     {
         var warning = Assert.Single(new CameraWarningEngine().Update(Snapshot(200), Now));
         Assert.False(warning.FirstConfirmedInside200Meters);
-        Assert.Equal("二百米处，有测速照相。", PlannedSpeechAnnouncer.Text(200,200,warning.FirstConfirmedInside200Meters));
+        Assert.Equal("两百米处，有测速照相。", PlannedSpeechAnnouncer.Text(200,200,warning.FirstConfirmedInside200Meters));
     }
 
     [Fact]

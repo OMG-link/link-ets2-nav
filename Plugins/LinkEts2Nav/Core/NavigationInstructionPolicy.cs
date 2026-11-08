@@ -38,6 +38,8 @@ public static class NavigationPrompts
         return Distance(meters, round: false) + "后，" + Action(kind) + "。";
     }
 
+    public static string Execute(ManeuverKind kind) => Action(kind) + "。";
+
     public static string Immediate(ManeuverKind kind)
         => kind == ManeuverKind.Straight ? "保持直行。" : "即将" + Action(kind) + "。";
 
@@ -50,7 +52,7 @@ public static class NavigationPrompts
         if (meters < 50 && junctionOrdinal <= 1) return Immediate(kind);
         string where = junctionOrdinal <= 0 ? "" : junctionOrdinal == 1
             ? "在下一个路口" : "在第" + Number(junctionOrdinal) + "个路口";
-        return (meters >= 50 ? Number(meters) + "米后，" : "") + where + Action(kind) + "。";
+        return (meters >= 50 ? MeterNumber(meters) + "米后，" : "") + where + Action(kind) + "。";
     }
 
     public static string Continue(double distance)
@@ -66,11 +68,13 @@ public static class NavigationPrompts
         return Math.Floor(distance / step) * step;
     }
 
+    private static string MeterNumber(int value) => Number(value).Replace("二百", "两百", StringComparison.Ordinal);
+
     private static string Distance(double distance, bool round = true)
     {
         if (!double.IsFinite(distance) || distance < 50) throw new ArgumentOutOfRangeException(nameof(distance));
         double meters = round ? RoundDistance(distance) : distance;
-        if (meters < 1000) return Number((int)meters) + "米";
+        if (meters < 1000) return MeterNumber((int)meters) + "米";
         double kilometers = meters / 1000;
         int whole = (int)Math.Min(int.MaxValue, Math.Floor(kilometers));
         string number = whole <= 9999 ? Number(whole) : whole.ToString(CultureInfo.InvariantCulture);
@@ -81,6 +85,7 @@ public static class NavigationPrompts
             string fraction = hundredths.ToString("00", CultureInfo.InvariantCulture).TrimEnd('0');
             number += "点" + string.Concat(fraction.Select(c => digits[c-'0']));
         }
+        if (hundredths == 0) number = whole == 2 ? "两" : number.Replace("二百", "两百", StringComparison.Ordinal);
         return number + "公里";
     }
 
@@ -94,6 +99,7 @@ public static class NavigationPrompts
             foreach (int distance in new[] { 2000,1000,500,450,400,350,300,250,200,150,100,50 })
                 yield return AtDistance(kind,distance);
             yield return Immediate(kind);
+            yield return Execute(kind);
         }
     }
 }
@@ -168,8 +174,8 @@ public sealed class NavigationInstructionPolicy
             int consumed = due?.Consumed ?? state.Consumed;
             foreach (int stageIndex in Enumerable.Range(0,Stages.Length))
                 if ((consumed & (1<<stageIndex)) == 0)
-                    result.Add(StageText(target.Kind,Stages[stageIndex],ordinal));
-            if (consumed != AllStages) result.Add(ImmediateText(target.Kind,ordinal));
+                    result.Add(StageText(target.Kind,Stages[stageIndex],ordinal, state.FirstAnnounced || due is not null));
+            if (consumed != AllStages) result.Add(ImmediateText(target.Kind,ordinal, state.FirstAnnounced || due is not null));
         }
         else if (!continuationCovered && (maneuvers.Count==0 || maneuvers[0].DistanceMeters>50))
             result.Add(NavigationPrompts.Continue());
@@ -275,18 +281,20 @@ public sealed class NavigationInstructionPolicy
         bool crossing=index==pending && state.Previous is { } previous && previous>Stages[index]
             && distance>=Stages[index]-20;
         if (distance==Stages[index] || crossing)
-            return new(StageText(target.Kind,Stages[index],ordinal),consumed);
-        if (distance<50) return new(ImmediateText(target.Kind,ordinal),AllStages);
+            return new(StageText(target.Kind,Stages[index],ordinal, hasPreviousAnnouncement: true),consumed);
+        if (distance<50) return new(ImmediateText(target.Kind,ordinal, hasPreviousAnnouncement: true),AllStages);
         consumed|=(1<<Math.Min(index+2,Stages.Length))-1;
-        return new(StageText(target.Kind,(int)NavigationPrompts.RoundDistance(distance),ordinal),consumed);
+        return new(StageText(target.Kind,(int)NavigationPrompts.RoundDistance(distance),ordinal, hasPreviousAnnouncement: true),consumed);
     }
 
     private static bool NeedsBriefing(Encounter state) => !state.FirstAnnounced;
-    private static string StageText(ManeuverKind kind,int meters,int ordinal)
-        => meters<=800 && ordinal>1 ? NavigationPrompts.FirstLayer(kind,meters,ordinal)
+    private static string StageText(ManeuverKind kind,int meters,int ordinal,bool hasPreviousAnnouncement=false)
+        => meters==50 && hasPreviousAnnouncement ? NavigationPrompts.Execute(kind)
+            : meters<=800 && ordinal>1 ? NavigationPrompts.FirstLayer(kind,meters,ordinal)
             : NavigationPrompts.AtDistance(kind,meters);
-    private static string ImmediateText(ManeuverKind kind,int ordinal)
-        => ordinal>1 ? NavigationPrompts.FirstLayer(kind,0,ordinal) : NavigationPrompts.Immediate(kind);
+    private static string ImmediateText(ManeuverKind kind,int ordinal,bool hasPreviousAnnouncement=false)
+        => hasPreviousAnnouncement ? NavigationPrompts.Execute(kind)
+            : ordinal>1 ? NavigationPrompts.FirstLayer(kind,0,ordinal) : NavigationPrompts.Immediate(kind);
     private static int InitialConsumption(double distance)
     {
         // A road-level overview does not replace the upcoming maneuver reminders.

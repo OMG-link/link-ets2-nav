@@ -129,8 +129,8 @@ public sealed class SpeechPackTests : IDisposable
     public void PackNumbersAndAllCommonCombinationsAreWellFormed(int number, string expected)
     {
         Assert.Equal(expected, SpeechPack.Number(number));
-        Assert.Equal(121, SpeechPack.DefaultTexts().Distinct().Count());
-        Assert.Contains("二百米处，有测速照相，限速九十。", SpeechPack.DefaultTexts());
+        Assert.Equal(127, SpeechPack.DefaultTexts().Distinct().Count());
+        Assert.Contains("两百米处，有测速照相，限速九十。", SpeechPack.DefaultTexts());
     }
 
     [Fact]
@@ -142,13 +142,13 @@ public sealed class SpeechPackTests : IDisposable
         Assert.Equal("前方有测速照相。", Assert.Single(localRequests));
     }
     [Theory]
-    [InlineData("二百米内，有测速照相，限速一百一十。", "米内，有测速照相，限速", true)]
+    [InlineData("两百米内，有测速照相，限速一百一十。", "米内，有测速照相，限速", true)]
     [InlineData("前方有测速照相，限速一百一十。", "前方有测速照相，限速", false)]
     public void SpecialLimitsSupportLateWarningTemplates(string text, string fragment, bool distance)
     {
         var pack = Create(Entry(fragment, [3, 0]));
         var result = pack.Generate(text, Local);
-        Assert.Equal(distance ? new[] { "二百", "一百一十" } : new[] { "一百一十" }, localRequests);
+        Assert.Equal(distance ? new[] { "两百", "一百一十" } : new[] { "一百一十" }, localRequests);
         Assert.Equal(distance ? new byte[] { 9, 0, 3, 0, 9, 0 } : new byte[] { 3, 0, 9, 0 }, PcmAudio.Read(result.Path));
     }
 
@@ -158,7 +158,7 @@ public sealed class SpeechPackTests : IDisposable
         Assert.Equal(new[] { 30, 40, 50, 60, 70, 80, 90, 100 }, SpeechPack.CommonLimits);
         var texts = SpeechPack.DefaultTexts().ToArray();
         Assert.DoesNotContain(texts, text => text.Contains("测速照相") && (text.Contains("公里") || text.Contains("一百一十")));
-        foreach (string prefix in new[] { "五百米处，有测速照相", "二百米处，有测速照相", "二百米内，有测速照相", "前方有测速照相" })
+        foreach (string prefix in new[] { "五百米处，有测速照相", "两百米处，有测速照相", "两百米内，有测速照相", "前方有测速照相" })
             foreach (int limit in SpeechPack.CommonLimits)
                 Assert.Contains(prefix + "，限速" + SpeechPack.Number(limit) + "。", texts);
     }

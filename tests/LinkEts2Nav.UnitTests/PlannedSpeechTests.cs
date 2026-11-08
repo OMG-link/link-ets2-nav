@@ -65,7 +65,7 @@ public sealed class PlannedSpeechTests : IDisposable
         first.Result.SetResult(firstFile);
         await ready.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         var second = await synth.Next();
-        Assert.Equal("二百米处，有测速照相。", second.Text);
+        Assert.Equal("两百米处，有测速照相。", second.Text);
         second.Result.SetResult(File("200"));
         await ready.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         speech.Announce(Warning(500, 499));
@@ -173,9 +173,9 @@ public sealed class PlannedSpeechTests : IDisposable
 
     [Theory]
     [InlineData(500, 499, "五百米处，有测速照相。")]
-    [InlineData(200, 199, "二百米处，有测速照相。")]
+    [InlineData(200, 199, "两百米处，有测速照相。")]
     [InlineData(500, 300, "前方有测速照相。")]
-    [InlineData(200, 60, "二百米处，有测速照相。")]
+    [InlineData(200, 60, "两百米处，有测速照相。")]
     [InlineData(500, 150, "前方有测速照相。")]
     public void LateRecognitionDoesNotSpeakAnIncorrectFixedDistance(double stage, double actual, string expected)
         => Assert.Equal(expected, PlannedSpeechAnnouncer.Text(stage, actual));

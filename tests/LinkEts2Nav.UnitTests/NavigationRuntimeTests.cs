@@ -148,7 +148,7 @@ public sealed class NavigationRuntimeTests
         runtime.Process(Data(scene.Route,653),scene.Map,Now);
         Assert.Equal(3,calls);
         Assert.Contains(logs,l=>l.Contains("导航指令：六百米后，在下一个路口右转。"));
-        Assert.Contains(logs,l=>l.Contains("导航指令：五十米后，右转。"));
+        Assert.Contains(logs,l=>l.Contains("导航指令：右转。"));
     }
     [Fact]
     public void MissingNavigationPauseAndStalePoseNeverAnnounce()
@@ -163,7 +163,7 @@ public sealed class NavigationRuntimeTests
     [Fact]
     public void EveryRuntimePhraseExistsInPreGeneratedPack()
     {
-        Assert.Equal(78,NavigationPrompts.AllTexts().Distinct().Count());
+        Assert.Equal(84,NavigationPrompts.AllTexts().Distinct().Count());
         Assert.Contains(NavigationPrompts.Continue(),LinkEts2Nav.Speech.SpeechPack.DefaultTexts());
         foreach(string text in NavigationPrompts.AllTexts())
             Assert.Contains(text,LinkEts2Nav.Speech.SpeechPack.DefaultTexts());

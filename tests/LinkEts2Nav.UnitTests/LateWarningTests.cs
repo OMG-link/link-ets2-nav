@@ -27,7 +27,7 @@ public sealed class LateWarningTests : IDisposable
     [Fact]
     public async Task FirstConfirmedTargetAt150MetersPlays200WithinImmediatelyWithoutPlanningOrFallback()
     {
-        string text = "二百米内，有测速照相。", name = SpeechPack.FileName(text);
+        string text = "两百米内，有测速照相。", name = SpeechPack.FileName(text);
         string path = Path.Combine(root, name);
         PcmAudio.Write(path, [1, 0, 2, 0]);
         File.WriteAllText(Path.Combine(root, "manifest.json"), JsonSerializer.Serialize(
@@ -55,7 +55,7 @@ public sealed class LateWarningTests : IDisposable
     public void CorruptPreloadedAudioIsNotPlayed()
     {
         Directory.CreateDirectory(root);
-        string text = "二百米内，有测速照相。", name = SpeechPack.FileName(text);
+        string text = "两百米内，有测速照相。", name = SpeechPack.FileName(text);
         File.WriteAllText(Path.Combine(root, name), new string('x', 44));
         File.WriteAllText(Path.Combine(root, "manifest.json"), JsonSerializer.Serialize(
             new PackManifest(1, "model", "voice", [new(text, name, "invalid")])));

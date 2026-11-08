@@ -53,11 +53,11 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
     private static string BaseText(double stage, double actualDistance, bool firstConfirmedInside200Meters)
     {
         if (stage == 200) return firstConfirmedInside200Meters
-            ? "二百米内，有测速照相。" : "二百米处，有测速照相。";
+            ? "两百米内，有测速照相。" : "两百米处，有测速照相。";
         // A late first observation must not claim that a camera is still 500/200 m away.
         if (actualDistance < stage * .9) return "前方有测速照相。";
         return stage == 500 ? "五百米处，有测速照相。" :
-            stage == 200 ? "二百米处，有测速照相。" : "前方有测速照相。";
+            stage == 200 ? "两百米处，有测速照相。" : "前方有测速照相。";
     }
 
     public void UpdatePlan(WarningSnapshot? snapshot, IReadOnlyList<PlannedCameraWarning> plans, DateTimeOffset now)

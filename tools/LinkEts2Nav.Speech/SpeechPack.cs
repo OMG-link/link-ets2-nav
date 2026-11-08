@@ -17,7 +17,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
     public const string UncalibratedText = "正靠近未校准的探头，无法获取其监测方向，请减速慢行。";
     public static IEnumerable<string> DefaultTexts()
     {
-        foreach (string prefix in new[] { "五百米处，有测速照相", "二百米处，有测速照相", "二百米内，有测速照相", "前方有测速照相" })
+        foreach (string prefix in new[] { "五百米处，有测速照相", "两百米处，有测速照相", "两百米内，有测速照相", "前方有测速照相" })
         {
             yield return prefix + "。";
             foreach (int speed in CommonLimits)
@@ -35,16 +35,18 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             foreach (int distance in Enumerable.Range(1, 10).Select(n => n * 50).Concat(new[] { 1000, 2000 }))
                 yield return NavigationDistance(distance) + "后，" + action + "。";
             yield return action == "直行" ? "保持直行。" : "即将" + action + "。";
+            yield return action + "。";
         }
     }
 
     public static string NavigationDistance(int meters)
     {
-        if (meters < 1000) return Number(meters) + "米";
+        if (meters < 1000) return Number(meters).Replace("二百", "两百", StringComparison.Ordinal) + "米";
         const string digits = "零一二三四五六七八九";
         string text = Number(meters / 1000);
         string fraction = (meters % 1000).ToString("000", System.Globalization.CultureInfo.InvariantCulture).TrimEnd('0');
         if (fraction.Length > 0) text += "点" + string.Concat(fraction.Select(c => digits[c - '0']));
+        if (fraction.Length == 0) text = meters / 1000 == 2 ? "两" : text.Replace("二百", "两百", StringComparison.Ordinal);
         return text + "公里";
     }
 
@@ -85,7 +87,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             }
 
             // Capture spoken numbers without inventing a speed limit.
-            var match = Regex.Match(text, @"^(?:(?<distance>[零一二三四五六七八九十百0-9]+)(?<where>米处|米内)，有测速照相|(?<ahead>前方有测速照相))(?:，限速(?<speed>[零一二三四五六七八九十百0-9]+))?。$",
+            var match = Regex.Match(text, @"^(?:(?<distance>[零一二两三四五六七八九十百0-9]+)(?<where>米处|米内)，有测速照相|(?<ahead>前方有测速照相))(?:，限速(?<speed>[零一二两三四五六七八九十百0-9]+))?。$",
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
             if (!match.Success) return local(text);
             bool hasSpeed = match.Groups["speed"].Success;

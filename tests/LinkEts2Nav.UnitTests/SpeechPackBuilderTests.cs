@@ -26,7 +26,7 @@ public sealed class SpeechPackBuilderTests : IDisposable
     [Fact]
     public async Task MixedCachedAndNewClipsKeepCachedTailAndLateDiscoveryPlaysImmediately()
     {
-        const string far="五百米处，有测速照相。", generic="前方有测速照相。", near="二百米处，有测速照相。";
+        const string far="五百米处，有测速照相。", generic="前方有测速照相。", near="两百米处，有测速照相。";
         var token = TestContext.Current.CancellationToken;
         await SpeechPackBuilder.BuildAsync(directory,"model","voice",[far,near],Audio,cancellationToken:token);
         var generated = new List<string>();

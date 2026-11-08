@@ -30,11 +30,77 @@ public sealed class NavigationInstructionPolicyTests
     [InlineData(1000,"一公里后，左转。")]
     [InlineData(1500,"一点五公里后，左转。")]
     [InlineData(1750,"一点七五公里后，左转。")]
-    [InlineData(2000,"二公里后，左转。")]
+    [InlineData(2000,"两公里后，左转。")]
     public void ManeuverDistanceUsesAfterAndSwitchesToKilometers(int meters,string expected)
     {
         Assert.Equal(expected,NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,meters));
         Assert.Equal(expected,LinkEts2Nav.Speech.SpeechPack.NavigationDistance(meters)+"后，左转。");
+    }
+
+    [Theory]
+    [InlineData(1400)]
+    [InlineData(1000)]
+    [InlineData(500)]
+    [InlineData(200)]
+    public void FiftyMeterFollowupUsesBareActionAfterActualAnnouncement(int earlierDistance)
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(earlierDistance)]);
+        Update(p,[M(200)]);
+        Update(p,[M(51)]);
+        Assert.Contains("左转。",Plan(p,[M(51)]));
+        Assert.DoesNotContain("五十米后，左转。",Plan(p,[M(51)]));
+        Assert.Equal("左转。",Assert.Single(Update(p,[M(49)])));
+        Assert.Empty(Update(p,[M(30)]));
+    }
+
+    [Fact]
+    public void PlanningAndUnreadyAudioDoNotRemoveFirstFiftyMeterPrefix()
+    {
+        var p=new NavigationInstructionPolicy();
+        Plan(p,[M(500)]);
+        Assert.Empty(Update(p,[M(500)],_=>false));
+        Assert.Empty(Update(p,[M(200)],_=>false));
+        Assert.Equal("五十米后，在下一个路口左转。",Assert.Single(Update(p,[M(50)])));
+    }
+
+    [Fact]
+    public void PreviousActionDoesNotRemovePrefixForNewActionsFirstFiftyMeterCue()
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(30)]);
+        Assert.Equal("五十米后，在下一个路口右转。",Assert.Single(Update(p,[M(50,"next",ManeuverKind.TurnRight)])));
+    }
+
+    [Fact]
+    public void LateFiftyMeterFollowupUsesBareActionAndDropsOrdinal()
+    {
+        var p=new NavigationInstructionPolicy();
+        Update(p,[M(200)]);
+        Assert.Equal("左转。",Assert.Single(Update(p,[M(20)])));
+        var q=new NavigationInstructionPolicy();
+        Update(q,[M(100,"straight",ManeuverKind.Straight),M(500)]);
+        Assert.Equal("左转。",Assert.Single(Update(q,[M(20,"straight",ManeuverKind.Straight),M(50)])));
+    }
+
+    [Theory]
+    [InlineData(200,"两百米后，左转。")]
+    [InlineData(250,"两百五十米后，左转。")]
+    [InlineData(2000,"两公里后，左转。")]
+    public void IntegerDistanceUsesLiang(int meters,string expected)
+    {
+        Assert.Equal(expected,NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,meters));
+        Assert.Equal(expected,LinkEts2Nav.Speech.SpeechPack.NavigationDistance(meters)+"后，左转。");
+    }
+
+    [Theory]
+    [InlineData(1200,"一点二公里")]
+    [InlineData(2100,"二点一公里")]
+    [InlineData(2200,"二点二公里")]
+    public void DecimalDistanceRetainsEr(int meters,string expected)
+    {
+        Assert.Equal("沿当前道路，继续行驶"+expected+"。",NavigationPrompts.Continue(meters));
+        Assert.Equal(expected,LinkEts2Nav.Speech.SpeechPack.NavigationDistance(meters));
     }
 
     [Fact]
@@ -91,7 +157,7 @@ public sealed class NavigationInstructionPolicyTests
         var p=new NavigationInstructionPolicy();
         Assert.Equal("沿当前道路，继续行驶二点五公里。",Assert.Single(Update(p,[M(2500)])));
         Assert.Empty(Update(p,[M(2001)]));
-        Assert.Equal("二公里后，左转。",Assert.Single(Update(p,[M(1995)])));
+        Assert.Equal("两公里后，左转。",Assert.Single(Update(p,[M(1995)])));
         Assert.Empty(Update(p,[M(1001)]));
         Assert.Equal("一公里后，左转。",Assert.Single(Update(p,[M(995)])));
         Assert.Empty(Update(p,[M(800)]));
@@ -100,9 +166,9 @@ public sealed class NavigationInstructionPolicyTests
         Assert.Empty(Update(p,[M(501)]));
         Assert.Equal("五百米后，左转。",Assert.Single(Update(p,[M(498)])));
         Assert.Empty(Update(p,[M(201)]));
-        Assert.Equal("二百米后，左转。",Assert.Single(Update(p,[M(198)])));
+        Assert.Equal("两百米后，左转。",Assert.Single(Update(p,[M(198)])));
         Assert.Empty(Update(p,[M(51)]));
-        Assert.Equal("五十米后，左转。",Assert.Single(Update(p,[M(49)])));
+        Assert.Equal("左转。",Assert.Single(Update(p,[M(49)])));
         Assert.Empty(Update(p,[M(10)]));
     }
 
@@ -115,7 +181,7 @@ public sealed class NavigationInstructionPolicyTests
         Assert.Empty(Update(p,[M(100,"s1",ManeuverKind.Straight),M(300,"s2",ManeuverKind.Straight),M(800)]));
         Assert.Equal("五百米后，在第三个路口左转。",Assert.Single(Update(p,
             [M(100,"s1",ManeuverKind.Straight),M(250,"s2",ManeuverKind.Straight),M(500)])));
-        Assert.Equal("二百米后，在第二个路口左转。",Assert.Single(Update(p,
+        Assert.Equal("两百米后，在第二个路口左转。",Assert.Single(Update(p,
             [M(100,"s2",ManeuverKind.Straight),M(200)])));
     }
 
@@ -130,8 +196,7 @@ public sealed class NavigationInstructionPolicyTests
             var plan=Plan(p,[M(distance)]);
             Assert.Equal(new[]{NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,500),
                 NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,200),
-                NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,50),
-                NavigationPrompts.Immediate(ManeuverKind.TurnLeft)},plan);
+                NavigationPrompts.Execute(ManeuverKind.TurnLeft)},plan);
             Assert.Empty(Update(p,[M(distance)]));
         }
         Assert.Equal(NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,500),Assert.Single(Update(p,[M(499)])));
@@ -153,7 +218,7 @@ public sealed class NavigationInstructionPolicyTests
     {
         var p=new NavigationInstructionPolicy();
         Update(p,[M(100,"s1",ManeuverKind.Straight),M(200,"s2",ManeuverKind.Straight),M(500)]);
-        Assert.Equal("二百米后，在第二个路口左转。",Assert.Single(Update(p,
+        Assert.Equal("两百米后，在第二个路口左转。",Assert.Single(Update(p,
             [M(50,"s2",ManeuverKind.Straight),M(200)])));
         var other=new NavigationInstructionPolicy();
         Update(other,[M(100,"s1",ManeuverKind.Straight),M(500)]);
@@ -161,7 +226,7 @@ public sealed class NavigationInstructionPolicyTests
             [M(20,"s1",ManeuverKind.Straight),M(175)])));
     }
     [Theory]
-    [InlineData(275,"二百五十米后，在下一个路口左转。",true)]
+    [InlineData(275,"两百五十米后，在下一个路口左转。",true)]
     [InlineData(175,"一百五十米后，在下一个路口左转。",false)]
     [InlineData(79,"五十米后，在下一个路口左转。",false)]
     public void FirstBetweenStagesRoundsAndSkipsFollowingLowerReminder(double distance,string text,bool later50)
@@ -169,7 +234,7 @@ public sealed class NavigationInstructionPolicyTests
         var p=new NavigationInstructionPolicy();
         Assert.Equal(text,Assert.Single(Update(p,[M(distance)])));
         Assert.Empty(Update(p,[M(Math.Min(distance,200))]));
-        if(later50)Assert.Equal("五十米后，左转。",Assert.Single(Update(p,[M(50)])));
+        if(later50)Assert.Equal("左转。",Assert.Single(Update(p,[M(50)])));
         else Assert.Empty(Update(p,[M(50)]));
     }
 
@@ -205,7 +270,7 @@ public sealed class NavigationInstructionPolicyTests
         Assert.Empty(Update(p,[M(700)],_=>false));
         Assert.Equal("六百五十米后，在下一个路口左转。",Assert.Single(Update(p,[M(675)])));
         Assert.Empty(Update(p,[M(500)]));
-        Assert.Equal("二百米后，左转。",Assert.Single(Update(p,[M(200)])));
+        Assert.Equal("两百米后，左转。",Assert.Single(Update(p,[M(200)])));
     }
 
     [Fact]
@@ -224,11 +289,11 @@ public sealed class NavigationInstructionPolicyTests
     {
         var p=new NavigationInstructionPolicy();
         var plan=Plan(p,[M(275),M(800,"next",ManeuverKind.TurnRight)]);
-        Assert.Contains("二百五十米后，在下一个路口左转。",plan);
-        Assert.Contains("二百米后，在下一个路口左转。",plan);
+        Assert.Contains("两百五十米后，在下一个路口左转。",plan);
+        Assert.Contains("两百米后，在下一个路口左转。",plan);
         Assert.Contains("一百五十米后，在下一个路口左转。",plan);
         Assert.Contains("五百米后，在下一个路口右转。",plan);
-        Assert.Equal("二百五十米后，在下一个路口左转。",Assert.Single(Update(p,[M(275)])));
+        Assert.Equal("两百五十米后，在下一个路口左转。",Assert.Single(Update(p,[M(275)])));
         Assert.Empty(Update(p,[M(200)]));
     }
 
@@ -239,7 +304,7 @@ public sealed class NavigationInstructionPolicyTests
         Update(p,[M(2500)]);
         Update(p,[M(2001)]);
         Plan(p,[M(1995)]);
-        Assert.Equal("二公里后，左转。",Assert.Single(Update(p,[M(1995)])));
+        Assert.Equal("两公里后，左转。",Assert.Single(Update(p,[M(1995)])));
     }
 
     [Fact]
@@ -268,7 +333,7 @@ public sealed class NavigationInstructionPolicyTests
         Update(p,[M(500)]);
         Assert.Empty(Update(p,[]));
         Assert.Empty(Update(p,[M(490)]));
-        Assert.Equal("二百米后，左转。",Assert.Single(Update(p,[M(200)])));
+        Assert.Equal("两百米后，左转。",Assert.Single(Update(p,[M(200)])));
     }
 
     [Theory]
@@ -315,9 +380,9 @@ public sealed class NavigationInstructionPolicyTests
     public void FiniteVocabularyDoesNotEnumerateDynamicDistancesOrOrdinals()
     {
         var text=NavigationPrompts.AllTexts().ToArray();
-        Assert.Equal(78,text.Length);
-        Assert.Equal(78,text.Distinct().Count());
-        Assert.Contains("二公里后，向右前方行驶。",text);
+        Assert.Equal(84,text.Length);
+        Assert.Equal(84,text.Distinct().Count());
+        Assert.Contains("两公里后，向右前方行驶。",text);
         Assert.Contains("保持直行。",text);
         Assert.Equal("八百米后，在下一个路口右转。",NavigationPrompts.FirstLayer(ManeuverKind.TurnRight,800,1));
         Assert.Equal("沿当前道路，继续行驶八百五十米。",NavigationPrompts.FirstLayer(ManeuverKind.TurnRight,850,1));

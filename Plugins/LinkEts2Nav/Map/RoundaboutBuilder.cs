@@ -41,12 +41,10 @@ public sealed class RoundaboutBuilder
             double quality = Circularity(points);
             if (quality < MinimumCircularity) continue;
             var members = ring.Select(k => graph[k].PrefabUid).OfType<ulong>().Distinct().Order().ToArray();
-            var canonical = ring.Select((k, i) => (k, i)).OrderBy(p => p.k.ItemUid).ThenBy(p => p.k.CurveIndex).First().i;
-            ring = ring.Skip(canonical).Concat(ring.Take(canonical)).ToArray();
-            points = Join(ring);
             var exits = CollectExits(ring, members, cancellationToken);
             if (exits is null) continue;
-            var id = string.Join("/", ring.Select(k => $"{k.ItemUid:X16}:{k.CurveIndex}"));
+            // Multiple lane rings of the same prefab set identify one physical roundabout.
+            var id = string.Join("/", members.Select(uid => $"{uid:X16}"));
             return new(id, members, ring, points, quality, exits);
         }
         return null;

@@ -121,4 +121,24 @@ public sealed class RoundaboutBuilderTests
         index.BuildNewSectors([new(0,0),new(1,0)],TestContext.Current.CancellationToken);
         Assert.Single(index.Structures);
     }
+
+    [Fact]
+    public void DifferentLaneRingsShareIdentityOnlyWhenPrefabSetsMatch()
+    {
+        var outer=Circle(2);
+        var inner=outer.Select(c=>c with
+        {
+            Key=c.Key with {CurveIndex=c.Key.CurveIndex+100},
+            Next=c.Next.Select(k=>k with {CurveIndex=k.CurveIndex+100}).ToArray(),
+            Points=c.Points.Select(p=>p*.8f).ToArray()
+        }).ToArray();
+        var builder=new RoundaboutBuilder(outer.Concat(inner));
+        var a=builder.Find(1,[outer[0].Key],TestContext.Current.CancellationToken)!;
+        var b=builder.Find(2,[inner[20].Key],TestContext.Current.CancellationToken)!;
+        Assert.Equal(a.Id,b.Id);
+        Assert.False(a.Ring.SequenceEqual(b.Ring));
+        var single=Circle();
+        var other=new RoundaboutBuilder(single).Find(1,[single[0].Key],TestContext.Current.CancellationToken)!;
+        Assert.NotEqual(a.Id,other.Id);
+    }
 }

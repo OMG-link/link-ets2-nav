@@ -17,6 +17,8 @@ public sealed class SpeedLimitDefinitionReader
     private readonly Dictionary<string,Unit> rules=new(StringComparer.Ordinal);
     private readonly Dictionary<byte,string> countryNames=new();
     private string? error;
+    private TruckLib.ScsMap.Map? indexedHost;
+    private RoadCountryIndex? hostCountries;
 
     public SpeedLimitDefinitionReader(IFileSystem original,IReadOnlyList<string>? mods=null)
     {
@@ -70,7 +72,7 @@ public sealed class SpeedLimitDefinitionReader
 
     public SpeedLimitData Build(TruckLib.ScsMap.Map map) => Build(map,CancellationToken.None);
 
-    public SpeedLimitData Build(TruckLib.ScsMap.Map map,CancellationToken cancellationToken)
+    public SpeedLimitData Build(TruckLib.ScsMap.Map map,CancellationToken cancellationToken, TruckLib.ScsMap.Map? hostMap = null)
     {
         if(error is not null)return SpeedLimitData.Empty with{Error=error};
         var roads=new Dictionary<ulong,LimitRoad>();
@@ -113,7 +115,17 @@ public sealed class SpeedLimitDefinitionReader
                 regions.Add(new(area.Uid.ToString("X16"),area.Nodes.Select(n=>n.Position).ToArray(),area.Range,
                     action.Urban==true,action.SetKph));
         }
+        if (hostMap is not null && !ReferenceEquals(indexedHost, hostMap))
+        {
+            hostCountries = RoadCountryIndex.Build(hostMap, countryNames, cancellationToken);
+            indexedHost = hostMap;
+        }
         var countryIndex=RoadCountryIndex.Build(map,countryNames,cancellationToken);
+        // Global evidence is authoritative, including ambiguity; local city seeds cannot override it.
+        if (hostMap is not null && hostCountries is not null)
+            foreach (ulong uid in roads.Keys.ToArray())
+                if (hostCountries.Contains(uid))
+                    roads[uid] = roads[uid] with { Country = hostCountries.GetCountry(uid), CountryUncertain = hostCountries.IsUncertain(uid) };
         // Only a road actually inside a city's polygon may borrow its country evidence.
         // A city on another island or across a border is never a map-window default.
         foreach(var region in regions.Where(r=>r.Country is not null))
@@ -123,7 +135,10 @@ public sealed class SpeedLimitDefinitionReader
                 if(road.Geometry.Points.Any(region.Contains))countryIndex.AddSeed(uid,region.Country!);
         }
         foreach(ulong uid in roads.Keys.ToArray())
-            roads[uid]=roads[uid] with { Country=countryIndex.GetCountry(uid), CountryUncertain=countryIndex.IsUncertain(uid) };
+            if (hostMap is null || hostCountries is null || !hostCountries.Contains(uid))
+                roads[uid]=roads[uid] with { Country=countryIndex.GetCountry(uid), CountryUncertain=countryIndex.IsUncertain(uid) };
+            else if (roads[uid].Country is null && !roads[uid].CountryUncertain)
+                roads[uid]=roads[uid] with { Country=countryIndex.GetCountry(uid), CountryUncertain=countryIndex.IsUncertain(uid) };
         return new(roads,placedSigns,regions,limits,null);
     }
     private LimitAction Action(string name,HashSet<string> seen)

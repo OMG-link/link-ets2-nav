@@ -134,6 +134,7 @@ public sealed class NavPlugin : Plugin
         long resourceVersion = 0;
         long observedScanRevision = 0;
         Installation? installation = null;
+        TruckLib.ScsMap.Map? installationMap = null;
         string signature = "";
         string session = "";
         var mountCheck = DateTimeOffset.MinValue;
@@ -183,7 +184,7 @@ public sealed class NavPlugin : Plugin
                     }
                 }
                 var currentInstallation = ApplicationState.Current.RunningGame;
-                if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2)
+                if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2 || !currentInstallation.IsParsed)
                 {
                     speech?.ClearPlan();
                     if (installation is not null) { mapScanner.Invalidate(); pipeline.Reset(); navigation.Reset(); installation = null; }
@@ -198,14 +199,15 @@ public sealed class NavPlugin : Plugin
                         mountCheck = now.AddSeconds(5);
                         var log = currentInstallation.GetLogFileContents().ToArray();
                         string nextSignature = OfficialArchiveMount.ResolveGameLog(currentInstallation.Path, log).Signature;
-                        if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature)
+                        if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature || !ReferenceEquals(installationMap, currentInstallation.GetMapData()))
                         {
                             mapScanner.Invalidate();
                             pipeline.Reset(); navigation.Reset();
-                            logOutput.ResetTargets("准备在后台挂载当前地图资源：" + currentInstallation.Path, now);
+                            logOutput.ResetTargets("准备复用宿主地图并补充附近缺失对象：" + currentInstallation.Path, now);
                             gameLog = log;
                             resourceVersion++;
                             installation = currentInstallation;
+                            installationMap = currentInstallation.GetMapData();
                             signature = nextSignature;
                         }
                     }
@@ -218,7 +220,7 @@ public sealed class NavPlugin : Plugin
                     }
                     var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
                     if (mapScanner.Request(new(resourceVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        session, currentInstallation.Path, gameLog, position), now))
+                        session, currentInstallation.Path, gameLog, position) { HostMap = currentInstallation.GetMapData() }, now))
                         logOutput.ScanStarted(position, now);
                     var scan = mapScanner.Capture();
                     if (!scan.IsScanning) scanBusySince = DateTimeOffset.MinValue;

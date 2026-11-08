@@ -6,7 +6,10 @@ using LinkEts2Nav.Map;
 namespace LinkEts2Nav.Runtime;
 
 public sealed record MapScanRequest(string ResourceId, string SessionId, string GamePath,
-    IReadOnlyList<string> LogLines, Vector3 Position);
+    IReadOnlyList<string> LogLines, Vector3 Position)
+{
+    public TruckLib.ScsMap.Map? HostMap { get; init; }
+}
 
 public interface IMapScanBackend : IDisposable
 {
@@ -155,7 +158,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         public OfficialBackend(MapScanRequest request)
         {
             mount = OfficialArchiveMount.FromGameLog(request.GamePath, request.LogLines);
-            scanner = new NearbyCameraScanner(mount.FileSystem, activeModPaths: mount.ActiveModPaths);
+            scanner = new NearbyCameraScanner(mount.FileSystem, activeModPaths: mount.ActiveModPaths, hostMap: request.HostMap);
         }
         public NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken)
             => scanner.ReadNearby(position, 1100, cancellationToken);

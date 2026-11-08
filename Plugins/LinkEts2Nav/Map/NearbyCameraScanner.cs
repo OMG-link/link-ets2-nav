@@ -26,6 +26,8 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
 public sealed class NearbyCameraScanner
 {
     private readonly IFileSystem fileSystem;
+    private readonly ScsMap? hostMap;
+    private readonly HostMapView? hostView;
     private readonly string mapPath;
     private readonly Dictionary<string, string> prefabPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PrefabDescriptor?> prefabDescriptors = new(StringComparer.Ordinal);
@@ -45,9 +47,11 @@ public sealed class NearbyCameraScanner
     private SpeedLimitDefinitionReader? speedReader;
     private SpeedLimitData speedLimits = SpeedLimitData.Empty;
 
-    public NearbyCameraScanner(IFileSystem fileSystem, string mapPath = "/map/europe.mbd", IReadOnlyList<string>? activeModPaths = null)
+    public NearbyCameraScanner(IFileSystem fileSystem, string mapPath = "/map/europe.mbd", IReadOnlyList<string>? activeModPaths = null, ScsMap? hostMap = null)
     {
         this.fileSystem = fileSystem;
+        this.hostMap = hostMap;
+        hostView = hostMap is null ? null : new HostMapView(hostMap);
         this.mapPath = mapPath;
         this.activeModPaths = activeModPaths ?? [];
     }
@@ -65,8 +69,9 @@ public sealed class NearbyCameraScanner
         var sectors = SectorsNear(playerPosition, radiusMeters + 100);
         if (map == null || !sectors.SequenceEqual(loadedSectors))
         {
-            var nextMap = new CameraMap();
+            var nextMap = new CameraMap(hostMap);
             nextMap.Read(mapPath, fileSystem, sectors);
+            hostView?.MergeInto(nextMap, sectors);
             cancellationToken.ThrowIfCancellationRequested();
             var junctions = new List<DirectedRoad>();
             var issues = new List<string>();
@@ -90,7 +95,7 @@ public sealed class NearbyCameraScanner
             junctionDiagnostics = issues.Distinct().ToArray();
             map = nextMap;
             loadedSectors = sectors;
-            speedLimits = speedReader!.Build(nextMap,cancellationToken);
+            speedLimits = speedReader!.Build(nextMap,cancellationToken,hostMap);
         }
         var diagnostics = new List<string>(definitionDiagnostics);
         diagnostics.AddRange(junctionDiagnostics);
@@ -279,8 +284,9 @@ public sealed class NearbyCameraScanner
     private static float HorizontalDistanceSquared(Vector3 a, Vector3 b) =>
         (a.X - b.X) * (a.X - b.X) + (a.Z - b.Z) * (a.Z - b.Z);
 
-    private sealed class CameraMap : ScsMap
+    private sealed class CameraMap(ScsMap? host) : ScsMap
     {
-        protected override bool PostProcessItem(MapItem item) => item is ScsModel or Sign or Road or Prefab or CityArea or TrafficArea;
+        protected override bool PostProcessItem(MapItem item) => (item is ScsModel or Sign or Road or Prefab or CityArea or TrafficArea)
+            && (host is null || !host.MapItems.ContainsKey(item.Uid));
     }
 }

@@ -29,6 +29,26 @@ public sealed class SpeedLimitDefinitionTests
         public string GetParent(string p)=>p[..(p.LastIndexOf('/')+1)];
     }
     [Fact]
+    public void NearbyRoadUsesDistantHostBorderAndRebuildsForNewMap()
+    {
+        var host = new TruckLib.ScsMap.Map();
+        var first=Road.Add(host,new(0,0,0),new(1000,0,0),default);
+        var next=first.Append(new(2000,0,0));
+        first.RoadType=next.RoadType="un11";
+        first.Node.IsCountryBorder=true;
+        first.Node.ForwardItem=first;
+        first.Node.ForwardCountry=35;
+        var nearby=new TruckLib.ScsMap.Map();
+        nearby.MapItems.Add(next.Uid,next);
+        var reader=new SpeedLimitDefinitionReader(new Fs());
+        var data=reader.Build(nearby,TestContext.Current.CancellationToken,host);
+        Assert.Equal("norway",data.Roads[next.Uid].Country);
+        var empty=new TruckLib.ScsMap.Map();
+        data=reader.Build(nearby,TestContext.Current.CancellationToken,empty);
+        Assert.Null(data.Roads[next.Uid].Country);
+    }
+
+    [Fact]
     public void MissingCityCountryIsUnknownRatherThanAScanFailure()
     {
         var fs=new Fs();

@@ -16,6 +16,8 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     IReadOnlyList<string> Diagnostics, IReadOnlyList<SectorCoordinate> Sectors)
 {
     public IReadOnlyList<DirectedRoad> PrefabPaths { get; init; } = [];
+    public IReadOnlyList<RoundaboutStructure> Roundabouts { get; init; } = [];
+    public IReadOnlyDictionary<ulong, RoundaboutStructure> RoadStructures { get; init; } = new Dictionary<ulong, RoundaboutStructure>();
     public SpeedLimitData SpeedLimits { get; init; } = SpeedLimitData.Empty;
     public IReadOnlyList<FreeNavigationArea> FreeNavigationAreas { get; init; } = [];
 }
@@ -26,6 +28,7 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
 /// </summary>
 public sealed class NearbyCameraScanner
 {
+    private readonly RoundaboutMapIndex roundaboutIndex = new();
     private readonly IFileSystem fileSystem;
     private readonly ScsMap? hostMap;
     private readonly HostMapView? hostView;
@@ -94,6 +97,7 @@ public sealed class NearbyCameraScanner
                         prefabDescriptors[resource] = descriptor = PrefabDescriptor.Open(resource, fileSystem);
                     if (descriptor is not null)
                     {
+                        roundaboutIndex.AddPrefab(prefab, descriptor);
                         junctions.AddRange(PrefabPathGeometry.Build(prefab, descriptor));
                         areas.AddRange(FreeNavigationArea.Build(prefab,descriptor));
                     }
@@ -104,6 +108,8 @@ public sealed class NearbyCameraScanner
                     issues.Add($"Prefab {resource}: {ex.Message}");
                 }
             }
+            foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road);
+            roundaboutIndex.BuildNewSectors(sectors,cancellationToken);
             junctionGeometry = junctions;
             freeNavigationAreas = areas;
             junctionDiagnostics = issues.Distinct().ToArray();
@@ -184,7 +190,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, FreeNavigationAreas = freeNavigationAreas };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, FreeNavigationAreas = freeNavigationAreas };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)

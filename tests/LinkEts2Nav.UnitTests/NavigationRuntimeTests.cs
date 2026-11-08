@@ -124,18 +124,19 @@ public sealed class NavigationRuntimeTests
     }
 
     [Fact]
-    public void FirstDetectionAt79MetersDoesNotRepeatAt50Meters()
+    public void FirstDetectionAt79MetersRepeatsOnlyForTwentyMeterExecution()
     {
         var scene=Scene();var calls=0;var logs=new List<string>();
         var runtime=new NavigationRuntime(fallback:()=>calls++,log:logs.Add);
         runtime.Process(Data(scene.Route,621),scene.Map,Now);
         runtime.Process(Data(scene.Route,651),scene.Map,Now);
         runtime.Process(Data(scene.Route,680),scene.Map,Now);
-        Assert.Equal(1,calls);
+        Assert.Equal(2,calls);
+        Assert.Contains(logs,l=>l.Contains("导航指令：右转。"));
         Assert.Contains(logs,l=>l.Contains("导航指令：五十米后，在下一个路口右转。"));
     }
     [Fact]
-    public void OfficialRouteProducesThreeRightTurnStagesWithoutCameraOrLaneData()
+    public void OfficialRouteProducesOverviewHundredAndTwentyMeterCues()
     {
         var scene=Scene();var calls=0;var logs=new List<string>();
         var runtime=new NavigationRuntime(fallback:()=>calls++,log:logs.Add);
@@ -144,9 +145,11 @@ public sealed class NavigationRuntimeTests
         Assert.InRange(next.Next.DistanceMeters,599,601);
         runtime.Process(Data(scene.Route,201),scene.Map,Now);
         runtime.Process(Data(scene.Route,501),scene.Map,Now);
+        runtime.Process(Data(scene.Route,601),scene.Map,Now);
         runtime.Process(Data(scene.Route,651),scene.Map,Now);
-        runtime.Process(Data(scene.Route,653),scene.Map,Now);
-        Assert.Equal(3,calls);
+        runtime.Process(Data(scene.Route,680),scene.Map,Now);
+        runtime.Process(Data(scene.Route,690),scene.Map,Now);
+        Assert.Equal(4,calls);
         Assert.Contains(logs,l=>l.Contains("导航指令：六百米后，在下一个路口右转。"));
         Assert.Contains(logs,l=>l.Contains("导航指令：右转。"));
     }

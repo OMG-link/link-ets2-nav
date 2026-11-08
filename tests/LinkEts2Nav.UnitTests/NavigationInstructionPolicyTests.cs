@@ -42,7 +42,7 @@ public sealed class NavigationInstructionPolicyTests
     [InlineData(1000)]
     [InlineData(500)]
     [InlineData(200)]
-    public void FiftyMeterFollowupUsesBareActionAfterActualAnnouncement(int earlierDistance)
+    public void TwentyMeterFollowupUsesBareActionAfterActualAnnouncement(int earlierDistance)
     {
         var p=new NavigationInstructionPolicy();
         Update(p,[M(earlierDistance)]);
@@ -50,8 +50,8 @@ public sealed class NavigationInstructionPolicyTests
         Update(p,[M(51)]);
         Assert.Contains("左转。",Plan(p,[M(51)]));
         Assert.DoesNotContain("五十米后，左转。",Plan(p,[M(51)]));
-        Assert.Equal("左转。",Assert.Single(Update(p,[M(49)])));
-        Assert.Empty(Update(p,[M(30)]));
+        Assert.Equal("左转。",Assert.Single(Update(p,[M(20)])));
+        Assert.Empty(Update(p,[M(10)]));
     }
 
     [Fact]
@@ -73,14 +73,14 @@ public sealed class NavigationInstructionPolicyTests
     }
 
     [Fact]
-    public void LateFiftyMeterFollowupUsesBareActionAndDropsOrdinal()
+    public void TwentyMeterFollowupUsesBareActionAndDropsOrdinal()
     {
         var p=new NavigationInstructionPolicy();
         Update(p,[M(200)]);
         Assert.Equal("左转。",Assert.Single(Update(p,[M(20)])));
         var q=new NavigationInstructionPolicy();
         Update(q,[M(100,"straight",ManeuverKind.Straight),M(500)]);
-        Assert.Equal("左转。",Assert.Single(Update(q,[M(20,"straight",ManeuverKind.Straight),M(50)])));
+        Assert.Equal("左转。",Assert.Single(Update(q,[M(10,"straight",ManeuverKind.Straight),M(20)])));
     }
 
     [Theory]
@@ -167,8 +167,10 @@ public sealed class NavigationInstructionPolicyTests
         Assert.Equal("五百米后，左转。",Assert.Single(Update(p,[M(498)])));
         Assert.Empty(Update(p,[M(201)]));
         Assert.Equal("两百米后，左转。",Assert.Single(Update(p,[M(198)])));
-        Assert.Empty(Update(p,[M(51)]));
-        Assert.Equal("左转。",Assert.Single(Update(p,[M(49)])));
+        Assert.Empty(Update(p,[M(101)]));
+        Assert.Equal("一百米后，左转。",Assert.Single(Update(p,[M(99)])));
+        Assert.Empty(Update(p,[M(25)]));
+        Assert.Equal("左转。",Assert.Single(Update(p,[M(20)])));
         Assert.Empty(Update(p,[M(10)]));
     }
 
@@ -196,6 +198,7 @@ public sealed class NavigationInstructionPolicyTests
             var plan=Plan(p,[M(distance)]);
             Assert.Equal(new[]{NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,500),
                 NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,200),
+                NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,100),
                 NavigationPrompts.Execute(ManeuverKind.TurnLeft)},plan);
             Assert.Empty(Update(p,[M(distance)]));
         }
@@ -229,29 +232,32 @@ public sealed class NavigationInstructionPolicyTests
     [InlineData(275,"两百五十米后，在下一个路口左转。",true)]
     [InlineData(175,"一百五十米后，在下一个路口左转。",false)]
     [InlineData(79,"五十米后，在下一个路口左转。",false)]
-    public void FirstBetweenStagesRoundsAndSkipsFollowingLowerReminder(double distance,string text,bool later50)
+    public void FirstBetweenStagesRoundsAndSkipsFollowingLowerReminder(double distance,string text,bool later100)
     {
         var p=new NavigationInstructionPolicy();
         Assert.Equal(text,Assert.Single(Update(p,[M(distance)])));
         Assert.Empty(Update(p,[M(Math.Min(distance,200))]));
-        if(later50)Assert.Equal("左转。",Assert.Single(Update(p,[M(50)])));
-        else Assert.Empty(Update(p,[M(50)]));
+        if(later100)Assert.Equal("一百米后，左转。",Assert.Single(Update(p,[M(100)])));
+        else Assert.Empty(Update(p,[M(100)]));
+        Assert.Empty(Update(p,[M(50)]));
+        Assert.Equal("左转。",Assert.Single(Update(p,[M(20)])));
     }
 
     [Fact]
     public void FirstCloseStraightDoesNotHideTheSecondIntersectionTurn()
     {
         var p=new NavigationInstructionPolicy();
-        Assert.Equal("在第二个路口左转。",Assert.Single(Update(p,
+        Assert.Equal("保持直行。",Assert.Single(Update(p,
             [M(10,"straight",ManeuverKind.Straight),M(35)])));
+        Assert.Equal("左转。",Assert.Single(Update(p,[M(20)])));
     }
 
     [Fact]
     public void FirstActionUnder50UsesReadyImmediateWithoutDistance()
     {
         var p=new NavigationInstructionPolicy();
-        Assert.Equal("即将左转。",Assert.Single(Update(p,[M(30)])));
-        Assert.Empty(Update(p,[M(10)]));
+        Assert.Empty(Update(p,[M(30)]));
+        Assert.Equal("左转。",Assert.Single(Update(p,[M(10)])));
     }
 
     [Fact]
@@ -353,7 +359,7 @@ public sealed class NavigationInstructionPolicyTests
     public void OldObservationsCannotResetOrRebrief()
     {
         var p=new NavigationInstructionPolicy();
-        Update(p,[M(30)]);
+        Update(p,[M(10)]);
         Assert.Empty(p.UpdateSequence([M(700)],"session",Now.AddSeconds(-1),Now,true));
         Assert.Empty(Update(p,[M(500)]));
     }
@@ -362,7 +368,7 @@ public sealed class NavigationInstructionPolicyTests
     public void SessionAndNearThenFarEncounterCanRearm()
     {
         var p=new NavigationInstructionPolicy();
-        Update(p,[M(30)]);
+        Update(p,[M(10)]);
         Assert.Empty(Update(p,[M(550)]));
         Assert.Single(Update(p,[M(551)]));
         Assert.Single(p.UpdateSequence([M(500)],"next-session",Now,Now,true));
@@ -423,7 +429,7 @@ public sealed class NavigationInstructionPolicyTests
         var p=new NavigationInstructionPolicy();
         Update(p,[M(1500)]);
         Assert.Empty(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true));
-        Update(p,[M(30)]);
+        Update(p,[M(10)]);
         Assert.Equal(NavigationPrompts.Continue(),Assert.Single(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true)));
         Assert.Empty(p.UpdateSequence([],"session",Now,Now,true,hasConfirmedContinuation:true));
         Assert.Empty(Update(p,[M(1500,"next")]));
@@ -434,7 +440,7 @@ public sealed class NavigationInstructionPolicyTests
     {
         var p=new NavigationInstructionPolicy();
         Update(p,[M(1500)]);
-        Update(p,[M(30)]);
+        Update(p,[M(10)]);
         Assert.Equal(NavigationPrompts.Continue(1500),Assert.Single(Update(p,[M(1500,"next")])));
     }
 

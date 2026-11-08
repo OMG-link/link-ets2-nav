@@ -109,7 +109,7 @@ public static class NavigationPrompts
 public sealed class NavigationInstructionPolicy
 {
     private const int MaximumEncounters = 2048;
-    private static readonly int[] Stages = [2000,1000,500,200,50];
+    private static readonly int[] Stages = [2000,1000,500,200,100];
     private const int AllStages = 31;
     private static readonly TimeSpan MaximumAge = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan StraightQuietPeriod = TimeSpan.FromSeconds(5);
@@ -120,10 +120,11 @@ public sealed class NavigationInstructionPolicy
         // One overview belongs to this approach, not to every changing distance sample.
         public string? PendingContinuation;
         public bool FirstAnnounced;
+        public bool Executed;
         public int Consumed;
         public DateTimeOffset LastSeen;
     }
-    private readonly record struct Decision(string Text,int Consumed);
+    private readonly record struct Decision(string Text,int Consumed,bool Execute=false);
     private readonly Dictionary<string,Encounter> encounters = new(StringComparer.Ordinal);
     private string? session;
     private DateTimeOffset? observed, lastSpoken;
@@ -162,7 +163,7 @@ public sealed class NavigationInstructionPolicy
                 // Warm the next two rounded bins, not an unbounded distance vocabulary.
                 double rounded = Math.Floor(target.DistanceMeters/50)*50;
                 foreach (double next in new[] { rounded-50,rounded-100 })
-                    if (next >= 0) result.Add(NavigationPrompts.FirstLayer(target.Kind,next,ordinal));
+                    if (next >= 50) result.Add(NavigationPrompts.FirstLayer(target.Kind,next,ordinal));
             }
             int nextIndex = ActionIndex(maneuvers,index+1);
             if (nextIndex >= 0 && target.DistanceMeters <= 800
@@ -176,7 +177,7 @@ public sealed class NavigationInstructionPolicy
             foreach (int stageIndex in Enumerable.Range(0,Stages.Length))
                 if ((consumed & (1<<stageIndex)) == 0)
                     result.Add(StageText(target.Kind,Stages[stageIndex],ordinal, state.FirstAnnounced || due is not null));
-            if (consumed != AllStages) result.Add(ImmediateText(target.Kind,ordinal, state.FirstAnnounced || due is not null));
+            if (!state.Executed) result.Add(NavigationPrompts.Execute(target.Kind));
         }
         else if (hasConfirmedContinuation && !continuationCovered && (maneuvers.Count==0 || maneuvers[0].DistanceMeters>50))
             result.Add(NavigationPrompts.Continue());
@@ -235,6 +236,7 @@ public sealed class NavigationInstructionPolicy
                 if (!state.FirstAnnounced && target.DistanceMeters>800) continuationAnnounced=true;
                 state.FirstAnnounced=true;
                 state.Consumed=current.Consumed;
+                if(current.Execute) state.Executed=true;
                 output.Add(current.Text);
             }
         }
@@ -270,6 +272,8 @@ public sealed class NavigationInstructionPolicy
     private static Decision? Select(Encounter state,NavigationManeuver target,int ordinal)
     {
         double distance=target.DistanceMeters;
+        if(distance<=20) return state.Executed ? null : new(NavigationPrompts.Execute(target.Kind),AllStages,true);
+        if(distance<50) return null;
         if (NeedsBriefing(state))
             return new(distance > 800 && state.PendingContinuation is { } overview
                 ? overview : NavigationPrompts.FirstLayer(target.Kind,distance,ordinal),
@@ -283,23 +287,19 @@ public sealed class NavigationInstructionPolicy
             && distance>=Stages[index]-20;
         if (distance==Stages[index] || crossing)
             return new(StageText(target.Kind,Stages[index],ordinal, hasPreviousAnnouncement: true),consumed);
-        if (distance<50) return new(ImmediateText(target.Kind,ordinal, hasPreviousAnnouncement: true),AllStages);
+        if (distance<100) return null;
         consumed|=(1<<Math.Min(index+2,Stages.Length))-1;
         return new(StageText(target.Kind,(int)NavigationPrompts.RoundDistance(distance),ordinal, hasPreviousAnnouncement: true),consumed);
     }
 
     private static bool NeedsBriefing(Encounter state) => !state.FirstAnnounced;
     private static string StageText(ManeuverKind kind,int meters,int ordinal,bool hasPreviousAnnouncement=false)
-        => meters==50 && hasPreviousAnnouncement ? NavigationPrompts.Execute(kind)
-            : meters<=800 && ordinal>1 ? NavigationPrompts.FirstLayer(kind,meters,ordinal)
+        => meters<=800 && ordinal>1 ? NavigationPrompts.FirstLayer(kind,meters,ordinal)
             : NavigationPrompts.AtDistance(kind,meters);
-    private static string ImmediateText(ManeuverKind kind,int ordinal,bool hasPreviousAnnouncement=false)
-        => hasPreviousAnnouncement ? NavigationPrompts.Execute(kind)
-            : ordinal>1 ? NavigationPrompts.FirstLayer(kind,0,ordinal) : NavigationPrompts.Immediate(kind);
     private static int InitialConsumption(double distance)
     {
         // A road-level overview does not replace the upcoming maneuver reminders.
-        // Expire only boundaries already reached; e.g. 1.4 km keeps 1000/500/200/50 pending.
+        // Expire only boundaries already reached; e.g. 1.4 km keeps 1000/500/200/100 pending; execution has separate state.
         if (distance>800)
         {
             int expired=0;
@@ -320,12 +320,12 @@ public sealed class NavigationInstructionPolicy
     }
     private Encounter Preview(NavigationManeuver m,string sessionId)
         => StringComparer.Ordinal.Equals(session,sessionId) && encounters.TryGetValue(m.Id,out var state)
-            && !(state.Minimum<=50 && m.DistanceMeters>550) ? state : new(m.DistanceMeters);
+            && !(state.Minimum<=20 && m.DistanceMeters>550) ? state : new(m.DistanceMeters);
     private Encounter Current(NavigationManeuver m,DateTimeOffset now)
     {
         if (encounters.TryGetValue(m.Id,out var state))
         {
-            if (state.Minimum<=50 && m.DistanceMeters>550) encounters[m.Id]=state=new(m.DistanceMeters);
+            if (state.Minimum<=20 && m.DistanceMeters>550) encounters[m.Id]=state=new(m.DistanceMeters);
             return state;
         }
         if (encounters.Count>=MaximumEncounters)
@@ -354,7 +354,7 @@ public sealed class NavigationInstructionPolicy
     private bool StartsNewLeg(IReadOnlyList<NavigationManeuver> list)
     {
         if(legTargetId is null || !encounters.TryGetValue(legTargetId,out var previous)
-            || previous.Minimum>50) return false;
+            || previous.Minimum>20) return false;
         var same=list.FirstOrDefault(m=>m.Id==legTargetId);
         return same is null || same.DistanceMeters>550;
     }
@@ -362,7 +362,7 @@ public sealed class NavigationInstructionPolicy
     private static Encounter Copy(Encounter original) => new(original.Minimum)
     {
         Previous=original.Previous,PendingContinuation=original.PendingContinuation,
-        FirstAnnounced=original.FirstAnnounced,Consumed=original.Consumed,LastSeen=original.LastSeen
+        FirstAnnounced=original.FirstAnnounced,Executed=original.Executed,Consumed=original.Consumed,LastSeen=original.LastSeen
     };
 
     private static void CoverOverview(Encounter state,double distance)

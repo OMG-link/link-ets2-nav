@@ -23,6 +23,8 @@ public sealed class NavigationManeuverDetector
     private const float MaximumJoinGap = 2;
     private const double TurnAngleDegrees = 45;
     private const double ForkAngleDegrees = 55;
+    private const double MinimumForkSpreadDegrees = 5;
+    private const double ExitOrderingToleranceDegrees = .5;
     private IReadOnlyList<DirectedRoad>? indexedGraph;
     private Dictionary<ulong, DirectedRoad[]> roadStarts = new();
     private Dictionary<(string Prefab, ulong Start), DirectedRoad[][]> prefabStarts = new();
@@ -186,10 +188,10 @@ public sealed class NavigationManeuverDetector
         var angles = choices.Select(c => c.Angle).ToArray();
         if (chosen <= -TurnAngleDegrees) return ManeuverKind.TurnLeft;
         if (chosen >= TurnAngleDegrees) return ManeuverKind.TurnRight;
-        if (angles.All(a => Math.Abs(a) <= ForkAngleDegrees) && angles.Max() - angles.Min() >= 10)
+        if (angles.All(a => Math.Abs(a) <= ForkAngleDegrees) && angles.Max() - angles.Min() >= MinimumForkSpreadDegrees)
         {
-            bool left = angles.Any(a => a < chosen - 5);
-            bool right = angles.Any(a => a > chosen + 5);
+            bool left = angles.Any(a => a < chosen - ExitOrderingToleranceDegrees);
+            bool right = angles.Any(a => a > chosen + ExitOrderingToleranceDegrees);
             if (!left && right) return ManeuverKind.KeepLeft;
             if (left && !right) return ManeuverKind.KeepRight;
         }

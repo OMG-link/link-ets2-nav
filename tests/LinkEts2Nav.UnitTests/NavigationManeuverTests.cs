@@ -44,6 +44,50 @@ public sealed class NavigationManeuverTests
         Assert.Null(Detector.FindNext([entry, near, middle, farTurn], 0, graph));
     }
 
+    private static DirectedRoad ExitAt(string id,ulong node,double angle)
+    {
+        double radians = angle * Math.PI / 180;
+        return R(id,2,node,P(0,-100),P((float)(100*Math.Sin(radians)),(float)(-100-100*Math.Cos(radians))));
+    }
+
+    [Theory]
+    [InlineData(1,false,ManeuverKind.KeepLeft)]
+    [InlineData(1,true,ManeuverKind.KeepRight)]
+    [InlineData(-1,false,ManeuverKind.KeepRight)]
+    [InlineData(-1,true,ManeuverKind.KeepLeft)]
+    public void ShallowCollectorSplitUsesRelativeExitOrder(int mirror,bool collector,ManeuverKind expected)
+    {
+        var entry=R("entry",1,2,P(0,0),P(0,-100));
+        // Measured exit tangents at the cloverleaf: only 6.881 degrees apart.
+        var main=ExitAt("main",3,mirror*1.7716804);
+        var auxiliary=ExitAt("auxiliary",4,mirror*8.6526888);
+        var selected=collector?auxiliary:main;
+        Assert.Equal(expected,Detector.FindNext([entry,selected],10,[entry,main,auxiliary])!.Kind);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NearlyAlignedExitsBelowTheForkSpreadRemainStraight(bool right)
+    {
+        var entry=R("entry",1,2,P(0,0),P(0,-100));
+        var first=ExitAt("first",3,0);
+        var second=ExitAt("second",4,4.9);
+        Assert.Equal(ManeuverKind.Straight,
+            Detector.FindNext([entry,right?second:first],0,[entry,first,second])!.Kind);
+    }
+
+    [Fact]
+    public void MiddleExitOfAShallowThreeWaySplitDoesNotInventASideInstruction()
+    {
+        var entry=R("entry",1,2,P(0,0),P(0,-100));
+        var left=ExitAt("left",3,0);
+        var middle=ExitAt("middle",4,3);
+        var right=ExitAt("right",5,6.881);
+        Assert.Equal(ManeuverKind.Straight,
+            Detector.FindNext([entry,middle],0,[entry,left,middle,right])!.Kind);
+    }
+
     [Fact]
     public void InvalidNativeCurveCannotBorrowLateralReferenceConnectorsForDirection()
     {

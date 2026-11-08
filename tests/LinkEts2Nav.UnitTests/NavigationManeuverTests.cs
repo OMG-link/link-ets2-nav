@@ -11,6 +11,52 @@ public sealed class NavigationManeuverTests
     private static readonly NavigationManeuverDetector Detector = new();
 
     [Theory]
+    [InlineData(1, ManeuverKind.MergeLeft)]
+    [InlineData(-1, ManeuverKind.MergeRight)]
+    public void SeparateEntranceJoiningThroughRoadProducesMergeButThroughTrafficDoesNot(int side, ManeuverKind expected)
+    {
+        var main=R("prefab:MERGE:0:1",1,3,P(0,100),P(0,100),P(0,50),P(0,0),P(0,0));
+        var ramp=R("prefab:MERGE:2:1",2,3,P(20*side,100),P(20*side,100),P(20*side,50),P(20*side,0),P(0,0));
+        var before=R("ramp",4,2,P(20*side,150),P(20*side,100));
+        var through=R("main",5,1,P(0,150),P(0,100));
+        var after=R("exit",3,6,P(0,0),P(0,-100));
+        LaneConnection[] lanes=[new(1,0,3,0),new(1,1,3,1),new(2,0,3,2),new(2,1,3,2)];
+        main=main with { LaneConnections=lanes }; ramp=ramp with { LaneConnections=lanes };
+        DirectedRoad[] graph=[before,through,main,ramp,after];
+        Assert.Equal(expected,Assert.Single(Detector.FindSequence([before,ramp,after],0,graph)).Kind);
+        Assert.Empty(Detector.FindSequence([through,main,after],0,graph));
+        Detector.FindSequence([before,ramp,after],55,graph,out _,out bool inside);
+        Assert.True(inside);
+        Detector.FindSequence([before,ramp,after],171,graph,out _,out bool passed);
+        Assert.False(passed);
+    }
+
+    [Fact]
+    public void AmbiguousRoadJoinBlocksContinuationWithoutInventingAnAction()
+    {
+        var main=R("prefab:ADD:0:1",1,3,P(0,100),P(0,100),P(0,50),P(0,0),P(0,0));
+        var ramp=R("prefab:ADD:2:1",2,3,P(20,100),P(20,100),P(20,50),P(20,0),P(0,0));
+        LaneConnection[] lanes=[new(1,0,3,0),new(2,0,3,1)];
+        main=main with{LaneConnections=lanes};ramp=ramp with{LaneConnections=lanes};
+        var before=R("ramp",4,2,P(20,150),P(20,100));
+        var after=R("exit",3,6,P(0,0),P(0,-2000));
+        var result=Detector.FindSequence([before,ramp,after],0,[before,main,ramp,after],out double confirmed,out bool unresolved);
+        Assert.Empty(result);
+        Assert.True(confirmed>800);
+        Assert.True(unresolved);
+    }
+
+    [Fact]
+    public void MultipleLaneCurvesWithSameEntranceAreNotAnEntryToMainRoad()
+    {
+        var before=R("road",1,2,P(0,100),P(0,50));
+        var left=R("prefab:NARROW:0:1",2,3,P(0,50),P(-3,50),P(-1,25),P(0,0),P(0,0));
+        var right=R("prefab:NARROW:0:1:lane",2,3,P(0,50),P(3,50),P(1,25),P(0,0),P(0,0));
+        var after=R("exit",3,4,P(0,0),P(0,-100));
+        Assert.Empty(Detector.FindSequence([before,left,after],0,[before,left,right,after]));
+    }
+
+    [Theory]
     [InlineData(.072, 32.684, null, null, null, ManeuverKind.Straight, true)]
     [InlineData(20, -20, "main", "main", "ramp", ManeuverKind.Straight, true)]
     [InlineData(1, 30, "same", "same", "same", ManeuverKind.Straight, true)]

@@ -40,9 +40,9 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         var route = paths!.GetPath(position, vehicle.ForwardDirection, data.Route, data.RouteAvailability);
         var along = matcher.ProjectDistance(position, vehicle.ForwardDirection, route);
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
-        var upcoming = detector.FindSequence(route, along.Value, paths.GetNavigationGraph(), out double confirmedUntil);
+        var upcoming = detector.FindSequence(route, along.Value, paths.GetNavigationGraph(), out double confirmedUntil, out bool hasUnresolvedJoin);
         double confirmedAhead = Math.Max(0, confirmedUntil - along.Value);
-        bool confirmedContinuation = !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
+        bool confirmedContinuation = !hasUnresolvedJoin && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
         var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation);
         speech?.UpdatePlan("navigation", plan, priority: 10);

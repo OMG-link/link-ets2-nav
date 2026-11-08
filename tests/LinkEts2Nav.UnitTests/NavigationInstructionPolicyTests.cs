@@ -321,7 +321,8 @@ public sealed class NavigationInstructionPolicyTests
     public void StraightOnlyUsesUnmeasuredContinuationAndLocalPassageCue()
     {
         var p=new NavigationInstructionPolicy();
-        Assert.Equal(NavigationPrompts.Continue(),Assert.Single(Update(p,[M(100,"s",ManeuverKind.Straight)])));
+        Assert.Empty(Update(p,[M(100,"s",ManeuverKind.Straight)]));
+        Assert.DoesNotContain(NavigationPrompts.Continue(),p.PlanSequence([M(100,"s",ManeuverKind.Straight)],"session",Now,Now,true));
         Assert.Empty(Update(p,[M(70,"s",ManeuverKind.Straight)],seconds:1));
         Assert.Equal("保持直行。",Assert.Single(Update(p,[M(40,"s",ManeuverKind.Straight)],seconds:6)));
     }
@@ -380,8 +381,8 @@ public sealed class NavigationInstructionPolicyTests
     public void FiniteVocabularyDoesNotEnumerateDynamicDistancesOrOrdinals()
     {
         var text=NavigationPrompts.AllTexts().ToArray();
-        Assert.Equal(84,text.Length);
-        Assert.Equal(84,text.Distinct().Count());
+        Assert.Equal(112,text.Length);
+        Assert.Equal(112,text.Distinct().Count());
         Assert.Contains("两公里后，向右前方行驶。",text);
         Assert.Contains("保持直行。",text);
         Assert.Equal("八百米后，在下一个路口右转。",NavigationPrompts.FirstLayer(ManeuverKind.TurnRight,800,1));

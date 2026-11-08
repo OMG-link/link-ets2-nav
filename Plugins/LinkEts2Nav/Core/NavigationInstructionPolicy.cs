@@ -8,6 +8,7 @@ public static class NavigationPrompts
     {
         ManeuverKind.TurnLeft => "左转", ManeuverKind.TurnRight => "右转",
         ManeuverKind.KeepLeft => "向左前方行驶", ManeuverKind.KeepRight => "向右前方行驶",
+        ManeuverKind.MergeLeft => "向左前方进入主路", ManeuverKind.MergeRight => "向右前方进入主路",
         ManeuverKind.Straight => "直行", ManeuverKind.UTurn => "掉头",
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
@@ -177,7 +178,7 @@ public sealed class NavigationInstructionPolicy
                     result.Add(StageText(target.Kind,Stages[stageIndex],ordinal, state.FirstAnnounced || due is not null));
             if (consumed != AllStages) result.Add(ImmediateText(target.Kind,ordinal, state.FirstAnnounced || due is not null));
         }
-        else if (!continuationCovered && (maneuvers.Count==0 || maneuvers[0].DistanceMeters>50))
+        else if (hasConfirmedContinuation && !continuationCovered && (maneuvers.Count==0 || maneuvers[0].DistanceMeters>50))
             result.Add(NavigationPrompts.Continue());
         var straight = maneuvers.Take(index >= 0 ? index : maneuvers.Count).FirstOrDefault(m => m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation);
         if (straight is not null && !Preview(straight,sessionId).FirstAnnounced)
@@ -248,7 +249,7 @@ public sealed class NavigationInstructionPolicy
                 if (canAnnounce?.Invoke(text) ?? true)
                 { states[straight.Id].FirstAnnounced=true; output.Add(text); }
             }
-            else if (index < 0 && !continuationAnnounced && (quiet || newLeg))
+            else if (hasConfirmedContinuation && index < 0 && !continuationAnnounced && (quiet || newLeg))
             {
                 string text=NavigationPrompts.Continue();
                 if (canAnnounce?.Invoke(text) ?? true) { continuationAnnounced=true; output.Add(text); }

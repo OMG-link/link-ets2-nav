@@ -221,7 +221,7 @@ public sealed class NavigationRuntimeTests
         runtime.Process(Data(scene.Route,680),scene.Map,Now);
         Assert.Equal(2,calls);
         Assert.Contains(logs,l=>l.Contains("导航指令：右转。"));
-        Assert.Contains(logs,l=>l.Contains("导航指令：五十米后，在下一个路口右转。"));
+        Assert.Contains(logs,l=>l.Contains("导航指令：五十米后，右转。"));
     }
     [Fact]
     public void OfficialRouteProducesOverviewHundredAndTwentyMeterCues()
@@ -238,7 +238,7 @@ public sealed class NavigationRuntimeTests
         runtime.Process(Data(scene.Route,680),scene.Map,Now);
         runtime.Process(Data(scene.Route,690),scene.Map,Now);
         Assert.Equal(4,calls);
-        Assert.Contains(logs,l=>l.Contains("导航指令：六百米后，在下一个路口右转。"));
+        Assert.Contains(logs,l=>l.Contains("导航指令：六百米后，右转。"));
         Assert.Contains(logs,l=>l.Contains("导航指令：右转。"));
     }
     [Fact]

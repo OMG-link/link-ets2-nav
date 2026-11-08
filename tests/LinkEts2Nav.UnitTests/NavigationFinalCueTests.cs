@@ -6,12 +6,12 @@ public sealed class NavigationFinalCueTests
     private static NavigationManeuver M(double distance)=>new("turn",ManeuverKind.TurnLeft,distance,"in","out");
     [Theory]
     [InlineData(25,null,false)]
-    [InlineData(55,"五十米后，在下一个路口左转。",false)]
-    [InlineData(88,"五十米后，在下一个路口左转。",false)]
-    [InlineData(128,"一百米后，在下一个路口左转。",false)]
-    [InlineData(158,"一百五十米后，在下一个路口左转。",false)]
-    [InlineData(210,"两百米后，在下一个路口左转。",true)]
-    [InlineData(388,"三百五十米后，在下一个路口左转。",true)]
+    [InlineData(55,"五十米后，左转。",false)]
+    [InlineData(88,"五十米后，左转。",false)]
+    [InlineData(128,"一百米后，左转。",false)]
+    [InlineData(158,"一百五十米后，左转。",false)]
+    [InlineData(210,"两百米后，左转。",true)]
+    [InlineData(388,"三百五十米后，左转。",true)]
     public void InitialBriefingNeverConsumesFinalTwentyMeterExecution(double first,string? initial,bool hundred)
     {
         var p=new NavigationInstructionPolicy();

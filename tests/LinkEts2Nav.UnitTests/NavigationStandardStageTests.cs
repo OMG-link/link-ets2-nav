@@ -37,7 +37,7 @@ public sealed class NavigationStandardStageTests
         var km=p.UpdateSequence([Straight(300),Turn(1000)],"s",Now,Now,true);
         Assert.Equal("一公里后，在第二个路口右转。",Assert.Single(km));
         Assert.Empty(p.UpdateSequence([Straight(60),Turn(501)],"s",Now,Now,true));
-        Assert.Equal("五百米后，在第二个路口右转。",Assert.Single(p.UpdateSequence([Straight(49),Turn(499)],"s",Now,Now,true)));
+        Assert.Equal("五百米后，右转，前方路口直行。",Assert.Single(p.UpdateSequence([Straight(49),Turn(499)],"s",Now,Now,true)));
         Assert.Empty(p.UpdateSequence([Turn(400)],"s",Now,Now,true));
         Assert.Equal("两百米后，右转。",Assert.Single(p.UpdateSequence([Turn(200)],"s",Now,Now,true)));
     }
@@ -57,6 +57,6 @@ public sealed class NavigationStandardStageTests
         var p=new NavigationInstructionPolicy();p.Update(Turn(1500),"s",Now,Now,true);
         var later=new NavigationManeuver("later",ManeuverKind.TurnLeft,900,"in","out");
         var plan=p.PlanSequence([Turn(650),later],"s",Now,Now,true).ToList();
-        Assert.True(plan.IndexOf("五百米后，右转。")<plan.IndexOf("两百五十米后，在下一个路口左转。"));
+        Assert.True(plan.IndexOf("五百米后，右转。")<plan.IndexOf("两百五十米后，左转。"));
     }
 }

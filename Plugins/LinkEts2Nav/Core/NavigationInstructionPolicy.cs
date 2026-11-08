@@ -53,8 +53,7 @@ public static class NavigationPrompts
         if (distance > 800) return Continue(distance);
         int meters = (int)Math.Floor(distance / 50) * 50;
         if (meters < 50 && junctionOrdinal <= 1) return Immediate(kind);
-        string where = junctionOrdinal <= 0 ? "" : junctionOrdinal == 1
-            ? "在下一个路口" : "在第" + Number(junctionOrdinal) + "个路口";
+        string where = junctionOrdinal <= 1 ? "" : "在第" + Number(junctionOrdinal) + "个路口";
         return (meters >= 50 ? MeterNumber(meters) + "米后，" : "") + where + Action(kind) + "。";
     }
 
@@ -123,10 +122,11 @@ public sealed class NavigationInstructionPolicy
         public string? PendingContinuation;
         public bool FirstAnnounced;
         public bool Executed;
+        public bool ActionAnnounced;
         public int Consumed;
         public DateTimeOffset LastSeen;
     }
-    private readonly record struct Decision(string Text,int Consumed,bool Execute=false);
+    private readonly record struct Decision(string Text,int Consumed,bool Execute=false,bool Overview=false);
     private readonly Dictionary<string,Encounter> encounters = new(StringComparer.Ordinal);
     private string? session;
     private DateTimeOffset? observed, lastSpoken;
@@ -158,7 +158,7 @@ public sealed class NavigationInstructionPolicy
                 CoverOverview(state,target.DistanceMeters);
             }
             int ordinal = Ordinal(maneuvers,0,index);
-            var due = Select(state,target,ordinal);
+            var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation));
             if (due is { } current) result.Add(current.Text);
             if (NeedsBriefing(state) && target.DistanceMeters <= 800)
             {
@@ -170,7 +170,7 @@ public sealed class NavigationInstructionPolicy
             int consumed = due?.Consumed ?? state.Consumed;
             foreach (int stageIndex in Enumerable.Range(0,Stages.Length))
                 if ((consumed & (1<<stageIndex)) == 0)
-                    result.Add(StageText(target.Kind,Stages[stageIndex],ordinal, state.FirstAnnounced || due is not null));
+                    result.Add(StageText(target.Kind,Stages[stageIndex],ordinal, state.ActionAnnounced || due is { Overview:false },maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation)));
             if (!state.Executed) result.Add(NavigationPrompts.Execute(target.Kind));
             int nextIndex = ActionIndex(maneuvers,index+1);
             if (nextIndex >= 0 && target.DistanceMeters <= 800
@@ -223,7 +223,7 @@ public sealed class NavigationInstructionPolicy
             if (!state.FirstAnnounced && target.DistanceMeters > 800)
                 state.PendingContinuation ??= NavigationPrompts.Continue(target.DistanceMeters);
             int ordinal=Ordinal(maneuvers,0,index);
-            var due = Select(state,target,ordinal);
+            var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation));
             bool ready=due is { } candidate && (canAnnounce?.Invoke(candidate.Text) ?? true);
             if (!ready && NeedsBriefing(state) && target.DistanceMeters<=800 && (ordinal==1 || index==0))
             {
@@ -248,6 +248,7 @@ public sealed class NavigationInstructionPolicy
                 if (!state.FirstAnnounced && target.DistanceMeters>800) continuationAnnounced=true;
                 state.FirstAnnounced=true;
                 state.Consumed=current.Consumed;
+                if(!current.Overview)state.ActionAnnounced=true;
                 if(current.Execute) state.Executed=true;
                 output.Add(current.Text);
             }
@@ -281,7 +282,7 @@ public sealed class NavigationInstructionPolicy
         return output;
     }
 
-    private static Decision? Select(Encounter state,NavigationManeuver target,int ordinal)
+    private static Decision? Select(Encounter state,NavigationManeuver target,int ordinal,bool precedingStraight)
     {
         double distance=target.DistanceMeters;
         if(distance<=20) return state.Executed ? null : new(NavigationPrompts.Execute(target.Kind),AllStages,true);
@@ -289,14 +290,14 @@ public sealed class NavigationInstructionPolicy
         if (NeedsBriefing(state))
             return new(distance > 800 && state.PendingContinuation is { } overview
                 ? overview : NavigationPrompts.FirstLayer(target.Kind,distance,ordinal),
-                state.Consumed|InitialConsumption(distance));
+                state.Consumed|InitialConsumption(distance),Overview:distance>800);
         if (distance > Stages[0]) return null;
         int index=StageIndex(distance);
         if ((state.Consumed & (1<<index)) != 0) return null;
         int consumed=state.Consumed | ((1<<(index+1))-1);
         bool crossing=state.Previous.HasValue && distance>=Stages[index]-20;
         if (distance==Stages[index] || crossing)
-            return new(StageText(target.Kind,Stages[index],ordinal, hasPreviousAnnouncement: true),consumed);
+            return new(StageText(target.Kind,Stages[index],ordinal,state.ActionAnnounced,precedingStraight),consumed);
         if (distance<100) return null;
         // Missing a standard reminder does not authorize a new 400/150/50 m stage.
         // Leave later standards and the independent execution cue available.
@@ -304,8 +305,10 @@ public sealed class NavigationInstructionPolicy
     }
 
     private static bool NeedsBriefing(Encounter state) => !state.FirstAnnounced;
-    private static string StageText(ManeuverKind kind,int meters,int ordinal,bool hasPreviousAnnouncement=false)
-        => NavigationPrompts.AtDistance(kind,meters,ordinal);
+    private static string StageText(ManeuverKind kind,int meters,int ordinal,bool hasPreviousAnnouncement=false,bool precedingStraight=false)
+        => !hasPreviousAnnouncement ? NavigationPrompts.AtDistance(kind,meters,ordinal)
+            : precedingStraight ? NavigationPrompts.AtDistance(kind,meters).TrimEnd('。')+"，前方路口直行。"
+            : NavigationPrompts.AtDistance(kind,meters);
     private static int InitialConsumption(double distance)
     {
         // A road-level overview does not replace the upcoming maneuver reminders.
@@ -372,7 +375,7 @@ public sealed class NavigationInstructionPolicy
     private static Encounter Copy(Encounter original) => new(original.Minimum)
     {
         Previous=original.Previous,PendingContinuation=original.PendingContinuation,
-        FirstAnnounced=original.FirstAnnounced,Executed=original.Executed,Consumed=original.Consumed,LastSeen=original.LastSeen
+        FirstAnnounced=original.FirstAnnounced,Executed=original.Executed,ActionAnnounced=original.ActionAnnounced,Consumed=original.Consumed,LastSeen=original.LastSeen
     };
 
     private static void CoverOverview(Encounter state,double distance)

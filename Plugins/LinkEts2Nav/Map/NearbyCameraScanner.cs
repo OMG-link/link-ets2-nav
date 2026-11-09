@@ -24,7 +24,7 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
 
 /// <summary>
 /// Own one instance per mounted map. Call on a background worker; instances are not thread-safe.
-/// Only the current nearby sector window is retained; model metadata is cached per descriptor.
+/// Only the nearby/route sector window is retained; overlapping prefab geometry and model metadata are reused.
 /// </summary>
 public sealed class NearbyCameraScanner
 {
@@ -38,6 +38,7 @@ public sealed class NearbyCameraScanner
     private IReadOnlyList<DirectedRoad> junctionGeometry = [];
     private IReadOnlyList<FreeNavigationArea> freeNavigationAreas = [];
     private string[] junctionDiagnostics = [];
+    private Dictionary<ulong, (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
     private readonly Dictionary<string, string> modelPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> signPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (float MeasurementDistance, bool ReverseDirection)> cameraDefinitions = new(StringComparer.Ordinal);
@@ -68,7 +69,7 @@ public sealed class NearbyCameraScanner
     }
 
     public NearbyMapSnapshot ReadNearby(Vector3 playerPosition, float radiusMeters = 1000,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, MapScanCoverage? coverage = null)
     {
         if (!float.IsFinite(radiusMeters) || radiusMeters <= 0 || radiusMeters > 4000)
             throw new ArgumentOutOfRangeException(nameof(radiusMeters));
@@ -77,7 +78,8 @@ public sealed class NearbyCameraScanner
         cancellationToken.ThrowIfCancellationRequested();
         Prepare(cancellationToken);
         // Halo covers references and locators on models whose origins are in an adjacent sector.
-        var sectors = SectorsNear(playerPosition, radiusMeters + 100);
+        coverage ??= MapScanCoverage.Create(playerPosition, radiusMeters, null, null, 0);
+        var sectors = coverage.Sectors.ToArray();
         if (map == null || !sectors.SequenceEqual(loadedSectors))
         {
             var nextMap = new CameraMap(hostMap);
@@ -87,6 +89,7 @@ public sealed class NearbyCameraScanner
             var junctions = new List<DirectedRoad>();
             var areas = new List<FreeNavigationArea>();
             var issues = new List<string>();
+            var nextGeometry = new Dictionary<ulong, (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)>();
             foreach (var prefab in nextMap.MapItems.Values.OfType<Prefab>())
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -98,8 +101,11 @@ public sealed class NearbyCameraScanner
                     if (descriptor is not null)
                     {
                         roundaboutIndex.AddPrefab(prefab, descriptor);
-                        junctions.AddRange(PrefabPathGeometry.Build(prefab, descriptor));
-                        areas.AddRange(FreeNavigationArea.Build(prefab,descriptor));
+                        if (!geometryCache.TryGetValue(prefab.Uid, out var geometry))
+                            geometry = (PrefabPathGeometry.Build(prefab, descriptor), FreeNavigationArea.Build(prefab,descriptor));
+                        nextGeometry[prefab.Uid] = geometry;
+                        junctions.AddRange(geometry.Paths);
+                        areas.AddRange(geometry.Areas);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -110,6 +116,7 @@ public sealed class NearbyCameraScanner
             }
             foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road);
             roundaboutIndex.BuildNewSectors(sectors,cancellationToken);
+            geometryCache = nextGeometry;
             junctionGeometry = junctions;
             freeNavigationAreas = areas;
             junctionDiagnostics = issues.Distinct().ToArray();
@@ -121,12 +128,11 @@ public sealed class NearbyCameraScanner
         diagnostics.AddRange(junctionDiagnostics);
         if(speedLimits.Error is not null) diagnostics.Add(speedLimits.Error);
         var cameras = new List<CameraObservation>();
-        float radiusSquared = (radiusMeters + 100) * (radiusMeters + 100);
         foreach (var item in map.MapItems.Values)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (item is not SingleNodeItem placed || placed.Node is not Node node) continue;
-            if (HorizontalDistanceSquared(playerPosition, node.Position) > radiusSquared) continue;
+            if (!coverage.Contains(node.Position, 100)) continue;
             string? descriptor = null;
             Vector3 scale = Vector3.One;
             string variant = "default";
@@ -164,7 +170,7 @@ public sealed class NearbyCameraScanner
                 {
                     if (!active.Visible.Contains(locator.PartIndex)) continue;
                     Vector3 worldPosition = node.Position + Vector3.Transform(locator.Position * scale, node.Rotation);
-                    if (HorizontalDistanceSquared(playerPosition, worldPosition) > radiusMeters * radiusMeters) continue;
+                    if (!coverage.Contains(worldPosition)) continue;
                     var worldRotation = Quaternion.Normalize(node.Rotation * locator.Rotation);
                     // Axis sign is deliberately unverified until in-game calibration.
                     Vector3 direction = Vector3.Transform(-Vector3.UnitZ, worldRotation);

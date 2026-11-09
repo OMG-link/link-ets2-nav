@@ -23,6 +23,40 @@ public sealed class BackgroundMapScannerTests
         while (!predicate()) await Task.Delay(5, timeout.Token);
     }
 
+    private sealed class RouteBackend(Func<MapScanRequest, CancellationToken, NearbyMapSnapshot> read) : IMapScanBackend
+    {
+        public NearbyMapSnapshot Read(Vector3 p, CancellationToken token) => throw new InvalidOperationException();
+        public NearbyMapSnapshot Read(MapScanRequest request, CancellationToken token) => read(request, token);
+        public void Dispose() { }
+    }
+    [Fact]
+    public async Task PublishesNearbyBeforeSlowRouteExpansionAndRerouteSupersedesOldWork()
+    {
+        using var release = new ManualResetEventSlim();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var near = Map("near"); var updated = Map("new-route");
+        await using var scanner = new BackgroundMapScanner(_ => new RouteBackend((request, token) =>
+        {
+            if (request.Route is null) return near;
+            if (request.Route.Revision == "old") { started.TrySetResult(); release.Wait(token); return Map("old"); }
+            return updated;
+        }), TestContext.Current.CancellationToken);
+        var now=DateTimeOffset.UtcNow;
+        var route=new RouteSnapshot([],"old",RouteAvailability.Available,now);
+        scanner.Request(Request() with { Route=route, NavigationRemainingMeters=10000 },now);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(8),TestContext.Current.CancellationToken);
+        try
+        {
+            Assert.Same(near,scanner.Capture().Map);
+            Assert.True(scanner.Capture().IsScanning);
+            // Same position/time must not suppress a changed route.
+            Assert.True(scanner.Request(Request() with{Route=route with{Revision="new"}},now));
+        }
+        finally { release.Set(); }
+        await WaitFor(()=>ReferenceEquals(updated,scanner.Capture().Map));
+        Assert.Equal(2,scanner.Capture().Revision); // nearby + new route; old result was discarded
+    }
+
     [Fact]
     public async Task PreparationWithoutPositionCreatesBackendButDoesNotScanAndIsReused()
     {

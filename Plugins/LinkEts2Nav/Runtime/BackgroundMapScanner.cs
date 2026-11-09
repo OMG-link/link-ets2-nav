@@ -10,11 +10,15 @@ public sealed record MapScanRequest(string ResourceId, string SessionId, string 
 {
     public TruckLib.ScsMap.Map? HostMap { get; init; }
     public bool PreparationOnly { get; init; }
+    public RouteSnapshot? Route { get; init; }
+    public double NavigationRemainingMeters { get; init; }
 }
 
 public interface IMapScanBackend : IDisposable
 {
     NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken);
+    NearbyMapSnapshot Read(MapScanRequest request, CancellationToken cancellationToken)
+        => Read(request.Position, cancellationToken);
 }
 
 public sealed record MapScanState(NearbyMapSnapshot? Map, Vector3 Position, TimeSpan Elapsed,
@@ -35,7 +39,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     private readonly Channel<bool> wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
     { SingleReader = true, FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Task worker;
-    private string? resourceId, sessionId;
+    private string? resourceId, sessionId, requestedRoute;
     private long generation;
     private (MapScanRequest Request, long Generation)? pending;
     private Vector3 requestedPosition = new(float.PositiveInfinity);
@@ -81,8 +85,12 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                 state = new(null, default, default, state.Revision, null, false);
             }
             if (now < retryAfter) return false;
-            if (Vector3.Distance(request.Position, requestedPosition) < 25
+            string? routeRevision = request.Route?.Revision;
+            bool changedRoute = requestedRoute != routeRevision;
+            if (changedRoute) generation++;
+            if (!changedRoute && Vector3.Distance(request.Position, requestedPosition) < 25
                 && now - requestedAt < TimeSpan.FromSeconds(3)) return false;
+            requestedRoute = routeRevision;
             requestedPosition = request.Position;
             requestedAt = now;
             pending = (request, generation);
@@ -97,7 +105,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         lock (gate)
         {
             generation++;
-            resourceId = sessionId = null;
+            resourceId = sessionId = requestedRoute = null;
             pending = null;
             requestedAt = retryAfter = DateTimeOffset.MinValue;
             requestedPosition = new(float.PositiveInfinity);
@@ -131,7 +139,20 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                         backend = factory(item.Request);
                         backendResource = item.Request.ResourceId;
                     }
-                    if (!item.Request.PreparationOnly) completed = backend.Read(item.Request.Position, stop.Token);
+                    if (!item.Request.PreparationOnly)
+                    {
+                        bool needsNearby;
+                        lock (gate) needsNearby = state.Map is null && item.Request.Route is not null;
+                        if (needsNearby)
+                        {
+                            var nearby = backend.Read(item.Request with { Route = null }, stop.Token);
+                            lock (gate)
+                                if (item.Generation == generation && !stop.IsCancellationRequested)
+                                    state = new(nearby, item.Request.Position, watch.Elapsed, state.Revision + 1, null, true) { IsPrepared = true };
+                            watch.Restart();
+                        }
+                        completed = backend.Read(item.Request, stop.Token);
+                    }
                     stop.Token.ThrowIfCancellationRequested();
                 }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
@@ -181,6 +202,12 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         }
         public NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken)
             => scanner.ReadNearby(position, 1100, cancellationToken);
+        public NearbyMapSnapshot Read(MapScanRequest request, CancellationToken cancellationToken)
+        {
+            var coverage = MapScanCoverage.Create(request.Position, 1100, request.HostMap,
+                request.Route, request.NavigationRemainingMeters);
+            return scanner.ReadNearby(request.Position, 1100, cancellationToken, coverage);
+        }
         public void Dispose() => mount.Dispose();
     }
 }

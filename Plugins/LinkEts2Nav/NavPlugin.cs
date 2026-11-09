@@ -227,9 +227,15 @@ public sealed class NavPlugin : Plugin
                         mapScanner.Invalidate();
                         pipeline.Reset(); navigation.Reset();
                     }
+                    logOutput.Change("scan-coverage", data.RouteAvailability == RouteAvailability.Available
+                        ? "地图扫描范围：附近 1100 m，并沿游戏导航路线预读前方 5 km；后台优先准备附近地图。"
+                        : "地图扫描范围：附近 1100 m（无有效导航路线）。", now);
                     var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
                     if (mapScanner.Request(new(resourceVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        session, currentInstallation.Path, gameLog, position) { HostMap = currentInstallation.GetMapData() }, now))
+                        session, currentInstallation.Path, gameLog, position) {
+                        HostMap = currentInstallation.GetMapData(),
+                        Route = data.RouteAvailability == RouteAvailability.Available ? data.Route : null,
+                        NavigationRemainingMeters = vehicle.NavigationDistanceRemainingMeters }, now))
                         logOutput.ScanStarted(position, now);
                     var scan = mapScanner.Capture();
                     if (!scan.IsScanning) scanBusySince = DateTimeOffset.MinValue;

@@ -42,6 +42,12 @@ public static class PrefabPathGeometry
         {
             if(from==to)continue;
             var entryOrder=Order(from,true);var exitOrder=Order(to,false);
+            IReadOnlyList<int> Starts(IReadOnlyList<int> chain)
+            {
+                var indices=new List<int>();int offset=0;
+                foreach(int curve in chain){indices.Add(offset);offset+=Math.Clamp((int)Math.Ceiling(curves[curve].Length/3),4,256)+1;}
+                return indices.ToArray();
+            }
             var candidates=new List<PrefabLanePath>();
             for(int input=0;input<control[from].InputLines.Length;input++)
             for(int output=0;output<control[to].OutputLines.Length;output++)
@@ -53,7 +59,7 @@ public static class PrefabPathGeometry
                 var lanePoints=points.Skip(1).Take(points.Count-2).ToArray();
                 candidates.Add(new(prefab.Uid,prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,input,output,
                     entryOrder[input],exitOrder[output],entryOrder.Count,exitOrder.Count,chain,lanePoints,
-                    lanePoints.Zip(lanePoints.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second))));
+                    lanePoints.Zip(lanePoints.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second))){CurveStartPointIndices=Starts(chain)});
             }
             if(candidates.Count==0)continue;
             var representative=PrefabCurvePathfinder.Find(descriptor,control[from].InputLines,control[to].OutputLines.Where(Valid).ToHashSet());

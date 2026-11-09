@@ -6,6 +6,7 @@ namespace LinkEts2Nav.Runtime;
 
 public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next = null, string? LastSpoken = null)
 {
+    public IReadOnlyList<LaneMergeObservation> LaneMerges { get; init; } = [];
     public LaneNavigationPlan? LaneRoute { get; init; }
     public IReadOnlyList<NavigationManeuver> Upcoming { get; init; } = [];
     public double? ConfirmedAheadMeters { get; init; }
@@ -16,13 +17,14 @@ public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next
 public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Action? fallback = null,
     Action<string>? log = null)
 {
+    private readonly LaneMergeDetector mergeDetector = new();
     private readonly LaneRoutePlanner lanePlanner = new();
     private readonly NavigationManeuverDetector detector = new();
     private readonly NavigationInstructionPolicy policy = new();
     private readonly DirectedPathMatcher matcher = new();
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
-    private string? lastSpoken, signature;
+    private string? lastSpoken, signature, mergeSignature;
     private string? approachingJunction;
     private bool approachingStraight;
     private DateTimeOffset reportedAt;
@@ -65,6 +67,28 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
         var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
         var upcoming = detector.FindSequence(instructionRoute, along.Value, paths.GetNavigationGraph(), out double confirmedUntil, out bool hasUnresolvedJoin);
+        var laneRoute=lanePlanner.Build(route,position,along.Value,paths.GetNavigationGraph());
+        // Recognized roundabouts already own entry/exit guidance; their internal joins are not ramp actions.
+        var merges=mergeDetector.Find(route,paths.GetNavigationGraph(),laneRoute,along.Value)
+            .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
+        string mergeState=string.Join("|",merges.Select(m=>$"{m.Id}:{m.Kind}:{m.ParallelDistanceMeters}"));
+        if(mergeState!=mergeSignature)
+        {
+            foreach(var merge in merges)log?.Invoke(FormattableString.Invariant($"车道合并判定：{merge.Kind}，距汇合点={merge.DistanceMeters:F0} m，平行接近长度={merge.ParallelDistanceMeters?.ToString("F0")??"未知"} m，向{(merge.MoveLeft?"左":"右")}合并；{merge.Id}；{merge.Reason}"));
+            mergeSignature=mergeState;
+        }
+        foreach(var merge in merges)
+        {
+            string group=$"prefab:{merge.PrefabUid:X16}";
+            upcoming=upcoming.Where(m=>m.JunctionId!=group||m.Kind is ManeuverKind.TurnLeft or ManeuverKind.TurnRight or ManeuverKind.UTurn or ManeuverKind.EnterRoundabout or ManeuverKind.ExitRoundabout or ManeuverKind.PassRoundaboutExit).ToArray();
+            string side=merge.MoveLeft?"左":"右";
+            string lanes=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
+            var action=new NavigationManeuver(merge.Id,merge.MoveLeft?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,merge.DistanceMeters,"lane","lane")
+            { JunctionId="lane-merge:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
+                AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.NoticeAt500:NavigationAnnouncementMode.Silent,
+                Instruction=$"请注意前方车道合并，建议走{side}侧{lanes}" };
+            upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
+        }
         if(yardApproach)
         {
             string group="prefab:"+route[0].Id.Split(':')[1];
@@ -103,7 +127,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             : confirmedContinuation ? "已确认前方长直路，沿当前道路行驶，等待下一操作提示。"
             : "当前连续路径内没有可确认的普通路口操作。";
         Report(state, next, now);
-        return new(state, next, lastSpoken) { LaneRoute = lanePlanner.Build(route), Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
+        return new(state, next, lastSpoken) { LaneRoute = laneRoute, LaneMerges = merges, Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
     }
 
     private static string? CurrentJunction(IReadOnlyList<DirectedRoad> route,double along)
@@ -144,6 +168,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
     public void Reset()
     {
         policy.Reset();
+        mergeDetector.Reset();
+        mergeSignature=null;
         speech?.ClearPlan("navigation");
         map = null;
         paths = null;

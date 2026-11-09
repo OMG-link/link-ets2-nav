@@ -24,12 +24,12 @@ public sealed class LaneNavigationTests
         Assert.Equal("road",Assert.Single(plan.Transfers[0].RoadIds));
     }
     [Fact]
-    public void LaneChangeIsExplicitAndNotClaimedToBeVerified()
+    public void ParallelRoadLaneChangeIsExplicitAndLowerPriorityThanNativeContinuity()
     {
         var plan=new LaneRoutePlanner().Build([Edge("prefab:A:0:1",10,20,Lane(10,20,0,0,1)),
             Edge("road",20,30),Edge("prefab:B:0:1",30,40,Lane(30,40,2,1,7))]);
-        Assert.False(plan.Complete);Assert.False(Assert.Single(plan.Transfers).SameLaneVerified);
-        Assert.Contains("变道",plan.Failure);
+        Assert.True(plan.Complete);Assert.False(Assert.Single(plan.Transfers).SameLaneVerified);
+        Assert.True(plan.Transfers[0].AllowedLaneChange);
         Assert.Equal(2,plan.Sections.Count);
     }
     [Fact]
@@ -63,6 +63,38 @@ public sealed class LaneNavigationTests
         Assert.Equal(2,rotated.LanePaths.Count);
         Assert.All(rotated.LanePaths,p=>{Assert.Equal(a.Uid,p.EntryNodeUid);Assert.Equal(b.Uid,p.ExitNodeUid);});
     }
+    [Fact]
+    public void VehicleRoadLaneAnchorsPlanAndChangingLaneInvalidatesCachedChoice()
+    {
+        var left=Lane(10,20,0,0,1,10) with {Points=[new(0,0,20),new(0,0,40)]};
+        var right=Lane(10,20,1,0,2,30) with {Points=[new(3.5f,0,20),new(0,0,40)]};
+        var road=new DirectedRoad("road",5,10,[new(0,0,0),new(0,0,20)]);
+        var edge=Edge("prefab:A:0:1",10,20,left,right);
+        DirectedRoad[] route=[road,edge];var planner=new LaneRoutePlanner();
+        Assert.Equal(1,Assert.Single(planner.Build(route,new(3.5f,0,10),10).Sections).Path.EntryLane);
+        Assert.Equal(0,Assert.Single(planner.Build(route,new(0,0,10),10).Sections).Path.EntryLane);
+    }
+    [Fact]
+    public void AdjacentParallelLaneChangeIsExplicitVirtualConnection()
+    {
+        var a=Lane(10,20,0,0,1) with {Points=[new(0,0,0),new(0,0,20)]};
+        var b=Lane(20,30,1,1,2) with {Points=[new(3.5f,0,20),new(3.5f,0,40)]};
+        var plan=new LaneRoutePlanner().Build([Edge("prefab:A:0:1",10,20,a),Edge("prefab:B:0:1",20,30,b)]);
+        Assert.True(plan.Complete);Assert.True(Assert.Single(plan.Transfers).AllowedLaneChange);
+        Assert.False(plan.Transfers[0].SameLaneVerified);
+    }
+
+    [Fact]
+    public void CrossingTwoLanesEqualsTwoAdjacentSwitchesAndLengthBreaksTie()
+    {
+        var a=Edge("prefab:A:0:1",10,20,Lane(10,20,0,0,1));
+        var b=Edge("prefab:B:0:1",30,40,Lane(30,40,2,0,2,100),Lane(30,40,1,1,3,10));
+        var c=Edge("prefab:C:0:1",50,60,Lane(50,60,0,0,4));
+        var plan=new LaneRoutePlanner().Build([a,Edge("road1",20,30),b,Edge("road2",40,50),c]);
+        Assert.Equal(1,plan.Sections[1].Path.EntryLane);
+        Assert.Equal(2,plan.Transfers.Sum(t=>Math.Abs(t.FromLane-t.ToLane)));
+    }
+
     private static NavCurve Curve(float x,float start,float end,int? next=null)
     {
         var c=new NavCurve{StartPosition=new(x,0,start),EndPosition=new(x,0,end),Length=Math.Abs(end-start),

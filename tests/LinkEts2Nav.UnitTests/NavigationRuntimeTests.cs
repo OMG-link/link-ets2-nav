@@ -25,6 +25,32 @@ public sealed class NavigationRuntimeTests
         bool paused=false,bool stale=false)=>new(
         new(0,0,z,.5,20,1000,true,paused,1,stale?Now.AddSeconds(-3):Now),
         route,availability,"session",!paused);
+    [Theory]
+    [InlineData(1200, true)]
+    [InlineData(800, true)]
+    [InlineData(799, false)]
+    public void DistantUnresolvedJoinAllowsOneContinuationButNearbyJoinStillDefers(float distance, bool speaks)
+    {
+        var map = new TruckLib.ScsMap.Map();
+        var approach = Road.Add(map, new(0, 0, 0), new(0, 0, distance), default);
+        var after = Road.Add(map, new(0, 0, distance+100), new(0, 0, distance+2100), default);
+        ulong entry = approach.ForwardNode.Uid, exit = after.Node.Uid;
+        LaneConnection[] lanes = [new(entry, 0, exit, 0), new(42, 0, exit, 1)];
+        DirectedRoad main = new("prefab:ABC:0:1", entry, exit,
+            [new(0, 0, distance), new(0, 0, distance), new(0, 0, distance+50),
+             new(0, 0, distance+100), new(0, 0, distance+100)]) { LaneConnections = lanes };
+        var side = main with { Id = "prefab:ABC:2:1", StartNodeUid = 42 };
+        var nearby = new NearbyMapSnapshot(map, [], [], []) { PrefabPaths = [main, side] };
+        var route = RouteSnapshot.Parse([new(approach.Node.Uid, distance+2100, 100),
+            new(entry, 2100, 90), new(exit, 2000, 80), new(after.ForwardNode.Uid, 0, 0)], Now);
+        var lines = new List<string>(); var runtime = new NavigationRuntime(log: lines.Add);
+        var first = runtime.Process(Data(route, 0), nearby, Now);
+        Assert.Equal(speaks ? NavigationPrompts.Continue() : null, first.LastSpoken);
+        Assert.Equal(distance, first.ConfirmedAheadMeters!.Value, 1);
+        runtime.Process(Data(route, 1), nearby, Now);
+        Assert.Equal(speaks ? 1 : 0, lines.Count(l => l.StartsWith("导航指令：")));
+    }
+
     private sealed class DelayedSynth : ISpeechSynthesizer
     {
         public TaskCompletionSource<string> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -59,9 +59,16 @@ public sealed class NavigationManeuverDetector
 
     public IReadOnlyList<NavigationManeuver> FindSequence(IReadOnlyList<DirectedRoad> route, double vehicleAlong,
         IReadOnlyList<DirectedRoad> graph, out double confirmedUntil, out bool hasUnresolvedJoin)
+        => FindSequence(route, vehicleAlong, graph, out confirmedUntil, out hasUnresolvedJoin, out _);
+
+    /// <summary>Unresolved join position is an absolute route distance, or infinity when none is ahead.</summary>
+    public IReadOnlyList<NavigationManeuver> FindSequence(IReadOnlyList<DirectedRoad> route, double vehicleAlong,
+        IReadOnlyList<DirectedRoad> graph, out double confirmedUntil, out bool hasUnresolvedJoin,
+        out double firstUnresolvedJoinAlong)
     {
         confirmedUntil = 0;
         hasUnresolvedJoin = false;
+        firstUnresolvedJoinAlong = double.PositiveInfinity;
         ArgumentNullException.ThrowIfNull(route);
         ArgumentNullException.ThrowIfNull(graph);
         var result = new List<NavigationManeuver>();
@@ -114,7 +121,8 @@ public sealed class NavigationManeuverDetector
                         .Any(e => e.StartNodeUid != current.StartNodeUid))
                     {
                         var role = RoadJoinClassifier.Classify(current.LaneConnections, current.StartNodeUid, current.EndNodeUid).Role;
-                        if (role is RoadJoinRole.Entering or RoadJoinRole.Ambiguous) hasUnresolvedJoin = true;
+                        if (role is RoadJoinRole.Entering or RoadJoinRole.Ambiguous)
+                        { hasUnresolvedJoin = true; firstUnresolvedJoinAlong = Math.Min(firstUnresolvedJoinAlong, offset); }
                     }
                     confirmedUntil = end; offset = end; continue;
                 }
@@ -124,7 +132,8 @@ public sealed class NavigationManeuverDetector
                 if (connections.Length == 1)
                 {
                     var merge = MergeDecision(current, prefab);
-                    if (merge.Ambiguous) hasUnresolvedJoin = true;
+                    if (merge.Ambiguous)
+                    { hasUnresolvedJoin = true; firstUnresolvedJoinAlong = Math.Min(firstUnresolvedJoinAlong, offset); }
                     if (merge.Kind is { } mergeKind)
                         result.Add(new($"merge:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
                             mergeKind, offset - vehicleAlong, i > 0 ? route[i - 1].Id : current.Id,

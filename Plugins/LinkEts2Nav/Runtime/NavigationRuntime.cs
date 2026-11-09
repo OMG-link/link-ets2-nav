@@ -66,7 +66,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         }
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
         var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
-        var upcoming = detector.FindSequence(instructionRoute, along.Value, paths.GetNavigationGraph(), out double confirmedUntil, out bool hasUnresolvedJoin);
+        var upcoming = detector.FindSequence(instructionRoute, along.Value, paths.GetNavigationGraph(), out double confirmedUntil, out _, out double firstUnresolvedJoinAlong);
         var laneRoute=lanePlanner.Build(route,position,along.Value,paths.GetNavigationGraph());
         // Recognized roundabouts already own entry/exit guidance; their internal joins are not ramp actions.
         var merges=mergeDetector.Find(route,paths.GetNavigationGraph(),laneRoute,along.Value)
@@ -96,8 +96,10 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
                 return Suspend("货场出口路径已找到，但出口操作尚无法确认。",now);
             upcoming=upcoming.Select(m=>m with{DistanceMeters=m.DistanceMeters+exitDistance}).ToArray();
         }
-        double confirmedAhead = Math.Max(0, confirmedUntil - along.Value);
-        bool confirmedContinuation = !yardApproach && !hasUnresolvedJoin && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
+        // A distant unresolved join limits the safe stretch; it does not invalidate
+        // an already verified long road before that join.
+        double confirmedAhead = Math.Max(0, Math.Min(confirmedUntil, firstUnresolvedJoinAlong) - along.Value);
+        bool confirmedContinuation = !yardApproach && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
         string? currentJunction=yardApproach ? null : CurrentJunction(instructionRoute,along.Value);
         bool finishingTrackedTurn=currentJunction is not null && currentJunction==approachingJunction && !approachingStraight;

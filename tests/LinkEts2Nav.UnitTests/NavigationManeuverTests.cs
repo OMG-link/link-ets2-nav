@@ -46,6 +46,26 @@ public sealed class NavigationManeuverTests
         Assert.True(unresolved);
     }
 
+    [Theory]
+    [InlineData(1000, 0, 1000)]
+    [InlineData(1000, 500, 1000)]
+    [InlineData(1000, 1050, 1000)]
+    [InlineData(1000, 1200, double.PositiveInfinity)]
+    public void UnresolvedJoinReportsItsPositionRatherThanInvalidatingEarlierRoad(
+        float approach, double vehicleAlong, double expected)
+    {
+        var before = R("road", 4, 1, P(0, 0), P(0, approach));
+        LaneConnection[] lanes = [new(1, 0, 3, 0), new(2, 0, 3, 1)];
+        var main = R("prefab:ADD:0:1", 1, 3, P(0, approach), P(0, approach),
+            P(0, approach+50), P(0, approach+100), P(0, approach+100)) with { LaneConnections = lanes };
+        var side = main with { Id = "prefab:ADD:2:1", StartNodeUid = 2 };
+        var after = R("exit", 3, 5, P(0, approach+100), P(0, approach+2100));
+        Detector.FindSequence([before, main, after], vehicleAlong, [before, main, side, after],
+            out _, out bool unresolved, out double firstJoin);
+        Assert.Equal(expected, firstJoin);
+        Assert.Equal(double.IsFinite(expected), unresolved);
+    }
+
     [Fact]
     public void MultipleLaneCurvesWithSameEntranceAreNotAnEntryToMainRoad()
     {

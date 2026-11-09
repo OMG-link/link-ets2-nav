@@ -30,18 +30,16 @@ public sealed record MonitoredCamera(string Id, Vector3 MonitoringPosition, Vect
 /// <summary>
 /// Projects a player and camera onto a directed continuous path. For no-route matching,
 /// the caller must supply only the continuation proven unavoidable by road topology.
-/// A road or prefab gap is rejected rather than bridged with a straight line.
+/// Shared interface UIDs establish connectivity; reference-line offsets do not veto it.
 /// </summary>
 public sealed class DirectedPathMatcher
 {
     private readonly double _horizontalTolerance;
     private readonly double _verticalTolerance;
     private readonly double _minimumDirectionDot;
-    private readonly double _maximumJoinGap;
 
     public DirectedPathMatcher(double horizontalToleranceMeters = 12,
-        double verticalToleranceMeters = 3, double minimumDirectionDot = 0.5,
-        double maximumJoinGapMeters = 2)
+        double verticalToleranceMeters = 3, double minimumDirectionDot = 0.5)
     {
         if (!double.IsFinite(horizontalToleranceMeters) || horizontalToleranceMeters <= 0)
             throw new ArgumentOutOfRangeException(nameof(horizontalToleranceMeters));
@@ -49,12 +47,9 @@ public sealed class DirectedPathMatcher
             throw new ArgumentOutOfRangeException(nameof(verticalToleranceMeters));
         if (!double.IsFinite(minimumDirectionDot) || minimumDirectionDot <= 0 || minimumDirectionDot > 1)
             throw new ArgumentOutOfRangeException(nameof(minimumDirectionDot));
-        if (!double.IsFinite(maximumJoinGapMeters) || maximumJoinGapMeters < 0)
-            throw new ArgumentOutOfRangeException(nameof(maximumJoinGapMeters));
         _horizontalTolerance = horizontalToleranceMeters;
         _verticalTolerance = verticalToleranceMeters;
         _minimumDirectionDot = minimumDirectionDot;
-        _maximumJoinGap = maximumJoinGapMeters;
     }
 
     public CameraCandidate Match(Vector3 vehiclePosition, Vector3 vehicleDirection,
@@ -72,7 +67,7 @@ public sealed class DirectedPathMatcher
 
         var segments = BuildSegments(orderedForwardRoads);
         if (segments is null)
-            return Unknown("必经路径几何不连续");
+            return Unknown("必经路径节点未连接或几何无效");
         var player = Project(vehiclePosition, vehicleHeading, segments);
         var monitor = Project(camera.MonitoringPosition, cameraHeading, segments);
         if (player is null) return Unknown("车辆在必经路径上的投影不确定");
@@ -106,8 +101,7 @@ public sealed class DirectedPathMatcher
             if (road.Points.Count < 2 || road.StartNodeUid == 0 || road.EndNodeUid == 0
                 || road.Points.Any(point => !Finite(point)))
                 return null;
-            if (previous is not null && (previous.EndNodeUid != road.StartNodeUid
-                || Vector3.Distance(previous.Points[^1], road.Points[0]) > _maximumJoinGap))
+            if (previous is not null && previous.EndNodeUid != road.StartNodeUid)
                 return null;
             var countBeforeRoad = segments.Count;
             for (var i = 1; i < road.Points.Count; i++)

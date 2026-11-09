@@ -29,7 +29,6 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
 /// </summary>
 public sealed class NavigationManeuverDetector
 {
-    private const float MaximumJoinGap = 2;
     private const double TurnAngleDegrees = 45;
     private const double ForkAngleDegrees = 55;
     private const double MinimumForkSpreadDegrees = 5;
@@ -384,8 +383,7 @@ public sealed class NavigationManeuverDetector
         => first.Id == second.Id && first.StartNodeUid == second.StartNodeUid && first.EndNodeUid == second.EndNodeUid;
 
     private static bool Connected(DirectedRoad first, DirectedRoad second)
-        => first.EndNodeUid == second.StartNodeUid
-            && Vector3.Distance(first.Points[^1], second.Points[0]) <= MaximumJoinGap;
+        => first.EndNodeUid == second.StartNodeUid;
 
     private static string? PrefabKey(DirectedRoad road)
     {

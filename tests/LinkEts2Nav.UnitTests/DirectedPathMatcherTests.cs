@@ -104,12 +104,25 @@ public sealed class DirectedPathMatcherTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void NodeMismatchOrPhysicalGapDoesNotInventConnection(bool mismatchNode)
+    public void ConnectivityDependsOnSharedUidRatherThanEndpointGap(bool mismatchNode)
     {
         DirectedRoad[] roads = [new("a", 1, 2, [Point(0), Point(200)]),
             new("b", mismatchNode ? 99UL : 2UL, 3, [Point(mismatchNode ? 200 : 210), Point(500)])];
         var match = new DirectedPathMatcher().Match(Point(50), Forward, Camera(Point(350)), roads, true);
-        Assert.Equal(CameraApproach.Unknown, match.Approach);
+        Assert.Equal(mismatchNode ? CameraApproach.Unknown : CameraApproach.RouteAhead, match.Approach);
+        if (!mismatchNode) Assert.Equal(290, match.RoadDistanceMeters!.Value, 3);
+    }
+
+    [Theory]
+    [InlineData(6.75f)]
+    [InlineData(50f)]
+    public void SharedUidAllowsLateralReferenceOffsetsWithoutAddingTheirLength(float offset)
+    {
+        DirectedRoad[] path = [new("road", 1, 2, [Point(0), Point(200)]),
+            new("prefab", 2, 3, [Point(200, offset), Point(500, offset)])];
+        var match = new DirectedPathMatcher().Match(Point(50), Forward, Camera(Point(350, offset)), path, true);
+        Assert.Equal(CameraApproach.RouteAhead, match.Approach);
+        Assert.Equal(300, match.RoadDistanceMeters!.Value, 3);
     }
 
     [Fact]

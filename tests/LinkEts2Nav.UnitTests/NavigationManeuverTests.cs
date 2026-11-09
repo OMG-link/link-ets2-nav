@@ -150,6 +150,19 @@ public sealed class NavigationManeuverTests
     }
 
     [Theory]
+    [InlineData(6.75f)]
+    [InlineData(50f)]
+    public void SharedUidConnectsPrefabToRoadDespiteLateralReferenceOffset(float offset)
+    {
+        var entry = R("entry", 1, 2, P(0, 0), P(0, -100));
+        var bridge = R("prefab:KNOWN:0:1", 2, 3, P(offset, -100), P(offset, -140));
+        var beyond = R("beyond", 3, 4, P(0, -140), P(0, -1000));
+        DirectedRoad[] route = [entry, bridge, beyond];
+        Assert.Empty(Detector.FindSequence(route, 20, route, out double confirmed));
+        Assert.Equal(1000, confirmed);
+    }
+
+    [Theory]
     [InlineData(-100, ManeuverKind.TurnLeft)]
     [InlineData(100, ManeuverKind.TurnRight)]
     public void IntersectionUsesTravelRelativeLeftAndRight(float x, ManeuverKind expected)
@@ -326,7 +339,7 @@ public sealed class NavigationManeuverTests
         var middle = R("middle", 2, 3, P(0, -100), P(0, -200));
         var firstSide = R("first-side", 2, 4, P(0, -100), P(100, -100));
         var beyond = R("beyond", 3, 5, P(0, -200), P(0, -300));
-        var brokenSide = R("broken-side", 3, 6, P(10, -200), P(100, -200));
+        var brokenSide = R("broken-side", 3, 6, P(float.NaN, -200), P(100, -200));
         var farTurn = R("far-turn", 5, 7, P(0, -300), P(-100, -300));
         var farStraight = R("far-straight", 5, 8, P(0, -300), P(0, -400));
         DirectedRoad[] route = [entry, middle, beyond, farTurn];
@@ -340,7 +353,7 @@ public sealed class NavigationManeuverTests
     {
         var entry = R("entry", 1, 2, P(0, 100), P(0, 0));
         var middle = R("middle", 2, 3, P(0, 0), P(0, -100));
-        var brokenNearExit = R("near-other", 2, 4, P(10, 0), P(100, 0));
+        var brokenNearExit = R("near-other", 2, 4, P(float.NaN, 0), P(100, 0));
         var farTurn = R("far-turn", 3, 5, P(0, -100), P(-100, -100));
         var farStraight = R("far-straight", 3, 6, P(0, -100), P(0, -200));
         Assert.Null(Detector.FindNext([entry, middle, farTurn], 0,
@@ -481,12 +494,12 @@ public sealed class NavigationManeuverTests
     }
 
     [Fact]
-    public void MissingGeometryAndInvalidOffsetsRemainUnknown()
+    public void SharedNodeAllowsEndpointOffsetButInvalidRouteProgressRemainsUnknown()
     {
         var entry = R("entry", 1, 2, P(0, 0), P(0, -100));
         var gap = R("exit", 2, 3, P(0, -110), P(0, -200));
         var alternative = R("other", 2, 4, P(0, -100), P(100, -100));
-        Assert.Null(Detector.FindNext([entry, gap], 0, [entry, gap, alternative]));
+        Assert.Equal(ManeuverKind.Straight, Detector.FindNext([entry, gap], 0, [entry, gap, alternative])!.Kind);
         Assert.Null(Detector.FindNext([entry, gap], double.NaN, [entry, gap, alternative]));
     }
 

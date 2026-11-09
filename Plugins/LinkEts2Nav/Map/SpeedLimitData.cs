@@ -14,9 +14,14 @@ public sealed record LimitSign(string Id, Vector3 Position, Vector3 Direction, b
 }
 public sealed record LimitRoad(DirectedRoad Geometry, string? SpeedClass)
 {
+    public DirectionalSpeedClasses? DirectionalClasses { get; init; }
+    public string? ClassFor(DirectedRoad directed) => DirectionalClasses is null?SpeedClass:
+        directed.StartNodeUid==Geometry.StartNodeUid&&directed.EndNodeUid==Geometry.EndNodeUid?DirectionalClasses.Forward:
+        directed.StartNodeUid==Geometry.EndNodeUid&&directed.EndNodeUid==Geometry.StartNodeUid?DirectionalClasses.Reverse:null;
     public string? Country { get; init; }
     public bool CountryUncertain { get; init; }
 }
+public sealed record DirectionalSpeedClasses(string? Forward,string? Reverse);
 public sealed record LimitRegion(string Id, IReadOnlyList<Vector3> Points, float Height, bool Urban, int? SetKph = null)
 {
     public string? Country { get; init; }

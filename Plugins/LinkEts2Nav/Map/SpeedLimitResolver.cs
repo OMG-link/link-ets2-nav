@@ -41,7 +41,7 @@ public sealed class SpeedLimitResolver(SpeedLimitData data, RoadPathSource paths
             {
                 if(i>0)along+=Vector3.Distance(road.Points[i-1],road.Points[i]);
                 if(offset+along>cameraAt.Value)break;
-                var value=BaseAt(road.Points[i],metadata?.SpeedClass,metadata?.Country);
+                var value=BaseAt(road.Points[i],metadata?.ClassFor(road),metadata?.Country);
                 events.Add((offset+along,0,null,value.Kph,value.Reason));
             }
             foreach(var sign in data.Signs)
@@ -72,7 +72,7 @@ public sealed class SpeedLimitResolver(SpeedLimitData data, RoadPathSource paths
         var last=forward.LastOrDefault(r=>matcher.ProjectDistance(camera.MonitoringPosition,camera.TravelDirection,[r]).HasValue);
         var lastMetadata=last is not null&&ulong.TryParse(last.Id,NumberStyles.HexNumber,CultureInfo.InvariantCulture,out var lastUid)
             ?data.Roads.GetValueOrDefault(lastUid):null;
-        var lastClass=lastMetadata?.SpeedClass;
+        var lastClass=last is null?null:lastMetadata?.ClassFor(last);
         var atCamera=BaseAt(camera.MonitoringPosition,lastClass,lastMetadata?.Country);
         events.Add((cameraAt.Value,0,null,atCamera.Kph,atCamera.Reason));
         int? currentBase=null,posted=null;bool? urban=null;bool unknown=false;

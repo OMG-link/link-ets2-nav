@@ -12,7 +12,9 @@ public sealed class SpeedLimitDefinitionReader
 {
     private readonly Dictionary<string,LimitAction> signs=new(StringComparer.Ordinal);
     private readonly Dictionary<string,string> cityCountries=new(StringComparer.Ordinal);
-    private readonly Dictionary<string,string?> roadClasses=new(StringComparer.Ordinal);
+    private readonly Dictionary<string,Unit> roadLooks=new(StringComparer.Ordinal);
+    private readonly Dictionary<string,Unit> roadUnits=new(StringComparer.Ordinal);
+    private readonly Dictionary<string,string> laneClasses=new(StringComparer.Ordinal);
     private readonly Dictionary<string,TruckSpeedLimit> limits=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> rules=new(StringComparer.Ordinal);
     private readonly Dictionary<byte,string> countryNames=new();
@@ -30,14 +32,11 @@ public sealed class SpeedLimitDefinitionReader
                     && Path.GetFileName(p).StartsWith(prefix,StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal))
                 .Order(StringComparer.Ordinal).SelectMany(p=>SiiFile.Open(p,fs).Units);
             foreach(var u in Files("/def/world/","traffic_rules"))rules[u.Name]=u;
-            var lanes=Files("/def/world/","traffic_lane").Where(u=>u.Class=="traffic_lane_data")
-                .GroupBy(u=>u.Name).ToDictionary(g=>g.Key,g=>Text(g.Last(),"speed_class"));
-            foreach(var u in Files("/def/world/","road_look").Where(u=>u.Attributes.ContainsKey("lanes_right")||u.Attributes.ContainsKey("lanes_left")))
-            {
-                var classes=Values(u,"lanes_left").Concat(Values(u,"lanes_right")).Select(Link)
-                    .Select(p=>lanes.GetValueOrDefault(p)).Where(p=>!string.IsNullOrEmpty(p)).Distinct().ToArray();
-                roadClasses[u.Name.Split('.').Last()]=classes.Length==1?classes[0]:null;
-            }
+            foreach(var u in Files("/def/world/","traffic_lane").Where(u=>u.Class=="traffic_lane_data"))
+                laneClasses[u.Name]=Text(u,"speed_class");
+            foreach(var u in Files("/def/world/","road_look"))roadUnits[u.Name]=u;
+            foreach(var u in roadUnits.Values.Where(u=>u.Class=="road_look"))
+                roadLooks[u.Name.Split('.').Last()]=u;
             foreach(var u in Files("/def/world/","sign").Where(u=>u.Class=="sign_model"))
                 signs[u.Name.Split('.').Last()]=Action(Link(Value(u,"traffic_rule")),[]);
             foreach(var u in Files("/def/","city").Where(u=>u.Class=="city_data"))
@@ -89,9 +88,10 @@ public sealed class SpeedLimitDefinitionReader
         {
             int count=Math.Clamp((int)Math.Ceiling(road.Length/5),16,256);
             var points=Enumerable.Range(0,count+1).Select(i=>road.InterpolateCurve((float)i/count).Position).ToArray();
-            string? cls=roadClasses.GetValueOrDefault(road.RoadType.ToString());
-            if(!string.IsNullOrEmpty(road.Left.TrafficRule.ToString())||!string.IsNullOrEmpty(road.Right.TrafficRule.ToString()))cls=null;
-            roads[road.Uid]=new(new(road.Uid.ToString("X16"),road.Node.Uid,road.ForwardNode.Uid,points),cls);
+            var left=RoadClass(road,true);var right=RoadClass(road,false);
+            string? cls=left==right?left:left??right;
+            roads[road.Uid]=new(new(road.Uid.ToString("X16"),road.Node.Uid,road.ForwardNode.Uid,points),cls)
+            { DirectionalClasses=road.LeftHandTraffic?new(left,right):new(right,left) };
         }
         var placedSigns=new List<LimitSign>();
         foreach(var sign in map.MapItems.Values.OfType<Sign>().Where(s=>s.Node is Node))
@@ -146,6 +146,38 @@ public sealed class SpeedLimitDefinitionReader
                 roads[uid]=roads[uid] with { Country=countryIndex.GetCountry(uid), CountryUncertain=countryIndex.IsUncertain(uid) };
         return new(roads,placedSigns,regions,limits,null);
     }
+    // TrafficRule selects lane_variant; Variant selects model_variants within that lane variant.
+    // Resolve only variants explicitly owned by this road look, never by their name suffix.
+    private string? RoadClass(Road road,bool left)
+    {
+        if(!roadLooks.TryGetValue(road.RoadType.ToString(),out var look))return null;
+        var side=left?road.Left:road.Right;
+        if(side.VariantOverrides.Count>0)return null;
+        string key=left?"lanes_left":"lanes_right";
+        string selected=side.TrafficRule.ToString();
+        string defaultVariant=Text(look,"lane_variant_default");
+        if(string.IsNullOrEmpty(selected))selected=defaultVariant;
+        var references=Values(look,"lane_variants").Select(Link).ToArray();
+        if(references.Any(id=>!roadUnits.ContainsKey(id)))return null;
+        var variants=references.Select(id=>roadUnits[id])
+            .Where(u=>Text(u,"lane_variant")==selected)
+            .Select(u=>(Unit:u,Models:Values(u,"model_variants").Select(Link).ToArray()))
+            .Where(p=>p.Models.Length==0||p.Models.Contains(side.Variant.ToString(),StringComparer.Ordinal)).ToArray();
+        if(variants.Any(p=>p.Models.Length>0))variants=variants.Where(p=>p.Models.Length>0).ToArray();
+        if(variants.Length==0)
+            return selected==defaultVariant?LaneClass(Values(look,key)):null;
+        var classes=variants.Select(p=>LaneClass(Values(p.Unit.Attributes.ContainsKey(key)?p.Unit:look,key))).ToArray();
+        return classes.All(c=>c is not null)&&classes.Distinct(StringComparer.Ordinal).Count()==1?classes[0]:null;
+    }
+
+    private string? LaneClass(IEnumerable<object> values)
+    {
+        var names=values.Select(Link).ToArray();
+        if(names.Length==0)return null;
+        var classes=names.Select(n=>laneClasses.GetValueOrDefault(n)).ToArray();
+        return classes.All(c=>!string.IsNullOrEmpty(c))&&classes.Distinct(StringComparer.Ordinal).Count()==1?classes[0]:null;
+    }
+
     private LimitAction Action(string name,HashSet<string> seen)
     {
         if(string.IsNullOrEmpty(name))return new();

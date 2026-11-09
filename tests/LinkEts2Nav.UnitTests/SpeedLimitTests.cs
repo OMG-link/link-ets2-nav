@@ -23,6 +23,20 @@ public sealed class SpeedLimitTests
         =>new SpeedLimitResolver(scene.Data,new RoadPathSource(scene.Map)).Resolve(new("camera",new(700,0,0),Vector3.UnitX));
 
     [Fact]
+    public void DirectionalClassSelectsActualTruckRuleAtCamera()
+    {
+        var s=Scene();
+        s.Data=s.Data with { Limits=new Dictionary<string,TruckSpeedLimit> {
+            ["norway/local_road"]=new(60,50,60),["norway/motorway"]=new(80,80,80) },
+            Roads=new Dictionary<ulong,LimitRoad> { [s.Road.Uid]=s.Data.Roads[s.Road.Uid] with {
+                DirectionalClasses=new("motorway","local_road") } } };
+        Assert.Equal(80,Resolve(s).Kph);
+        var reverse=new SpeedLimitResolver(s.Data,new RoadPathSource(s.Map))
+            .Resolve(new("opposite",new(300,0,0),-Vector3.UnitX));
+        Assert.Equal(60,reverse.Kph);
+    }
+
+    [Fact]
     public void UncertainRoadCountryCannotBeOverriddenByCityOrGlobalFallback()
     {
         var s=Scene();

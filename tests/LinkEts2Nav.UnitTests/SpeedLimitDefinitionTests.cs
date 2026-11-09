@@ -28,6 +28,47 @@ public sealed class SpeedLimitDefinitionTests
         public Stream Open(string p)=>new MemoryStream(ReadAllBytes(p));
         public string GetParent(string p)=>p[..(p.LastIndexOf('/')+1)];
     }
+    private static Fs VariantDefinitions()
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/traffic_lane.sii"]="""SiiNunit { traffic_lane_data : traffic_lane.local { speed_class: local_road } traffic_lane_data : traffic_lane.motor { speed_class: motorway } traffic_lane_data : traffic_lane.express { speed_class: expressway } }""";
+        fs.Files["/def/world/road_look.sii"]="""SiiNunit { road_look : road.un11 { lane_variant_default: local_road lanes_left[]: traffic_lane.local lanes_right[]: traffic_lane.local lane_variants[]: .motor lane_variants[]: .special lane_variants[]: .express } road_template_variant : .motor { lane_variant: motorway lanes_left[]: traffic_lane.motor lanes_right[]: traffic_lane.motor } road_template_variant : .special { lane_variant: motorway model_variants[]: bus lanes_left[]: traffic_lane.express lanes_right[]: traffic_lane.express } road_template_variant : .express { lane_variant: expressway lanes_left[]: traffic_lane.express lanes_right[]: traffic_lane.express } }""";
+        return fs;
+    }
+
+    [Theory]
+    [InlineData("motorway","","motorway")]
+    [InlineData("expressway","","expressway")]
+    [InlineData("motorway","bus","expressway")]
+    [InlineData("","","local_road")]
+    [InlineData("missing","",null)]
+    public void LaneVariantAndModelVariantSelectActualClass(string variant,string model,string? expected)
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);road.RoadType="un11";
+        road.Right.TrafficRule=variant;road.Right.Variant=model;
+        var data=new SpeedLimitDefinitionReader(VariantDefinitions()).Build(map,TestContext.Current.CancellationToken);
+        Assert.Null(data.Error);
+        var metadata=data.Roads[road.Uid];
+        Assert.Equal(expected,metadata.ClassFor(metadata.Geometry));
+        Assert.Equal("local_road",metadata.ClassFor(metadata.Geometry with {
+            StartNodeUid=metadata.Geometry.EndNodeUid,EndNodeUid=metadata.Geometry.StartNodeUid }));
+    }
+
+    [Fact]
+    public void MissingLaneReferenceDoesNotSilentlyUseOtherLanes()
+    {
+        var fs=VariantDefinitions();
+        fs.Files["/def/world/road_look.sii"]=fs.Files["/def/world/road_look.sii"].Replace(
+            "lanes_right[]: traffic_lane.motor", "lanes_right[]: traffic_lane.motor lanes_right[]: traffic_lane.missing");
+        var map=new TruckLib.ScsMap.Map();
+        var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);road.RoadType="un11";
+        road.Right.TrafficRule="motorway";
+        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        Assert.Null(data.Error);
+        Assert.Null(data.Roads[road.Uid].ClassFor(data.Roads[road.Uid].Geometry));
+    }
+
     [Fact]
     public void NearbyRoadUsesDistantHostBorderAndRebuildsForNewMap()
     {

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using LinkEts2Nav.Core;
 namespace LinkEts2Nav.Map;
 
@@ -30,11 +31,41 @@ public static class RoundaboutRouteAdapter
             if (ambiguous || ordinal == 0)
             { result.AddRange(route.Skip(i).Take(last - i + 1)); i = last; continue; }
             var points = route.Skip(i).Take(last - i + 1).SelectMany(e => e.Points).ToArray();
+            double length=points.Zip(points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+            double connector=exitMatches[0].Min(p=>p.DepartureToBoundaryMeters);
+            double departure=Math.Max(0,length-connector);
+            var cues=new List<RoundaboutExitCue>();double previous=0;
+            for(int n=0;n<ordinal-1;n++)
+            {
+                var port=ring.ExitPorts.Where(p=>(p.ExternalItemUid,p.ExternalNodeUid)==ordered[n].Key)
+                    .MinBy(p=>Ahead(p.RingAlong))!;
+                double along=Project(port.DeparturePosition,points,previous,departure);
+                cues.Add(new(n+1,along));previous=along;
+            }
+            cues.Add(new(ordinal,departure));
             result.Add(new("roundabout:" + ring.Id, route[i].StartNodeUid, route[last].EndNodeUid, points)
-            { Roundabout = new(ring.Id, ordinal, exitMatches[0].Min(p => p.DepartureToBoundaryMeters)) });
+            { Roundabout = new(ring.Id, ordinal, connector){Exits=cues} });
             i = last;
         }
         return result;
+    }
+    // Locate each physical departure on the actual selected path, preserving exit order.
+    private static double Project(Vector3 point,IReadOnlyList<Vector3> path,double minimum,double maximum)
+    {
+        double offset=0,bestAlong=minimum,bestDistance=double.PositiveInfinity;
+        for(int i=1;i<path.Count;i++)
+        {
+            var a=path[i-1];var delta=path[i]-a;double length=delta.Length();
+            if(length>0 && offset+length>=minimum && offset<=maximum)
+            {
+                double low=Math.Max(0,(minimum-offset)/length),high=Math.Min(1,(maximum-offset)/length);
+                float t=(float)Math.Clamp(Vector3.Dot(point-a,delta)/(length*length),low,high);
+                double distance=Vector3.DistanceSquared(point,a+t*delta);
+                if(distance<bestDistance){bestDistance=distance;bestAlong=offset+t*length;}
+            }
+            offset+=length;
+        }
+        return bestAlong;
     }
     private static bool TryOwner(DirectedRoad road, out ulong uid)
     {

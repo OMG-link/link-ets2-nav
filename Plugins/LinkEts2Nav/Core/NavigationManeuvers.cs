@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace LinkEts2Nav.Core;
 
-public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout }
+public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit }
 
 public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double DistanceMeters,
     string EntryId, string ExitId)
@@ -11,6 +11,7 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     public string? JunctionId { get; init; }
     /// <summary>Optional action-specific wording; distance scheduling remains shared.</summary>
     public string? Instruction { get; init; }
+    public string? NearInstruction { get; init; }
     public bool ExecutionOnly { get; init; }
     /// <summary>False when an adjacent prefab, rather than an explicit approach road, precedes this decision.</summary>
     public bool HasSeparateApproachRoad { get; init; } = true;
@@ -82,10 +83,18 @@ public sealed class NavigationManeuverDetector
                 string id = $"roundabout:{ring.Id}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}";
                 if (offset >= vehicleAlong)
                     result.Add(new(id + ":enter", ManeuverKind.EnterRoundabout, offset - vehicleAlong, current.Id, current.Id)
-                    { JunctionId = "roundabout:" + ring.Id, Instruction = "进入环岛，从第" + NavigationPrompts.Number(ring.ExitNumber) + "出口驶出" });
-                if (end >= vehicleAlong)
-                    result.Add(new(id + ":exit", ManeuverKind.ExitRoundabout, Math.Max(0, end - ring.ExitConnectorMeters - vehicleAlong), current.Id, current.Id)
-                    { JunctionId = "roundabout:" + ring.Id, ExecutionOnly = true });
+                    { JunctionId = "roundabout:" + ring.Id, Instruction = "进入环岛", NearInstruction="进入环岛，请从第"+NavigationPrompts.Number(ring.ExitNumber)+"出口驶出" });
+                var exits=ring.Exits.Count>0 ? ring.Exits : new[]{new RoundaboutExitCue(ring.ExitNumber,Math.Max(0,end-offset-ring.ExitConnectorMeters))};
+                foreach(var exit in exits)
+                {
+                    double location=offset+exit.AlongMeters;
+                    if(location<vehicleAlong)continue;
+                    bool selected=exit.Number==ring.ExitNumber;
+                    result.Add(new(id+":exit:"+exit.Number,selected?ManeuverKind.ExitRoundabout:ManeuverKind.PassRoundaboutExit,
+                        location-vehicleAlong,current.Id,current.Id)
+                    {JunctionId="roundabout:"+ring.Id,ExecutionOnly=true,
+                        Instruction=selected?"驶出环岛":"经过第"+NavigationPrompts.Number(exit.Number)+"出口"});
+                }
                 confirmedUntil = end; offset = end; continue;
             }
             // A road is known up to its exit even if the choice beyond it is unknown.

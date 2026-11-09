@@ -15,7 +15,11 @@ public sealed record DirectedRoad(
     public IReadOnlyList<LaneConnection>? LaneConnections { get; init; }
 }
 
-public sealed record RoundaboutPassage(string Id, int ExitNumber, double ExitConnectorMeters = 0);
+public sealed record RoundaboutPassage(string Id, int ExitNumber, double ExitConnectorMeters = 0)
+{
+    public IReadOnlyList<RoundaboutExitCue> Exits { get; init; } = [];
+}
+public sealed record RoundaboutExitCue(int Number,double AlongMeters);
 
 public sealed record LaneConnection(ulong EntryNode, int EntryLane, ulong ExitNode, int ExitLane);
 

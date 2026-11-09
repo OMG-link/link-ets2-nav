@@ -2,7 +2,10 @@ using System.Numerics;
 namespace LinkEts2Nav.Map;
 
 public sealed record RoundaboutEntryPort(ulong NodeUid, double RingAlong);
-public sealed record RoundaboutExitPort(ulong ExternalItemUid, ulong ExternalNodeUid, ulong BoundaryNodeUid, double RingAlong, double DepartureToBoundaryMeters = 0);
+public sealed record RoundaboutExitPort(ulong ExternalItemUid, ulong ExternalNodeUid, ulong BoundaryNodeUid, double RingAlong, double DepartureToBoundaryMeters = 0)
+{
+    public Vector3 DeparturePosition { get; init; }
+}
 
 /// <summary>Maps physical ports to a representative ring using directed shortest connector paths.</summary>
 public static class RoundaboutPorts
@@ -40,6 +43,7 @@ public static class RoundaboutPorts
         // Sources are the ends of ring curves: a departure branches after its source curve.
         foreach (var key in ring)
         { best[key] = 0; pending.Enqueue((key, (phases[key] + lengths[key]) % total, 0, 0), 0); }
+        var departurePositions=ring.ToDictionary(k=>(phases[k]+lengths[k])%total,k=>graph[k].Points[^1]);
         var exits = new Dictionary<(ulong, ulong, ulong), (double Cost, RoundaboutExitPort Port)>();
         while (pending.TryDequeue(out var current, out double cost))
         {
@@ -63,6 +67,6 @@ public static class RoundaboutPorts
                 best[next] = nextCost; pending.Enqueue((next, current.Phase, boundary, boundaryCost), nextCost);
             }
         }
-        return (entries, exits.Values.Select(p => p.Port).ToArray(), total);
+        return (entries, exits.Values.Select(p => p.Port with {DeparturePosition=departurePositions[p.Port.RingAlong]}).ToArray(), total);
     }
 }

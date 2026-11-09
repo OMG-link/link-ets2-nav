@@ -13,6 +13,7 @@ public sealed class NavigationLogReporter
     private readonly Action<string> warning;
     private readonly Dictionary<string, string> changes = new();
     private (string Session, double Limit)? currentLimit;
+    private CurrentSpeedLimitDiagnostic? lastLimitComparison;
     private readonly Dictionary<string, (string Decision, bool Verified, int? Limit, string? Reason)> cameras = new();
     private string? state;
     private DateTimeOffset stateAt = DateTimeOffset.MinValue;
@@ -71,6 +72,7 @@ public sealed class NavigationLogReporter
 
     public void Report(NavDiagnosticSnapshot snapshot)
     {
+        ReportLimitComparison(snapshot.CurrentSpeedLimit);
         Status(snapshot.State + " 路线=" + snapshot.RouteState, snapshot.UpdatedAt,
             detail: $"车辆={snapshot.VehiclePosition ?? "未知"}，附近探头={snapshot.CameraCount}。");
         // Waiting/paused snapshots are not evidence that previously observed cameras disappeared.
@@ -93,6 +95,25 @@ public sealed class NavigationLogReporter
             string routeBound = camera.RouteDistanceLowerBoundMeters is { } bound ? $"，已知路线长度下限={bound:F0} m" : "";
             Event(FormattableString.Invariant($"{action}：{camera.Id}，挂点={camera.Hookup}，直线={camera.DistanceMeters:F0} m，沿路={roadDistance}{routeBound}{limitText}，方向已验证={camera.DirectionVerified}；{camera.Decision}；模型={camera.SourceDescriptor}，变体={camera.Variant}。"), snapshot.UpdatedAt);
         }
+    }
+
+    public void ReportLimitComparison(CurrentSpeedLimitDiagnostic? sample)
+    {
+        if(sample is null)return;
+        var prior=lastLimitComparison;
+        bool same=prior is not null&&prior.SessionId==sample.SessionId&&prior.ActualKph==sample.ActualKph
+            &&prior.InferredKph==sample.InferredKph&&prior.Reason==sample.Reason;
+        bool issue=sample.Failed||sample.Mismatch;
+        if(same&&(!issue||sample.SampledAt-prior!.SampledAt<Interval&&
+            Vector3.Distance(new((float)sample.X,(float)sample.Y,(float)sample.Z),
+                new((float)prior.X,(float)prior.Y,(float)prior.Z))<100))return;
+        lastLimitComparison=sample;
+        if(!issue&&(prior is null||prior.SessionId!=sample.SessionId||!prior.Failed&&!prior.Mismatch))return;
+        string status=sample.Failed?"推断失败":sample.Mismatch?"推断与实际不符":sample.ActualKph is null?"实际限速不可用":"核验恢复";
+        string actual=sample.ActualKph is { } a?a.ToString("F1",System.Globalization.CultureInfo.InvariantCulture):"未知";
+        string inferred=sample.InferredKph?.ToString(System.Globalization.CultureInfo.InvariantCulture)??"未知";
+        string message=FormattableString.Invariant($"当前位置限速{status}：推断={inferred} km/h，实际={actual} km/h；原因={sample.Reason}；X={sample.X:F2}, Y={sample.Y:F2}, Z={sample.Z:F2}；朝向={sample.HeadingTurns:F5} 圈；会话={sample.SessionId}；采样时刻={sample.SampledAt:O}。");
+        (issue?warning:info)(Stamp(message,sample.SampledAt));
     }
 
     public void ReportCurrentLimit(GameDataSnapshot data, DateTimeOffset now)

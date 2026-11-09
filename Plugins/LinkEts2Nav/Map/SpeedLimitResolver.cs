@@ -18,6 +18,10 @@ public sealed class SpeedLimitResolver(SpeedLimitData data, RoadPathSource paths
         return result;
     }
 
+    // Moving positions must not enter the persistent fixed-camera cache.
+    public SpeedLimitResult ResolvePosition(Vector3 position,Vector3 direction)
+        => ResolveCore(new("player",position,direction));
+
     private SpeedLimitResult ResolveCore(MonitoredCamera camera)
     {
         if(data.Error is not null)return new(null,data.Error);

@@ -14,6 +14,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
     private RoadPathSource? paths;
     private SpeedLimitResolver? speedLimits;
     private string? lastWarning;
+    private readonly CurrentSpeedLimitMonitor currentLimit = new();
 
     public NavDiagnosticSnapshot Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
     {
@@ -86,11 +87,13 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
         if (nearby.Diagnostics.Count > 0) state += " " + nearby.Diagnostics[0];
         return new(now, state, data.RouteAvailability.ToString(), nearby.Cameras.Count,
             diagnostics.OrderBy(d => d.DistanceMeters).Take(30).ToArray(), lastWarning,
-            FormattableString.Invariant($"{vehicle.X:F1}, {vehicle.Y:F1}, {vehicle.Z:F1}"), data.LatestFine, data.LatestCameraFine, data.FineHistory, data.DroppedFineCount);
+            FormattableString.Invariant($"{vehicle.X:F1}, {vehicle.Y:F1}, {vehicle.Z:F1}"), data.LatestFine, data.LatestCameraFine, data.FineHistory, data.DroppedFineCount)
+        { CurrentSpeedLimit=currentLimit.Sample(data,nearby.Map,speedLimits!,now) };
     }
 
     public void Reset()
     {
+        currentLimit.Reset();
         engine.Reset();
         uncalibrated.Reset();
         planner?.ClearPlan();

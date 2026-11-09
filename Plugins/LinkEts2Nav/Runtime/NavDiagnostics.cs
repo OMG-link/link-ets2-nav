@@ -9,6 +9,7 @@ public sealed record NavDiagnosticSnapshot(DateTimeOffset UpdatedAt, string Stat
     string RouteState, int CameraCount, IReadOnlyList<CameraDiagnostic> Cameras, string? LastWarning = null, string? VehiclePosition = null, FineObservation? LatestFine = null,
     FineObservation? LatestCameraFine = null, IReadOnlyList<FineObservation>? FineHistory = null, long DroppedFineCount = 0)
 {
+    public CurrentSpeedLimitDiagnostic? CurrentSpeedLimit { get; init; }
     public NavigationDiagnostic? Navigation { get; init; }
 }
 

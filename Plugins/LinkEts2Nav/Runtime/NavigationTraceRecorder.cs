@@ -84,7 +84,7 @@ public sealed class NavigationTraceRecorder : IAsyncDisposable
                     data.SessionId, data.Vehicle, data.IsVehicleUsable, data.RouteAvailability,
                     Route = new { data.Route.Revision, data.Route.Availability, data.Route.ReceivedAt,
                         data.Route.MayBeTruncated, Nodes = includeNodes ? data.Route.Nodes : null },
-                    frame.Map.Sectors, frame.Map.Cameras, Decisions = frame.Diagnostic.Cameras, frame.Diagnostic.Navigation
+                    frame.Map.Sectors, frame.Map.Cameras, Decisions = frame.Diagnostic.Cameras, frame.Diagnostic.Navigation, frame.Diagnostic.CurrentSpeedLimit
                 }, Json);
                 string line = Serialize(nodes != lastNodes);
                 int size = System.Text.Encoding.UTF8.GetByteCount(line) + 1;

@@ -39,7 +39,7 @@ public static class NavigationPrompts
     {
         if (meters is < 50 or > 2000 || meters % 50 != 0)
             throw new ArgumentOutOfRangeException(nameof(meters));
-        return Distance(meters, round: false) + "后，" + (ordinal>1 ? "在第"+Number(ordinal)+"个路口" : "") + (instruction ?? Action(kind)) + "。";
+        return Distance(meters, round: false) + "后，" + (meters<=200 && ordinal>1 ? "在第"+Number(ordinal)+"个路口" : "") + (instruction ?? Action(kind)) + "。";
     }
 
     public static string Execute(ManeuverKind kind, string? instruction = null) => (instruction ?? Action(kind)) + "。";
@@ -54,7 +54,7 @@ public static class NavigationPrompts
         if (distance > 800) return Continue(distance);
         int meters = (int)Math.Floor(distance / 50) * 50;
         if (meters < 50 && junctionOrdinal <= 1) return Immediate(kind,instruction);
-        string where = junctionOrdinal <= 1 ? "" : "在第" + Number(junctionOrdinal) + "个路口";
+        string where = distance>200 || junctionOrdinal <= 1 ? "" : "在第" + Number(junctionOrdinal) + "个路口";
         return (meters >= 50 ? MeterNumber(meters) + "米后，" : "") + where + (instruction ?? Action(kind)) + "。";
     }
 
@@ -124,6 +124,7 @@ public sealed class NavigationInstructionPolicy
         public bool FirstAnnounced;
         public bool Executed;
         public bool ActionAnnounced;
+        public bool OrdinalAnnounced;
         public int Consumed;
         public DateTimeOffset LastSeen;
     }
@@ -161,7 +162,7 @@ public sealed class NavigationInstructionPolicy
                 CoverOverview(state,target.DistanceMeters);
             }
             int ordinal = Ordinal(maneuvers,0,index);
-            var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation));
+            var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation),ExecutionText(maneuvers,index));
             if (due is { } current) result.Add(current.Text);
             if (!target.ExecutionOnly && NeedsBriefing(state) && target.DistanceMeters <= 800)
             {
@@ -170,11 +171,17 @@ public sealed class NavigationInstructionPolicy
                 foreach (double next in new[] { rounded-50,rounded-100 })
                     if (next >= 50) result.Add(NavigationPrompts.FirstLayer(target.Kind,next,ordinal,StageInstruction(target,(int)next)));
             }
+            if(ordinal>1 && !state.OrdinalAnnounced && target.DistanceMeters>200)
+                result.Add(StageText(target,200,ordinal));
             int consumed = due?.Consumed ?? state.Consumed;
             foreach (int stageIndex in Enumerable.Range(0,Stages.Length))
                 if (!target.ExecutionOnly && (consumed & (1<<stageIndex)) == 0)
                     result.Add(StageText(target,Stages[stageIndex],ordinal, state.ActionAnnounced || due is { Overview:false },maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation)));
-            if (!state.Executed) result.Add(NavigationPrompts.Execute(target.Kind,StageInstruction(target,0)));
+            if (!state.Executed)
+            {
+                result.Add(ExecutionText(maneuvers,index));
+                result.Add(NavigationPrompts.Execute(target.Kind,StageInstruction(target,0)));
+            }
             int nextIndex = ActionIndex(maneuvers,index+1);
             foreach(var execution in maneuvers.Skip(index+1).TakeWhile(m=>m.JunctionId==target.JunctionId).Where(m=>m.ExecutionOnly))
                 result.Add(NavigationPrompts.Execute(execution.Kind,StageInstruction(execution,0)));
@@ -228,8 +235,15 @@ public sealed class NavigationInstructionPolicy
             if (target.AnnouncementMode==NavigationAnnouncementMode.Normal && !state.FirstAnnounced && target.DistanceMeters > 800)
                 state.PendingContinuation ??= NavigationPrompts.Continue(target.DistanceMeters);
             int ordinal=Ordinal(maneuvers,0,index);
-            var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation));
+            var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation),ExecutionText(maneuvers,index));
             bool ready=due is { } candidate && (candidate.Text.Length==0 || (canAnnounce?.Invoke(candidate.Text) ?? true));
+            if(!ready && due is {Execute:true} execution && target.AnnouncementMode==NavigationAnnouncementMode.Normal)
+            {
+                // An unready compound sentence must never delay the current turn's execution cue.
+                string bare=NavigationPrompts.Execute(target.Kind,StageInstruction(target,0));
+                if(execution.Text!=bare && (canAnnounce?.Invoke(bare)??true))
+                { due=execution with{Text=bare}; ready=true; }
+            }
             if (target.AnnouncementMode==NavigationAnnouncementMode.Normal && !target.ExecutionOnly && !ready && NeedsBriefing(state) && target.DistanceMeters<=800 && (ordinal==1 || index==0))
             {
                 // A prepared fixed boundary cue can replace a still-generating close briefing.
@@ -255,6 +269,8 @@ public sealed class NavigationInstructionPolicy
                 state.FirstAnnounced=true;
                 state.Consumed=current.Consumed;
                 if(!current.Overview)state.ActionAnnounced=true;
+                if(ordinal>1 && target.DistanceMeters<=200 && current.Text.Contains("个路口",StringComparison.Ordinal))
+                    state.OrdinalAnnounced=true;
                 if(current.Execute) state.Executed=true;
                 if(current.Text.Length>0)output.Add(current.Text);
             }
@@ -288,11 +304,13 @@ public sealed class NavigationInstructionPolicy
         return output;
     }
 
-    private static Decision? Select(Encounter state,NavigationManeuver target,int ordinal,bool precedingStraight)
+    private static Decision? Select(Encounter state,NavigationManeuver target,int ordinal,bool precedingStraight,string executionText)
     {
         if(target.AnnouncementMode==NavigationAnnouncementMode.NoticeAt500)
             return !state.Executed&&target.DistanceMeters<=500?new(NavigationPrompts.Execute(target.Kind,target.Instruction),AllStages,true):null;
         var decision=SelectNormal(state,target,ordinal,precedingStraight);
+        if(decision is {Execute:true} && target.AnnouncementMode==NavigationAnnouncementMode.Normal)
+            decision=decision.Value with{Text=executionText};
         return target.AnnouncementMode==NavigationAnnouncementMode.Silent&&decision is {} silent
             ?silent with {Text="",Overview=false}:decision;
     }
@@ -305,6 +323,10 @@ public sealed class NavigationInstructionPolicy
             return new(distance > 800 && state.PendingContinuation is { } overview
                 ? overview : NavigationPrompts.FirstLayer(target.Kind,distance,ordinal,StageInstruction(target,(int)(Math.Floor(distance/50)*50))),
                 state.Consumed|InitialConsumption(distance),Overview:distance>800);
+        // A skipped 200 m distance reminder must not suppress the first near-junction ordinal.
+        if(ordinal>1 && !state.OrdinalAnnounced && distance<=200 && distance>=180
+            && (distance==200 || state.Previous is >200))
+            return new(StageText(target,200,ordinal),state.Consumed|15);
         if (distance > Stages[0]) return null;
         int index=StageIndex(distance);
         if ((state.Consumed & (1<<index)) != 0) return null;
@@ -321,9 +343,30 @@ public sealed class NavigationInstructionPolicy
     private static bool NeedsBriefing(Encounter state) => !state.FirstAnnounced;
     private static string StageText(NavigationManeuver target,int meters,int ordinal,bool hasPreviousAnnouncement=false,bool precedingStraight=false)
         => target.Kind==ManeuverKind.EnterRoundabout ? NavigationPrompts.AtDistance(target.Kind,meters,0,StageInstruction(target,meters))
+            : meters==200 && ordinal>1 ? NavigationPrompts.AtDistance(target.Kind,meters,ordinal,StageInstruction(target,meters))
             : !hasPreviousAnnouncement ? NavigationPrompts.AtDistance(target.Kind,meters,ordinal,StageInstruction(target,meters))
-            : precedingStraight ? NavigationPrompts.AtDistance(target.Kind,meters,0,StageInstruction(target,meters)).TrimEnd('。')+"，前方路口直行。"
+            : precedingStraight && meters<=200 ? NavigationPrompts.AtDistance(target.Kind,meters,0,StageInstruction(target,meters)).TrimEnd('。')+"，前方路口直行。"
             : NavigationPrompts.AtDistance(target.Kind,meters,0,StageInstruction(target,meters));
+    private static string ExecutionText(IReadOnlyList<NavigationManeuver> maneuvers,int index)
+    {
+        var target=maneuvers[index];
+        string text=NavigationPrompts.Execute(target.Kind,StageInstruction(target,0));
+        if(target.ExecutionOnly || target.Kind==ManeuverKind.EnterRoundabout
+            || target.AnnouncementMode!=NavigationAnnouncementMode.Normal) return text;
+        int nextIndex=ActionIndex(maneuvers,index+1);
+        if(nextIndex<0) return text;
+        var next=maneuvers[nextIndex];
+        if(next.ExecutionOnly || next.AnnouncementMode!=NavigationAnnouncementMode.Normal
+            || next.JunctionId is not null && next.JunctionId==target.JunctionId) return text;
+        // Both execution points are 20 m before their junctions, so that offset
+        // cancels. Keep this gap stable while preparing speech before either cue.
+        double distance=next.DistanceMeters-target.DistanceMeters;
+        if(distance<=0 || distance>=100) return text;
+        int meters=(int)Math.Floor(distance/10)*10;
+        return text.TrimEnd('。')+"，然后"+(meters>0 ? NavigationPrompts.Number(meters)+"米后，" : "立即")
+            +(next.Instruction??NavigationPrompts.Action(next.Kind))+"。";
+    }
+
     private static string? StageInstruction(NavigationManeuver target,int meters)
         => meters is 0 or 100 ? target.NearInstruction??target.Instruction : target.Instruction;
     private static int InitialConsumption(double distance)
@@ -392,7 +435,7 @@ public sealed class NavigationInstructionPolicy
     private static Encounter Copy(Encounter original) => new(original.Minimum)
     {
         Previous=original.Previous,PendingContinuation=original.PendingContinuation,
-        FirstAnnounced=original.FirstAnnounced,Executed=original.Executed,ActionAnnounced=original.ActionAnnounced,Consumed=original.Consumed,LastSeen=original.LastSeen
+        FirstAnnounced=original.FirstAnnounced,Executed=original.Executed,ActionAnnounced=original.ActionAnnounced,OrdinalAnnounced=original.OrdinalAnnounced,Consumed=original.Consumed,LastSeen=original.LastSeen
     };
 
     private static void CoverOverview(Encounter state,double distance)

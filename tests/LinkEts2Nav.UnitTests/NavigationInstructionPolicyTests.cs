@@ -129,8 +129,8 @@ public sealed class NavigationInstructionPolicyTests
     {
         var p=new NavigationInstructionPolicy();
         NavigationManeuver[] sequence=[M(100,"s1",ManeuverKind.Straight),M(200,"s2",ManeuverKind.Straight),M(650)];
-        Assert.Equal("六百五十米后，在第三个路口左转。",Plan(p,sequence)[0]);
-        Assert.Equal("六百五十米后，在第三个路口左转。",Assert.Single(Update(p,sequence)));
+        Assert.Equal("六百五十米后，左转。",Plan(p,sequence)[0]);
+        Assert.Equal("六百五十米后，左转。",Assert.Single(Update(p,sequence)));
         Assert.Empty(Update(p,[M(190,"s2",ManeuverKind.Straight),M(640)]));
     }
 
@@ -181,9 +181,9 @@ public sealed class NavigationInstructionPolicyTests
         Update(p,[M(1500)]);
         Assert.Equal("一公里后，左转。",Assert.Single(Update(p,[M(1000)])));
         Assert.Empty(Update(p,[M(100,"s1",ManeuverKind.Straight),M(300,"s2",ManeuverKind.Straight),M(800)]));
-        Assert.Equal("五百米后，左转，前方路口直行。",Assert.Single(Update(p,
+        Assert.Equal("五百米后，左转。",Assert.Single(Update(p,
             [M(100,"s1",ManeuverKind.Straight),M(250,"s2",ManeuverKind.Straight),M(500)])));
-        Assert.Equal("两百米后，左转，前方路口直行。",Assert.Single(Update(p,
+        Assert.Equal("两百米后，在第二个路口左转。",Assert.Single(Update(p,
             [M(100,"s2",ManeuverKind.Straight),M(200)])));
     }
 
@@ -221,7 +221,7 @@ public sealed class NavigationInstructionPolicyTests
     {
         var p=new NavigationInstructionPolicy();
         Update(p,[M(100,"s1",ManeuverKind.Straight),M(200,"s2",ManeuverKind.Straight),M(500)]);
-        Assert.Equal("两百米后，左转，前方路口直行。",Assert.Single(Update(p,
+        Assert.Equal("两百米后，在第二个路口左转。",Assert.Single(Update(p,
             [M(50,"s2",ManeuverKind.Straight),M(200)])));
         var other=new NavigationInstructionPolicy();
         Update(other,[M(100,"s1",ManeuverKind.Straight),M(500)]);
@@ -470,12 +470,12 @@ public sealed class NavigationInstructionPolicyTests
     }
 
     [Fact]
-    public void PreparedBoundaryCannotDropIntersectionOrdinalOrInventCrossing()
+    public void FarPreparedBoundaryOmitsOrdinalButCannotInventCrossing()
     {
         var p=new NavigationInstructionPolicy();
         string fixedCue=NavigationPrompts.AtDistance(ManeuverKind.TurnRight,500);
         bool Ready(string text)=>text==fixedCue;
-        Assert.Empty(Update(p,[M(100,"straight",ManeuverKind.Straight),M(501,kind:ManeuverKind.TurnRight)],Ready));
+        Assert.Equal(fixedCue,Assert.Single(Update(p,[M(100,"straight",ManeuverKind.Straight),M(501,kind:ManeuverKind.TurnRight)],Ready)));
         Assert.Empty(Update(p,[M(90,"straight",ManeuverKind.Straight),M(499,kind:ManeuverKind.TurnRight)],Ready));
         var q=new NavigationInstructionPolicy();
         Assert.Empty(Update(q,[M(650,kind:ManeuverKind.TurnRight)],Ready));

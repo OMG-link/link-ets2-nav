@@ -78,6 +78,31 @@ public sealed class RoundaboutBuilderTests
         var found=new RoundaboutBuilder(ring.Append(branch).Concat(exits)).Find(1,[ring[0].Key], TestContext.Current.CancellationToken)!;
         Assert.Equal(2,found.Exits.Count);Assert.Equal(new ulong[]{10,20},found.Exits.Select(e=>e.NodeUid));
     }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OnlyVerifiedDeadEndCountsAsCompleteExit(bool verified)
+    {
+        var ring = Circle();
+        var branch = new RoundaboutCurve(new(1, 99), 1, false,
+            [ring[0].Points[^1], new(40, 0, 0)], [new(2, -1)], ExitNode: 10);
+        var road = new RoundaboutCurve(new(2, -1), null, false,
+            [new(40, 0, 0), new(60, 0, 0)], [], 10, 20) { TerminalExit = verified };
+        ring[0] = ring[0] with { Next = [ring[1].Key, branch.Key] };
+        var found = new RoundaboutBuilder(ring.Append(branch).Append(road))
+            .Find(1, [ring[0].Key], TestContext.Current.CancellationToken);
+        if (!verified) { Assert.Null(found); return; }
+        Assert.NotNull(found);
+        var exit = Assert.Single(found.Exits);
+        Assert.Equal(2UL, exit.ExternalItemUid);
+        Assert.Equal(20UL, exit.NodeUid);
+        var port = Assert.Single(found.ExitPorts);
+        Assert.Equal(10UL, port.BoundaryNodeUid);
+        Assert.Equal(20UL, port.ExternalNodeUid);
+        // Execution is at the departure, not at the distant road's dead end.
+        Assert.InRange(port.DepartureToBoundaryMeters, 19, 21);
+    }
+
     [Fact]
     public void RejectsElongatedCycle()
     {

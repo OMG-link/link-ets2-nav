@@ -16,7 +16,11 @@ public sealed record RoundaboutStructure(string Id, IReadOnlyList<ulong> PrefabU
 /// <summary>Actual directed PPD curves; road links are explicitly distinguished from prefab curves.</summary>
 public sealed record RoundaboutCurve(RoundaboutCurveKey Key, ulong? PrefabUid,
     bool LeftHandTraffic, IReadOnlyList<Vector3> Points, IReadOnlyList<RoundaboutCurveKey> Next,
-    ulong EntryNode = 0, ulong ExitNode = 0);
+    ulong EntryNode = 0, ulong ExitNode = 0)
+{
+    /// <summary>Map endpoint explicitly has no further item; not merely absent from the loaded graph.</summary>
+    public bool TerminalExit { get; init; }
+}
 
 /// <summary>One short-lived search session per newly constructed sector. Does not own map objects.</summary>
 public sealed class RoundaboutBuilder
@@ -125,7 +129,11 @@ public sealed class RoundaboutBuilder
         {
             token.ThrowIfCancellationRequested();
             if (!visited.Add(key) || !graph.TryGetValue(key, out var curve)) continue;
-            if (curve.Next.Count == 0 && curve.ExitNode != 0) return null;
+            if (curve.Next.Count == 0 && curve.ExitNode != 0)
+            {
+                if (!curve.TerminalExit) return null;
+                exits.TryAdd((curve.Key.ItemUid, curve.ExitNode), [key]);
+            }
             foreach (var next in curve.Next)
             {
                 if (!graph.TryGetValue(next, out var target)) return null;

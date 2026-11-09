@@ -52,6 +52,12 @@ public static class RoundaboutPorts
             ulong boundary = curve.PrefabUid is { } owner && owners.Contains(owner) && curve.ExitNode != 0
                 ? curve.ExitNode : current.Boundary;
             double boundaryCost = boundary != current.Boundary ? cost : current.BoundaryCost;
+            if (curve.Next.Count == 0 && curve.TerminalExit && curve.ExitNode != 0 && boundary != 0)
+            {
+                var key = (curve.Key.ItemUid, curve.ExitNode, boundary);
+                if (!exits.TryGetValue(key, out var known) || cost < known.Cost)
+                    exits[key] = (cost, new(curve.Key.ItemUid, curve.ExitNode, boundary, current.Phase, boundaryCost));
+            }
             foreach (var next in curve.Next)
             {
                 if (!graph.TryGetValue(next, out var target)) continue;

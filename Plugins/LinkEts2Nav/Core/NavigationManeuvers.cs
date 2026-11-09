@@ -4,11 +4,14 @@ namespace LinkEts2Nav.Core;
 
 public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit }
 
+public enum NavigationAnnouncementMode { Normal, Silent, NoticeAt500 }
+
 public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double DistanceMeters,
     string EntryId, string ExitId)
 {
     /// <summary>Multiple connection curves inside one prefab share this physical-junction group.</summary>
     public string? JunctionId { get; init; }
+    public NavigationAnnouncementMode AnnouncementMode { get; init; }
     /// <summary>Optional action-specific wording; distance scheduling remains shared.</summary>
     public string? Instruction { get; init; }
     public string? NearInstruction { get; init; }

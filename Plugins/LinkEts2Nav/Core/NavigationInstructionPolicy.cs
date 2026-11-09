@@ -152,6 +152,8 @@ public sealed class NavigationInstructionPolicy
         if (index >= 0)
         {
             var target = maneuvers[index];
+            if(target.AnnouncementMode!=NavigationAnnouncementMode.Normal)
+                return target.AnnouncementMode==NavigationAnnouncementMode.Silent?[]:[NavigationPrompts.Execute(target.Kind,target.Instruction)];
             var state = Preview(target,sessionId);
             if (continuationCovered && !state.FirstAnnounced)
             {
@@ -210,7 +212,7 @@ public sealed class NavigationInstructionPolicy
         var passage=maneuvers.Take(index>=0 ? index : 0)
             .FirstOrDefault(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation && m.DistanceMeters<=100);
         bool passageQuiet=lastSpoken is null || now-lastSpoken.Value>=StraightQuietPeriod;
-        if(index>=0 && states[maneuvers[index].Id].FirstAnnounced && passage is not null && passageQuiet
+        if(index>=0 && maneuvers[index].AnnouncementMode==NavigationAnnouncementMode.Normal && states[maneuvers[index].Id].FirstAnnounced && passage is not null && passageQuiet
             && !states[passage.Id].FirstAnnounced && maneuvers[index].DistanceMeters>100)
         {
             string text=NavigationPrompts.Immediate(ManeuverKind.Straight);
@@ -223,12 +225,12 @@ public sealed class NavigationInstructionPolicy
             var state = states[target.Id];
             if(continuationAnnounced && !state.FirstAnnounced)
                 CoverOverview(state,target.DistanceMeters);
-            if (!state.FirstAnnounced && target.DistanceMeters > 800)
+            if (target.AnnouncementMode==NavigationAnnouncementMode.Normal && !state.FirstAnnounced && target.DistanceMeters > 800)
                 state.PendingContinuation ??= NavigationPrompts.Continue(target.DistanceMeters);
             int ordinal=Ordinal(maneuvers,0,index);
             var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation));
-            bool ready=due is { } candidate && (canAnnounce?.Invoke(candidate.Text) ?? true);
-            if (!target.ExecutionOnly && !ready && NeedsBriefing(state) && target.DistanceMeters<=800 && (ordinal==1 || index==0))
+            bool ready=due is { } candidate && (candidate.Text.Length==0 || (canAnnounce?.Invoke(candidate.Text) ?? true));
+            if (target.AnnouncementMode==NavigationAnnouncementMode.Normal && !target.ExecutionOnly && !ready && NeedsBriefing(state) && target.DistanceMeters<=800 && (ordinal==1 || index==0))
             {
                 // A prepared fixed boundary cue can replace a still-generating close briefing.
                 // Never remove an intersection ordinal or announce a boundary not actually crossed.
@@ -248,15 +250,16 @@ public sealed class NavigationInstructionPolicy
             }
             if (ready && due is { } current)
             {
-                if (!state.FirstAnnounced && target.DistanceMeters>800) continuationAnnounced=true;
+                if (target.AnnouncementMode==NavigationAnnouncementMode.Silent) continuationAnnounced=false;
+                else if (!state.FirstAnnounced && target.DistanceMeters>800) continuationAnnounced=true;
                 state.FirstAnnounced=true;
                 state.Consumed=current.Consumed;
                 if(!current.Overview)state.ActionAnnounced=true;
                 if(current.Execute) state.Executed=true;
-                output.Add(current.Text);
+                if(current.Text.Length>0)output.Add(current.Text);
             }
         }
-        if (output.Count == 0)
+        if (output.Count == 0 && (index<0 || maneuvers[index].AnnouncementMode==NavigationAnnouncementMode.Normal))
         {
             var straight = maneuvers.Take(index >= 0 ? index : maneuvers.Count)
                 .FirstOrDefault(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation);
@@ -286,6 +289,14 @@ public sealed class NavigationInstructionPolicy
     }
 
     private static Decision? Select(Encounter state,NavigationManeuver target,int ordinal,bool precedingStraight)
+    {
+        if(target.AnnouncementMode==NavigationAnnouncementMode.NoticeAt500)
+            return !state.Executed&&target.DistanceMeters<=500?new(NavigationPrompts.Execute(target.Kind,target.Instruction),AllStages,true):null;
+        var decision=SelectNormal(state,target,ordinal,precedingStraight);
+        return target.AnnouncementMode==NavigationAnnouncementMode.Silent&&decision is {} silent
+            ?silent with {Text="",Overview=false}:decision;
+    }
+    private static Decision? SelectNormal(Encounter state,NavigationManeuver target,int ordinal,bool precedingStraight)
     {
         double distance=target.DistanceMeters;
         if(distance<=20) return state.Executed ? null : new(NavigationPrompts.Execute(target.Kind,StageInstruction(target,0)),AllStages,true);

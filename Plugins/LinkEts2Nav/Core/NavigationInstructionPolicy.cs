@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 
 namespace LinkEts2Nav.Core;
 
@@ -9,6 +9,7 @@ public static class NavigationPrompts
         ManeuverKind.TurnLeft => "左转", ManeuverKind.TurnRight => "右转",
         ManeuverKind.KeepLeft => "向左前方行驶", ManeuverKind.KeepRight => "向右前方行驶",
         ManeuverKind.MergeLeft => "向左前方进入主路", ManeuverKind.MergeRight => "向右前方进入主路",
+        ManeuverKind.EnterRoundabout => "进入环岛", ManeuverKind.ExitRoundabout => "从此出口驶出",
         ManeuverKind.Straight => "直行", ManeuverKind.UTurn => "掉头",
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
@@ -160,7 +161,7 @@ public sealed class NavigationInstructionPolicy
             int ordinal = Ordinal(maneuvers,0,index);
             var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation));
             if (due is { } current) result.Add(current.Text);
-            if (NeedsBriefing(state) && target.DistanceMeters <= 800)
+            if (!target.ExecutionOnly && NeedsBriefing(state) && target.DistanceMeters <= 800)
             {
                 // Warm the next two rounded bins, not an unbounded distance vocabulary.
                 double rounded = Math.Floor(target.DistanceMeters/50)*50;
@@ -169,11 +170,13 @@ public sealed class NavigationInstructionPolicy
             }
             int consumed = due?.Consumed ?? state.Consumed;
             foreach (int stageIndex in Enumerable.Range(0,Stages.Length))
-                if ((consumed & (1<<stageIndex)) == 0)
+                if (!target.ExecutionOnly && (consumed & (1<<stageIndex)) == 0)
                     result.Add(StageText(target,Stages[stageIndex],ordinal, state.ActionAnnounced || due is { Overview:false },maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation)));
             if (!state.Executed) result.Add(NavigationPrompts.Execute(target.Kind,target.Instruction));
             int nextIndex = ActionIndex(maneuvers,index+1);
-            if (nextIndex >= 0 && target.DistanceMeters <= 800
+            if(nextIndex>=0 && maneuvers[nextIndex].ExecutionOnly)
+                result.Add(NavigationPrompts.Execute(maneuvers[nextIndex].Kind,maneuvers[nextIndex].Instruction));
+            if (nextIndex >= 0 && !maneuvers[nextIndex].ExecutionOnly && target.DistanceMeters <= 800
                 && maneuvers[nextIndex].DistanceMeters - target.DistanceMeters <= 800)
             {
                 var next = maneuvers[nextIndex];
@@ -225,7 +228,7 @@ public sealed class NavigationInstructionPolicy
             int ordinal=Ordinal(maneuvers,0,index);
             var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation));
             bool ready=due is { } candidate && (canAnnounce?.Invoke(candidate.Text) ?? true);
-            if (!ready && NeedsBriefing(state) && target.DistanceMeters<=800 && (ordinal==1 || index==0))
+            if (!target.ExecutionOnly && !ready && NeedsBriefing(state) && target.DistanceMeters<=800 && (ordinal==1 || index==0))
             {
                 // A prepared fixed boundary cue can replace a still-generating close briefing.
                 // Never remove an intersection ordinal or announce a boundary not actually crossed.
@@ -286,7 +289,7 @@ public sealed class NavigationInstructionPolicy
     {
         double distance=target.DistanceMeters;
         if(distance<=20) return state.Executed ? null : new(NavigationPrompts.Execute(target.Kind,target.Instruction),AllStages,true);
-        if(distance<50) return null;
+        if(target.ExecutionOnly || distance<50) return null;
         if (NeedsBriefing(state))
             return new(distance > 800 && state.PendingContinuation is { } overview
                 ? overview : NavigationPrompts.FirstLayer(target.Kind,distance,ordinal,target.Instruction),
@@ -401,4 +404,3 @@ public sealed class NavigationInstructionPolicy
         encounters.Clear();session=null;observed=null;lastSpoken=null;continuationAnnounced=false;legTargetId=null;
     }
 }
-

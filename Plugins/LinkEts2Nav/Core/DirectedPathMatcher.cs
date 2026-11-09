@@ -11,8 +11,11 @@ public sealed record DirectedRoad(
 {
     /// <summary>Map road-type token; absent for prefab connections or unavailable metadata.</summary>
     public string? RoadType { get; init; }
+    public RoundaboutPassage? Roundabout { get; init; }
     public IReadOnlyList<LaneConnection>? LaneConnections { get; init; }
 }
+
+public sealed record RoundaboutPassage(string Id, int ExitNumber, double ExitConnectorMeters = 0);
 
 public sealed record LaneConnection(ulong EntryNode, int EntryLane, ulong ExitNode, int ExitLane);
 

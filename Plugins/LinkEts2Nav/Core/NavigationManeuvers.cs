@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace LinkEts2Nav.Core;
 
-public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight }
+public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout }
 
 public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double DistanceMeters,
     string EntryId, string ExitId)
@@ -11,6 +11,7 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     public string? JunctionId { get; init; }
     /// <summary>Optional action-specific wording; distance scheduling remains shared.</summary>
     public string? Instruction { get; init; }
+    public bool ExecutionOnly { get; init; }
     /// <summary>False when an adjacent prefab, rather than an explicit approach road, precedes this decision.</summary>
     public bool HasSeparateApproachRoad { get; init; } = true;
     /// <summary>True when a straight decision explicitly continues the main road.</summary>
@@ -64,7 +65,7 @@ public sealed class NavigationManeuverDetector
         if (route.Any(r => !Valid(r))) return result;
         for (int i = 1; i < route.Count; i++)
             if (!Connected(route[i - 1], route[i])) return result;
-        if (route.Count == 1)
+        if (route.Count == 1 && route[0].Roundabout is null)
         {
             if (PrefabKey(route[0]) is null) confirmedUntil = Length(route[0]);
             return result;
@@ -76,6 +77,17 @@ public sealed class NavigationManeuverDetector
         {
             var current = route[i];
             double end = offset + Length(current);
+            if (current.Roundabout is { } ring)
+            {
+                string id = $"roundabout:{ring.Id}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}";
+                if (offset >= vehicleAlong)
+                    result.Add(new(id + ":enter", ManeuverKind.EnterRoundabout, offset - vehicleAlong, current.Id, current.Id)
+                    { JunctionId = "roundabout:" + ring.Id, Instruction = "进入环岛，从第" + NavigationPrompts.Number(ring.ExitNumber) + "出口驶出" });
+                if (end >= vehicleAlong)
+                    result.Add(new(id + ":exit", ManeuverKind.ExitRoundabout, Math.Max(0, end - ring.ExitConnectorMeters - vehicleAlong), current.Id, current.Id)
+                    { JunctionId = "roundabout:" + ring.Id, ExecutionOnly = true });
+                confirmedUntil = end; offset = end; continue;
+            }
             // A road is known up to its exit even if the choice beyond it is unknown.
             // A prefab requires its connection to be validated before advancing.
             if (PrefabKey(current) is null) confirmedUntil = end;
@@ -86,11 +98,11 @@ public sealed class NavigationManeuverDetector
                 if (ComplexInternalBend(current)) return result;
                 if (offset < vehicleAlong)
                 {
-                    if ((prefabEnds.GetValueOrDefault((prefab,current.EndNodeUid))??[])
-                        .Any(e=>e.StartNodeUid!=current.StartNodeUid))
+                    if ((prefabEnds.GetValueOrDefault((prefab, current.EndNodeUid)) ?? [])
+                        .Any(e => e.StartNodeUid != current.StartNodeUid))
                     {
-                        var role=RoadJoinClassifier.Classify(current.LaneConnections,current.StartNodeUid,current.EndNodeUid).Role;
-                        if(role is RoadJoinRole.Entering or RoadJoinRole.Ambiguous) hasUnresolvedJoin=true;
+                        var role = RoadJoinClassifier.Classify(current.LaneConnections, current.StartNodeUid, current.EndNodeUid).Role;
+                        if (role is RoadJoinRole.Entering or RoadJoinRole.Ambiguous) hasUnresolvedJoin = true;
                     }
                     confirmedUntil = end; offset = end; continue;
                 }
@@ -103,9 +115,9 @@ public sealed class NavigationManeuverDetector
                     if (merge.Ambiguous) hasUnresolvedJoin = true;
                     if (merge.Kind is { } mergeKind)
                         result.Add(new($"merge:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
-                            mergeKind, offset-vehicleAlong, i>0 ? route[i-1].Id : current.Id,
-                            i+1<route.Count ? route[i+1].Id : current.Id)
-                        { JunctionId="prefab:"+prefab, HasSeparateApproachRoad=i>0 && PrefabKey(route[i-1]) is null });
+                            mergeKind, offset - vehicleAlong, i > 0 ? route[i - 1].Id : current.Id,
+                            i + 1 < route.Count ? route[i + 1].Id : current.Id)
+                        { JunctionId = "prefab:" + prefab, HasSeparateApproachRoad = i > 0 && PrefabKey(route[i - 1]) is null });
                 }
                 if (connections.Length >= 2)
                 {
@@ -169,7 +181,7 @@ public sealed class NavigationManeuverDetector
                 }
             }
             else if (PrefabKey(current) is null && i + 1 < route.Count
-                && PrefabKey(route[i + 1]) is null && end >= vehicleAlong)
+                && PrefabKey(route[i + 1]) is null && route[i + 1].Roundabout is null && end >= vehicleAlong)
             {
                 var outgoing = route[i + 1];
                 var exits = (roadStarts.GetValueOrDefault(current.EndNodeUid) ?? [])
@@ -213,27 +225,27 @@ public sealed class NavigationManeuverDetector
         indexedGraph = graph;
     }
 
-    private (ManeuverKind? Kind,bool Ambiguous) MergeDecision(DirectedRoad selected,string prefab)
+    private (ManeuverKind? Kind, bool Ambiguous) MergeDecision(DirectedRoad selected, string prefab)
     {
-        var alternatives=(prefabEnds.GetValueOrDefault((prefab,selected.EndNodeUid))??[])
-            .Where(e=>e.StartNodeUid!=selected.StartNodeUid).ToArray();
-        if(alternatives.Length==0)return (null,false);
-        var decision=RoadJoinClassifier.Classify(selected.LaneConnections,selected.StartNodeUid,selected.EndNodeUid);
-        if(decision.Role==RoadJoinRole.Ambiguous)return (null,true);
-        if(decision.Role!=RoadJoinRole.Entering)return (null,false);
-        var main=alternatives.FirstOrDefault(e=>e.StartNodeUid==decision.MainEntry);
-        if(main is null || main.Points.Count<4 || selected.Points.Count<4
-            ||NativeTangent(main,false) is not {} direction)return (null,true);
+        var alternatives = (prefabEnds.GetValueOrDefault((prefab, selected.EndNodeUid)) ?? [])
+            .Where(e => e.StartNodeUid != selected.StartNodeUid).ToArray();
+        if (alternatives.Length == 0) return (null, false);
+        var decision = RoadJoinClassifier.Classify(selected.LaneConnections, selected.StartNodeUid, selected.EndNodeUid);
+        if (decision.Role == RoadJoinRole.Ambiguous) return (null, true);
+        if (decision.Role != RoadJoinRole.Entering) return (null, false);
+        var main = alternatives.FirstOrDefault(e => e.StartNodeUid == decision.MainEntry);
+        if (main is null || main.Points.Count < 4 || selected.Points.Count < 4
+            || NativeTangent(main, false) is not { } direction) return (null, true);
         // Geometry only labels left/right after lane structure establishes a road merge.
-        var delta=selected.Points[^2]-main.Points[^2];
-        double side=direction.X*delta.Z-direction.Y*delta.X;
-        if(Math.Abs(side)<.1)
+        var delta = selected.Points[^2] - main.Points[^2];
+        double side = direction.X * delta.Z - direction.Y * delta.X;
+        if (Math.Abs(side) < .1)
         {
-            delta=selected.Points[1]-main.Points[1];
-            side=direction.X*delta.Z-direction.Y*delta.X;
+            delta = selected.Points[1] - main.Points[1];
+            side = direction.X * delta.Z - direction.Y * delta.X;
         }
-        if(Math.Abs(side)<.1)return (null,true);
-        return (side>0?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,false);
+        if (Math.Abs(side) < .1) return (null, true);
+        return (side > 0 ? ManeuverKind.MergeLeft : ManeuverKind.MergeRight, false);
     }
 
     private static bool ComplexInternalBend(DirectedRoad prefab)

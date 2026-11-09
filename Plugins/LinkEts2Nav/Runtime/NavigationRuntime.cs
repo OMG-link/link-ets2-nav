@@ -61,7 +61,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             }
         }
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
-        var upcoming = detector.FindSequence(route, along.Value, paths.GetNavigationGraph(), out double confirmedUntil, out bool hasUnresolvedJoin);
+        var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
+        var upcoming = detector.FindSequence(instructionRoute, along.Value, paths.GetNavigationGraph(), out double confirmedUntil, out bool hasUnresolvedJoin);
         if(yardApproach)
         {
             string group="prefab:"+route[0].Id.Split(':')[1];
@@ -72,7 +73,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         double confirmedAhead = Math.Max(0, confirmedUntil - along.Value);
         bool confirmedContinuation = !yardApproach && !hasUnresolvedJoin && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
-        string? currentJunction=yardApproach ? null : CurrentJunction(route,along.Value);
+        string? currentJunction=yardApproach ? null : CurrentJunction(instructionRoute,along.Value);
         bool finishingTrackedTurn=currentJunction is not null && currentJunction==approachingJunction && !approachingStraight;
         if(!finishingTrackedTurn && upcoming.FirstOrDefault() is { DistanceMeters: <=50, JunctionId: not null } approach)
         {
@@ -111,6 +112,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             double end=offset+edge.Points.Zip(edge.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
             if(along>offset && along<end)
             {
+                if(edge.Roundabout is {} ring)return "roundabout:"+ring.Id;
                 if(!edge.Id.StartsWith("prefab:",StringComparison.Ordinal))return null;
                 var parts=edge.Id.Split(':');
                 return parts.Length==4 ? "prefab:"+parts[1] : null;

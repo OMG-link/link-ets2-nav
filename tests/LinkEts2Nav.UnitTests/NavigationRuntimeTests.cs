@@ -254,7 +254,7 @@ public sealed class NavigationRuntimeTests
     [Fact]
     public void EveryRuntimePhraseExistsInPreGeneratedPack()
     {
-        Assert.Equal(112,NavigationPrompts.AllTexts().Distinct().Count());
+        Assert.Equal(140,NavigationPrompts.AllTexts().Distinct().Count());
         Assert.Contains(NavigationPrompts.Continue(),LinkEts2Nav.Speech.SpeechPack.DefaultTexts());
         foreach(string text in NavigationPrompts.AllTexts())
             Assert.Contains(text,LinkEts2Nav.Speech.SpeechPack.DefaultTexts());

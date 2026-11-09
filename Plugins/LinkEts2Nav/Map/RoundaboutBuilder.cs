@@ -6,7 +6,12 @@ public sealed record RoundaboutCurveKey(ulong ItemUid, int CurveIndex);
 public sealed record RoundaboutExit(ulong ExternalItemUid, ulong NodeUid, IReadOnlyList<RoundaboutCurveKey> Branches);
 public sealed record RoundaboutStructure(string Id, IReadOnlyList<ulong> PrefabUids,
     IReadOnlyList<RoundaboutCurveKey> Ring, IReadOnlyList<Vector3> Geometry,
-    double Circularity, IReadOnlyList<RoundaboutExit> Exits);
+    double Circularity, IReadOnlyList<RoundaboutExit> Exits)
+{
+    public IReadOnlyList<RoundaboutEntryPort> EntryPorts { get; init; } = [];
+    public IReadOnlyList<RoundaboutExitPort> ExitPorts { get; init; } = [];
+    public double RingLength { get; init; }
+}
 
 /// <summary>Actual directed PPD curves; road links are explicitly distinguished from prefab curves.</summary>
 public sealed record RoundaboutCurve(RoundaboutCurveKey Key, ulong? PrefabUid,
@@ -45,7 +50,9 @@ public sealed class RoundaboutBuilder
             if (exits is null) continue;
             // Multiple lane rings of the same prefab set identify one physical roundabout.
             var id = string.Join("/", members.Select(uid => $"{uid:X16}"));
-            return new(id, members, ring, points, quality, exits);
+            var ports = RoundaboutPorts.Build(graph,ring,members);
+            return new(id, members, ring, points, quality, exits)
+            {EntryPorts=ports.Entries,ExitPorts=ports.Exits,RingLength=ports.Length};
         }
         return null;
     }

@@ -18,6 +18,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
     Action<string>? log = null)
 {
     private readonly LaneMergeDetector mergeDetector = new();
+    private readonly LaneExitApproach exitApproach = new();
     private readonly LaneRoutePlanner lanePlanner = new();
     private readonly NavigationManeuverDetector detector = new();
     private readonly NavigationInstructionPolicy policy = new();
@@ -98,6 +99,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         }
         // A distant unresolved join limits the safe stretch; it does not invalidate
         // an already verified long road before that join.
+        upcoming = exitApproach.Apply(upcoming, route, paths.GetNavigationGraph(), along.Value);
         double confirmedAhead = Math.Max(0, Math.Min(confirmedUntil, firstUnresolvedJoinAlong) - along.Value);
         bool confirmedContinuation = !yardApproach && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
@@ -170,7 +172,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
     public void Reset()
     {
         policy.Reset();
-        mergeDetector.Reset();
+        mergeDetector.Reset(); exitApproach.Reset();
         mergeSignature=null;
         speech?.ClearPlan("navigation");
         map = null;

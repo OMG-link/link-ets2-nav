@@ -28,30 +28,8 @@ public static class PrefabPathGeometry
             if (from == to) continue;
             var targets = control[to].OutputLines.Where(Valid).ToHashSet();
             if (targets.Count == 0) continue;
-            var queue = new PriorityQueue<int, float>();
-            var costs = new Dictionary<int, float>();
-            var previous = new Dictionary<int, int>();
-            foreach (int line in control[from].InputLines.Where(Valid).Distinct())
-            { costs[line] = curves[line].Length; previous[line] = -1; queue.Enqueue(line, costs[line]); }
-            int found = -1, visited = 0;
-            while (queue.TryDequeue(out int line, out float cost) && visited++ < 8192)
-            {
-                if (cost > costs[line] || cost > 2500) continue;
-                if (targets.Contains(line)) { found = line; break; }
-                foreach (int next in curves[line].NextLines.Where(Valid))
-                {
-                    if (Vector3.Distance(curves[line].EndPosition, curves[next].StartPosition) > .5f) continue;
-                    float nextCost = cost + curves[next].Length;
-                    if (costs.TryGetValue(next, out float known) && known <= nextCost) continue;
-                    costs[next] = nextCost; previous[next] = line; queue.Enqueue(next, nextCost);
-                }
-            }
-            if (found < 0) continue;
-            var chain = new List<int>();
-            for (int current = found; current >= 0; current = previous[current])
-            { chain.Add(current); if (chain.Count > curves.Count) break; }
-            if (chain.Count > curves.Count) continue;
-            chain.Reverse();
+            var chain = PrefabCurvePathfinder.Find(descriptor,control[from].InputLines,targets);
+            if(chain.Count==0)continue;
             var points = new List<Vector3> { prefab.Nodes[from].Position };
             bool valid = true;
             foreach (int index in chain)

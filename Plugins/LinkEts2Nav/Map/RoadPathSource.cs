@@ -154,8 +154,8 @@ public sealed class RoadPathSource
                 else if (junctionLinks.TryGetValue(key, out var junction)) directed = junction;
                 else
                 {
-                    // Native routes may contain internal junction nodes between map control nodes.
-                    // Skip only unrecognized internal UIDs, never another known road boundary.
+                    // An unmatched physical UID is not a PPD curve index or proof of an internal node.
+                    // Preserve the legacy verified-span fallback, never skipping a known road boundary.
                     for (int next = i + 1; next < Math.Min(nodes.Length, i + 16); next++)
                     {
                         if (boundaryNodes.Contains(nodes[next - 1].Uid)) break;

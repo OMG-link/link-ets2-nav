@@ -36,5 +36,37 @@ public static class PrefabCurvePathfinder
         chain.Reverse();
         return chain.ToArray();
     }
+    public static IReadOnlyDictionary<int,IReadOnlyList<int>> FindEach(PrefabDescriptor descriptor,int start,IReadOnlySet<int> targets)
+    {
+        var curves=descriptor.NavCurves;
+        bool Valid(int i)=>i>=0&&i<curves.Count&&Finite(curves[i].StartPosition)&&Finite(curves[i].EndPosition)
+            &&float.IsFinite(curves[i].Length)&&curves[i].Length>.001f;
+        var result=new Dictionary<int,IReadOnlyList<int>>();
+        if(!Valid(start))return result;
+        var costs=new Dictionary<int,float>{{start,curves[start].Length}};
+        var previous=new Dictionary<int,int>{{start,-1}};
+        var queue=new PriorityQueue<int,(float Cost,int Index)>();queue.Enqueue(start,(costs[start],start));
+        int visited=0;
+        while(queue.TryDequeue(out int current,out var priority)&&visited++<8192)
+        {
+            if(priority.Cost>costs[current]||priority.Cost>2500)continue;
+            if(targets.Contains(current))
+            {
+                var chain=new List<int>();
+                for(int k=current;k>=0;k=previous[k])chain.Add(k);
+                chain.Reverse();result[current]=chain.ToArray();
+                if(result.Count==targets.Count)break;
+            }
+            foreach(int next in curves[current].NextLines.Where(Valid))
+            {
+                if(Vector3.Distance(curves[current].EndPosition,curves[next].StartPosition)>.5f)continue;
+                float cost=priority.Cost+curves[next].Length;
+                if(costs.TryGetValue(next,out var known)&&known<=cost)continue;
+                costs[next]=cost;previous[next]=current;queue.Enqueue(next,(cost,next));
+            }
+        }
+        return result;
+    }
+
     private static bool Finite(Vector3 p)=>float.IsFinite(p.X)&&float.IsFinite(p.Y)&&float.IsFinite(p.Z);
 }

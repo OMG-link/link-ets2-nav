@@ -11,6 +11,7 @@ public sealed record DirectedRoad(
 {
     /// <summary>Map road-type token; absent for prefab connections or unavailable metadata.</summary>
     public string? RoadType { get; init; }
+    public IReadOnlyList<PrefabLanePath> LanePaths { get; init; } = [];
     public RoundaboutPassage? Roundabout { get; init; }
     public IReadOnlyList<LaneConnection>? LaneConnections { get; init; }
 }

@@ -6,6 +6,7 @@ namespace LinkEts2Nav.Runtime;
 
 public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next = null, string? LastSpoken = null)
 {
+    public LaneNavigationPlan? LaneRoute { get; init; }
     public IReadOnlyList<NavigationManeuver> Upcoming { get; init; } = [];
     public double? ConfirmedAheadMeters { get; init; }
     public bool DeferredUntilJunctionExit { get; init; }
@@ -15,6 +16,7 @@ public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next
 public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Action? fallback = null,
     Action<string>? log = null)
 {
+    private readonly LaneRoutePlanner lanePlanner = new();
     private readonly NavigationManeuverDetector detector = new();
     private readonly NavigationInstructionPolicy policy = new();
     private readonly DirectedPathMatcher matcher = new();
@@ -101,7 +103,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             : confirmedContinuation ? "已确认前方长直路，沿当前道路行驶，等待下一操作提示。"
             : "当前连续路径内没有可确认的普通路口操作。";
         Report(state, next, now);
-        return new(state, next, lastSpoken) { Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
+        return new(state, next, lastSpoken) { LaneRoute = lanePlanner.Build(route), Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
     }
 
     private static string? CurrentJunction(IReadOnlyList<DirectedRoad> route,double along)

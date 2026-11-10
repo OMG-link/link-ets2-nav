@@ -239,3 +239,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/export-prefab-svg.ps
 不足 500 米且已观察到平行段起点时，产生 `Silent` 动作；达到 500 米时产生 `NoticeAt500` 动作。数据范围或连接歧义导致上游长度不能确认时，诊断保留 `Uncertain`，使用静默动作防止过早结束等待。已进入本次合并接近的状态保持到驶过实际公共曲线起点，避免规划车道短暂变化导致长距离简报提前出现。已识别环岛继续由环岛导航处理，不插入独立匝道合并动作。
 
 `NavigationAnnouncementMode.Silent` 使用正常阶段消耗状态，但规划和执行均不产生音频文本、不调用音频就绪回调，也不触发提示音；`NoticeAt500` 只预热并执行一次固定提醒，首次发现已在 500 米内时立即尝试播报。`NavigationDiagnostic.LaneMerges` 和“车道合并判定”日志保存侧别、长度依据、分类与汇合点距离，可随回放分析。
+
+
+## 特殊环岛定义库
+
+`Plugins/LinkEts2Nav/Data/special-roundabouts.json` 存放经过人工核对、无法通过原生闭环算法识别的环岛。它作为嵌入资源随插件发布，不需要另装数据库服务。新增或修改定义后重新构建插件。
+
+- `id`：定义的稳定标识，不能重复；`description` 记录资源特征。
+- `members`：成员列表。`key` 是定义内的别名；`resource` 为完整 PPD 路径，`curveCount` 和 `controlNodeCount` 为预期结构。单成员可省略 `instanceUid`，匹配此资源的各个地图实例；组合的每个成员都必须填写十六进制地图 UID，防止把使用相同资源的其他路口拼在一起。
+- `referenceCircuit`：按行驶方向排列的参考曲线，每项用 `member`、`curve` 定位，并以 `expectedNext` 校验该曲线原生的同对象后继。参考环用于出口相位排序，不要求参考环的闭合连接实际存在，也不会把该连接加入游戏行驶图。
+- 组合可包含普通道路成员：只填 `key` 和 `instanceUid`，省略 `resource`；参考曲线编号 `-1` 表示道路 Node 到 ForwardNode，`-2` 表示反向。道路成员的 `expectedNext` 可以为 `null`，因为后继由地图接口 UID 连接。
+
+所有成员及参考曲线加载完成后才建立特殊环岛，允许组合跨区块延迟完成。明确的特殊定义优先于自动识别结果。资源结构或校验连接变化时跳过旧定义，并在地图诊断中留下记录；地图缺少引用时仍等待补充数据。出口分组、接口匹配及出口编号沿用正常环岛的实现，不按预制件名称猜测出口。
+
+当前包含赫尔辛基港口的 `balt_r1_x_r2_round_tram_helsinki.ppd`。其参考顺序为 `30 → 31 → 26 → 32 → 12 → 34 → 36`；最后回到 30 仅表示参考顺序闭合，不是新增的车道连接。

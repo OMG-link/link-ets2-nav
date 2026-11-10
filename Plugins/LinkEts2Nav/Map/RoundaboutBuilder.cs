@@ -11,6 +11,7 @@ public sealed record RoundaboutStructure(string Id, IReadOnlyList<ulong> PrefabU
     public IReadOnlyList<RoundaboutEntryPort> EntryPorts { get; init; } = [];
     public IReadOnlyList<RoundaboutExitPort> ExitPorts { get; init; } = [];
     public double RingLength { get; init; }
+    public string? SpecialDefinitionId { get; init; }
 }
 
 /// <summary>Actual directed PPD curves; road links are explicitly distinguished from prefab curves.</summary>
@@ -54,6 +55,18 @@ public sealed class RoundaboutBuilder
             if (structure is not null) return structure;
         }
         return null;
+    }
+
+    /// <summary>Explicit database reference order; it need not be a native drivable cycle.</summary>
+    public RoundaboutStructure? BuildDeclaredCircuit(IReadOnlyList<RoundaboutCurveKey> reference,
+        CancellationToken token=default)
+    {
+        if(reference.Count==0||reference.Any(k=>!graph.ContainsKey(k)))return null;
+        var ring=reference.ToArray();
+        var members=ring.Select(k=>graph[k].PrefabUid).OfType<ulong>().Distinct().Order().ToArray();
+        if(members.Length==0)return null;
+        var points=Join(ring);
+        return Assemble(ring,members,points,Circularity(points),token);
     }
 
     private RoundaboutStructure? Assemble(RoundaboutCurveKey[] ring, ulong[] members,

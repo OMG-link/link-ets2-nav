@@ -100,7 +100,7 @@ public sealed class NearbyCameraScanner
                         prefabDescriptors[resource] = descriptor = PrefabDescriptor.Open(resource, fileSystem);
                     if (descriptor is not null)
                     {
-                        roundaboutIndex.AddPrefab(prefab, descriptor);
+                        roundaboutIndex.AddPrefab(prefab, descriptor, resource);
                         if (!geometryCache.TryGetValue(prefab.Uid, out var geometry))
                             geometry = (PrefabPathGeometry.Build(prefab, descriptor), FreeNavigationArea.Build(prefab,descriptor));
                         nextGeometry[prefab.Uid] = geometry;
@@ -126,6 +126,7 @@ public sealed class NearbyCameraScanner
         }
         var diagnostics = new List<string>(definitionDiagnostics);
         diagnostics.AddRange(junctionDiagnostics);
+        diagnostics.AddRange(roundaboutIndex.Diagnostics);
         if(speedLimits.Error is not null) diagnostics.Add(speedLimits.Error);
         var cameras = new List<CameraObservation>();
         foreach (var item in map.MapItems.Values)

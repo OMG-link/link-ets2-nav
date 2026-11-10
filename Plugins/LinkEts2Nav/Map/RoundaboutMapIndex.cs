@@ -7,6 +7,11 @@ namespace LinkEts2Nav.Map;
 /// <summary>Persistent map annotations. Search memoization exists only inside BuildNewSectors.</summary>
 public sealed class RoundaboutMapIndex
 {
+    private readonly SpecialRoundaboutCatalog special;
+    private readonly Dictionary<ulong,SpecialRoundaboutPrefab> resources = [];
+    private readonly HashSet<string> diagnostics = [];
+    public IReadOnlyList<string> Diagnostics => diagnostics.ToArray();
+    public RoundaboutMapIndex(SpecialRoundaboutCatalog? special=null) => this.special=special??SpecialRoundaboutCatalog.Default;
     private readonly HashSet<SectorCoordinate> built = [];
     private readonly Dictionary<ulong, (SectorCoordinate Sector, RoundaboutCurve[] Curves, RoundaboutCurveKey[] Entrances)> prefabs = [];
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurve> curves = [];
@@ -17,9 +22,10 @@ public sealed class RoundaboutMapIndex
         .GroupBy(p => p.uid).ToDictionary(g => g.Key, g => g.First().r);
     public int BuiltSectorCount => built.Count;
 
-    public void AddPrefab(Prefab prefab, PrefabDescriptor descriptor)
+    public void AddPrefab(Prefab prefab, PrefabDescriptor descriptor, string? resource=null)
     {
         if (prefabs.ContainsKey(prefab.Uid) || !PrefabPlacement.TryCreate(prefab, descriptor, out var placement)) return;
+        if(resource is not null)resources[prefab.Uid]=new(resource,descriptor.NavCurves.Count,descriptor.Nodes.Count);
         var entry = new Dictionary<int, ulong>(); var exit = new Dictionary<int, ulong>();
         for (int n = 0; n < placement.ControlNodes.Count; n++)
         {
@@ -67,7 +73,6 @@ public sealed class RoundaboutMapIndex
     public void BuildNewSectors(IEnumerable<SectorCoordinate> sectors, CancellationToken token = default)
     {
         var fresh = sectors.Where(s => !built.Contains(s)).Distinct().ToArray();
-        if (fresh.Length == 0) return;
         var inputs = curves.Values.Where(c => c.EntryNode != 0).GroupBy(c => c.EntryNode).ToDictionary(g => g.Key, g => g.ToArray());
         var graph = curves.Values.Select(c =>
         {
@@ -76,6 +81,15 @@ public sealed class RoundaboutMapIndex
                 .Select(n => n.Key).ToArray();
             return c with { Next = c.Next.Concat(next).Distinct().ToArray() };
         }).ToArray();
+        var linked=graph.ToDictionary(c=>c.Key);
+        var classified=structures.Values.Where(r=>r.SpecialDefinitionId is not null).SelectMany(r=>r.PrefabUids).ToHashSet();
+        foreach(var declared in special.Build(linked,resources,classified,message=>diagnostics.Add(message),token))
+        {
+            foreach(var automatic in structures.Values.Where(r=>r.SpecialDefinitionId is null
+                &&r.PrefabUids.Intersect(declared.PrefabUids).Any()).Select(r=>r.Id).ToArray())structures.Remove(automatic);
+            structures[declared.Id]=declared;
+            classified.UnionWith(declared.PrefabUids);
+        }
         foreach (var sector in fresh)
         {
             token.ThrowIfCancellationRequested();

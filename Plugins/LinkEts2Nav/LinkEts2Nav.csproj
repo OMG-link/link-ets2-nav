@@ -6,6 +6,7 @@
     <Version>0.2.0</Version>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Data/special-roundabouts.json" LogicalName="LinkEts2Nav.special-roundabouts.json" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../ETS2LA/ETS2LA.Shared/ETS2LA.Shared.csproj" Private="false" />
     <ProjectReference Include="../../ETS2LA/ETS2LA.Logging/ETS2LA.Logging.csproj" Private="false" />

@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "definitions": [
+    {
+      "id": "helsinki-port-tram-roundabout",
+      "description": "Helsinki port spiral roundabout. Reviewed ordering backbone only; the closure is not a native driving connection.",
+      "members": [
+        { "key": "body", "resource": "/prefab2/cross_temp/balt/balt_r1_x_r2_round_tram_helsinki.ppd", "curveCount": 41, "controlNodeCount": 4 }
+      ],
+      "referenceCircuit": [
+        { "member": "body", "curve": 30, "expectedNext": [31] },
+        { "member": "body", "curve": 31, "expectedNext": [26,27] },
+        { "member": "body", "curve": 26, "expectedNext": [32] },
+        { "member": "body", "curve": 32, "expectedNext": [11,12] },
+        { "member": "body", "curve": 12, "expectedNext": [34] },
+        { "member": "body", "curve": 34, "expectedNext": [35,36] },
+        { "member": "body", "curve": 36, "expectedNext": [23] }
+      ]
+    }
+  ]
+}

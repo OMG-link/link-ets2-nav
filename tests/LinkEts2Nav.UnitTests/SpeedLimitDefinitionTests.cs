@@ -166,4 +166,30 @@ public sealed class SpeedLimitDefinitionTests
         }
         finally{Directory.Delete(root,true);}
     }
+    [Fact]
+    public void CityMembershipDoesNotSetUrbanLimitButTrafficAreaDoes()
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/traffic_rules.sii"]="""SiiNunit { traffic_rule_data : traffic_rule.urban_area { rule: lane str_params[]: urban_area str_params[]: area } traffic_rule_data : traffic_rule.city_area { additional_rules[]: traffic_rule.urban_area } }""";
+        var map=new TruckLib.ScsMap.Map();
+        var city=CityArea.Add(map,new(500,0,0),"test",1000,1000);
+        city.Node.Rotation=System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitY,.4f);
+        TrafficArea.Add(map,[new(400,0,-50),new(600,0,-50),new(600,0,50),new(400,0,50)],"city_area");
+        var regions=new SpeedLimitDefinitionReader(fs).ReadRegions(map);
+        Assert.Equal(2,regions.Count);
+        Assert.False(regions.Single(r=>r.Country=="norway").Urban);
+        Assert.Single(regions,r=>r.Urban);
+    }
+
+    [Fact]
+    public void ImplicitResetIsAnOperationNotAVehicleFilter()
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/traffic_rules.sii"]="""SiiNunit { traffic_rule_data : traffic_rule.impl_reset { rule: speed_limit num_params[]: 0 num_params[]: 1 str_params[]: implicit } }""";
+        fs.Files["/def/world/sign.test.sii"]="""SiiNunit { sign_model : sign.test { traffic_rule: traffic_rule.impl_reset } }""";
+        var map=new TruckLib.ScsMap.Map();Sign.Add(map,new(400,0,5),"test");
+        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        Assert.True(Assert.Single(data.Signs).Action.Reset);
+    }
+
 }

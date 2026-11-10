@@ -121,11 +121,11 @@ public sealed class SpeedLimitTests
         Assert.Equal(2,messages.Count);
     }
 
-    [Fact] public void PostedLimitBeforeDefaultTransitionDoesNotGuessItsScope()
+    [Fact] public void PostedLimitSurvivesDefaultTransitionAndCanRaiseUrbanDefault()
     {
         var s=Scene(Sign("posted",200,new(SetKph:70)));
         s.Data=s.Data with{Regions=[new("city",[new(650,0,-100),new(1000,0,-100),new(1000,0,100),new(650,0,100)],0,true)]};
-        Assert.Null(Resolve(s).Kph);
+        Assert.Equal(70,Resolve(s).Kph);
     }
     private sealed class NoSynthesis : ISpeechSynthesizer
     {

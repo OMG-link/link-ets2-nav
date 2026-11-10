@@ -11,6 +11,7 @@ public sealed class NavigationLogReporter
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
     private readonly Action<string> info;
     private readonly Action<string> warning;
+    private readonly HashSet<string> reportedLimitConflicts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> changes = new();
     private (string Session, double Limit)? currentLimit;
     private CurrentSpeedLimitDiagnostic? lastLimitComparison;
@@ -66,8 +67,11 @@ public sealed class NavigationLogReporter
         scan = signature;
         scanAt = now;
         Event(FormattableString.Invariant($"扫描完成：{nearby.Sectors.Count} 个区块，{nearby.Map.MapItems.Count} 个地图条目，{nearby.PrefabPaths.Count} 条路口连接，附近 {nearby.Cameras.Count} 个测速挂点；耗时 {elapsed.TotalMilliseconds:F0} ms；X={position.X:F1}, Z={position.Z:F1}。"), now);
-        if (nearby.Diagnostics.Count > 0)
-            warning(Stamp($"扫描有 {nearby.Diagnostics.Count} 条资源诊断：{string.Join(" | ", nearby.Diagnostics.Take(3))}", now));
+        foreach(var conflict in nearby.Diagnostics.Where(d=>d.StartsWith("限速汇合冲突：",StringComparison.Ordinal)))
+            if(reportedLimitConflicts.Add(conflict))warning(Stamp(conflict,now));
+        var otherDiagnostics=nearby.Diagnostics.Where(d=>!d.StartsWith("限速汇合冲突：",StringComparison.Ordinal)).ToArray();
+        if (otherDiagnostics.Length > 0)
+            warning(Stamp($"扫描有 {otherDiagnostics.Length} 条资源诊断：{string.Join(" | ", otherDiagnostics.Take(3))}", now));
     }
 
     public void Report(NavDiagnosticSnapshot snapshot)

@@ -262,3 +262,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/export-prefab-svg.ps
 标志依据 [SCS Blender Tools 的 PIF 定义](https://github.com/SCSSoftware/BlenderTools/blob/master/addon/io_scs_tools/consts.py)：记录组头中的 `0xF0` 表示组大小，`0x10000` 是分流、`0x20000` 是汇合；两类均排除。`0x40000` 的尖角交叉仍属于交叉。组内曲线再按原生 Next 关系追溯入口及出口，排除同入口车道交织和同出口收敛。无有效交叉记录时不猜测。
 
 `NavigationManeuverDetector` 将全部角度分类统一为路口规则 `ClassifyJunctionAngles`：左转、右转、掉头、左右前方及直行均只在已确认交叉路口计算。普通道路节点分岔和未经确认的预制件不调用这组规则。基于车道连接结构的合并、驶出和已识别环岛仍按各自规则处理。`LaneExitApproach` 可独立从专属外侧车道及上游新增车道原生分叉生成驶出动作，不依赖被禁用的角度指引；该结构依据优先于把专属出口误当作直行的几何结果。
+
+
+## 预计算限速区间
+
+后台区块扫描先由 `SpeedLimitDefinitionReader` 读取规则，再由 `PostedLimitBuilder` 挂载标牌并沿道路与原生 PPD 的有向连接传播，产生每条道路正反向的 `ForwardSignLimits`／`ReverseSignLimits`。区间里程从各自方向的起点计算。经过路口不自动解除，传播到所有已加载出口；只有明确的解除／覆盖规则改变状态。不限制传播距离。汇合的数值限速不一致时记录一条包含冲突数量和节点示例的警告，受影响区间返回未知。无标牌限制与未知是不同状态。构建工作集在完成后释放，查询使用发布后的不可变区间和空间索引，不反向寻路、不读文件。新窗口按全部已激活连接构建完成后统一替换，旧快照在替换前仍可查询。
+
+区域按其所属区块缓存在 `SpeedLimitAreaCache`，仅对尚未缓存的补充区块读取 Area，不触发预制件／探头解析。查询检查最近四个区块的 Area，并先用包围盒筛选。约定所有影响查询点的 Area 都属于这四个区块，所有影响标牌限速的完整区间都在激活区块内。`CityArea` 只提供城市／国家归属，支持旋转矩形；城区状态来自 `TrafficArea` 的 `urban_area` 等规则或标牌。高度范围仍参与区域判断。
+
+组合规则使用国家货车定义中的 `limit`／`urban_limit` 作为默认值，明确标牌可提高城区默认值，但始终受 `max_limit` 约束；显式数值交通区域再取较小值。高速道路通过对应类别的 `urban_limit` 处理，不笼统忽略数值 Area。此区别来自 [SCS 的货车限速说明](https://modding.scssoft.com/wiki/Games/ETS2/Modding_guides/1.25#Speed_limits)，仍应持续使用 SDK 实际限速校验。`impl_reset` 的 `implicit` 参数是解除操作模式，不是车辆类别。

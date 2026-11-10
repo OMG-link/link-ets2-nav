@@ -80,7 +80,7 @@ public sealed class SpeedLimitDefinitionReader
 
     public SpeedLimitData Build(TruckLib.ScsMap.Map map) => Build(map,CancellationToken.None);
 
-    public SpeedLimitData Build(TruckLib.ScsMap.Map map,CancellationToken cancellationToken, TruckLib.ScsMap.Map? hostMap = null)
+    public SpeedLimitData Build(TruckLib.ScsMap.Map map,CancellationToken cancellationToken, TruckLib.ScsMap.Map? hostMap = null, IReadOnlyList<LimitRegion>? regionsOverride = null)
     {
         if(error is not null)return SpeedLimitData.Empty with{Error=error};
         var roads=new Dictionary<ulong,LimitRoad>();
@@ -98,32 +98,7 @@ public sealed class SpeedLimitDefinitionReader
             if(signs.TryGetValue(sign.Model.ToString(),out var action)&&action.Relevant)
                 placedSigns.Add(new(sign.Uid.ToString("X16"),sign.Node.Position,Vector3.Transform(-Vector3.UnitZ,sign.Node.Rotation),
                     sign.FollowRoadDir,action,!string.IsNullOrEmpty(sign.SignTemplate)||sign.SignOverrides?.Count>0));
-        placedSigns=placedSigns.Select(sign =>
-        {
-            var owners=roads.Values.Select(r=>(Road:r,Projection:SpeedLimitGeometry.Nearest(sign.Position,r.Geometry)))
-                .Where(p=>p.Projection is {Error:<=18,Vertical:<=3}).OrderBy(p=>p.Projection!.Value.Error).Take(2).ToArray();
-            return sign with { RoadId=owners.Length==0?null:owners[0].Road.Geometry.Id,
-                OwnershipAmbiguous=owners.Length==0||owners.Length>1&&owners[1].Projection!.Value.Error-owners[0].Projection!.Value.Error<2 };
-        }).ToList();
-        var regions=new List<LimitRegion>();
-
-        foreach(var city in map.MapItems.Values.OfType<CityArea>().Where(c=>c.Node is Node))
-        {
-            if(city.Node.Rotation!=Quaternion.Identity)continue;
-            var p=city.Node.Position;float x=city.Width/2,z=city.Height/2;
-            var country=cityCountries.GetValueOrDefault(city.Name.ToString());
-            if(string.IsNullOrWhiteSpace(country))country=null;
-
-            regions.Add(new(city.Uid.ToString("X16"),[p+new Vector3(-x,0,-z),p+new Vector3(x,0,-z),
-                p+new Vector3(x,0,z),p+new Vector3(-x,0,z)],0,true){Country=country});
-        }
-        foreach(var area in map.MapItems.Values.OfType<TrafficArea>())
-        {
-            var action=Action("traffic_rule."+area.Rule,[]);
-            if(action.Urban==true||action.SetKph.HasValue)
-                regions.Add(new(area.Uid.ToString("X16"),area.Nodes.Select(n=>n.Position).ToArray(),area.Range,
-                    action.Urban==true,action.SetKph));
-        }
+        var regions=regionsOverride??ReadRegions(map);
         PrepareHost(hostMap, cancellationToken);
         var countryIndex=RoadCountryIndex.Build(map,countryNames,cancellationToken);
         // Global evidence is authoritative, including ambiguity; local city seeds cannot override it.
@@ -146,6 +121,34 @@ public sealed class SpeedLimitDefinitionReader
                 roads[uid]=roads[uid] with { Country=countryIndex.GetCountry(uid), CountryUncertain=countryIndex.IsUncertain(uid) };
         return new(roads,placedSigns,regions,limits,null);
     }
+    public IReadOnlyList<LimitRegion> ReadRegions(TruckLib.ScsMap.Map map)
+    {
+        var regions=new List<LimitRegion>();
+
+        foreach(var city in map.MapItems.Values.OfType<CityArea>().Where(c=>c.Node is Node))
+        {
+            var p=city.Node.Position;float x=city.Width/2,z=city.Height/2;
+            var country=cityCountries.GetValueOrDefault(city.Name.ToString());
+            if(string.IsNullOrWhiteSpace(country))country=null;
+
+            var corners=new[]{new Vector3(-x,0,-z),new Vector3(x,0,-z),new Vector3(x,0,z),new Vector3(-x,0,z)}
+                .Select(v=>p+Vector3.Transform(v,city.Node.Rotation)).ToArray();
+            // City items declare city membership, not the urban traffic rule.
+            regions.Add(new(city.Uid.ToString("X16"),corners,0,false)
+                {Country=country,OwnerSector=TruckLib.ScsMap.Map.GetSectorOfCoordinate(p)});
+        }
+        foreach(var area in map.MapItems.Values.OfType<TrafficArea>())
+        {
+            var action=Action("traffic_rule."+area.Rule,[]);
+            if(action.Urban==true||action.SetKph.HasValue||action.Unsupported)
+                regions.Add(new(area.Uid.ToString("X16"),area.Nodes.Select(n=>n.Position).ToArray(),area.Range,
+                    action.Urban==true,action.SetKph)
+                { OwnerSector=TruckLib.ScsMap.Map.GetSectorOfCoordinate(area.Nodes.Select(n=>n.Position).Aggregate(Vector3.Zero,(a,b)=>a+b)/area.Nodes.Count),
+                  Unsupported=action.Unsupported });
+        }
+        return regions;
+    }
+
     // TrafficRule selects lane_variant; Variant selects model_variants within that lane variant.
     // Resolve only variants explicitly owned by this road look, never by their name suffix.
     private string? RoadClass(Road road,bool left)
@@ -184,14 +187,18 @@ public sealed class SpeedLimitDefinitionReader
         if(!seen.Add(name))return new(Unsupported:true);
         if(name is "traffic_rule.urban_area" or "traffic_rule.urban_start")return new(Urban:true);
         if(name=="traffic_rule.urban_end")return new(Reset:true,Urban:false);
-        if(name=="traffic_rule.crossroad_end")return new(Reset:true);
+        if(name=="traffic_rule.crossroad_end")return new();
         if(!rules.TryGetValue(name,out var u))return new(Unsupported:name.Contains("limit",StringComparison.Ordinal)||name.Contains("urban",StringComparison.Ordinal));
-        if(name.Contains("motorway",StringComparison.Ordinal)||name.Contains("highway",StringComparison.Ordinal))return new(Unsupported:true);
-        int? speed=null;bool reset=false,unsupported=false;bool? urban=null;
+        int? speed=null;bool reset=false,unsupported=false;bool? urban=null;bool? motorway=null;
+        if(Text(u,"rule")=="lane")
+        {
+            var parameters=Values(u,"str_params").Select(Link).ToArray();
+            if(parameters.Length>=2 && parameters[0]=="motorway")motorway=parameters[1]=="start"?true:parameters[1]=="end"?false:null;
+        }
         if(Text(u,"rule")=="speed_limit")
         {
             var vehicles=Values(u,"str_params").Select(Link).ToArray();
-            if(vehicles.Length>0&&!vehicles.Any(v=>v is "truck" or "truck_all"))return new();
+            if(vehicles.Length>0&&!vehicles.Any(v=>v is "truck" or "truck_all" or "implicit"))return new();
             var numbers=Numbers(u,"num_params");
             if(numbers.Length==0)unsupported=true;
             else if(numbers[0]==0)reset=true;
@@ -201,9 +208,9 @@ public sealed class SpeedLimitDefinitionReader
         foreach(var child in Values(u,"additional_rules").Select(Link))
         {
             var a=Action(child,new HashSet<string>(seen));
-            speed=a.SetKph??speed;reset|=a.Reset;urban=a.Urban??urban;unsupported|=a.Unsupported;
+            speed=a.SetKph??speed;reset|=a.Reset;urban=a.Urban??urban;motorway=a.Motorway??motorway;unsupported|=a.Unsupported;
         }
-        return new(speed,reset,urban,unsupported);
+        return new(speed,reset,urban,unsupported,motorway);
     }
     private static object? Value(Unit u,string key)=>u.Attributes.TryGetValue(key,out var value)?(object)value:null;
     private static string Text(Unit u,string key)=>Link(Value(u,key));

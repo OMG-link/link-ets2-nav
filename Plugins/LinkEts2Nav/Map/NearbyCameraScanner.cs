@@ -51,6 +51,7 @@ public sealed class NearbyCameraScanner
     private bool definitionsLoaded;
     private readonly IReadOnlyList<string> activeModPaths;
     private SpeedLimitDefinitionReader? speedReader;
+    private SpeedLimitAreaCache? areaCache;
     private SpeedLimitData speedLimits = SpeedLimitData.Empty;
 
     public NearbyCameraScanner(IFileSystem fileSystem, string mapPath = "/map/europe.mbd", IReadOnlyList<string>? activeModPaths = null, ScsMap? hostMap = null)
@@ -116,17 +117,25 @@ public sealed class NearbyCameraScanner
             }
             foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road);
             roundaboutIndex.BuildNewSectors(sectors,cancellationToken);
+            areaCache ??= new(fileSystem,mapPath);
+            var regionData=areaCache.Update(nextMap,sectors,
+                junctions.SelectMany(e=>e.Points).Concat(nextMap.MapItems.Values.OfType<Road>()
+                    .SelectMany(r=>Enumerable.Range(0,Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)+1)
+                        .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),speedReader!,cancellationToken);
+            var builtLimits = PostedLimitBuilder.Build(speedReader!.Build(nextMap,cancellationToken,hostMap,regionData),junctions,cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             geometryCache = nextGeometry;
             junctionGeometry = junctions;
             freeNavigationAreas = areas;
             junctionDiagnostics = issues.Distinct().ToArray();
+            speedLimits = builtLimits;
             map = nextMap;
             loadedSectors = sectors;
-            speedLimits = speedReader!.Build(nextMap,cancellationToken,hostMap);
         }
         var diagnostics = new List<string>(definitionDiagnostics);
         diagnostics.AddRange(junctionDiagnostics);
         diagnostics.AddRange(roundaboutIndex.Diagnostics);
+        diagnostics.AddRange(speedLimits.Diagnostics);
         if(speedLimits.Error is not null) diagnostics.Add(speedLimits.Error);
         var cameras = new List<CameraObservation>();
         foreach (var item in map.MapItems.Values)

@@ -153,6 +153,14 @@ public sealed class SpeedLimitDefinitionReader
     // Resolve only variants explicitly owned by this road look, never by their name suffix.
     private string? RoadClass(Road road,bool left)
     {
+        var lanes=RoadLanes(road,left);
+        if(lanes is null)return null;
+        var classes=lanes.Select(LaneClass).ToArray();
+        return classes.All(c=>c is not null)&&classes.Distinct(StringComparer.Ordinal).Count()==1?classes[0]:null;
+    }
+
+    private object[][]? RoadLanes(Road road,bool left)
+    {
         if(!roadLooks.TryGetValue(road.RoadType.ToString(),out var look))return null;
         var side=left?road.Left:road.Right;
         if(side.VariantOverrides.Count>0)return null;
@@ -168,9 +176,8 @@ public sealed class SpeedLimitDefinitionReader
             .Where(p=>p.Models.Length==0||p.Models.Contains(side.Variant.ToString(),StringComparer.Ordinal)).ToArray();
         if(variants.Any(p=>p.Models.Length>0))variants=variants.Where(p=>p.Models.Length>0).ToArray();
         if(variants.Length==0)
-            return selected==defaultVariant?LaneClass(Values(look,key)):null;
-        var classes=variants.Select(p=>LaneClass(Values(p.Unit.Attributes.ContainsKey(key)?p.Unit:look,key))).ToArray();
-        return classes.All(c=>c is not null)&&classes.Distinct(StringComparer.Ordinal).Count()==1?classes[0]:null;
+            return selected==defaultVariant?[Values(look,key).ToArray()]:null;
+        return variants.Select(p=>Values(p.Unit.Attributes.ContainsKey(key)?p.Unit:look,key).ToArray()).ToArray();
     }
 
     private string? LaneClass(IEnumerable<object> values)

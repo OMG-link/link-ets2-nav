@@ -100,7 +100,7 @@ public sealed class SpeedLimitDefinitionReader
                     sign.FollowRoadDir,action,!string.IsNullOrEmpty(sign.SignTemplate)||sign.SignOverrides?.Count>0));
         placedSigns=placedSigns.Select(sign =>
         {
-            var owners=roads.Values.Select(r=>(Road:r,Projection:SpeedLimitResolver.Nearest(sign.Position,r.Geometry)))
+            var owners=roads.Values.Select(r=>(Road:r,Projection:SpeedLimitGeometry.Nearest(sign.Position,r.Geometry)))
                 .Where(p=>p.Projection is {Error:<=18,Vertical:<=3}).OrderBy(p=>p.Projection!.Value.Error).Take(2).ToArray();
             return sign with { RoadId=owners.Length==0?null:owners[0].Road.Geometry.Id,
                 OwnershipAmbiguous=owners.Length==0||owners.Length>1&&owners[1].Projection!.Value.Error-owners[0].Projection!.Value.Error<2 };

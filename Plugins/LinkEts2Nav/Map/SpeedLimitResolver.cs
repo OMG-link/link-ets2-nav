@@ -50,13 +50,13 @@ public sealed class SpeedLimitResolver(SpeedLimitData data, RoadPathSource paths
             }
             foreach(var sign in data.Signs)
             {
-                var projection=Nearest(sign.Position,road);
+                var projection=SpeedLimitGeometry.Nearest(sign.Position,road);
                 if(projection is null||projection.Value.Error>18||projection.Value.Vertical>3)continue;
                 if(offset+projection.Value.Along>cameraAt.Value+.01)continue;
                 if(sign.RoadId is not null&&sign.RoadId!=road.Id)continue;
                 // Production associations are built by the scanner, outside the warning loop.
                 // Synthetic/unassociated inputs can still resolve ownership here.
-                var owners=(sign.RoadId is null ? data.Roads.Values : Array.Empty<LimitRoad>()).Select(r=>(Road:r,Projection:Nearest(sign.Position,r.Geometry)))
+                var owners=(sign.RoadId is null ? data.Roads.Values : Array.Empty<LimitRoad>()).Select(r=>(Road:r,Projection:SpeedLimitGeometry.Nearest(sign.Position,r.Geometry)))
                     .Where(p=>p.Projection is {Error:<=18,Vertical:<=3})
                     .OrderBy(p=>p.Projection!.Value.Error).Take(2).ToArray();
                 bool ambiguous=sign.OwnershipAmbiguous || sign.RoadId is null && (owners.Length==0||owners[0].Road.Geometry.Id!=road.Id
@@ -139,19 +139,5 @@ public sealed class SpeedLimitResolver(SpeedLimitData data, RoadPathSource paths
         return new(value>0?value:null,urban?"城市道路默认限速":"国家道路默认限速");
     }
     private static double Length(DirectedRoad road)=>road.Points.Zip(road.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
-    internal static (double Along,float Error,float Vertical,Vector3 Heading)? Nearest(Vector3 point,DirectedRoad road)
-    {
-        double along=0; (double Along,float Error,float Vertical,Vector3 Heading)? best=null;
-        foreach(var(a,b)in road.Points.Zip(road.Points.Skip(1)))
-        {
-            var delta=b-a;float length=delta.Length();
-            if(length<.001f)continue;
-            float t=Math.Clamp(Vector3.Dot(point-a,delta)/delta.LengthSquared(),0,1);
-            var p=a+delta*t;
-            float error=Vector2.Distance(new(point.X,point.Z),new(p.X,p.Z));
-            if(best is null||error<best.Value.Error)best=(along+length*t,error,Math.Abs(point.Y-p.Y),Vector3.Normalize(new(delta.X,0,delta.Z)));
-            along+=length;
-        }
-        return best;
-    }
+
 }

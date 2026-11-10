@@ -139,7 +139,8 @@ public sealed class NavigationManeuverDetector
                             i + 1 < route.Count ? route[i + 1].Id : current.Id)
                         { JunctionId = "prefab:" + prefab, HasSeparateApproachRoad = i > 0 && PrefabKey(route[i - 1]) is null });
                 }
-                if (connections.Length >= 2)
+                // All angle-based maneuvers share this junction-only rule.
+                if (connections.Length >= 2 && current.Junction?.IsJunction == true)
                 {
                     var previous = i > 0 ? route[i - 1] : null;
                     var following = i + 1 < route.Count ? route[i + 1] : null;
@@ -190,8 +191,7 @@ public sealed class NavigationManeuverDetector
                         exits.Add((group[0].EndNodeUid, direction.Value, roadType));
                     }
                     if (chosen is null) return result;
-                    if (Classify(entry.Value, chosen.Value, exits, previous?.RoadType, current.EndNodeUid, out bool mainContinuation) is { } kind
-                        && (kind is not (ManeuverKind.KeepLeft or ManeuverKind.KeepRight) || current.Junction?.IsJunction==true))
+                    if (ClassifyJunctionAngles(entry.Value, chosen.Value, exits, previous?.RoadType, current.EndNodeUid, out bool mainContinuation) is { } kind)
                         result.Add(new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
                             kind, offset - vehicleAlong, previous?.Id ?? current.Id, following?.Id ?? current.Id)
                         {
@@ -204,26 +204,11 @@ public sealed class NavigationManeuverDetector
             else if (PrefabKey(current) is null && i + 1 < route.Count
                 && PrefabKey(route[i + 1]) is null && route[i + 1].Roundabout is null && end >= vehicleAlong)
             {
-                var outgoing = route[i + 1];
+                // Ordinary road joins still validate continuity, but are not junction rules.
                 var exits = (roadStarts.GetValueOrDefault(current.EndNodeUid) ?? [])
-                    .Where(e => e.Id != current.Id && e.EndNodeUid != current.StartNodeUid)
-                    .GroupBy(e => (e.Id, e.StartNodeUid, e.EndNodeUid)).Select(g => g.First()).ToArray();
-                if (!exits.Any(e => SameEdge(e, outgoing))) return result;
-                if (exits.Length >= 2)
-                {
-                    if (exits.Any(e => !Valid(e) || !Connected(current, e))) return result;
-                    var entry = Tangent(current, false);
-                    var chosen = Tangent(outgoing, true);
-                    var directions = exits.Select(e => (e.EndNodeUid, Direction: Tangent(e, true), e.RoadType)).ToArray();
-                    if (entry is null || chosen is null || directions.Any(e => e.Direction is null)) return result;
-                    if (Classify(entry.Value, chosen.Value,
-                        directions.Select(e => (e.EndNodeUid, e.Direction!.Value, e.RoadType)).ToArray(),
-                        current.RoadType, outgoing.EndNodeUid, out bool mainContinuation) is { } kind
-                        && kind is not (ManeuverKind.KeepLeft or ManeuverKind.KeepRight))
-                        result.Add(new($"node:{current.EndNodeUid:X16}:{outgoing.EndNodeUid:X16}",
-                            kind, end - vehicleAlong, current.Id, outgoing.Id)
-                        { JunctionId = $"node:{current.EndNodeUid:X16}", IsMainRoadContinuation = mainContinuation });
-                }
+                    .Where(e => e.Id != current.Id && e.EndNodeUid != current.StartNodeUid).ToArray();
+                if (!exits.Any(e => SameEdge(e, route[i + 1]))) return result;
+                if (exits.Length >= 2 && exits.Any(e => !Valid(e) || !Connected(current, e))) return result;
             }
             confirmedUntil = end;
             offset = end;
@@ -287,7 +272,9 @@ public sealed class NavigationManeuverDetector
         return false;
     }
 
-    private static ManeuverKind? Classify(Vector2 entry, Vector2 selected,
+    /// <summary>Junction rule: classify all turns, reversals and shallow directions together.
+    /// Called only for prefabs confirmed to contain crossing movements.</summary>
+    private static ManeuverKind? ClassifyJunctionAngles(Vector2 entry, Vector2 selected,
         IReadOnlyList<(ulong End, Vector2 Direction, string? RoadType)> exits,
         string? entryType, ulong selectedEnd, out bool mainContinuation)
     {

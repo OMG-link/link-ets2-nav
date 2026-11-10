@@ -261,4 +261,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/export-prefab-svg.ps
 
 标志依据 [SCS Blender Tools 的 PIF 定义](https://github.com/SCSSoftware/BlenderTools/blob/master/addon/io_scs_tools/consts.py)：记录组头中的 `0xF0` 表示组大小，`0x10000` 是分流、`0x20000` 是汇合；两类均排除。`0x40000` 的尖角交叉仍属于交叉。组内曲线再按原生 Next 关系追溯入口及出口，排除同入口车道交织和同出口收敛。无有效交叉记录时不猜测。
 
-`NavigationManeuverDetector` 只允许已确认交叉路口产生按出口角度计算的 KeepLeft／KeepRight；普通道路节点分岔和未经确认的预制件不产生这两类角度指引。明确左／右转、掉头、合并和已识别环岛仍按各自规则处理。`LaneExitApproach` 可独立从专属外侧车道及上游新增车道原生分叉生成驶出动作，不依赖被禁用的角度指引；该结构依据优先于把专属出口误当作直行的几何结果。
+`NavigationManeuverDetector` 将全部角度分类统一为路口规则 `ClassifyJunctionAngles`：左转、右转、掉头、左右前方及直行均只在已确认交叉路口计算。普通道路节点分岔和未经确认的预制件不调用这组规则。基于车道连接结构的合并、驶出和已识别环岛仍按各自规则处理。`LaneExitApproach` 可独立从专属外侧车道及上游新增车道原生分叉生成驶出动作，不依赖被禁用的角度指引；该结构依据优先于把专属出口误当作直行的几何结果。

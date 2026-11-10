@@ -15,8 +15,8 @@ public sealed class NavigationRuntimeTests
         var straight=Road.Add(map,new(0,0,760),new(0,0,1300),default);
         DirectedRoad[] links=[
             new("prefab:ABC:0:1",incoming.ForwardNode.Uid,right.Node.Uid,
-                [new(0,0,700),new(0,0,710),new(-10,0,725),new(-30,0,730)]),
-            new("prefab:ABC:0:2",incoming.ForwardNode.Uid,straight.Node.Uid,[new(0,0,700),new(0,0,760)])];
+                [new(0,0,700),new(0,0,710),new(-10,0,725),new(-30,0,730)]) { Junction = new(2, 2, 1) },
+            new("prefab:ABC:0:2",incoming.ForwardNode.Uid,straight.Node.Uid,[new(0,0,700),new(0,0,760)]) { Junction = new(2, 2, 1) }];
         var route=RouteSnapshot.Parse([new(incoming.Node.Uid,1300,60),
             new(incoming.ForwardNode.Uid,600,30),new(right.Node.Uid,570,28),new(right.ForwardNode.Uid,0,0)],Now);
         return(new(map,[],[],[]){PrefabPaths=links},route);
@@ -107,8 +107,8 @@ public sealed class NavigationRuntimeTests
         var turn=Road.Add(map,new(-40,0,1240),new(-600,0,1240),default);
         var continuation=Road.Add(map,new(0,0,1260),new(0,0,1600),default);
         DirectedRoad[] links=[..scene.Map.PrefabPaths.Where(p=>hasChoice || p.EndNodeUid==straight.Node.Uid),
-            new("prefab:DEF:0:1",straight.ForwardNode.Uid,turn.Node.Uid,[new(0,0,1200),new(-40,0,1240)]),
-            new("prefab:DEF:0:2",straight.ForwardNode.Uid,continuation.Node.Uid,[new(0,0,1200),new(0,0,1260)])];
+            new("prefab:DEF:0:1",straight.ForwardNode.Uid,turn.Node.Uid,[new(0,0,1200),new(-40,0,1240)]) { Junction = new(2, 2, 1) },
+            new("prefab:DEF:0:2",straight.ForwardNode.Uid,continuation.Node.Uid,[new(0,0,1200),new(0,0,1260)]) { Junction = new(2, 2, 1) }];
         var route=RouteSnapshot.Parse([new(incoming.Node.Uid,2000,100),new(incoming.ForwardNode.Uid,1600,80),
             new(straight.Node.Uid,1500,75),new(straight.ForwardNode.Uid,1000,50),new(turn.Node.Uid,900,45),new(turn.ForwardNode.Uid,0,0)],Now);
         var nearby=scene.Map with{PrefabPaths=links};var runtime=new NavigationRuntime();
@@ -127,8 +127,8 @@ public sealed class NavigationRuntimeTests
         var nextExit=Road.Add(map,new(-600,0,770),new(-600,0,1200),default);
         var otherExit=Road.Add(map,new(-640,0,730),new(-1000,0,730),default);
         DirectedRoad[] links=[..scene.Map.PrefabPaths,
-            new("prefab:DEF:0:1",firstExit.ForwardNode.Uid,nextExit.Node.Uid,[new(-600,0,730),new(-600,0,770)]),
-            new("prefab:DEF:0:2",firstExit.ForwardNode.Uid,otherExit.Node.Uid,[new(-600,0,730),new(-640,0,730)])];
+            new("prefab:DEF:0:1",firstExit.ForwardNode.Uid,nextExit.Node.Uid,[new(-600,0,730),new(-600,0,770)]) { Junction = new(2, 2, 1) },
+            new("prefab:DEF:0:2",firstExit.ForwardNode.Uid,otherExit.Node.Uid,[new(-600,0,730),new(-640,0,730)]) { Junction = new(2, 2, 1) }];
         var nearby=scene.Map with{PrefabPaths=links};
         var nodes=scene.Route.Nodes.Take(4).Select((n,i)=>n with{DistanceToEndMeters=2000-i*400}).ToList();
         nodes.Add(new(nextExit.Node.Uid,400,20));nodes.Add(new(nextExit.ForwardNode.Uid,0,0));

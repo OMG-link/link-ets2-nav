@@ -4,9 +4,9 @@ using LinkEts2Nav.Map;
 namespace LinkEts2Nav.UnitTests;
 public sealed class RoundaboutNavigationTests
 {
-    private static RoundaboutStructure Ring()
+    private static RoundaboutStructure Ring(bool mirrored=false)
     {
-        Vector3 P(double a)=>new((float)(20*Math.Cos(a)),0,(float)(-20*Math.Sin(a)));
+        Vector3 P(double a)=>new((float)(20*Math.Cos(a)),0,(float)((mirrored?20:-20)*Math.Sin(a)));
         var graph=new Dictionary<RoundaboutCurveKey,RoundaboutCurve>();
         var ring=Enumerable.Range(0,8).Select(i=>new RoundaboutCurveKey(1,i)).ToArray();
         for(int i=0;i<8;i++)
@@ -18,7 +18,7 @@ public sealed class RoundaboutNavigationTests
         for(int n=0;n<4;n++)
         {
             var boundary=P(n*Math.PI/2)*2;
-            graph[new(1,200+n)]=new(new(1,200+n),1,false,[boundary,P((2*n+1)*Math.PI/4)],[ring[2*n+1]],(ulong)(10+n));
+            graph[new(1,200+n)]=new(new(1,200+n),1,false,[P(n*Math.PI/2+.04)*2,P((2*n+1)*Math.PI/4)],[ring[2*n+1]],(ulong)(10+n));
             graph[new(1,100+n)]=new(new(1,100+n),1,false,[P(n*Math.PI/2),boundary],[new((ulong)(1000+n),0)],0,(ulong)(10+n));
             graph[new((ulong)(1000+n),0)]=new(new((ulong)(1000+n),0),(ulong)(1000+n),false,[boundary,boundary*2],[],(ulong)(100+n));
         }
@@ -35,6 +35,23 @@ public sealed class RoundaboutNavigationTests
         var adapted=RoundaboutRouteAdapter.Apply(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring}});
         Assert.Equal(ordinal,Assert.Single(adapted).Roundabout!.ExitNumber);
     }
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void PolarOrderingIgnoresReferenceRingJoinAndDepartureOffsets(bool mirrored)
+    {
+        var ring=Ring(mirrored);
+        var first=ring.ExitPorts.Single(p=>p.BoundaryNodeUid==11);
+        // Reference lane joins after the first departure: polar ordering must still count it.
+        ring=ring with{EntryPorts=ring.EntryPorts.Select(p=>p.NodeUid==10
+            ?p with{RingAlong=first.RingAlong+1}:p).ToArray()};
+        var road=new DirectedRoad("prefab:1:0:3",10,13,[Vector3.Zero,new(100,0,0)]);
+        var adapted=Assert.Single(RoundaboutRouteAdapter.Apply([road],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        Assert.Equal(3,adapted.Roundabout!.ExitNumber);
+        Assert.Equal(new[]{1,2,3},adapted.Roundabout.Exits.Select(e=>e.Number));
+        Assert.NotEqual(ring.EntryPorts.Single(p=>p.NodeUid==10).Bearing,
+            ring.ExitPorts.Single(p=>p.BoundaryNodeUid==10).Bearing);
+    }
+
     [Fact]
     public void CompositePassagePreservesActualGeometryAndUsesOnePhysicalDecision()
     {

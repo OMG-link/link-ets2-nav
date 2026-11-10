@@ -22,11 +22,12 @@ public static class RoundaboutRouteAdapter
                 .GroupBy(p => (p.ExternalItemUid, p.ExternalNodeUid)).ToArray();
             if (entry is null || exitMatches.Length != 1 || ring.RingLength <= 0)
             { result.AddRange(route.Skip(i).Take(last - i + 1)); i = last; continue; }
-            double Ahead(double phase)
-            { double d = (phase - entry.RingAlong + ring.RingLength) % ring.RingLength; return d < .01 || ring.RingLength - d < .01 ? 0 : d; }
+            // Bearings already follow the ring's native circulation direction.
+            double Ahead(RoundaboutExitPort port)
+            { return (port.Bearing - entry.Bearing + 2 * Math.PI) % (2 * Math.PI); }
             var ordered = ring.ExitPorts.GroupBy(p => (p.ExternalItemUid, p.ExternalNodeUid))
-                .Select(g => (g.Key, Along: g.Min(p => Ahead(p.RingAlong)))).OrderBy(p => p.Along).ToArray();
-            bool ambiguous = ordered.Zip(ordered.Skip(1)).Any(p => Math.Abs(p.First.Along - p.Second.Along) < .01);
+                .Select(g => (g.Key, Along: g.Min(p => Ahead(p)))).OrderBy(p => p.Along).ToArray();
+            bool ambiguous = ordered.Zip(ordered.Skip(1)).Any(p => Math.Abs(p.First.Along - p.Second.Along) < 1e-6);
             int ordinal = Array.FindIndex(ordered, p => p.Key == exitMatches[0].Key) + 1;
             if (ambiguous || ordinal == 0)
             { result.AddRange(route.Skip(i).Take(last - i + 1)); i = last; continue; }
@@ -38,7 +39,7 @@ public static class RoundaboutRouteAdapter
             for(int n=0;n<ordinal-1;n++)
             {
                 var port=ring.ExitPorts.Where(p=>(p.ExternalItemUid,p.ExternalNodeUid)==ordered[n].Key)
-                    .MinBy(p=>Ahead(p.RingAlong))!;
+                    .MinBy(p=>Ahead(p))!;
                 double along=Project(port.DeparturePosition,points,previous,departure);
                 cues.Add(new(n+1,along));previous=along;
             }

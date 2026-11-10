@@ -1,10 +1,14 @@
 using System.Numerics;
 namespace LinkEts2Nav.Map;
 
-public sealed record RoundaboutEntryPort(ulong NodeUid, double RingAlong);
+public sealed record RoundaboutEntryPort(ulong NodeUid, double RingAlong)
+{
+    public double Bearing { get; init; }
+}
 public sealed record RoundaboutExitPort(ulong ExternalItemUid, ulong ExternalNodeUid, ulong BoundaryNodeUid, double RingAlong, double DepartureToBoundaryMeters = 0)
 {
     public Vector3 DeparturePosition { get; init; }
+    public double Bearing { get; init; }
 }
 
 /// <summary>Maps physical ports to a representative ring using directed shortest connector paths.</summary>
@@ -17,6 +21,30 @@ public static class RoundaboutPorts
         var owners = members.ToHashSet(); var ringSet = ring.ToHashSet();
         bool Inside(RoundaboutCurve c) => c.PrefabUid is { } owner ? owners.Contains(owner) : ringSet.Contains(c.Key);
         var local = graph.Values.Where(Inside).ToArray();
+        // Use one native lane endpoint per direction and interface, independently.
+        // Stable curve ordering makes the arbitrary representative reproducible.
+        var entryPositions = local.Where(c => c.EntryNode != 0).GroupBy(c => c.EntryNode)
+            .ToDictionary(g => g.Key, g => g.OrderBy(c => c.Key.ItemUid).ThenBy(c => c.Key.CurveIndex).First().Points[0]);
+        var exitPositions = local.Where(c => c.ExitNode != 0).GroupBy(c => c.ExitNode)
+            .ToDictionary(g => g.Key, g => g.OrderBy(c => c.Key.ItemUid).ThenBy(c => c.Key.CurveIndex).First().Points[^1]);
+        // Length weighting avoids bias from uneven sampling densities.
+        double weight = 0, centerX = 0, centerZ = 0, area = 0;
+        var origin = graph[ring[0]].Points[0];
+        foreach (var key in ring)
+        {
+            var points = graph[key].Points;
+            for (int i = 1; i < points.Count; i++)
+            {
+                var a = points[i - 1]; var b = points[i];
+                double length = Vector3.Distance(a, b);
+                weight += length; centerX += ((double)a.X + b.X) * .5 * length;
+                centerZ += ((double)a.Z + b.Z) * .5 * length;
+                area += (double)(a.X - origin.X) * (b.Z - origin.Z) - (double)(b.X - origin.X) * (a.Z - origin.Z);
+            }
+        }
+        centerX /= weight; centerZ /= weight;
+        double direction = area >= 0 ? 1 : -1;
+        double Bearing(Vector3 p) => direction * Math.Atan2(p.Z - centerZ, p.X - centerX);
         var reverse = local.SelectMany(c => c.Next.Select(n => (From: c.Key, To: n))).GroupBy(p => p.To)
             .ToDictionary(g => g.Key, g => g.Select(p => p.From).ToArray());
         double Length(RoundaboutCurve c) => c.Points.Zip(c.Points.Skip(1)).Sum(p => (double)Vector3.Distance(p.First, p.Second));
@@ -37,7 +65,7 @@ public static class RoundaboutPorts
             }
         }
         var entries = local.Where(c => c.EntryNode != 0 && entryBest.ContainsKey(c.Key)).GroupBy(c => c.EntryNode)
-            .Select(g => g.MinBy(c => entryBest[c.Key].Cost)!).Select(c => new RoundaboutEntryPort(c.EntryNode, entryBest[c.Key].Phase)).ToArray();
+            .Select(g => g.MinBy(c => entryBest[c.Key].Cost)!).Select(c => new RoundaboutEntryPort(c.EntryNode, entryBest[c.Key].Phase) { Bearing = Bearing(entryPositions[c.EntryNode]) }).ToArray();
         var best = new Dictionary<RoundaboutCurveKey, double>();
         var pending = new PriorityQueue<(RoundaboutCurveKey Key, double Phase, ulong Boundary, double BoundaryCost), double>();
         // Sources are the ends of ring curves: a departure branches after its source curve.
@@ -73,6 +101,6 @@ public static class RoundaboutPorts
                 best[next] = nextCost; pending.Enqueue((next, current.Phase, boundary, boundaryCost), nextCost);
             }
         }
-        return (entries, exits.Values.Select(p => p.Port with {DeparturePosition=departurePositions[p.Port.RingAlong]}).ToArray(), total);
+        return (entries, exits.Values.Select(p => p.Port with {DeparturePosition=departurePositions[p.Port.RingAlong], Bearing=Bearing(exitPositions[p.Port.BoundaryNodeUid])}).ToArray(), total);
     }
 }

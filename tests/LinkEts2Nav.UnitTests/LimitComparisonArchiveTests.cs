@@ -1,45 +1,13 @@
-using System.Numerics;
 using System.Text.Json;
-using LinkEts2Nav.Core;
-using LinkEts2Nav.Map;
 using LinkEts2Nav.Runtime;
-using TruckLib.ScsMap;
 namespace LinkEts2Nav.UnitTests;
 
-public sealed class CurrentSpeedLimitMonitorTests
+public sealed class LimitComparisonArchiveTests
 {
     private static readonly DateTimeOffset Now=new(2026,11,9,0,0,0,TimeSpan.Zero);
     private static GameDataSnapshot Data(DateTimeOffset time,double x=500) => new(
         new(x,0,0,.75,20,1000,true,false,1,time){CurrentSpeedLimitKph=80},
         RouteSnapshot.Parse([],time),RouteAvailability.None,"session",true);
-    private static (TruckLib.ScsMap.Map,SpeedLimitResolver) Scene()
-    {
-        var map=new TruckLib.ScsMap.Map();
-        var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);
-        var geometry=new DirectedRoad(road.Uid.ToString("X16"),road.Node.Uid,road.ForwardNode.Uid,
-            Enumerable.Range(0,101).Select(i=>new Vector3(i*10,0,0)).ToArray());
-        var data=new SpeedLimitData(new Dictionary<ulong,LimitRoad>{{road.Uid,new(geometry,"local_road")}},[],[],
-            new Dictionary<string,TruckSpeedLimit>{{"test/local_road",new(60,50,60)}},"test");
-        return(map,new(data,new RoadPathSource(map)));
-    }
-    [Fact]
-    public void ComparesSamePoseAndThrottlesThenResamples()
-    {
-        var(map,resolver)=Scene();var monitor=new CurrentSpeedLimitMonitor();
-        var first=monitor.Sample(Data(Now),map,resolver,Now)!;
-        Assert.True(first.Mismatch);Assert.Equal(60,first.InferredKph);Assert.Equal(80,first.ActualKph);
-        Assert.Same(first,monitor.Sample(Data(Now.AddMilliseconds(200),510),map,resolver,Now.AddMilliseconds(200)));
-        var next=monitor.Sample(Data(Now.AddSeconds(1),520),map,resolver,Now.AddSeconds(1))!;
-        Assert.Equal(520,next.X);Assert.Equal(Now.AddSeconds(1),next.SampledAt);
-        monitor.Reset();Assert.NotSame(next,monitor.Sample(Data(Now.AddSeconds(1),530),map,resolver,Now.AddSeconds(1)));
-    }
-    [Fact]
-    public void PausedAndStaleSamplesDoNotProduceComparisons()
-    {
-        var(map,resolver)=Scene();var monitor=new CurrentSpeedLimitMonitor();var data=Data(Now);
-        Assert.Null(monitor.Sample(data with {Vehicle=data.Vehicle! with {Paused=true}},map,resolver,Now));
-        Assert.Null(monitor.Sample(data,map,resolver,Now.AddSeconds(3)));
-    }
     [Fact]
     public void LogsMismatchFailureDistanceReminderAndRecoveryWithoutTickSpam()
     {

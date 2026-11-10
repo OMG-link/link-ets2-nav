@@ -4,6 +4,17 @@ namespace LinkEts2Nav.Map;
 
 internal static class SpeedLimitGeometry
 {
+    internal static Vector3 PointAt(DirectedRoad road,double along)
+    {
+        foreach(var(a,b)in road.Points.Zip(road.Points.Skip(1)))
+        {
+            double length=Vector3.Distance(a,b);
+            if(length>.001&&along<=length)return Vector3.Lerp(a,b,(float)Math.Clamp(along/length,0,1));
+            along-=length;
+        }
+        return road.Points[^1];
+    }
+
     internal static (double Along,float Error,float Vertical,Vector3 Heading)? Nearest(Vector3 point,DirectedRoad road)
     {
         double along=0; (double Along,float Error,float Vertical,Vector3 Heading)? best=null;

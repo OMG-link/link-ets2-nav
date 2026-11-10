@@ -122,7 +122,7 @@ public sealed class NearbyCameraScanner
                 junctions.SelectMany(e=>e.Points).Concat(nextMap.MapItems.Values.OfType<Road>()
                     .SelectMany(r=>Enumerable.Range(0,Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)+1)
                         .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),speedReader!,cancellationToken);
-            var builtLimits = PostedLimitBuilder.Build(speedReader!.Build(nextMap,cancellationToken,hostMap,regionData),junctions,cancellationToken);
+            var builtLimits = ProjectedSignBuilder.Build(speedReader!.Build(nextMap,cancellationToken,hostMap,regionData),junctions,cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             geometryCache = nextGeometry;
             junctionGeometry = junctions;

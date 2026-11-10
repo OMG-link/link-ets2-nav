@@ -44,9 +44,8 @@ internal static class SignProjector
             var best=bindings[0];
             // Multiple exits can share the same native approach curves: all inherit that sign.
             string? prefab=Prefab(graph[best.Edge]);
-            var owners=bindings.Where(b=>b.Error-best.Error<2 && b.Dot>=.65f)
-                .Select(b=>Prefab(graph[b.Edge])??graph[b.Edge].Id).Distinct().ToArray();
-            bool uncertain=sign.OwnershipAmbiguous||sign.TemplateOverride||best.Dot<.65f||owners.Length>1;
+            var nearOwners=bindings.Where(b=>b.Error-best.Error<2 && b.Dot>=.65f).Select(b=>graph[b.Edge]).ToArray();
+            bool uncertain=sign.OwnershipAmbiguous||sign.TemplateOverride||best.Dot<.65f||CompetingCorridors(nearOwners);
             if(uncertain)warnings.Add("限速标牌归属、朝向或模板未确认："+sign.Id);
             foreach(var binding in bindings.Where(b=>b.Edge==best.Edge || prefab is not null&&Prefab(graph[b.Edge])==prefab&&b.Dot>=.65f
                 && (b.Error-best.Error<2
@@ -58,5 +57,23 @@ internal static class SignProjector
 
         return new(events,warnings.ToArray());
     }
+    private static bool CompetingCorridors(IReadOnlyList<DirectedRoad> candidates)
+    {
+        if(candidates.Count<2)return false;
+        var reached=new HashSet<int>{0};var queue=new Queue<int>();queue.Enqueue(0);
+        while(queue.TryDequeue(out int i))
+        for(int j=0;j<candidates.Count;j++)
+        {
+            if(reached.Contains(j))continue;
+            var a=candidates[i];var b=candidates[j];
+            bool sameOwner=a.Id==b.Id || Prefab(a) is {} prefab && prefab==Prefab(b);
+            // Two candidates on opposite sides of the same directed interface describe
+            // a continuous corridor, not competing ownership of a boundary sign.
+            if(sameOwner||a.EndNodeUid==b.StartNodeUid||b.EndNodeUid==a.StartNodeUid)
+            {reached.Add(j);queue.Enqueue(j);}
+        }
+        return reached.Count!=candidates.Count;
+    }
+
     private static string? Prefab(DirectedRoad edge)=>edge.Id.StartsWith("prefab:")?edge.Id.Split(':')[1]:null;
 }

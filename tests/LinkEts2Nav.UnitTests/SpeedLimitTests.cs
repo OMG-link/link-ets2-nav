@@ -14,13 +14,14 @@ public sealed class SpeedLimitTests
         var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);
         var geometry=new DirectedRoad(road.Uid.ToString("X16"),road.Node.Uid,road.ForwardNode.Uid,
             Enumerable.Range(0,201).Select(i=>new Vector3(i*5,0,0)).ToArray());
-        return(map,road,new(new Dictionary<ulong,LimitRoad>{{road.Uid,new(geometry,"local_road")}},signs,[],
+        return(map,road,new(new Dictionary<ulong,LimitRoad>{{road.Uid,new(geometry,"local_road")}},[Sign("initial-reset",1,new(Reset:true)),..signs],[],
             new Dictionary<string,TruckSpeedLimit>{{"norway/local_road",new(80,50,80)}},"norway"));
     }
     private static LimitSign Sign(string id,float x,LimitAction action,bool reverse=false)
         =>new(id,new(x,0,5),reverse?-Vector3.UnitX:Vector3.UnitX,false,action);
     private static SpeedLimitResult Resolve((TruckLib.ScsMap.Map Map,Road Road,SpeedLimitData Data) scene)
-        =>new SpeedLimitResolver(scene.Data,new RoadPathSource(scene.Map)).Resolve(new("camera",new(700,0,0),Vector3.UnitX));
+        =>new SpeedLimitResolver(scene.Data,new RoadPathSource(scene.Map)).ResolveOnPath(new(0,0,0),Vector3.UnitX,80,
+            new("camera",new(700,0,0),Vector3.UnitX),[scene.Data.Roads[scene.Road.Uid].Geometry]);
 
     [Fact]
     public void DirectionalClassSelectsActualTruckRuleAtCamera()
@@ -32,7 +33,9 @@ public sealed class SpeedLimitTests
                 DirectionalClasses=new("motorway","local_road") } } };
         Assert.Equal(80,Resolve(s).Kph);
         var reverse=new SpeedLimitResolver(s.Data,new RoadPathSource(s.Map))
-            .Resolve(new("opposite",new(300,0,0),-Vector3.UnitX));
+            .ResolveOnPath(new(1000,0,0),-Vector3.UnitX,60,new("opposite",new(300,0,0),-Vector3.UnitX),
+                [s.Data.Roads[s.Road.Uid].Geometry with {StartNodeUid=s.Road.ForwardNode.Uid,EndNodeUid=s.Road.Node.Uid,
+                    Points=s.Data.Roads[s.Road.Uid].Geometry.Points.Reverse().ToArray()}]);
         Assert.Equal(60,reverse.Kph);
     }
 

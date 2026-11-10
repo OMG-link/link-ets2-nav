@@ -76,7 +76,6 @@ public sealed class NavigationLogReporter
 
     public void Report(NavDiagnosticSnapshot snapshot)
     {
-        ReportLimitComparison(snapshot.CurrentSpeedLimit);
         Status(snapshot.State + " 路线=" + snapshot.RouteState, snapshot.UpdatedAt,
             detail: $"车辆={snapshot.VehiclePosition ?? "未知"}，附近探头={snapshot.CameraCount}。");
         // Waiting/paused snapshots are not evidence that previously observed cameras disappeared.

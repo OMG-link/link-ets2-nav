@@ -14,8 +14,6 @@ public sealed record LimitSign(string Id, Vector3 Position, Vector3 Direction, b
 }
 public sealed record LimitRoad(DirectedRoad Geometry, string? SpeedClass)
 {
-    public IReadOnlyList<PostedLimitInterval> ForwardSignLimits { get; init; } = [];
-    public IReadOnlyList<PostedLimitInterval> ReverseSignLimits { get; init; } = [];
     public bool ForwardTraffic { get; init; } = true;
     public bool ReverseTraffic { get; init; } = true;
     public DirectionalSpeedClasses? DirectionalClasses { get; init; }
@@ -55,14 +53,10 @@ public sealed record SpeedLimitData(
     IReadOnlyList<LimitRegion> Regions, IReadOnlyDictionary<string,TruckSpeedLimit> Limits,
     string? Country, string? Error = null)
 {
-    public PostedLimitIndex? PostedLimits { get; init; }
+    public ProjectedSignIndex? SignProjections { get; init; }
     public LimitRegionIndex? RegionIndex { get; init; }
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
     public static SpeedLimitData Empty { get; } = new(new Dictionary<ulong,LimitRoad>(),[],[],
         new Dictionary<string,TruckSpeedLimit>(),null,"限速资源尚未加载");
 }
 public sealed record SpeedLimitResult(int? Kph, string Reason);
-
-/// <summary>Null Kph means no posted limit; Unknown is a distinct unresolved/conflicting state.</summary>
-public sealed record PostedLimitState(int? Kph = null, bool? Urban = null, bool? Motorway = null, bool Unknown = false, bool NumericKnown = true);
-public sealed record PostedLimitInterval(double FromMeters, double ToMeters, PostedLimitState State);

@@ -115,4 +115,15 @@ public sealed class PostedLimitBuilderTests
         Assert.Equal(40,Query(Build(source,[]),P(500)).Kph);
     }
 
+    [Fact]
+    public void ExitingPrefabCannotImmediatelyReenterAnotherPathInTheSamePrefab()
+    {
+        var a=Road(1,10,11,P(0),P(100));var b=Road(2,12,13,P(120),P(250));var c=Road(3,14,15,P(120,40),P(250,40));
+        DirectedRoad[] links=[new("prefab:ABC:0:1",11,12,[P(100),P(120)]),
+            new("prefab:ABC:1:2",12,14,[P(120),P(120,40)])];
+        var data=Build(Data([a,b,c],new LimitSign("60",P(50,5),Vector3.UnitX,false,new(SetKph:60))),links);
+        Assert.Equal(60,Query(data,P(200)).Kph);
+        Assert.Equal(80,Query(data,P(200,40)).Kph);
+    }
+
 }

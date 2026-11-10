@@ -13,7 +13,7 @@ public static class PostedLimitBuilder
     private sealed record Binding(int Edge, double At, float Error, float Dot);
 
     public static SpeedLimitData Build(SpeedLimitData data, IReadOnlyList<DirectedRoad> prefabPaths,
-        CancellationToken token=default)
+        CancellationToken token=default, Action<PostedLimitTrace>? trace=null)
     {
         if(data.Error is not null)return data;
         var roads=data.Roads.Values.SelectMany(r=>new[]{r.Geometry,
@@ -25,7 +25,10 @@ public static class PostedLimitBuilder
         var ends=graph.Select((e,i)=>(e,i)).GroupBy(p=>p.e.EndNodeUid)
             .ToDictionary(g=>g.Key,g=>g.Select(p=>p.i).ToArray());
         var next=graph.Select(e=>(starts.GetValueOrDefault(e.EndNodeUid)??[])
-            .Where(i=>graph[i].Id!=e.Id && graph[i].EndNodeUid!=e.StartNodeUid).ToArray()).ToArray();
+            .Where(i=>graph[i].Id!=e.Id && graph[i].EndNodeUid!=e.StartNodeUid
+                // Each aggregated PPD edge already spans entrance to exit. Re-entering the
+                // same prefab at that exit invents a U-turn across the interface.
+                && (Prefab(e) is null || Prefab(e)!=Prefab(graph[i]))).ToArray()).ToArray();
         var incoming=Enumerable.Range(0,graph.Length).Select(_=>new List<int>()).ToArray();
         for(int i=0;i<graph.Length;i++)foreach(int j in next[i])incoming[j].Add(i);
         var events=Enumerable.Range(0,graph.Length).Select(_=>new List<Event>()).ToArray();
@@ -111,6 +114,9 @@ public static class PostedLimitBuilder
                 states=states.Select(s=>Apply(s,e.Action)).ToHashSet();from=at;
             }
             intervals.Add(new(from,length,Combine(states)));ranges[key]=intervals.ToArray();
+            trace?.Invoke(new(edge,incoming[i].Select(j=>graph[j]).ToArray(),
+                events[i].Select(e=>new PostedLimitEventTrace(e.SignId,e.At,e.Action)).ToArray(),
+                inputs[i].ToArray(),outputs[i].ToArray()));
             if(ulong.TryParse(edge.Id,NumberStyles.HexNumber,CultureInfo.InvariantCulture,out var uid)&&annotated.TryGetValue(uid,out var road))
             {
                 metadata[key]=road;
@@ -159,3 +165,8 @@ public static class PostedLimitBuilder
             motorway.Length==1?motorway[0]:null,unknown);
     }
 }
+
+/// <summary>Optional build-time evidence; not retained in the runtime index.</summary>
+public sealed record PostedLimitEventTrace(string SignId,double AlongMeters,LimitAction Action);
+public sealed record PostedLimitTrace(DirectedRoad Edge,IReadOnlyList<DirectedRoad> Predecessors,
+    IReadOnlyList<PostedLimitEventTrace> Events,IReadOnlyList<PostedLimitState> Inputs,IReadOnlyList<PostedLimitState> Outputs);

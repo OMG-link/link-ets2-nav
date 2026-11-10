@@ -192,4 +192,21 @@ public sealed class SpeedLimitDefinitionTests
         Assert.True(Assert.Single(data.Signs).Action.Reset);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EmptySideHasNoTrafficButMissingLaneMetadataIsNotTreatedAsAClosedLane(bool leftHand)
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/road_look.sii"]="""SiiNunit { road_look : road.un11 { lanes_right[]: traffic_lane.road.local } }""";
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);
+        road.RoadType="un11";road.LeftHandTraffic=leftHand;
+        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        Assert.Equal(!leftHand,data.Roads[road.Uid].ForwardTraffic);
+        Assert.Equal(leftHand,data.Roads[road.Uid].ReverseTraffic);
+        road.RoadType="unresolved";
+        data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        Assert.True(data.Roads[road.Uid].ForwardTraffic);Assert.True(data.Roads[road.Uid].ReverseTraffic);
+    }
+
 }

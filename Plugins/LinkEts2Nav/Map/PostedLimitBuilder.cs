@@ -10,14 +10,16 @@ namespace LinkEts2Nav.Map;
 public static class PostedLimitBuilder
 {
     private sealed record Event(double At, LimitAction Action, string SignId);
-    private sealed record Binding(int Edge, double At, float Error, float Dot);
+    private sealed record Binding(int Edge, double At, float Error, float Dot, bool AtEntry, bool AtExit);
 
     public static SpeedLimitData Build(SpeedLimitData data, IReadOnlyList<DirectedRoad> prefabPaths,
         CancellationToken token=default, Action<PostedLimitTrace>? trace=null)
     {
         if(data.Error is not null)return data;
-        var roads=data.Roads.Values.SelectMany(r=>new[]{r.Geometry,
-            r.Geometry with{StartNodeUid=r.Geometry.EndNodeUid,EndNodeUid=r.Geometry.StartNodeUid,Points=r.Geometry.Points.Reverse().ToArray()}});
+        var roads=data.Roads.Values.SelectMany(r=>
+            (r.ForwardTraffic?new[]{r.Geometry}:Array.Empty<DirectedRoad>()).Concat(r.ReverseTraffic
+                ?new[]{r.Geometry with{StartNodeUid=r.Geometry.EndNodeUid,EndNodeUid=r.Geometry.StartNodeUid,Points=r.Geometry.Points.Reverse().ToArray()}}
+                :Array.Empty<DirectedRoad>()));
         var graph=roads.Concat(prefabPaths).Where(e=>e.Points.Count>=2)
             .DistinctBy(LimitEdgeKey.Of).ToArray();
         var starts=graph.Select((e,i)=>(e,i)).GroupBy(p=>p.e.StartNodeUid)
@@ -55,7 +57,7 @@ public static class PostedLimitBuilder
                     if(shapeLength-p.Value.Along<.01 && Vector3.Dot(sign.Position-shape.Points[^1],p.Value.Heading)>2)continue;
                     var point=sign.Position; // convert native lane distance back to this directed edge's reference distance
                     var along=SpeedLimitGeometry.Nearest(point,edge)!.Value.Along;
-                    bindings.Add(new(i,along,p.Value.Error,dot));
+                    bindings.Add(new(i,along,p.Value.Error,dot,p.Value.Along<.01,shapeLength-p.Value.Along<.01));
                 }
             }
             bindings=bindings.GroupBy(b=>b.Edge).Select(g=>g.MinBy(b=>b.Error)!)
@@ -68,7 +70,10 @@ public static class PostedLimitBuilder
                 .Select(b=>Prefab(graph[b.Edge])??graph[b.Edge].Id).Distinct().ToArray();
             bool uncertain=sign.OwnershipAmbiguous||sign.TemplateOverride||best.Dot<.65f||owners.Length>1;
             if(uncertain)warnings.Add("限速标牌归属、朝向或模板未确认："+sign.Id);
-            foreach(var binding in bindings.Where(b=>b.Edge==best.Edge || prefab is not null&&Prefab(graph[b.Edge])==prefab&&b.Dot>=.65f&&b.Error-best.Error<2))
+            foreach(var binding in bindings.Where(b=>b.Edge==best.Edge || prefab is not null&&Prefab(graph[b.Edge])==prefab&&b.Dot>=.65f
+                && (b.Error-best.Error<2
+                    || best.AtExit&&b.AtExit&&graph[b.Edge].EndNodeUid==graph[best.Edge].EndNodeUid
+                    || best.AtEntry&&b.AtEntry&&graph[b.Edge].StartNodeUid==graph[best.Edge].StartNodeUid)))
                 events[binding.Edge].Add(new(binding.At,uncertain?new(Unsupported:true):sign.Action,sign.Id));
         }
         foreach(var list in events)list.Sort((a,b)=>a.At!=b.At?a.At.CompareTo(b.At):StringComparer.Ordinal.Compare(a.SignId,b.SignId));
@@ -86,7 +91,7 @@ public static class PostedLimitBuilder
         while(queue.TryDequeue(out int i))
         {
             token.ThrowIfCancellationRequested();queued[i]=false;
-            IEnumerable<PostedLimitState> seeds=inputs[i].Count>0?inputs[i]:[new()];
+            IEnumerable<PostedLimitState> seeds=inputs[i].Count>0?inputs[i]:[new(NumericKnown:false)];
             foreach(var state in seeds)
             {
                 var updated=state;
@@ -97,13 +102,13 @@ public static class PostedLimitBuilder
         }
         var ranges=new Dictionary<LimitEdgeKey,IReadOnlyList<PostedLimitInterval>>();
         var metadata=new Dictionary<LimitEdgeKey,LimitRoad?>();
-        var conflicts=new Dictionary<ulong,int[]>();
+        var conflicts=new Dictionary<ulong,int?[]>();
         var annotated=data.Roads.ToDictionary(p=>p.Key,p=>p.Value);
         for(int i=0;i<graph.Length;i++)
         {
             token.ThrowIfCancellationRequested();var edge=graph[i];var key=LimitEdgeKey.Of(edge);
             var states=inputs[i].Count>0?new HashSet<PostedLimitState>(inputs[i]):[new PostedLimitState()];
-            var limits=states.Where(s=>s.Kph.HasValue).Select(s=>s.Kph!.Value).Distinct().Order().ToArray();
+            var limits=states.Where(s=>s.NumericKnown).Select(s=>s.Kph).Distinct().Order().ToArray();
             if(limits.Length>1&&incoming[i].Count>1)conflicts[edge.StartNodeUid]=limits;
             var intervals=new List<PostedLimitInterval>();double from=0;
             double length=edge.Points.Zip(edge.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
@@ -141,7 +146,7 @@ public static class PostedLimitBuilder
             }
         }
         if(conflicts.Count>0)warnings.Add("限速汇合冲突："+conflicts.Count+" 个节点；"+
-            string.Join("；",conflicts.OrderBy(p=>p.Key).Take(8).Select(p=>$"{p.Key:X16}={string.Join('/',p.Value)}")));
+            string.Join("；",conflicts.OrderBy(p=>p.Key).Take(8).Select(p=>$"{p.Key:X16}={string.Join('/',p.Value.Select(v=>v?.ToString(CultureInfo.InvariantCulture)??"默认值"))}")));
         return data with{Roads=annotated,PostedLimits=new PostedLimitIndex(graph,ranges,metadata),
             RegionIndex=new(data.Regions),Diagnostics=warnings.Order(StringComparer.Ordinal).ToArray()};
     }
@@ -150,19 +155,20 @@ public static class PostedLimitBuilder
     {
         if(action.Unsupported)return state with{Unknown=true};
         return new(action.SetKph??(action.Reset?null:state.Kph), action.Urban??state.Urban,
-            action.Motorway??state.Motorway, action.Reset||action.SetKph.HasValue?false:state.Unknown);
+            action.Motorway??state.Motorway, action.Reset||action.SetKph.HasValue?false:state.Unknown,
+            state.NumericKnown||action.Reset||action.SetKph.HasValue);
     }
     private static PostedLimitState Combine(HashSet<PostedLimitState> states)
     {
         if(states.Count==1)return states.First();
-        var speeds=states.Where(s=>s.Kph.HasValue).Select(s=>s.Kph!.Value).Distinct().ToArray();
+        var speeds=states.Where(s=>s.NumericKnown).Select(s=>s.Kph).Distinct().ToArray();
         var urban=states.Where(s=>s.Urban.HasValue).Select(s=>s.Urban!.Value).Distinct().ToArray();
         var motorway=states.Where(s=>s.Motorway.HasValue).Select(s=>s.Motorway!.Value).Distinct().ToArray();
         bool unknown=states.Any(s=>s.Unknown)||speeds.Length>1;
-        // Context flags are separate from posted numeric limits. Different urban histories
-        // do not invalidate an otherwise unanimous explicit speed.
+        // A reset/default is real evidence, not a missing vote. Only a temporary seed
+        // for an as-yet-unreached context-only event lacks numeric evidence.
         return new(speeds.Length==1?speeds[0]:null,urban.Length==1?urban[0]:null,
-            motorway.Length==1?motorway[0]:null,unknown);
+            motorway.Length==1?motorway[0]:null,unknown,speeds.Length>0);
     }
 }
 

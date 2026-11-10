@@ -85,13 +85,15 @@ public sealed class PostedLimitBuilderTests
     [Fact]
     public void EqualMergeDoesNotWarnAndCycleTerminates()
     {
+        SpeedLimitData ForwardOnly(SpeedLimitData source)=>source with{
+            Roads=source.Roads.ToDictionary(p=>p.Key,p=>p.Value with{ReverseTraffic=false})};
         var a=Road(1,10,12,P(0),P(100));var b=Road(2,11,12,P(0,30),P(100));var c=Road(3,12,13,P(100),P(400));
-        var data=Build(Data([a,b,c],new LimitSign("a",P(30,1),Vector3.UnitX,false,new(SetKph:60)),
-            new LimitSign("b",P(30,22),Vector3.Normalize(P(100,-30)),false,new(SetKph:60))),[]);
+        var data=Build(ForwardOnly(Data([a,b,c],new LimitSign("a",P(30,1),Vector3.UnitX,false,new(SetKph:60)),
+            new LimitSign("b",P(30,22),Vector3.Normalize(P(100,-30)),false,new(SetKph:60)))),[]);
         Assert.Equal(60,Query(data,P(200)).Kph);
         Assert.DoesNotContain(data.Diagnostics,l=>l.StartsWith("限速汇合冲突："));
         var loop=Road(4,13,10,P(400),P(400,100),P(0,100),P(0));
-        data=Build(Data([a,c,loop],new LimitSign("60",P(30,1),Vector3.UnitX,false,new(SetKph:60))),[]);
+        data=Build(ForwardOnly(Data([a,c,loop],new LimitSign("60",P(30,1),Vector3.UnitX,false,new(SetKph:60)))),[]);
         Assert.Equal(60,Query(data,P(200)).Kph);
         Assert.DoesNotContain(data.Diagnostics,l=>l.StartsWith("限速汇合冲突："));
     }
@@ -124,6 +126,40 @@ public sealed class PostedLimitBuilderTests
         var data=Build(Data([a,b,c],new LimitSign("60",P(50,5),Vector3.UnitX,false,new(SetKph:60))),links);
         Assert.Equal(60,Query(data,P(200)).Kph);
         Assert.Equal(80,Query(data,P(200,40)).Kph);
+    }
+
+    [Fact]
+    public void OneWayRoadDoesNotCreateReversePropagationOrAReverseQueryMatch()
+    {
+        var road=Road(1,10,11,P(0),P(300));
+        var source=Data([road],new LimitSign("opposite",P(200,5),-Vector3.UnitX,false,new(SetKph:30)));
+        source=source with{Roads=new Dictionary<ulong,LimitRoad>{{1,source.Roads[1] with{ReverseTraffic=false}}}};
+        var data=Build(source,[]);
+        Assert.Equal(80,Query(data,P(100)).Kph);
+        Assert.Null(Query(data,P(100),-Vector3.UnitX).Kph);
+        Assert.Empty(data.Roads[1].ReverseSignLimits);
+    }
+
+    [Fact]
+    public void ExplicitResetAndPostedEntryAreAConflictRatherThanSilentlyChoosingPostedSpeed()
+    {
+        var a=Road(1,10,12,P(0),P(100));var b=Road(2,11,12,P(0,30),P(100));var c=Road(3,12,13,P(100),P(400));
+        var data=Build(Data([a,b,c],new LimitSign("70",P(30,1),Vector3.UnitX,false,new(SetKph:70)),
+            new LimitSign("reset",P(30,22),Vector3.Normalize(P(100,-30)),false,new(Reset:true))),[]);
+        Assert.Null(Query(data,P(200)).Kph);
+        Assert.Contains(data.Diagnostics,l=>l.Contains("默认值"));
+    }
+
+    [Fact]
+    public void ExitSignCoversParallelNativeLanesSharingAnExitInterface()
+    {
+        var a=Road(1,10,11,P(0),P(100));var b=Road(2,12,13,P(0,-10),P(100,-10));var c=Road(3,14,15,P(120,-5),P(300,-5));
+        PrefabLanePath Lane(ulong entry,int slot,float z)=>new(0xABC,entry,14,slot,slot,slot,slot,2,2,[slot],
+            [P(100,z),P(119,z)],19);
+        DirectedRoad[] links=[new("prefab:ABC:0:1",11,14,[P(100),P(120,-5)]){LanePaths=[Lane(11,0,0)]},
+            new("prefab:ABC:2:1",13,14,[P(100,-10),P(120,-5)]){LanePaths=[Lane(13,1,-10)]}];
+        var data=Build(Data([a,b,c],new LimitSign("60",P(120,-14),Vector3.UnitX,false,new(SetKph:60))),links);
+        Assert.Equal(60,Query(data,P(200,-5)).Kph);
     }
 
 }

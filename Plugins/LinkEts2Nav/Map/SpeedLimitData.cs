@@ -16,6 +16,8 @@ public sealed record LimitRoad(DirectedRoad Geometry, string? SpeedClass)
 {
     public IReadOnlyList<PostedLimitInterval> ForwardSignLimits { get; init; } = [];
     public IReadOnlyList<PostedLimitInterval> ReverseSignLimits { get; init; } = [];
+    public bool ForwardTraffic { get; init; } = true;
+    public bool ReverseTraffic { get; init; } = true;
     public DirectionalSpeedClasses? DirectionalClasses { get; init; }
     public string? ClassFor(DirectedRoad directed) => DirectionalClasses is null?SpeedClass:
         directed.StartNodeUid==Geometry.StartNodeUid&&directed.EndNodeUid==Geometry.EndNodeUid?DirectionalClasses.Forward:
@@ -62,5 +64,5 @@ public sealed record SpeedLimitData(
 public sealed record SpeedLimitResult(int? Kph, string Reason);
 
 /// <summary>Null Kph means no posted limit; Unknown is a distinct unresolved/conflicting state.</summary>
-public sealed record PostedLimitState(int? Kph = null, bool? Urban = null, bool? Motorway = null, bool Unknown = false);
+public sealed record PostedLimitState(int? Kph = null, bool? Urban = null, bool? Motorway = null, bool Unknown = false, bool NumericKnown = true);
 public sealed record PostedLimitInterval(double FromMeters, double ToMeters, PostedLimitState State);

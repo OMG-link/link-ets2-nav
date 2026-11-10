@@ -91,7 +91,8 @@ public sealed class SpeedLimitDefinitionReader
             var left=RoadClass(road,true);var right=RoadClass(road,false);
             string? cls=left==right?left:left??right;
             roads[road.Uid]=new(new(road.Uid.ToString("X16"),road.Node.Uid,road.ForwardNode.Uid,points),cls)
-            { DirectionalClasses=road.LeftHandTraffic?new(left,right):new(right,left) };
+            { DirectionalClasses=road.LeftHandTraffic?new(left,right):new(right,left),
+              ForwardTraffic=HasLanes(road,road.LeftHandTraffic),ReverseTraffic=HasLanes(road,!road.LeftHandTraffic) };
         }
         var placedSigns=new List<LimitSign>();
         foreach(var sign in map.MapItems.Values.OfType<Sign>().Where(s=>s.Node is Node))
@@ -151,6 +152,9 @@ public sealed class SpeedLimitDefinitionReader
 
     // TrafficRule selects lane_variant; Variant selects model_variants within that lane variant.
     // Resolve only variants explicitly owned by this road look, never by their name suffix.
+    // An unresolved template is not proof that traffic is forbidden. An explicitly empty lane list is.
+    private bool HasLanes(Road road,bool left)=>RoadLanes(road,left)?.Any(l=>l.Length>0)??true;
+
     private string? RoadClass(Road road,bool left)
     {
         var lanes=RoadLanes(road,left);

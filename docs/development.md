@@ -271,3 +271,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/export-prefab-svg.ps
 区域按其所属区块缓存在 `SpeedLimitAreaCache`，仅对尚未缓存的补充区块读取 Area，不触发预制件／探头解析。查询检查最近四个区块的 Area，并先用包围盒筛选。约定所有影响查询点的 Area 都属于这四个区块，所有影响标牌限速的完整区间都在激活区块内。`CityArea` 只提供城市／国家归属，支持旋转矩形；城区状态来自 `TrafficArea` 的 `urban_area` 等规则或标牌。高度范围仍参与区域判断。
 
 组合规则使用国家货车定义中的 `limit`／`urban_limit` 作为默认值，明确标牌可提高城区默认值，但始终受 `max_limit` 约束；显式数值交通区域再取较小值。高速道路通过对应类别的 `urban_limit` 处理，不笼统忽略数值 Area。此区别来自 [SCS 的货车限速说明](https://modding.scssoft.com/wiki/Games/ETS2/Modding_guides/1.25#Speed_limits)，仍应持续使用 SDK 实际限速校验。`impl_reset` 的 `implicit` 参数是解除操作模式，不是车辆类别。
+
+
+限速传播图仅建立模板中实际存在车道的方向；模板未解析与明确没有车道分别处理。聚合 PPD 路径已经从入口贯穿到出口，不能在出口直接重新进入同一个预制件的其他聚合路径。接口处的标牌按共同入口／出口覆盖平行的原生车道，不只挂到最近一条曲线上。明确解除后的默认状态参与汇合冲突判定；只有尚未收到上游输入时用于初始化上下文事件的临时状态缺少数值依据。离线诊断可通过 `PostedLimitBuilder.Build(..., trace: callback)` 取得每条边的前驱、标牌事件、输入和输出状态；默认不启用，不把构建过程中的来源集合保留在运行时索引中。

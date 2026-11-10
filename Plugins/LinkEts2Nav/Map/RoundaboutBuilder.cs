@@ -50,15 +50,22 @@ public sealed class RoundaboutBuilder
             double quality = Circularity(points);
             if (quality < MinimumCircularity) continue;
             var members = ring.Select(k => graph[k].PrefabUid).OfType<ulong>().Distinct().Order().ToArray();
-            var exits = CollectExits(ring, members, cancellationToken);
-            if (exits is null) continue;
-            // Multiple lane rings of the same prefab set identify one physical roundabout.
-            var id = string.Join("/", members.Select(uid => $"{uid:X16}"));
-            var ports = RoundaboutPorts.Build(graph,ring,members);
-            return new(id, members, ring, points, quality, exits)
-            {EntryPorts=ports.Entries,ExitPorts=ports.Exits,RingLength=ports.Length};
+            var structure = Assemble(ring, members, points, quality, cancellationToken);
+            if (structure is not null) return structure;
         }
         return null;
+    }
+
+    private RoundaboutStructure? Assemble(RoundaboutCurveKey[] ring, ulong[] members,
+        Vector3[] points, double quality, CancellationToken token)
+    {
+        var exits = CollectExits(ring, members, token);
+        if (exits is null) return null;
+        // Multiple lane rings of the same prefab set identify one physical roundabout.
+        var id = string.Join("/", members.Select(uid => $"{uid:X16}"));
+        var ports = RoundaboutPorts.Build(graph, ring, members);
+        return new(id, members, ring, points, quality, exits)
+        { EntryPorts=ports.Entries, ExitPorts=ports.Exits, RingLength=ports.Length };
     }
 
     private RoundaboutCurveKey[] Walk(RoundaboutCurveKey start, CancellationToken token)

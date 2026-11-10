@@ -99,7 +99,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         }
         // A distant unresolved join limits the safe stretch; it does not invalidate
         // an already verified long road before that join.
-        upcoming = exitApproach.Apply(upcoming, route, paths.GetNavigationGraph(), along.Value);
+        upcoming = exitApproach.Apply(upcoming, instructionRoute, paths.GetNavigationGraph(), along.Value);
         double confirmedAhead = Math.Max(0, Math.Min(confirmedUntil, firstUnresolvedJoinAlong) - along.Value);
         bool confirmedContinuation = !yardApproach && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();

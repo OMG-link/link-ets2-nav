@@ -253,3 +253,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/export-prefab-svg.ps
 所有成员及参考曲线加载完成后才建立特殊环岛，允许组合跨区块延迟完成。明确的特殊定义优先于自动识别结果。资源结构或校验连接变化时跳过旧定义，并在地图诊断中留下记录；地图缺少引用时仍等待补充数据。出口分组、接口匹配及出口编号沿用正常环岛的实现，不按预制件名称猜测出口。
 
 当前包含赫尔辛基港口的 `balt_r1_x_r2_round_tram_helsinki.ppd`。其参考顺序为 `30 → 31 → 26 → 32 → 12 → 34 → 36`；最后回到 30 仅表示参考顺序闭合，不是新增的车道连接。
+
+
+## 交叉路口与角度指引范围
+
+`PrefabJunctionClassifier` 复用 PPD 的 `Intersections`，不再按采样曲线求几何交点。入口、出口按具有有效 InputLines、OutputLines 的控制接口计数，而不是车道数量。只有至少两个入口、两个出口，并存在不同入口、不同出口之间的横向交叉组，才设置 `PrefabJunctionInfo.IsJunction`。
+
+标志依据 [SCS Blender Tools 的 PIF 定义](https://github.com/SCSSoftware/BlenderTools/blob/master/addon/io_scs_tools/consts.py)：记录组头中的 `0xF0` 表示组大小，`0x10000` 是分流、`0x20000` 是汇合；两类均排除。`0x40000` 的尖角交叉仍属于交叉。组内曲线再按原生 Next 关系追溯入口及出口，排除同入口车道交织和同出口收敛。无有效交叉记录时不猜测。
+
+`NavigationManeuverDetector` 只允许已确认交叉路口产生按出口角度计算的 KeepLeft／KeepRight；普通道路节点分岔和未经确认的预制件不产生这两类角度指引。明确左／右转、掉头、合并和已识别环岛仍按各自规则处理。`LaneExitApproach` 可独立从专属外侧车道及上游新增车道原生分叉生成驶出动作，不依赖被禁用的角度指引；该结构依据优先于把专属出口误当作直行的几何结果。

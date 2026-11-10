@@ -80,13 +80,13 @@ public sealed class NavigationManeuverTests
     [InlineData(.072, 32.684, null, null, null, ManeuverKind.Straight, true)]
     [InlineData(20, -20, "main", "main", "ramp", ManeuverKind.Straight, true)]
     [InlineData(1, 30, "same", "same", "same", ManeuverKind.Straight, true)]
-    [InlineData(-20, 20, "same", "same", "same", ManeuverKind.KeepLeft, false)]
+    [InlineData(-20, 20, "same", "same", "same", null, false)]
     [InlineData(1.77168, 8.65269, "ger18", "ger16", "ger2", ManeuverKind.Straight, true)]
-    [InlineData(1, 30, "ramp", "main", "ramp", ManeuverKind.KeepLeft, false)]
-    [InlineData(-20, 20, null, null, null, ManeuverKind.KeepLeft, false)]
+    [InlineData(1, 30, "ramp", "main", "ramp", null, false)]
+    [InlineData(-20, 20, null, null, null, null, false)]
     public void MainRoadContinuationUsesUniqueTypeBeforeNearStraightGeometry(double selectedAngle,
         double otherAngle, string? entryType, string? selectedType, string? otherType,
-        ManeuverKind expected, bool continuation)
+        ManeuverKind? expected, bool continuation)
     {
         Vector3 Exit(double angle) => P((float)(100 * Math.Sin(angle * Math.PI / 180)),
             -100 - (float)(100 * Math.Cos(angle * Math.PI / 180)));
@@ -94,6 +94,7 @@ public sealed class NavigationManeuverTests
         var selected = R("selected", 2, 3, P(0, -100), Exit(selectedAngle)) with { RoadType = selectedType };
         var other = R("other", 2, 4, P(0, -100), Exit(otherAngle)) with { RoadType = otherType };
         var result = Detector.FindNext([entry, selected], 0, [entry, selected, other]);
+        if(expected is null){Assert.Null(result);return;}
         Assert.Equal(expected, result!.Kind);
         Assert.Equal(continuation, result.IsMainRoadContinuation);
     }
@@ -207,14 +208,15 @@ public sealed class NavigationManeuverTests
     [InlineData(1,true,ManeuverKind.KeepRight)]
     [InlineData(-1,false,ManeuverKind.Straight)]
     [InlineData(-1,true,ManeuverKind.KeepLeft)]
-    public void ShallowCollectorSplitUsesRelativeExitOrder(int mirror,bool collector,ManeuverKind expected)
+    public void UnqualifiedCollectorSplitDoesNotUseAngularSideGuidance(int mirror,bool collector,ManeuverKind expected)
     {
         var entry=R("entry",1,2,P(0,0),P(0,-100));
         // Measured exit tangents at the cloverleaf: only 6.881 degrees apart.
         var main=ExitAt("main",3,mirror*1.7716804);
         var auxiliary=ExitAt("auxiliary",4,mirror*8.6526888);
         var selected=collector?auxiliary:main;
-        Assert.Equal(expected,Detector.FindNext([entry,selected],10,[entry,main,auxiliary])!.Kind);
+        var result=Detector.FindNext([entry,selected],10,[entry,main,auxiliary]);
+        if(collector)Assert.Null(result);else Assert.Equal(expected,result!.Kind);
     }
 
     [Theory]
@@ -434,9 +436,21 @@ public sealed class NavigationManeuverTests
     public void ShallowForkUsesExitOrderingRatherThanCallingEveryBendATurn(float x, ManeuverKind expected)
     {
         var entry = R("entry", 1, 2, P(0, 0), P(0, -100));
-        var chosen = R("chosen", 2, 3, P(0, -100), P(x, -200));
-        var other = R("other", 2, 4, P(0, -100), P(-x, -200));
+        var chosen = R("prefab:CROSS:0:1", 2, 3, P(0, -100), P(x, -200)) with{Junction=new(3,3,1)};
+        var other = R("prefab:CROSS:0:2", 2, 4, P(0, -100), P(-x, -200)) with{Junction=new(3,3,1)};
         Assert.Equal(expected, Detector.FindNext([entry, chosen], 0, [entry, chosen, other])!.Kind);
+    }
+
+    [Theory]
+    [InlineData(2,2,0)]
+    [InlineData(1,2,1)]
+    [InlineData(2,1,1)]
+    public void ForkDoesNotUseAngularSideGuidanceWithoutCrossingJunction(int entries,int exits,int crossings)
+    {
+        var entry=R("entry",1,2,P(0,0),P(0,-100));
+        var chosen=R("prefab:FORK:0:1",2,3,P(0,-100),P(40,-200)) with{Junction=new(entries,exits,crossings)};
+        var other=R("prefab:FORK:0:2",2,4,P(0,-100),P(-40,-200)) with{Junction=chosen.Junction};
+        Assert.Null(Detector.FindNext([entry,chosen],0,[entry,chosen,other]));
     }
 
     [Fact]

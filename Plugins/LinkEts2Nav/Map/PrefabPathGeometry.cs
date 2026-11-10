@@ -19,6 +19,7 @@ public static class PrefabPathGeometry
         var searches=control.SelectMany(n=>n.InputLines).Where(Valid).Distinct()
             .ToDictionary(i=>i,i=>PrefabCurvePathfinder.FindEach(descriptor,i,targets));
         var laneConnections=PrefabLaneTopology.Build(prefab,descriptor);
+        var junction=PrefabJunctionClassifier.Analyze(descriptor);
         var result=new List<DirectedRoad>();
         Dictionary<int,int> Order(int node,bool input)
         {
@@ -66,7 +67,7 @@ public static class PrefabPathGeometry
             var referencePoints=Sample(prefab,descriptor,placement,from,to,representative);
             if(referencePoints is null)continue;
             result.Add(new($"prefab:{prefab.Uid:X16}:{from}:{to}",prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,referencePoints)
-                {LaneConnections=laneConnections,LanePaths=candidates.ToArray()});
+                {LaneConnections=laneConnections,LanePaths=candidates.ToArray(),Junction=junction});
         }
         return result;
     }

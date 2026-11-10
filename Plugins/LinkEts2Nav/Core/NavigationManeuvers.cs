@@ -190,7 +190,8 @@ public sealed class NavigationManeuverDetector
                         exits.Add((group[0].EndNodeUid, direction.Value, roadType));
                     }
                     if (chosen is null) return result;
-                    if (Classify(entry.Value, chosen.Value, exits, previous?.RoadType, current.EndNodeUid, out bool mainContinuation) is { } kind)
+                    if (Classify(entry.Value, chosen.Value, exits, previous?.RoadType, current.EndNodeUid, out bool mainContinuation) is { } kind
+                        && (kind is not (ManeuverKind.KeepLeft or ManeuverKind.KeepRight) || current.Junction?.IsJunction==true))
                         result.Add(new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
                             kind, offset - vehicleAlong, previous?.Id ?? current.Id, following?.Id ?? current.Id)
                         {
@@ -217,7 +218,8 @@ public sealed class NavigationManeuverDetector
                     if (entry is null || chosen is null || directions.Any(e => e.Direction is null)) return result;
                     if (Classify(entry.Value, chosen.Value,
                         directions.Select(e => (e.EndNodeUid, e.Direction!.Value, e.RoadType)).ToArray(),
-                        current.RoadType, outgoing.EndNodeUid, out bool mainContinuation) is { } kind)
+                        current.RoadType, outgoing.EndNodeUid, out bool mainContinuation) is { } kind
+                        && kind is not (ManeuverKind.KeepLeft or ManeuverKind.KeepRight))
                         result.Add(new($"node:{current.EndNodeUid:X16}:{outgoing.EndNodeUid:X16}",
                             kind, end - vehicleAlong, current.Id, outgoing.Id)
                         { JunctionId = $"node:{current.EndNodeUid:X16}", IsMainRoadContinuation = mainContinuation });

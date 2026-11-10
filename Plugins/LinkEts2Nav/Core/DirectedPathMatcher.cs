@@ -2,6 +2,12 @@ using System.Numerics;
 
 namespace LinkEts2Nav.Core;
 
+/// <summary>Native prefab control-interface and crossing counts.</summary>
+public sealed record PrefabJunctionInfo(int EntranceCount,int ExitCount,int CrossingCount)
+{
+    public bool IsJunction => EntranceCount>=2 && ExitCount>=2 && CrossingCount>0;
+}
+
 /// <summary>Polyline points and node UIDs are ordered in the permitted direction of travel.</summary>
 public sealed record DirectedRoad(
     string Id,
@@ -11,6 +17,7 @@ public sealed record DirectedRoad(
 {
     /// <summary>Map road-type token; absent for prefab connections or unavailable metadata.</summary>
     public string? RoadType { get; init; }
+    public PrefabJunctionInfo? Junction { get; init; }
     public IReadOnlyList<PrefabLanePath> LanePaths { get; init; } = [];
     public RoundaboutPassage? Roundabout { get; init; }
     public IReadOnlyList<LaneConnection>? LaneConnections { get; init; }

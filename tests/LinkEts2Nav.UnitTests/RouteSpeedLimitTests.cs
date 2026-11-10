@@ -25,8 +25,11 @@ public sealed class RouteSpeedLimitTests
     {
         var a=R(1,10,12,P(0),P(100));var b=R(2,11,12,P(0,30),P(100));var c=R(3,12,13,P(100),P(400));
         var data=Build(Source([a,b,c],new LimitSign("side80",P(30,22),Vector3.Normalize(P(100,-30)),false,new(SetKph:80))));
-        Assert.Equal(50,Sim(data,[a,c],target:P(350),seed:50).Kph);
-        Assert.Equal(80,Sim(data,[b,c],start:P(0,30),target:P(350),seed:50).Kph);
+        var resolver=new SpeedLimitResolver(data,new RoadPathSource(new TruckLib.ScsMap.Map()));
+        MonitoredCamera camera=new("camera",P(350),Vector3.UnitX);
+        Assert.Equal(50,resolver.ResolveOnPath(P(0),Vector3.UnitX,50,camera,[a,c]).Kph);
+        Assert.Equal(80,resolver.ResolveOnPath(P(0,30),Vector3.UnitX,50,camera,[b,c]).Kph);
+        Assert.Equal(50,resolver.ResolveOnPath(P(0),Vector3.UnitX,50,camera,[a,c]).Kph);
         Assert.DoesNotContain(data.Diagnostics,d=>d.StartsWith("限速汇合"));
     }
     [Fact]
@@ -47,7 +50,11 @@ public sealed class RouteSpeedLimitTests
     public void SdkSeedBelongsToThisJourneyAndIsNotCachedByCameraId()
     {
         var data=Build(Source([Road]));
-        Assert.Equal(50,Sim(data,[Road],seed:50).Kph);Assert.Equal(80,Sim(data,[Road],seed:80).Kph);
+        var resolver=new SpeedLimitResolver(data,new RoadPathSource(new TruckLib.ScsMap.Map()));
+        MonitoredCamera camera=new("camera",P(900),Vector3.UnitX);
+        Assert.Equal(50,resolver.ResolveOnPath(P(0),Vector3.UnitX,50,camera,[Road]).Kph);
+        Assert.Equal(80,resolver.ResolveOnPath(P(0),Vector3.UnitX,80,camera,[Road]).Kph);
+        Assert.Equal(50,resolver.ResolveOnPath(P(0),Vector3.UnitX,50,camera,[Road]).Kph);
     }
     [Fact]
     public void MissingSeedStaysUnknownUntilASetOrCancellationSign()

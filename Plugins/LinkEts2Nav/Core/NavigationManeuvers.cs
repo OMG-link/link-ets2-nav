@@ -119,7 +119,7 @@ public sealed class NavigationManeuverDetector
                     if ((prefabEnds.GetValueOrDefault((prefab, current.EndNodeUid)) ?? [])
                         .Any(e => e.StartNodeUid != current.StartNodeUid))
                     {
-                        var role = RoadJoinClassifier.Classify(current.LaneConnections, current.StartNodeUid, current.EndNodeUid).Role;
+                        var role = RoadJoinClassifier.Classify(current).Role;
                         if (role is RoadJoinRole.Entering or RoadJoinRole.Ambiguous)
                         { hasUnresolvedJoin = true; firstUnresolvedJoinAlong = Math.Min(firstUnresolvedJoinAlong, offset); }
                     }
@@ -226,7 +226,7 @@ public sealed class NavigationManeuverDetector
         var alternatives = (prefabEnds.GetValueOrDefault((prefab, selected.EndNodeUid)) ?? [])
             .Where(e => e.StartNodeUid != selected.StartNodeUid).ToArray();
         if (alternatives.Length == 0) return (null, false);
-        var decision = RoadJoinClassifier.Classify(selected.LaneConnections, selected.StartNodeUid, selected.EndNodeUid);
+        var decision = RoadJoinClassifier.Classify(selected);
         if (decision.Role == RoadJoinRole.Ambiguous) return (null, true);
         if (decision.Role != RoadJoinRole.Entering) return (null, false);
         var main = alternatives.FirstOrDefault(e => e.StartNodeUid == decision.MainEntry);

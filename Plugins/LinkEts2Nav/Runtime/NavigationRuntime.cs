@@ -45,7 +45,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         if (!ReferenceEquals(map, nearby.Map))
         {
             map = nearby.Map;
-            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths);
+            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths,log);
         }
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
         var route = paths!.GetPath(position, vehicle.ForwardDirection, data.Route, data.RouteAvailability);

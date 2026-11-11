@@ -1,12 +1,18 @@
 namespace LinkEts2Nav.Core;
 
 public enum RoadJoinRole { None, Continuing, Entering, Ambiguous }
-public sealed record RoadJoinDecision(RoadJoinRole Role, ulong? MainEntry = null);
+public sealed record RoadJoinDecision(RoadJoinRole Role, ulong? MainEntry = null)
+{
+    public string? Reason { get; init; }
+}
 
-/// <summary>Lane reachability and preservation establish roles; curve angles never do.</summary>
+/// <summary>Shared-lane topology and independent-lane priority are separate role policies.</summary>
 public static class RoadJoinClassifier
 {
-    public static RoadJoinDecision Classify(IReadOnlyList<LaneConnection>? lanes, ulong entry, ulong exit)
+    public static RoadJoinDecision Classify(DirectedRoad selected)
+        =>Classify(selected.LaneConnections,selected.StartNodeUid,selected.EndNodeUid,selected.JoinPriority);
+
+    public static RoadJoinDecision Classify(IReadOnlyList<LaneConnection>? lanes, ulong entry, ulong exit,RoadJoinPriority? priority=null)
     {
         if(lanes is null) return new(RoadJoinRole.Ambiguous);
         var current=lanes.Where(c=>c.EntryNode==entry && c.ExitNode==exit).ToArray();
@@ -15,6 +21,13 @@ public static class RoadJoinClassifier
             .GroupBy(c=>c.EntryNode).Select(g=>g.ToArray()).ToArray();
         if(other.Length==0) return new(RoadJoinRole.None);
         if(lanes.Any(c=>c.EntryNode==entry && c.ExitNode!=exit)) return new(RoadJoinRole.Ambiguous);
+        var independent=RoadJoinTopology.IndependentEntries(lanes,exit);
+        if(independent.Count>0)
+        {
+            if(priority?.MainEntry is not {} main||!independent.Any(g=>g[0].EntryNode==main))
+                return new(RoadJoinRole.Ambiguous){Reason=priority?.Reason??"无冲突汇合缺少完整主路评分"};
+            return new(entry==main?RoadJoinRole.Continuing:RoadJoinRole.Entering,main){Reason=priority.Reason};
+        }
         bool Branch(LaneConnection[] branch,LaneConnection[] main)
         {
             if(!RoadJoinTopology.HasSoleExit(lanes,branch[0].EntryNode,exit)

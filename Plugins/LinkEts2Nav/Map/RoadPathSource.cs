@@ -22,7 +22,7 @@ public sealed class RoadPathSource
     private List<List<DirectedRoad>> cachedChunks = [];
     private IReadOnlyList<DirectedRoad>? navigationGraph;
 
-    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null)
+    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null)
     {
         roads = map.MapItems.Values.OfType<Road>().ToArray();
         foreach (var road in roads)
@@ -35,7 +35,8 @@ public sealed class RoadPathSource
             boundaryNodes.Add(road.Node.Uid);
             boundaryNodes.Add(road.ForwardNode.Uid);
         }
-        foreach (var group in (junctions ?? []).GroupBy(p => (p.StartNodeUid, p.EndNodeUid)))
+        var annotated=new RoadJoinPriorityBuilder(incidentRoads,log).Annotate(junctions??[]);
+        foreach (var group in annotated.GroupBy(p => (p.StartNodeUid, p.EndNodeUid)))
         {
             boundaryNodes.Add(group.Key.StartNodeUid);
             boundaryNodes.Add(group.Key.EndNodeUid);

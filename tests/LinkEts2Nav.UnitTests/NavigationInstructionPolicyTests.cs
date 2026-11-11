@@ -14,6 +14,31 @@ public sealed class NavigationInstructionPolicyTests
         =>p.UpdateSequence(m,"session",Now.AddSeconds(seconds),Now.AddSeconds(seconds),true,ready);
 
     [Theory]
+    [InlineData(59.9,false)] [InlineData(60,true)] [InlineData(120,true)]
+    public void HundredMeterStageUsesTriggerTimeSpeedAndKeepsExecution(double kph,bool skipped)
+    {
+        var p=new NavigationInstructionPolicy();
+        Assert.NotEmpty(Update(p,[M(200)]));
+        Assert.Contains("一百米后，左转。",Plan(p,[M(150)]));
+        var atHundred=p.UpdateSequence([M(100)],"session",Now.AddSeconds(1),Now.AddSeconds(1),true,
+            hasConfirmedContinuation:false,speedMetersPerSecond:kph/3.6);
+        if(skipped)Assert.Empty(atHundred);else Assert.Equal("一百米后，左转。",Assert.Single(atHundred));
+        Assert.Empty(Update(p,[M(90)],seconds:2)); // Slowing down cannot revive a consumed stage.
+        Assert.Equal("左转。",Assert.Single(p.UpdateSequence([M(20)],"session",Now.AddSeconds(3),Now.AddSeconds(3),true,
+            speedMetersPerSecond:120/3.6)));
+    }
+
+    [Fact]
+    public void FastFirstHundredMeterCueIsPreparedButSkippedEvenWhenAudioIsUnready()
+    {
+        var p=new NavigationInstructionPolicy();
+        Assert.Contains("一百米后，左转。",Plan(p,[M(100)]));
+        Assert.Empty(p.UpdateSequence([M(100)],"session",Now,Now,true,_=>false,speedMetersPerSecond:60/3.6));
+        Assert.Empty(Update(p,[M(90)],seconds:1));
+        Assert.Equal("左转。",Assert.Single(Update(p,[M(20)],seconds:2)));
+    }
+
+    [Theory]
     [InlineData(NavigationAnnouncementMode.Silent)]
     [InlineData(NavigationAnnouncementMode.NoticeAt500)]
     public void MergeAheadDoesNotSilenceAnInterveningStraightJunction(NavigationAnnouncementMode mode)

@@ -117,7 +117,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation);
         speech?.UpdatePlan("navigation", plan, priority: 10);
         foreach (string text in policy.UpdateSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, !defer,
-            speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text), confirmedContinuation))
+            speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text), confirmedContinuation,vehicle.SpeedMetersPerSecond))
         {
             log?.Invoke("导航指令：" + text + " 当前路口=" + upcoming.FirstOrDefault()?.Id + "；下一动作=" + next?.Id);
             if (speech is null || !speech.TryAnnounce(text, "导航"))

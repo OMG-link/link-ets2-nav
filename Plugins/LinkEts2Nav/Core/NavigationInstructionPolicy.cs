@@ -128,7 +128,7 @@ public sealed class NavigationInstructionPolicy
         public int Consumed;
         public DateTimeOffset LastSeen;
     }
-    private readonly record struct Decision(string Text,int Consumed,bool Execute=false,bool Overview=false);
+    private readonly record struct Decision(string Text,int Consumed,bool Execute=false,bool Overview=false,int? StageMeters=null);
     private readonly Dictionary<string,Encounter> encounters = new(StringComparer.Ordinal);
     private string? session;
     private DateTimeOffset? observed, lastSpoken;
@@ -203,7 +203,7 @@ public sealed class NavigationInstructionPolicy
 
     public IReadOnlyList<string> UpdateSequence(IReadOnlyList<NavigationManeuver> maneuvers,string sessionId,
         DateTimeOffset observedAt,DateTimeOffset now,bool active,Func<string,bool>? canAnnounce=null,
-        bool hasConfirmedContinuation=false)
+        bool hasConfirmedContinuation=false,double speedMetersPerSecond=0)
     {
         if (!Valid(maneuvers,sessionId,observedAt,now,active,hasConfirmedContinuation)) return [];
         if (!StringComparer.Ordinal.Equals(session,sessionId)) { Reset(); session=sessionId; }
@@ -236,6 +236,10 @@ public sealed class NavigationInstructionPolicy
                 state.PendingContinuation ??= NavigationPrompts.Continue(target.DistanceMeters);
             int ordinal=Ordinal(maneuvers,0,index);
             var due = Select(state,target,ordinal,maneuvers.Take(index).Any(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation),ExecutionText(maneuvers,index));
+            // Consume a skipped stage immediately, even if its audio is not ready.
+            // Never apply this gate while preparing the speech plan.
+            if(due is {StageMeters:100} && speedMetersPerSecond*3.6>=60)
+                due=due.Value with{Text=""};
             bool ready=due is { } candidate && (candidate.Text.Length==0 || (canAnnounce?.Invoke(candidate.Text) ?? true));
             if(!ready && due is {Execute:true} execution && target.AnnouncementMode==NavigationAnnouncementMode.Normal)
             {
@@ -254,9 +258,9 @@ public sealed class NavigationInstructionPolicy
                     bool crossed=target.DistanceMeters==stage || state.Previous is { } previous
                         && previous>stage && target.DistanceMeters<=stage && target.DistanceMeters>=stage-20;
                     string text=NavigationPrompts.AtDistance(target.Kind,stage,0,StageInstruction(target,stage));
-                    if(crossed && (canAnnounce?.Invoke(text) ?? true))
+                    if(crossed && (stage==100 && speedMetersPerSecond*3.6>=60 || (canAnnounce?.Invoke(text) ?? true)))
                     {
-                        due=new(text,state.Consumed|((1<<(i+1))-1));
+                        due=new(stage==100 && speedMetersPerSecond*3.6>=60?"":text,state.Consumed|((1<<(i+1))-1),StageMeters:stage);
                         ready=true;
                         break;
                     }
@@ -324,7 +328,8 @@ public sealed class NavigationInstructionPolicy
         if (NeedsBriefing(state))
             return new(distance > 800 && state.PendingContinuation is { } overview
                 ? overview : NavigationPrompts.FirstLayer(target.Kind,distance,ordinal,StageInstruction(target,(int)(Math.Floor(distance/50)*50))),
-                state.Consumed|InitialConsumption(distance),Overview:distance>800);
+                state.Consumed|InitialConsumption(distance),Overview:distance>800,
+                StageMeters:distance<=800?(int)(Math.Floor(distance/50)*50):null);
         // A skipped 200 m distance reminder must not suppress the first near-junction ordinal.
         if(ordinal>1 && !state.OrdinalAnnounced && distance<=200 && distance>=180
             && (distance==200 || state.Previous is >200))
@@ -335,7 +340,7 @@ public sealed class NavigationInstructionPolicy
         int consumed=state.Consumed | ((1<<(index+1))-1);
         bool crossing=state.Previous.HasValue && distance>=Stages[index]-20;
         if (distance==Stages[index] || crossing)
-            return new(StageText(target,Stages[index],ordinal,state.ActionAnnounced,precedingStraight),consumed);
+            return new(StageText(target,Stages[index],ordinal,state.ActionAnnounced,precedingStraight),consumed,StageMeters:Stages[index]);
         if (distance<100) return null;
         // Missing a standard reminder does not authorize a new 400/150/50 m stage.
         // Leave later standards and the independent execution cue available.

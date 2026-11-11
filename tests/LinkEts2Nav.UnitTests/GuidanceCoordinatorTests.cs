@@ -4,6 +4,41 @@ using LinkEts2Nav.Runtime;
 namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceCoordinatorTests
 {
+    [Fact]
+    public async Task DisappearanceDoesNotPreventTheLaterEndFromClearingPendingSpeech()
+    {
+        await using var playback=new GuidancePlaybackManager(null,new NoPlayer(),()=>null);
+        var c=new GuidanceCoordinator(playback:playback);
+        c.Publish(new("e","s","r",0,true,Now,[new("camera",100,"camera")],
+            [new("first","camera",SpeechTriggerKind.Advance,0,"camera")])
+            {CoordinateFrame="f",Sequences=[new("camera",150)]});
+        c.Tick(Data(),Now);Assert.Single(playback.Pending);
+        foreach(double player in new[]{110d,150d,160d})
+        {
+            c.Publish(new("e","s","r",player,true,Now,[],[]){CoordinateFrame="f"});c.Tick(Data(),Now);
+            if(player<=150)Assert.Single(playback.Pending);else Assert.Empty(playback.Pending);
+        }
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SharedCameraStagesSurviveANavigationToCameraFrameChange(bool temporarilyMissing)
+    {
+        var c=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();c.Queued+=queued.Add;
+        var snapshot=new WarningSnapshot("s","r",true,true,Now,[]);
+        PlannedCameraWarning[] Plans(double distance)=>[new("shared",500,distance,WarningDistanceKind.Road,Math.Max(0,distance-500)),
+            new("shared",200,distance,WarningDistanceKind.Road,Math.Max(0,distance-200))];
+        void Navigation(double player)=>c.Publish(new("navigation","s","r",player,true,Now,[],[]){CoordinateFrame="nav"});
+        Navigation(1000);c.PublishLandmarks(snapshot,Plans(600));c.Tick(Data(),Now);
+        Navigation(1100);c.PublishLandmarks(snapshot,Plans(500));c.Tick(Data(),Now);
+        Assert.StartsWith("五百米",Assert.Single(queued).Text);
+        c.Suspend("navigation");
+        if(temporarilyMissing){c.PublishLandmarks(snapshot,[],cameraPlayerAlong:200,cameraFrame:"camera");c.Tick(Data(),Now);}
+        c.PublishLandmarks(snapshot,Plans(400),cameraPlayerAlong:200,cameraFrame:"camera");c.Tick(Data(),Now);
+        Assert.Single(queued);Assert.Contains(c.Timeline.Sources.Single(s=>s.Source=="landmarks").Triggers,t=>t.Id.EndsWith(":200"));
+        c.PublishLandmarks(snapshot,Plans(200),cameraPlayerAlong:400,cameraFrame:"camera");c.Tick(Data(),Now);
+        Assert.Equal("两百米处，有测速照相。",queued[^1].Text);Assert.Equal(2,queued.Count);
+    }
     private static readonly DateTimeOffset Now=DateTimeOffset.Parse("2026-11-11T00:00:00Z");
     private static GameDataSnapshot Data()=>new(new(0,0,0,0,10,1000,true,false,1,Now),RouteSnapshot.Parse([],Now),RouteAvailability.None,"s",true);
     private sealed class NoPlayer:IGuidanceAudioPlayer

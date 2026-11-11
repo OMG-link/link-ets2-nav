@@ -3,6 +3,28 @@ using LinkEts2Nav.Core.Guidance;
 namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceTimelineTests
 {
+    [Theory]
+    [InlineData(100)]
+    [InlineData(150)]
+    public void ADisappearingEventRetainsItsEndUntilTheCrossingUpdate(double end)
+    {
+        var timeline=new GuidanceTimeline();var scheduler=new SpeechTriggerScheduler();
+        timeline.Publish(new("e","s","r",0,true,Now,[new("gone",100,"camera")],
+            [new("first","gone",SpeechTriggerKind.Advance,0,"first")])
+            {CoordinateFrame="f",Sequences=[new("gone",end)]});
+        scheduler.Update(timeline,Now,0);
+        int ended=0;
+        foreach(double player in new[]{110d,160d})
+        {
+            timeline.Publish(new("e","s","r",player,true,Now,[],[]){CoordinateFrame="f"});
+            var results=scheduler.Update(timeline,Now,0);
+            ended+=results.Count(r=>r.Disposition==TriggerDisposition.Ended);
+            if(player<=end)Assert.DoesNotContain(results,r=>r.Disposition==TriggerDisposition.Ended);
+        }
+        Assert.Equal(1,ended);
+        timeline.Publish(new("e","s","r",170,true,Now,[],[]){CoordinateFrame="f"});
+        Assert.Empty(timeline.Sources[0].Events);
+    }
     [Fact]
     public void SequenceEndDiagnosticsContainOnlyJsonNumbers()
     {

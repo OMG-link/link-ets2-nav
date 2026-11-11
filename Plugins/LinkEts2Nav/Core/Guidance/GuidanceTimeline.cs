@@ -20,18 +20,27 @@ public sealed class GuidanceTimeline
         foreach(var t in plan.Triggers)
             if(!ids.Contains(t.EventId)||!triggerIds.Add(t.Id)||!double.IsFinite(t.AlongMeters))
                 throw new ArgumentException("Invalid event trigger.",nameof(plan));
-        // Preserve a just-crossed event for this update even if the detector has
-        // already moved to the next junction. Its pending points still need to fire.
+        // Preserve missing events through their known end boundary, including
+        // the update crossing it. Event disappearance must not discard the end
+        // point needed to withdraw pending speech. No second lifecycle cache is needed.
         if(plan.CoordinateFrame is not null&&sources.TryGetValue(plan.Source,out var previous)
             &&previous.CoordinateFrame==plan.CoordinateFrame&&plan.PlayerAlongMeters>=previous.PlayerAlongMeters)
         {
-            var crossed=previous.Events.Where(e=>!ids.Contains(e.Id)&&e.AlongMeters>=previous.PlayerAlongMeters
-                &&e.AlongMeters<=plan.PlayerAlongMeters).ToArray();
+            var oldSequences=previous.Sequences.ToDictionary(s=>s.Id,StringComparer.Ordinal);
+            var crossed=previous.Events.Where(e=>!ids.Contains(e.Id)
+                &&(e.AlongMeters>=previous.PlayerAlongMeters&&e.AlongMeters<=plan.PlayerAlongMeters
+                    ||oldSequences.TryGetValue(e.SequenceId,out var sequence)
+                        &&sequence.EndAlongMeters>=previous.PlayerAlongMeters)).ToArray();
             if(crossed.Length>0)
             {
-                var crossedIds=crossed.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal);
+                var crossedEventIds=crossed.Where(e=>e.AlongMeters>=previous.PlayerAlongMeters
+                    &&e.AlongMeters<=plan.PlayerAlongMeters).Select(e=>e.Id).ToHashSet(StringComparer.Ordinal);
+                var retainedSequences=crossed.Select(e=>e.SequenceId).ToHashSet(StringComparer.Ordinal);
+                var currentSequences=plan.Sequences.Select(s=>s.Id).ToHashSet(StringComparer.Ordinal);
                 plan=plan with{Events=plan.Events.Concat(crossed).ToArray(),
-                    Triggers=plan.Triggers.Concat(previous.Triggers.Where(t=>crossedIds.Contains(t.EventId))).ToArray()};
+                    Triggers=plan.Triggers.Concat(previous.Triggers.Where(t=>crossedEventIds.Contains(t.EventId))).ToArray(),
+                    Sequences=plan.Sequences.Concat(previous.Sequences.Where(s=>retainedSequences.Contains(s.Id)
+                        &&!currentSequences.Contains(s.Id))).ToArray()};
             }
         }
         sources[plan.Source]=plan with {

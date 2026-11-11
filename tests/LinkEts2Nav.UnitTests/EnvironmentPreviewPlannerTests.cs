@@ -2,6 +2,44 @@
 namespace LinkEts2Nav.UnitTests;
 public sealed class EnvironmentPreviewPlannerTests
 {
+    [Fact]
+    public void ANewEarlierLandmarkReplansOnlyTheUnconsumedFirstPoint()
+    {
+        var p=new EnvironmentPreviewPlanner();var scheduler=new SpeechTriggerScheduler();
+        p.Build("e",0,[E("far","camera",750,750)],scheduler,true);
+        var inserted=p.Build("e",200,[E("near","camera",500,500),E("far","camera",750,750)],scheduler,true);
+        var far=Assert.Single(inserted.Triggers,t=>t.EventId=="far");
+        Assert.Equal(500,far.AlongMeters);Assert.True(far.StrictCrossing);Assert.Equal("250:far",far.Text);
+    }
+    [Fact]
+    public void ANewPredecessorDoesNotReplaySpokenContentAndGatesTheRemainingStage()
+    {
+        var p=new EnvironmentPreviewPlanner();var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        var initial=p.Build("e",0,[E("far","camera",750,750)],scheduler,true);
+        timeline.Publish(new("e","s","r",250,true,Now,initial.Events,initial.Triggers){Sequences=initial.Sequences});
+        scheduler.Update(timeline,Now,0);
+        var inserted=p.Build("e",300,[E("near","camera",600,600),E("far","camera",750,750)],scheduler,true);
+        var second=Assert.Single(inserted.Triggers,t=>t.Id=="far:200");
+        Assert.Equal(600,second.AlongMeters);Assert.True(second.StrictCrossing);
+        timeline.Publish(new("e","s","r",300,true,Now,inserted.Events,inserted.Triggers){Sequences=inserted.Sequences});
+        Assert.DoesNotContain(scheduler.Update(timeline,Now,0),r=>r.Event.Id=="far"&&r.Disposition==TriggerDisposition.Queued);
+    }
+    [Fact]
+    public void ATemporarilyUnmappedPredecessorStillBlocksItsSharedSuccessor()
+    {
+        var p=new EnvironmentPreviewPlanner();var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        var initial=p.Build("e",0,[E("far","camera",1000,1000)],scheduler,true);
+        timeline.Publish(new("e","s","r",500,true,Now,initial.Events,initial.Triggers){Sequences=initial.Sequences});
+        scheduler.Update(timeline,Now,0);
+        p.Build("e",600,[E("near","camera",800,800),E("far","camera",1000,1000)],scheduler,true);
+        p.Rebase([E("far","camera",500,500)]);
+        var missing=p.Build("e",350,[E("far","camera",500,500)],scheduler,true);
+        Assert.Empty(missing.Triggers); // The previous end has no coordinate in this frame.
+        var passed=p.Build("e",350,[E("near","camera",350) with{Ended=true},E("far","camera",500,500)],scheduler,true);
+        Assert.Contains(passed.Triggers,t=>t.Id=="far:200");
+        timeline.Publish(new("e","s","r",350,true,Now,passed.Events,passed.Triggers){Sequences=passed.Sequences});
+        Assert.Contains(scheduler.Update(timeline,Now,0),r=>r.Trigger.Id=="far:200"&&r.Disposition==TriggerDisposition.Queued);
+    }
     private static readonly DateTimeOffset Now=DateTimeOffset.Parse("2026-11-12T00:00:00Z");
     private static EnvironmentPreviewEvent E(string id,string kind,double along,double? end=null)=>new(id,kind,along,end,d=>d+":"+id);
     [Theory]

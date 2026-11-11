@@ -68,7 +68,6 @@ public sealed class GuidanceCoordinator
             &&p.ObservedAt==snapshot.ObservedAt&&p.CoordinateFrame is not null);
         double playerAlong=route?.PlayerAlongMeters??cameraPlayerAlong??0;
         string? frame=route?.CoordinateFrame??cameraFrame;
-        if(environmentFrame!=frame){environment.Reset();environmentFrame=frame;}
         var input=new List<EnvironmentPreviewEvent>();
         var kinds=new Dictionary<string,WarningDistanceKind>();
         foreach(var group in plans.GroupBy(p=>(p.CameraId,p.Kind,p.EncounterRevision)))
@@ -90,6 +89,7 @@ public sealed class GuidanceCoordinator
             input.RemoveAll(e=>e.Id==id);
             input.Add(new(id,CameraChain(passage.Kind,passage.CameraId),playerAlong,null,_=>"",Ended:true));
         }
+        if(environmentFrame!=frame){environment.Rebase(input);environmentFrame=frame;}
         if(WillReplaceSource("landmarks",snapshot.RouteRevision))
             environment.Reconcile(input.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,Scheduler,"landmarks");
         var plan=environment.Build("landmarks",playerAlong,input,Scheduler,snapshot.IsActive);

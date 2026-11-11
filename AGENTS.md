@@ -12,13 +12,23 @@
 - 开发宿主定制集中在 `dev-host/`，由根目录 `Directory.Build.targets` 接入构建。
 - `artifacts/`、`bin/`、`obj/` 是生成内容，不应作为源码修改或提交。
 
+## 实现原则
+
+- 先梳理数据来源、模型与职责，再选择最简单、通用且容易审查的算法；不要用不断叠加场景特判代替明确的规则。
+- 架构迁移不要求与旧实现保持 100% 行为一致。若新架构自然产生合理的行为变化，应说明变化及其影响；不要仅为复刻旧行为增加大量兼容分支。涉及重大产品取舍时再向用户确认。
+- 新功能需要通用性重构时，可以提出并执行；重构应先于功能实现，以独立 commit 提交，便于分别审查。
+- 核心算法与其缓存、状态生命周期应组织清楚，便于集中 review；避免重复维护可由既有数据或有序处理自然推导出的状态。
+- 优先使用现有结构化数据表达关系；需要几何推断或兜底时，先确认真实数据不足，并说明依据与限制。
+
 ## 验证
 
 - 构建：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1 -Action Build`。
 - 测试：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1 -Action Test`。
-- 日常可用 `-Action Test -TestScope Unit|Integration` 缩小项目范围，用 `-TestFilter` 指定相关用例；依赖未变时可加 `-NoRestore`。提交前运行默认全量测试入口。
+- 默认只运行受当前改动影响的测试，使用 `-Action Test -TestScope Unit|Integration` 和 `-TestFilter` 限定范围；依赖未变时可加 `-NoRestore`。不要例行执行全量回归；只有改动范围、失败证据或用户要求确有必要时才扩大验证。
 - `-NoBuild` 仅用于源码未变时重跑已有同配置测试产物，不得用于验证新代码。
 - 集成测试位于 `tests/DevHost.IntegrationTests/`；单元测试位于 `tests/LinkEts2Nav.UnitTests/`。
+- 优先复用通用回放工具和保留的真实场景验证；区分玩家实录、构造路径与模拟数据，不把未经验证的构造路径当作真实行驶证据。
+- 临时验证程序应捕获顶层异常，将完整错误与堆栈输出到日志并返回非零退出码；不要用未处理异常表示预期的验证失败，以免弹出交互式崩溃窗口。
 - 不启动游戏或安装游戏通信 DLL，除非任务明确需要。
 
 ## 公共文档

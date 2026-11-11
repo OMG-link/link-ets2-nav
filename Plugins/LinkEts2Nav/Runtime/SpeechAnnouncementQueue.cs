@@ -16,6 +16,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
     private readonly HashSet<string> failed = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (int Priority, string[] Texts)> plans = new(StringComparer.Ordinal);
     private readonly Task worker;
+    public event Action? CacheChanged;
     public bool IsStopped => stop.IsCancellationRequested;
 
     public SpeechAnnouncementQueue(ISpeechSynthesizer synthesizer, Action<string> play,
@@ -55,6 +56,15 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
     public bool IsReady(string text)
     {
         lock (gate) return ready.TryGetValue(text, out string? file) && File.Exists(file);
+    }
+
+    public bool TryGetAudio(string text,out string file)
+    {
+        lock(gate)
+        {
+            if(ready.TryGetValue(text,out var candidate)&&File.Exists(candidate)){file=candidate;return true;}
+        }
+        file="";return false;
     }
 
     public bool HasFailed(string text) { lock (gate) return failed.Contains(text); }
@@ -102,12 +112,14 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
                         if (stop.IsCancellationRequested) break;
                         lock (gate) ready[text] = file;
                         log("TTS 文件缓存已就绪：" + text + " 文件=" + file);
+                        CacheChanged?.Invoke();
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
                     catch (Exception ex)
                     {
                         lock (gate) failed.Add(text);
                         log("TTS 合成失败，本次启用期间使用现有提示音：" + ex.Message);
+                        CacheChanged?.Invoke();
                     }
                 }
             }

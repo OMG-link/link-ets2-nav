@@ -1,6 +1,6 @@
 namespace LinkEts2Nav.Core;
 
-/// <summary>Two-layer route guidance. Plan is read-only; only ready, actual announcements consume stages.</summary>
+/// <summary>Compatibility policy for standalone/offline callers. The host uses Guidance.NavigationEventPlanner.</summary>
 public sealed class NavigationInstructionPolicy
 {
     private const int MaximumEncounters = 2048;
@@ -263,8 +263,7 @@ public sealed class NavigationInstructionPolicy
         double distance=next.DistanceMeters-target.DistanceMeters;
         if(distance<=0 || distance>=100) return text;
         int meters=(int)Math.Floor(distance/10)*10;
-        return text.TrimEnd('。')+"，然后"+(meters>0 ? NavigationPrompts.Number(meters)+"米后，" : "立即")
-            +(next.Instruction??NavigationPrompts.Action(next.Kind))+"。";
+        return NavigationPrompts.Then(text,next.Kind,meters,next.Instruction);
     }
 
     private static string? StageInstruction(NavigationManeuver target,int meters)

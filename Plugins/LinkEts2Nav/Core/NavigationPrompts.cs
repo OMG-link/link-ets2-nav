@@ -44,6 +44,14 @@ public static class NavigationPrompts
 
     public static string Execute(ManeuverKind kind, string? instruction = null) => (instruction ?? Action(kind)) + "。";
 
+    /// <summary>Announces a second nearby action relative to the action being executed.</summary>
+    public static string Then(string first, ManeuverKind next, int meters, string? instruction = null)
+    {
+        if (meters < 0) throw new ArgumentOutOfRangeException(nameof(meters));
+        return first.TrimEnd('。') + "，然后" + (meters > 0 ? Number(meters) + "米" : "立即")
+            + (instruction ?? Action(next)) + "。";
+    }
+
     public static string Immediate(ManeuverKind kind, string? instruction = null)
         => kind == ManeuverKind.Straight ? "保持直行。" : "即将" + (instruction ?? Action(kind)) + "。";
 

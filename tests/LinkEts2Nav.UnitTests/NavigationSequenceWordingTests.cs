@@ -13,7 +13,7 @@ public sealed class NavigationSequenceWordingTests
     {
         var policy=new NavigationInstructionPolicy();
         NavigationManeuver[] Sequence(double distance)=>[M("first",ManeuverKind.TurnLeft,distance),M("second",ManeuverKind.TurnRight,distance+gap)];
-        string text="左转，然后"+spoken+"米后，右转。";
+        string text="左转，然后"+spoken+"米右转。";
         Assert.Contains(text,policy.PlanSequence(Sequence(200),"s",Now,Now,true));
         policy.UpdateSequence(Sequence(200),"s",Now,Now,true);
         Assert.Equal(text,Assert.Single(policy.UpdateSequence(Sequence(20),"s",Now,Now,true)));

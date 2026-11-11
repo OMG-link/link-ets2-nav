@@ -26,6 +26,13 @@ public sealed class PocCameraCalibrationTests
         Id="5c505cb545070001:0",LocatorPosition=new(13511.362f,-.84375006f,-28828.514f),
         LocalToWorld=new(.990981f,0,-.13400386f,0,0,1,0,0,.13400386f,0,.990981f,0,0,0,0,1)
     };
+    // Coordinates are translated to the locator origin; no map-instance position is retained.
+    private static CameraObservation SeVariant() => Positive() with
+    {
+        Id="se-sample",LocatorPosition=Vector3.Zero,ModelVariant="se",
+        MetadataFingerprint="BBBE5FAD62778ED80C7BBF6B8DC59078B3DD79F7193574B2DE8A8489E9A1979D",
+        LocalToWorld=new(.8606137f,0,-.50925833f,0,0,1,0,0,.50925833f,0,.8606137f,0,0,0,0,1)
+    };
     private static Vector3 Heading(double turns)=>new(-(float)Math.Sin(turns*Math.Tau),0,-(float)Math.Cos(turns*Math.Tau));
 
     [Fact]
@@ -49,6 +56,44 @@ public sealed class PocCameraCalibrationTests
         Assert.True(Vector3.Dot(Heading(.027745761),camera.TravelDirection)<-.99f);
     }
 
+    [Fact]
+    public void SeVariantFineFitsItsOwnFingerprintAndLocalTransform()
+    {
+        var camera=Profile().Apply(SeVariant());
+        var translatedFine=new Vector3(-15.470312f,-.534823f,-21.855037f);
+        Assert.True(camera.DirectionVerified);
+        Assert.InRange(Vector3.Distance(translatedFine,camera.MonitoredPosition),7.04f,7.07f);
+        Assert.True(Vector3.Dot(Heading(.5912104845),camera.TravelDirection)>.999f);
+        Assert.Equal(SeVariant().LocalToWorld.M31,camera.TravelDirection.X,5);
+        Assert.Equal(SeVariant().LocalToWorld.M33,camera.TravelDirection.Z,5);
+    }
+
+    [Theory]
+    [InlineData(500)]
+    [InlineData(200)]
+    public void SeVariantMatchesTheForwardRoadAndRejectsOppositeTravel(int distance)
+    {
+        var camera=Profile().Apply(SeVariant());
+        var road=new DirectedRoad("se-road",1,2,
+            [camera.MonitoredPosition-camera.TravelDirection*800,camera.MonitoredPosition+camera.TravelDirection*100]);
+        var target=new MonitoredCamera(camera.Id,camera.MonitoredPosition,camera.TravelDirection);
+        var position=camera.MonitoredPosition-camera.TravelDirection*distance;
+        var matcher=new DirectedPathMatcher();
+        Assert.Equal(CameraApproach.RouteAhead,matcher.Match(position,camera.TravelDirection,target,[road],true).Approach);
+        Assert.Equal(CameraApproach.Unknown,matcher.Match(position,-camera.TravelDirection,target,[road],false).Approach);
+    }
+
+    [Fact]
+    public void VariantAndFingerprintCannotBeMixedBetweenProfiles()
+    {
+        var profile=Profile();
+        Assert.False(profile.Apply(SeVariant() with{ModelVariant="default"}).DirectionVerified);
+        Assert.False(profile.Apply(Positive() with{ModelVariant="se"}).DirectionVerified);
+        Assert.False(profile.Apply(SeVariant() with{ActivePartVerified=false}).DirectionVerified);
+        Assert.False(profile.Apply(SeVariant() with{LocatorName="1"}).DirectionVerified);
+        Assert.False(profile.Apply(SeVariant() with{MetadataFingerprint=new string('A',64)}).DirectionVerified);
+    }
+
     [Theory]
     [InlineData(500)]
     [InlineData(200)]
@@ -70,7 +115,7 @@ public sealed class PocCameraCalibrationTests
     public void ProfileIsBoundToVerifiedPartVariantLocatorAndResourceFingerprint()
     {
         var profile=Profile();
-        Assert.Equal(1,profile.Count);
+        Assert.Equal(2,profile.Count);
         Assert.False(profile.Apply(Positive() with { ActivePartVerified=false }).DirectionVerified);
         Assert.False(profile.Apply(Positive() with { ModelVariant="def_no_trig" }).DirectionVerified);
         Assert.False(profile.Apply(Positive() with { LocatorName="1" }).DirectionVerified);

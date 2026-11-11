@@ -70,6 +70,6 @@
 
 [ETS2 1.62 德国三车道龙门架测速模型配置](calibration-profiles/ets2-1.62-germany-gantry.json) 覆盖 3lane_speedlimit_100_no_overtaking_trucks_60_sc.pmd 的 default 变体及指定指纹。依据为一处顺向测速罚款和另一处相反朝向模型的无罚款通过样本。后者的轨迹未进入计算出的 8 米监测邻域，因此不能据此单独证明同一探头反向绝不测速；其他变体和指纹不自动启用。
 
-[ETS2 1.62 speed_camera_02_poc 模型配置](calibration-profiles/ets2-1.62-speed-camera-02-poc.json) 覆盖 `/model2/speedcamera/speed_camera_02_poc.pmd` 的 default 变体、0 号 speedcam.20 挂点及指定资源指纹。依据是一处顺向测速罚款和另一处相反朝向实例的近距离超速未罚样本。局部 -Z20 米是与轨迹、罚款位置相容的监测点估计，不是精确测量；独立实例和执法冷却等因素使反向样本不能等同于同一探头的双向验证。其它同类实例仍需实测。
+[ETS2 1.62 speed_camera_02_poc 模型配置](calibration-profiles/ets2-1.62-speed-camera-02-poc.json) 覆盖 `/model2/speedcamera/speed_camera_02_poc.pmd` 的 default 与 se 变体、0 号 speedcam.20 挂点，各自严格匹配独立的资源指纹。两个变体均有顺向测速罚款及轨迹支持局部 +Z 方向、-Z20 米监测点估计；偏移不是精确测量。se 变体的另一处相反朝向实例虽然近距离超速未罚，但距顺向罚款仅约 4.85 秒，可能受执法冷却影响，不能证明反向一定不测速。独立实例的反向样本均不等同于同一探头的双向验证，其它同类实例仍需实测。
 
 使用时将其中 entries 的记录合并到宿主 Settings/LinkEts2Nav.CameraCalibrations.json 的 entries 数组，保留已有其他模型记录。不要添加重复键。插件会自动重新读取配置，无需重启。该文件不会自动启用，也不为其他指纹或变体提供兜底。

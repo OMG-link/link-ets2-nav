@@ -15,12 +15,10 @@ public static class RoadJoinClassifier
             .GroupBy(c=>c.EntryNode).Select(g=>g.ToArray()).ToArray();
         if(other.Length==0) return new(RoadJoinRole.None);
         if(lanes.Any(c=>c.EntryNode==entry && c.ExitNode!=exit)) return new(RoadJoinRole.Ambiguous);
-        bool SoleExit(LaneConnection[] group)=>!lanes.Any(c=>c.EntryNode==group[0].EntryNode && c.ExitNode!=exit);
-        bool Preserved(LaneConnection[] group)=>group.GroupBy(c=>c.EntryLane).All(g=>g.Select(c=>c.ExitLane).Distinct().Count()==1)
-            && group.Select(c=>c.ExitLane).Distinct().Count()==group.Select(c=>c.EntryLane).Distinct().Count();
         bool Branch(LaneConnection[] branch,LaneConnection[] main)
         {
-            if(!SoleExit(branch)||!SoleExit(main)||!Preserved(main))return false;
+            if(!RoadJoinTopology.HasSoleExit(lanes,branch[0].EntryNode,exit)
+                ||!RoadJoinTopology.HasSoleExit(lanes,main[0].EntryNode,exit)||!RoadJoinTopology.PreservesLanes(main))return false;
             int inputs=branch.Select(c=>c.EntryLane).Distinct().Count();
             var outputs=branch.Select(c=>c.ExitLane).Distinct().ToArray();
             int mainInputs=main.Select(c=>c.EntryLane).Distinct().Count();

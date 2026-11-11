@@ -160,6 +160,22 @@ public sealed class LaneMergeDetectorTests
     }
 
     [Fact]
+    public void SideRoadJoiningAnUpstreamExitLaneDoesNotTruncateTheMainCorridor()
+    {
+        var scene=Scene(upstream:80);var road=scene.Graph[0];float z=road.Points[0].Z;
+        PrefabLanePath Lane(int lane)=>new(43,30,5,lane,lane,lane,lane,2,2,[lane],
+            [new(lane*4.5f,0,z+600),new(lane*4.5f,0,z)],600);
+        var left=Lane(0);var right=Lane(1);
+        var side=new PrefabLanePath(43,40,5,0,1,0,1,1,2,[3,1],
+            [new(100,0,z+50),new(4.5f,0,z)],120);
+        DirectedRoad[] upstream=[new("prefab:000000000000002B:0:1",30,5,left.Points){LanePaths=[left,right]},
+            new("prefab:000000000000002B:2:1",40,5,side.Points){LanePaths=[side]}];
+        var result=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..upstream,..scene.Graph],scene.Plan,0));
+        Assert.Equal(LaneMergeKind.LaneReduction,result.Kind);
+        Assert.Equal(500,result.ParallelDistanceMeters);
+    }
+
+    [Fact]
     public void ShortParallelApproachWithKnownDivergenceIsRamp()
     {
         var scene=Scene(shortApproach:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));

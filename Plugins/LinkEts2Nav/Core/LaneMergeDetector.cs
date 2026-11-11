@@ -126,6 +126,13 @@ public sealed class LaneMergeDetector
             if(blocked||length>=550)break;
             var prior=(laneEnds.GetValueOrDefault(boundary)??[]).Where(p=>p.ExitOrder==current.EntryOrder&&p.ExitLaneCount==current.EntryLaneCount
                 &&Vector3.Distance(p.Points[^1],expected)<1).ToArray();
+            if(prior.Length>1)
+            {
+                // Side roads can join this exit lane. Prefer the unique upstream
+                // lane preserving the corridor's lane count, order and direction.
+                prior=prior.Where(p=>p.EntryLaneCount==current.EntryLaneCount&&p.EntryOrder==current.EntryOrder
+                    &&Vector3.Dot(new LanePolyline(p.Points).Heading(0),heading)>.7).ToArray();
+            }
             if(prior.Length!=1)break;
             current=prior[0];Add(current.Points.Reverse());
         }

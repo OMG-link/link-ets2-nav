@@ -34,6 +34,19 @@ public sealed class NavigationManeuverTests
         Assert.False(passed);
     }
 
+    [Theory]
+    [InlineData(-8,-49)] [InlineData(8,49)]
+    public void GentlyBendingThroughRoadWinsOverAMuchSharperSideRoad(double through,double side)
+    {
+        Vector3 End(double degrees)=>P((float)(100*Math.Sin(degrees*Math.PI/180)),(float)(-100-100*Math.Cos(degrees*Math.PI/180)));
+        var entry=R("entry",1,2,P(0,0),P(0,-100));
+        var chosen=R("prefab:CROSS:0:1",2,3,P(0,-100),End(through)) with{Junction=new(3,3,1)};
+        var other=R("prefab:CROSS:0:2",2,4,P(0,-100),End(side)) with{Junction=chosen.Junction};
+        var result=Detector.FindNext([entry,chosen],0,[entry,chosen,other]);
+        Assert.Equal(ManeuverKind.Straight,result!.Kind);
+        Assert.True(result.IsMainRoadContinuation);
+    }
+
     [Fact]
     public void AmbiguousRoadJoinBlocksContinuationWithoutInventingAnAction()
     {

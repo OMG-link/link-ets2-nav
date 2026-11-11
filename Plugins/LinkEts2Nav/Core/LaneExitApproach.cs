@@ -16,6 +16,9 @@ public sealed class LaneExitApproach
         for(int fork=0;fork<route.Count;fork++)
         {
             var edge=route[fork];var parts=edge.Id.Split(':');
+            // Crossing junctions already have a complete angular decision; an
+            // added approach lane there can serve through traffic, not an exit.
+            if(edge.Junction?.IsJunction==true)continue;
             if(edge.Roundabout is not null||parts.Length!=4||parts[0]!="prefab"||offsets[fork]<vehicleAlong)continue;
             string junction="prefab:"+parts[1];
             if(identified.Any(a=>a.JunctionId==junction&&a.Kind!=ManeuverKind.Straight))continue;

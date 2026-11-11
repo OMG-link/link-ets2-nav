@@ -303,8 +303,8 @@ public sealed class NavigationManeuverDetector
             }
             if (mainEnd is null)
             {
-                var straight = choices.Where(c => Math.Abs(c.Angle) <= 5).ToArray();
-                if (straight.Length == 1 && choices.Where(c => c.End != straight[0].End)
+                var straight = choices.Where(c => Math.Abs(c.Angle) <= 15).OrderBy(c => Math.Abs(c.Angle)).ToArray();
+                if (straight.Length > 0 && choices.Where(c => c.End != straight[0].End)
                     .All(c => Math.Abs(c.Angle) - Math.Abs(straight[0].Angle) >= 5))
                     mainEnd = straight[0].End;
             }

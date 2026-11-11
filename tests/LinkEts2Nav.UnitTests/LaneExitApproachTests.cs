@@ -20,6 +20,16 @@ public sealed class LaneExitApproachTests
         return(route,[..route,main],new("exit",ManeuverKind.KeepRight,300,"in","out"){JunctionId="prefab:2"});
     }
     [Fact]
+    public void CrossingJunctionThroughLaneIsNotReplacedByAnExitAction()
+    {
+        var s=Scene();
+        var route=s.Route.Select(e=>e.Id==s.Route[^1].Id?e with{Junction=new(3,3,1)}:e).ToArray();
+        var straight=s.Action with{Kind=ManeuverKind.Straight};
+        Assert.Equal(ManeuverKind.Straight,Assert.Single(new LaneExitApproach().Apply([straight],route,s.Graph,0)).Kind);
+        Assert.Empty(new LaneExitApproach().Apply([],route,s.Graph,0));
+    }
+
+    [Fact]
     public void DedicatedExitStartsAtNativeDivergenceAndRemainsConsumedAfterOpeningLeavesRoute()
     {
         var s=Scene();var detector=new LaneExitApproach();

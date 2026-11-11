@@ -53,17 +53,21 @@ public sealed class LaneNavigationTests
         var descriptor=new PrefabDescriptor {Nodes=[new ControlNode{Position=Vector3.Zero,InputLines=[0,1],OutputLines=[]},
             new ControlNode{Position=new(0,0,-40),InputLines=[],OutputLines=[2,3]}],NavCurves=[
             Curve(-2,0,-20,2),Curve(2,0,-20,3),Curve(-2,-20,-40),Curve(2,-20,-40)]};
+        descriptor.NavCurves[0].Blinker=TruckLib.Models.Ppd.BlinkerType.RightBlinker;
+        descriptor.NavCurves[2].Blinker=TruckLib.Models.Ppd.BlinkerType.NoBlinkerForced;
         var path=Assert.Single(PrefabPathGeometry.Build(prefab,descriptor));
         Assert.Equal(2,path.LanePaths.Count);
         Assert.Equal(-Vector3.UnitZ,path.NativeEntryTangent);
         Assert.Equal(-Vector3.UnitZ,path.NativeExitTangent);
         Assert.Contains(path.LanePaths,p=>p.CurveIndices.SequenceEqual(new[]{0,2})&&p.EntryLane==0&&p.ExitLane==0);
         Assert.Contains(path.LanePaths,p=>p.CurveIndices.SequenceEqual(new[]{1,3})&&p.EntryLane==1&&p.ExitLane==1);
+        Assert.Equal(new[]{LaneBlinker.Right,LaneBlinker.NoBlinkerForced},path.LanePaths.Single(p=>p.EntryLane==0).CurveBlinkers);
         Assert.All(path.LanePaths,p=>{Assert.Equal(40,p.LengthMeters,2);Assert.Equal(a.Uid,p.EntryNodeUid);Assert.Equal(b.Uid,p.ExitNodeUid);});
         prefab.ChangeOrigin(1);
         var rotated=Assert.Single(PrefabPathGeometry.Build(prefab,descriptor));
         Assert.Equal(2,rotated.LanePaths.Count);
         Assert.All(rotated.LanePaths,p=>{Assert.Equal(a.Uid,p.EntryNodeUid);Assert.Equal(b.Uid,p.ExitNodeUid);});
+        Assert.Equal(new[]{LaneBlinker.Right,LaneBlinker.NoBlinkerForced},rotated.LanePaths.Single(p=>p.EntryLane==0).CurveBlinkers);
     }
     [Fact]
     public void VehicleRoadLaneAnchorsPlanAndChangingLaneInvalidatesCachedChoice()

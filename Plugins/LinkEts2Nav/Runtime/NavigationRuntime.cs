@@ -75,19 +75,20 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         // Recognized roundabouts already own entry/exit guidance; their internal joins are not ramp actions.
         var merges=mergeDetector.Find(route,paths.GetNavigationGraph(),laneRoute,along.Value)
             .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
-        string mergeState=string.Join("|",merges.Select(m=>$"{m.Id}:{m.Kind}:{m.ParallelDistanceMeters}"));
+        string mergeState=string.Join("|",merges.Select(m=>$"{m.Id}:{m.Kind}:{m.ParallelDistanceMeters}:{m.MoveLeft}"));
         if(mergeState!=mergeSignature)
         {
-            foreach(var merge in merges)log?.Invoke(FormattableString.Invariant($"车道合并判定：{merge.Kind}，距汇合点={merge.DistanceMeters:F0} m，平行接近长度={merge.ParallelDistanceMeters?.ToString("F0")??"未知"} m，向{(merge.MoveLeft?"左":"右")}合并；{merge.Id}；{merge.Reason}"));
+            foreach(var merge in merges)log?.Invoke(FormattableString.Invariant($"车道合并判定：{merge.Kind}，距汇合点={merge.DistanceMeters:F0} m，平行接近长度={merge.ParallelDistanceMeters?.ToString("F0")??"未知"} m，{(merge.MoveLeft is null?"合并方向未知":"向"+(merge.MoveLeft==true?"左":"右")+"合并")}；{merge.Id}；{merge.Reason}"));
             mergeSignature=mergeState;
         }
         foreach(var merge in merges)
         {
             string group=$"prefab:{merge.PrefabUid:X16}";
             upcoming=upcoming.Where(m=>m.JunctionId!=group||m.Kind is ManeuverKind.TurnLeft or ManeuverKind.TurnRight or ManeuverKind.UTurn or ManeuverKind.EnterRoundabout or ManeuverKind.ExitRoundabout or ManeuverKind.PassRoundaboutExit).ToArray();
-            string side=merge.MoveLeft?"左":"右";
+            if(merge.MoveLeft is null)continue;
+            string side=merge.MoveLeft==true?"左":"右";
             string lanes=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
-            var action=new NavigationManeuver(merge.Id,merge.MoveLeft?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,merge.DistanceMeters,"lane","lane")
+            var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,merge.DistanceMeters,"lane","lane")
             { JunctionId="lane-merge:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
                 AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.NoticeAt500:NavigationAnnouncementMode.Silent,
                 Instruction=$"请注意前方车道合并，建议走{side}侧{lanes}" };

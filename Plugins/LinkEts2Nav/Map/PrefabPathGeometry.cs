@@ -60,7 +60,8 @@ public static class PrefabPathGeometry
                 var lanePoints=points.Skip(1).Take(points.Count-2).ToArray();
                 candidates.Add(new(prefab.Uid,prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,input,output,
                     entryOrder[input],exitOrder[output],entryOrder.Count,exitOrder.Count,chain,lanePoints,
-                    lanePoints.Zip(lanePoints.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second))){CurveStartPointIndices=Starts(chain)});
+                    lanePoints.Zip(lanePoints.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)))
+                    {CurveStartPointIndices=Starts(chain),CurveBlinkers=chain.Select(i=>(LaneBlinker)(int)curves[i].Blinker).ToArray()});
             }
             if(candidates.Count==0)continue;
             var representative=PrefabCurvePathfinder.Find(descriptor,control[from].InputLines,control[to].OutputLines.Where(Valid).ToHashSet());

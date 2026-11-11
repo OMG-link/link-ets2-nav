@@ -24,7 +24,8 @@ public sealed class LaneMergeDetectorTests
         }
         for(int d=-1;d>=-10;d--){var common=Position(d,0);main.Add(common);ending.Add(common);}
         int mainLane=left?1:0;int endLane=left?0:1;
-        PrefabLanePath Lane(int lane,int curve,List<Vector3> points)=>new(42,10,20,lane,0,lane,0,2,1,[curve,9],points,100);
+        PrefabLanePath Lane(int lane,int curve,List<Vector3> points)=>new(42,10,20,lane,0,lane,0,2,1,[curve,9],points,100)
+            {CurveBlinkers=[lane==mainLane?LaneBlinker.NoBlinker:left?LaneBlinker.Right:LaneBlinker.Left,LaneBlinker.NoBlinker]};
         var m=Lane(mainLane,1,main);var e=Lane(endLane,2,ending);
         var edge=new DirectedRoad("prefab:000000000000002A:0:1",10,20,main){LanePaths=[m,e]};
         var roadPoints=Enumerable.Range(0,(int)upstream+1).Select(i=>Position(length+upstream-i,0)).ToArray();
@@ -146,9 +147,9 @@ public sealed class LaneMergeDetectorTests
             new(-5.5980f,0.0000f,56.3800f),
             new(-5.7970f,0.0000f,56.6950f)];
         var continuing=new PrefabLanePath(42,10,20,0,0,0,0,2,1,[0,1,2,3],left,80)
-            {CurveStartPointIndices=[0,5,10,35]};
+            {CurveStartPointIndices=[0,5,10,35],CurveBlinkers=[LaneBlinker.NoBlinker,LaneBlinker.NoBlinker,LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]};
         var ending=new PrefabLanePath(42,10,20,1,0,1,0,2,1,[4,5,6,3],right,80)
-            {CurveStartPointIndices=[0,5,10,35]};
+            {CurveStartPointIndices=[0,5,10,35],CurveBlinkers=[LaneBlinker.NoBlinker,LaneBlinker.NoBlinker,LaneBlinker.Left,LaneBlinker.NoBlinker]};
         var edge=new DirectedRoad("prefab:000000000000002A:0:1",10,20,left)
             {LanePaths=reverseOrder?[ending,continuing]:[continuing,ending]};
         var plan=new LaneNavigationPlan([new(edge.Id,ending)],[],true,null);
@@ -188,7 +189,7 @@ public sealed class LaneMergeDetectorTests
         Assert.Equal(LaneMergeKind.Uncertain,observation.Kind);Assert.Null(observation.ParallelDistanceMeters);
     }
     [Fact]
-    public void CurvedMainRoadStillWinsOverSidewaysConvergence()
+    public void NativeBlinkerStillSelectsContinuingLaneOnCurvedRoad()
     {
         var scene=Scene(curved:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
         Assert.Equal(0,observation.MainEntryLane);Assert.True(observation.MoveLeft);
@@ -241,5 +242,38 @@ public sealed class LaneMergeDetectorTests
     public void PassingMergeRemovesItsAction()
     {
         var scene=Scene();Assert.Empty(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,1000));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UnknownOrContradictoryLampsDoNotGuessUsingCurvature(bool contradictory)
+    {
+        var scene=Scene();
+        var lanes=scene.Edge.LanePaths.Select(p=>p with
+        {CurveBlinkers=[p.EntryLane==1&&contradictory?LaneBlinker.Right:LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]}).ToArray();
+        var edge=scene.Edge with{LanePaths=lanes};
+        var plan=scene.Plan with{Sections=[new(edge.Id,lanes[1])]};
+        var merge=Assert.Single(new LaneMergeDetector().Find([edge],[scene.Graph[0],edge],plan,0));
+        Assert.Equal(LaneMergeKind.Uncertain,merge.Kind);
+        Assert.Null(merge.MoveLeft);Assert.Null(merge.EndingEntryLane);Assert.Null(merge.MainEntryLane);
+        Assert.Equal(0,merge.RecommendedLaneCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LeftLaneRightBlinkerOverridesTheOldCurvaturePreference(bool reverseOrder)
+    {
+        // Regression pattern observed in un_fork_4m-1m_0-2_0-3_join_0-2_60m:
+        // the left competing incoming curve signals right; the right one does not.
+        var scene=Scene();
+        var left=scene.Edge.LanePaths[0] with{CurveBlinkers=[LaneBlinker.Right,LaneBlinker.NoBlinker]};
+        var right=scene.Edge.LanePaths[1] with{CurveBlinkers=[LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]};
+        var edge=scene.Edge with{LanePaths=reverseOrder?[right,left]:[left,right]};
+        var plan=new LaneNavigationPlan([new(edge.Id,left)],[],true,null);
+        var merge=Assert.Single(new LaneMergeDetector().Find([edge],[scene.Graph[0],edge],plan,0));
+        Assert.Equal(0,merge.EndingEntryLane);Assert.Equal(1,merge.MainEntryLane);
+        Assert.False(merge.MoveLeft);Assert.Equal(1,merge.RecommendedLaneCount);
     }
 }

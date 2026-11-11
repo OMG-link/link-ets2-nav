@@ -2,17 +2,17 @@ using System.Numerics;
 namespace LinkEts2Nav.Core;
 
 public enum LaneMergeKind { Ramp, LaneReduction, Uncertain }
-public sealed record LaneMergeObservation(string Id,ulong PrefabUid,ulong EndingEntryNode,int EndingEntryLane,
-    ulong MainEntryNode,int MainEntryLane,Vector3 Position,bool MoveLeft,int RecommendedLaneCount,
+public sealed record LaneMergeObservation(string Id,ulong PrefabUid,ulong? EndingEntryNode,int? EndingEntryLane,
+    ulong? MainEntryNode,int? MainEntryLane,Vector3 Position,bool? MoveLeft,int RecommendedLaneCount,
     double? ParallelDistanceMeters,LaneMergeKind Kind,double DistanceMeters,string Reason);
 
-/// <summary>Topology proves the merge; curvature continuity identifies the continuing lane; paired geometry measures its history.</summary>
+/// <summary>Topology proves the merge; native blinkers identify the continuing lane; paired geometry measures its history.</summary>
 public sealed class LaneMergeDetector
 {
     private IReadOnlyList<DirectedRoad>? indexed;
     private IReadOnlyList<Model> models=[];
     private readonly HashSet<string> approaching=new(StringComparer.Ordinal);
-    private sealed record Model(PrefabLanePath Ending,PrefabLanePath Main,Vector3 Position,bool Left,int Count,
+    private sealed record Model(PrefabLanePath Ending,PrefabLanePath Main,Vector3 Position,bool? Left,int Count,
         double? Parallel,LaneMergeKind Kind,string Reason);
     public IReadOnlyList<LaneMergeObservation> Find(IReadOnlyList<DirectedRoad> route,IReadOnlyList<DirectedRoad> graph,
         LaneNavigationPlan plan,double vehicleAlong)
@@ -23,18 +23,19 @@ public sealed class LaneMergeDetector
         {
             var selected=plan.Sections.FirstOrDefault(s=>s.EdgeId==edge.Id)?.Path;
             foreach(var m in models.Where(m=>edge.LanePaths.Any(p=>p.PrefabUid==m.Ending.PrefabUid
-                &&p.EntryNodeUid==m.Ending.EntryNodeUid&&p.ExitNodeUid==m.Ending.ExitNodeUid)))
+                &&(p.EntryNodeUid==m.Ending.EntryNodeUid||p.EntryNodeUid==m.Main.EntryNodeUid)&&p.ExitNodeUid==m.Ending.ExitNodeUid)))
             {
                 bool usesEnding=selected is not null&&selected.EntryNodeUid==m.Ending.EntryNodeUid
                     &&selected.EntryLane==m.Ending.EntryLane&&selected.ExitNodeUid==m.Ending.ExitNodeUid;
                 string id=$"lane-merge:{m.Ending.PrefabUid:X16}:{m.Ending.CurveIndices[^1]}:{m.Ending.EntryNodeUid:X16}:{m.Ending.EntryLane}";
-                if(m.Kind!=LaneMergeKind.LaneReduction&&!usesEnding&&!approaching.Contains(id))continue;
+                if(m.Left is not null&&m.Kind!=LaneMergeKind.LaneReduction&&!usesEnding&&!approaching.Contains(id))continue;
                 var projected=new LanePolyline(edge.Points).Project(m.Position);
                 double distance=offset+projected.Along-vehicleAlong;
                 if(distance<0){approaching.Remove(id);continue;}
                 if(projected.Error>15)continue;
                 if(usesEnding)approaching.Add(id);
-                result.Add(new(id,m.Ending.PrefabUid,m.Ending.EntryNodeUid,m.Ending.EntryLane,m.Main.EntryNodeUid,m.Main.EntryLane,
+                result.Add(new(id,m.Ending.PrefabUid,m.Left is null?null:m.Ending.EntryNodeUid,m.Left is null?null:m.Ending.EntryLane,
+                    m.Left is null?null:m.Main.EntryNodeUid,m.Left is null?null:m.Main.EntryLane,
                     m.Position,m.Left,m.Count,m.Parallel,m.Kind,distance,m.Reason));
             }
             offset+=new LanePolyline(edge.Points).Length;
@@ -64,37 +65,30 @@ public sealed class LaneMergeDetector
                 if(y.CurveStartPointIndices.Count==y.CurveIndices.Count)yi=y.CurveStartPointIndices[^common];
                 var xp=new LanePolyline(x.Points);var yp=new LanePolyline(y.Points);
                 double xa=xp.Along[xi],ya=yp.Along[yi];if(xa<6||ya<6||xp.Length-xa<1)continue;
-                // Measure only the shared suffix. Short suffixes must not borrow
-                // curvature from either competing approach before the merge.
-                var shared=new LanePolyline(x.Points.Skip(xi));
-                double outgoing=shared.Curvature(Math.Min(3,shared.Length*.5));
-                double xs=Continuity(xp,xa,outgoing),ys=Continuity(yp,ya,outgoing);
-                if(Math.Abs(xs-ys)<.015||Math.Max(xs,ys)<1.5*Math.Max(.0001,Math.Min(xs,ys)))continue;
-                bool xEnds=xs>ys;
+                var direction=MergeBlinkerDirection.Classify(x,y,common);
+                bool xEnds=direction.FirstEnds??true;
                 var ending=xEnds?x:y;var main=xEnds?y:x;int ei=xEnds?xi:yi,mi=xEnds?yi:xi;
                 var endTrace=Trace(ending,ei,roads,laneEnds);var mainTrace=Trace(main,mi,roads,laneEnds);
                 var measured=MeasureParallel(endTrace,mainTrace);
                 if(!measured.Observed)continue;
                 double? parallel=measured.Distance;
-                var kind=parallel is null?LaneMergeKind.Uncertain:parallel<500?LaneMergeKind.Ramp:LaneMergeKind.LaneReduction;
+                var kind=direction.FirstEnds is null||parallel is null?LaneMergeKind.Uncertain:parallel<500?LaneMergeKind.Ramp:LaneMergeKind.LaneReduction;
                 var endLine=new LanePolyline(ending.Points);var mainLine=new LanePolyline(main.Points);
                 var endPosition=endLine.At(Math.Max(0,endLine.Along[ei]-Math.Min(30,endLine.Along[ei])));
                 var mainNear=mainLine.Project(endPosition);var heading=mainLine.Heading(mainNear.Along);
-                bool left=Vector3.Dot(endPosition-mainLine.At(mainNear.Along),new(-heading.Z,0,heading.X))>0;
+                double lateral=Vector3.Dot(endPosition-mainLine.At(mainNear.Along),new(-heading.Z,0,heading.X));
+                bool? left=direction.FirstEnds is null?null:direction.MoveLeft;
+                string reason=direction.Reason;
+                if(left is not null&&(Math.Abs(lateral)<.1||left.Value!=(lateral>0)))
+                {left=null;kind=LaneMergeKind.Uncertain;reason="原生转向灯与合并前车道侧向位置矛盾";}
                 int count=lanes.Where(p=>p.PrefabUid==ending.PrefabUid&&p.EntryNodeUid==ending.EntryNodeUid&&p.ExitNodeUid==ending.ExitNodeUid)
-                    .Where(p=>left?p.EntryOrder<ending.EntryOrder:p.EntryOrder>ending.EntryOrder).Select(p=>p.EntryLane).Distinct().Count();
-                count=Math.Max(1,count);
+                    .Where(p=>left==true?p.EntryOrder<ending.EntryOrder:p.EntryOrder>ending.EntryOrder).Select(p=>p.EntryLane).Distinct().Count();
+                count=left is null?0:Math.Max(1,count);
                 result.Add(new(ending,main,ending.Points[ei],left,count,parallel,kind,
-                    parallel is null?"已确认侧向合并，但上游平行段超出已加载或唯一连接范围":$"几何连续性区分延续车道；合并前平行接近区间约 {parallel:F0} m"));
+                    reason+(parallel is null?"；上游平行段超出已加载或唯一连接范围":$"；合并前平行接近区间约 {parallel:F0} m")));
             }
         }
         return result.DistinctBy(m=>(m.Ending.PrefabUid,m.Ending.EntryNodeUid,m.Ending.EntryLane,m.Ending.ExitNodeUid,m.Ending.ExitLane)).ToArray();
-    }
-    private static double Continuity(LanePolyline path,double merge,double outgoing)
-    {
-        double cost=0;
-        for(double d=2;d<=Math.Min(30,merge-2);d+=2)cost+=2*Math.Abs(path.Curvature(merge-d)-outgoing);
-        return cost;
     }
     private static LanePolyline Trace(PrefabLanePath current,int endIndex,IReadOnlyDictionary<ulong,DirectedRoad[]> roadEnds,IReadOnlyDictionary<ulong,PrefabLanePath[]> laneEnds)
     {
@@ -178,11 +172,6 @@ internal sealed class LanePolyline
     {
         var delta=At(Math.Min(Length,along+1))-At(Math.Max(0,along-1));delta.Y=0;
         return delta.LengthSquared()>.000001?Vector3.Normalize(delta):Vector3.Zero;
-    }
-    public double Curvature(double along)
-    {
-        double a=Math.Max(0,along-2),b=Math.Min(Length,along+2);if(b-a<.1)return 0;
-        var x=Heading(a);var y=Heading(b);return Math.Atan2(x.X*y.Z-x.Z*y.X,Vector3.Dot(x,y))/(b-a);
     }
     public (double Along,double Error) Project(Vector3 point,double minimum=0,double maximum=double.PositiveInfinity)
     {

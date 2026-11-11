@@ -1,0 +1,358 @@
+[
+  {
+    "resource": "/prefab2/fork_temp/un/un_fork_0-3_trans_0-2_50m.ppd",
+    "scene": "2026-11-09-213335-433-82043ba1",
+    "firstCurves": [
+      1,
+      4,
+      7
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      2,
+      5,
+      7
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "Left",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": false,
+    "moveLeft": true
+  },
+  {
+    "resource": "/prefab2/fork_temp/ger/ger_hw2-hw2_exit_tmpl.ppd",
+    "scene": "2026-11-10-005846-067-dc67d248",
+    "firstCurves": [
+      0,
+      4,
+      7,
+      2
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      8,
+      1,
+      3,
+      2
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "Left",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": false,
+    "moveLeft": true
+  },
+  {
+    "resource": "/prefab2/fork_temp/ger/ger_r2_r3_merge_tmpl.ppd",
+    "scene": "2026-11-10-005846-067-dc67d248",
+    "firstCurves": [
+      2,
+      1,
+      5
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      3,
+      4,
+      5
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "Left",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": false,
+    "moveLeft": true
+  },
+  {
+    "resource": "/prefab2/fork_temp/balt/balt_hw2_hw3_merge_tmpl.ppd",
+    "scene": "2026-11-10-012706-709-96160788",
+    "firstCurves": [
+      0,
+      4,
+      3
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      2,
+      5,
+      3
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "Left",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": false,
+    "moveLeft": true
+  },
+  {
+    "resource": "/prefab2/fork_temp/balt/balt_hw2_sr_fork_long_tmpl.ppd",
+    "scene": "2026-11-10-012706-709-96160788",
+    "firstCurves": [
+      1,
+      6,
+      8,
+      7
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      4,
+      3,
+      5,
+      7
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "Left",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": false,
+    "moveLeft": true
+  },
+  {
+    "resource": "/prefab2/fork_temp/balt/balt_hw2-hw2_exit_tmpl.ppd",
+    "scene": "2026-11-10-012706-709-96160788",
+    "firstCurves": [
+      1,
+      7,
+      5,
+      3
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      0,
+      6,
+      4,
+      3
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "Left",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": false,
+    "moveLeft": true
+  },
+  {
+    "resource": "/prefab2/fork_temp/un/un_fork_1-1_trans_2-2_2m_offset_80m.ppd",
+    "scene": "2026-11-11-201528-403-6e5ea07e",
+    "firstCurves": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      4,
+      5,
+      6,
+      3
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "Left",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": false,
+    "moveLeft": true
+  },
+  {
+    "resource": "/prefab2/fork_temp/balt/balt_fork_r2_x_r1_short_tmpl.ppd",
+    "scene": "2026-11-11-202959-965-34b35151",
+    "firstCurves": [
+      0,
+      5,
+      2
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      9,
+      6,
+      2
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "Left",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": false,
+    "moveLeft": true
+  },
+  {
+    "resource": "/prefab2/fork_temp/un/un_fork_4m-1m_0-2_0-3_join_0-2_60m.ppd",
+    "scene": "2026-11-11-215102-006-efb4d024",
+    "firstCurves": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "Right",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      5,
+      6,
+      10,
+      4
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": true,
+    "moveLeft": false
+  },
+  {
+    "resource": "/prefab2/fork_temp/un/un_fork_1-1_trans_2-1_50m_alt.ppd",
+    "scene": "2026-11-11-220345-637-bce0f11a",
+    "firstCurves": [
+      7,
+      8,
+      9,
+      0
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "Right",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      1,
+      2,
+      3,
+      0
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": true,
+    "moveLeft": false
+  },
+  {
+    "resource": "/prefab2/fork_temp/un/un_fork_1-2_trans_2-1_50m.ppd",
+    "scene": "2026-11-11-220853-975-c2a8d23e",
+    "firstCurves": [
+      7,
+      8,
+      9,
+      10
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "Right",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      11,
+      12,
+      13,
+      10
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": true,
+    "moveLeft": false
+  },
+  {
+    "resource": "/prefab2/fork_temp/un/un_fork_1-2_trans_2-1_50m.ppd",
+    "scene": "2026-11-11-220853-975-c2a8d23e",
+    "firstCurves": [
+      4,
+      5,
+      6,
+      3
+    ],
+    "firstLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "Right",
+      "NoBlinker"
+    ],
+    "secondCurves": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "secondLamps": [
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker",
+      "NoBlinker"
+    ],
+    "sharedSuffixCount": 1,
+    "firstEnds": true,
+    "moveLeft": false
+  }
+]

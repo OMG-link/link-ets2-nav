@@ -2,12 +2,16 @@ using System.Numerics;
 using System.Text.Json.Serialization;
 namespace LinkEts2Nav.Core;
 
+public enum LaneBlinker { NoBlinker=0, NoBlinkerForced=1, Right=2, Left=4 }
+
 /// <summary>One explicit PPD chain. Slot numbers are native; orders run left-to-right in travel direction.</summary>
 public sealed record PrefabLanePath(ulong PrefabUid,ulong EntryNodeUid,ulong ExitNodeUid,
     int EntryLane,int ExitLane,int EntryOrder,int ExitOrder,int EntryLaneCount,int ExitLaneCount,
     IReadOnlyList<int> CurveIndices,[property:JsonIgnore] IReadOnlyList<Vector3> Points,double LengthMeters)
 {
     public IReadOnlyList<int> CurveStartPointIndices { get; init; } = [];
+    /// <summary>Native lamp command for each incoming PPD curve, aligned with CurveIndices.</summary>
+    public IReadOnlyList<LaneBlinker> CurveBlinkers { get; init; } = [];
 }
 public sealed record LaneRouteSection(string EdgeId,PrefabLanePath Path);
 /// <summary>A road corridor connects consecutive selected prefab paths. A requested lane change is explicit, not a PPD curve.</summary>

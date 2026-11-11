@@ -89,7 +89,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             string side=merge.MoveLeft==true?"左":"右";
             string lanes=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
             var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,merge.DistanceMeters,"lane","lane")
-            { JunctionId="lane-merge:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
+            { EndDistanceMeters=merge.EndDistanceMeters,JunctionId="lane-merge:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
                 AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.NoticeAt500:NavigationAnnouncementMode.Silent,
                 Instruction=$"请注意前方车道合并，建议走{side}侧{lanes}" };
             upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
@@ -99,7 +99,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             string group="prefab:"+route[0].Id.Split(':')[1];
             if(!upcoming.Any(m=>m.JunctionId==group && m.Kind!=ManeuverKind.Straight && m.DistanceMeters==0))
                 return Suspend("货场出口路径已找到，但出口操作尚无法确认。",now);
-            upcoming=upcoming.Select(m=>m with{DistanceMeters=m.DistanceMeters+exitDistance}).ToArray();
+            upcoming=upcoming.Select(m=>m with{DistanceMeters=m.DistanceMeters+exitDistance,EndDistanceMeters=m.EndDistanceMeters+exitDistance}).ToArray();
         }
         // A distant unresolved join limits the safe stretch; it does not invalidate
         // an already verified long road before that join.

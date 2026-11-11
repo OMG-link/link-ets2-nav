@@ -4,7 +4,10 @@ namespace LinkEts2Nav.Core;
 public enum LaneMergeKind { Ramp, LaneReduction, Uncertain }
 public sealed record LaneMergeObservation(string Id,ulong PrefabUid,ulong? EndingEntryNode,int? EndingEntryLane,
     ulong? MainEntryNode,int? MainEntryLane,Vector3 Position,bool? MoveLeft,int RecommendedLaneCount,
-    double? ParallelDistanceMeters,LaneMergeKind Kind,double DistanceMeters,string Reason);
+    double? ParallelDistanceMeters,LaneMergeKind Kind,double DistanceMeters,string Reason)
+{
+    public double? EndDistanceMeters { get; init; }
+}
 
 /// <summary>Topology proves the merge; native blinkers identify the continuing lane; paired geometry measures its history.</summary>
 public sealed class LaneMergeDetector
@@ -36,7 +39,8 @@ public sealed class LaneMergeDetector
                 if(usesEnding)approaching.Add(id);
                 result.Add(new(id,m.Ending.PrefabUid,m.Left is null?null:m.Ending.EntryNodeUid,m.Left is null?null:m.Ending.EntryLane,
                     m.Left is null?null:m.Main.EntryNodeUid,m.Left is null?null:m.Main.EntryLane,
-                    m.Position,m.Left,m.Count,m.Parallel,m.Kind,distance,m.Reason));
+                    m.Position,m.Left,m.Count,m.Parallel,m.Kind,distance,m.Reason)
+                    {EndDistanceMeters=offset+new LanePolyline(edge.Points).Length-vehicleAlong});
             }
             offset+=new LanePolyline(edge.Points).Length;
         }

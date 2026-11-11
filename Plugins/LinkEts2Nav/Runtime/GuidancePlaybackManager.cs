@@ -9,7 +9,11 @@ public interface IGuidanceAudioPlayer
 }
 
 public sealed record QueuedGuidanceSpeech(string Source,string EventId,string TriggerId,
-    double SequenceOrder,int Priority,string Text);
+    double SequenceOrder,int Priority,string Text)
+{
+    public string? SpeechSequenceId { get; init; }
+    public string SequenceId => SpeechSequenceId ?? EventId;
+}
 
 /// <summary>Owns pending playback, priority and same-event replacement. Preparation never plays.</summary>
 public sealed class GuidancePlaybackManager:IAsyncDisposable

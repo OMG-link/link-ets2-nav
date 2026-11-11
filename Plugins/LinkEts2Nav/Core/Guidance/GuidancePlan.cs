@@ -6,6 +6,8 @@ public enum TriggerDisposition { Queued, Silent, SpeedSkipped, Superseded }
 /// <summary>A route landmark; camera and maneuver descriptions use the same event model.</summary>
 public sealed record GuidanceEvent(string Id,double AlongMeters,string Description)
 {
+    public string? SpeechSequenceId { get; init; }
+    public string SequenceId => SpeechSequenceId ?? Id;
     public WarningDistanceKind DistanceKind { get; init; } = WarningDistanceKind.Road;
 }
 
@@ -21,10 +23,14 @@ public sealed record SpeechTrigger(string Id,string EventId,SpeechTriggerKind Ki
     public IReadOnlyList<string> Supersedes { get; init; } = [];
 }
 
+/// <summary>A playback series ends strictly after its route boundary, or on an observed passage fact.</summary>
+public sealed record SpeechSequence(string Id,double? EndAlongMeters=null,bool Ended=false);
+
 public sealed record GuidanceSourcePlan(string Source,string SessionId,string RouteRevision,
     double PlayerAlongMeters,bool Active,DateTimeOffset ObservedAt,
     IReadOnlyList<GuidanceEvent> Events,IReadOnlyList<SpeechTrigger> Triggers)
 {
+    public IReadOnlyList<SpeechSequence> Sequences { get; init; } = [];
     public string? CoordinateFrame { get; init; }
     public bool PrepareWhileInactive { get; init; }
 }

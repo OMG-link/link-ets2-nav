@@ -63,6 +63,7 @@ public sealed class RoundaboutNavigationTests
         Assert.Equal(route.SelectMany(e=>e.Points),edge.Points);
         var detector=new NavigationManeuverDetector();var maneuvers=detector.FindSequence(adapted,0,[]);
         Assert.Equal(new[]{ManeuverKind.EnterRoundabout,ManeuverKind.PassRoundaboutExit,ManeuverKind.ExitRoundabout},maneuvers.Select(m=>m.Kind));
+        Assert.All(maneuvers, m => Assert.Equal(100, m.EndDistanceMeters));
         Assert.Equal("进入环岛",maneuvers[0].Instruction);
         Assert.Equal("进入环岛，请从第二出口驶出",maneuvers[0].NearInstruction);
         Assert.InRange(maneuvers[^1].DistanceMeters,1,99);

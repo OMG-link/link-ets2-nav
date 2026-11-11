@@ -11,6 +11,11 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
 {
     /// <summary>Multiple connection curves inside one prefab share this physical-junction group.</summary>
     public string? JunctionId { get; init; }
+    /// <summary>Selected route position where this action's physical component ends, relative to the player.</summary>
+    public double? EndDistanceMeters { get; init; }
+    /// <summary>Optional common playback series; event IDs remain distinct for reconciliation.</summary>
+    public string? SpeechSequenceId { get; init; }
+    public double SpeechSequenceOrder { get; init; }
     public NavigationAnnouncementMode AnnouncementMode { get; init; }
     /// <summary>Optional action-specific wording; distance scheduling remains shared.</summary>
     public string? Instruction { get; init; }
@@ -92,7 +97,7 @@ public sealed class NavigationManeuverDetector
                 string id = $"roundabout:{ring.Id}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}";
                 if (offset >= vehicleAlong)
                     result.Add(new(id + ":enter", ManeuverKind.EnterRoundabout, offset - vehicleAlong, current.Id, current.Id)
-                    { JunctionId = "roundabout:" + ring.Id, Instruction = "进入环岛", NearInstruction="进入环岛，请从第"+NavigationPrompts.Number(ring.ExitNumber)+"出口驶出" });
+                    { EndDistanceMeters = end - vehicleAlong, JunctionId = "roundabout:" + ring.Id, Instruction = "进入环岛", NearInstruction="进入环岛，请从第"+NavigationPrompts.Number(ring.ExitNumber)+"出口驶出" });
                 var exits=ring.Exits.Count>0 ? ring.Exits : new[]{new RoundaboutExitCue(ring.ExitNumber,Math.Max(0,end-offset-ring.ExitConnectorMeters))};
                 foreach(var exit in exits)
                 {
@@ -101,7 +106,7 @@ public sealed class NavigationManeuverDetector
                     bool selected=exit.Number==ring.ExitNumber;
                     result.Add(new(id+":exit:"+exit.Number,selected?ManeuverKind.ExitRoundabout:ManeuverKind.PassRoundaboutExit,
                         location-vehicleAlong,current.Id,current.Id)
-                    {JunctionId="roundabout:"+ring.Id,ExecutionOnly=true,
+                    {EndDistanceMeters=end-vehicleAlong,JunctionId="roundabout:"+ring.Id,ExecutionOnly=true,
                         Instruction=selected?"驶出环岛":"经过第"+NavigationPrompts.Number(exit.Number)+"出口"});
                 }
                 confirmedUntil = end; offset = end; continue;
@@ -137,7 +142,7 @@ public sealed class NavigationManeuverDetector
                         result.Add(new($"merge:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
                             mergeKind, offset - vehicleAlong, i > 0 ? route[i - 1].Id : current.Id,
                             i + 1 < route.Count ? route[i + 1].Id : current.Id)
-                        { JunctionId = "prefab:" + prefab, HasSeparateApproachRoad = i > 0 && PrefabKey(route[i - 1]) is null });
+                        { EndDistanceMeters = end - vehicleAlong, JunctionId = "prefab:" + prefab, HasSeparateApproachRoad = i > 0 && PrefabKey(route[i - 1]) is null });
                 }
                 // All angle-based maneuvers share this junction-only rule.
                 if (connections.Length >= 2 && current.Junction?.IsJunction == true)
@@ -184,6 +189,7 @@ public sealed class NavigationManeuverDetector
                         result.Add(new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
                             kind, offset - vehicleAlong, previous?.Id ?? current.Id, following?.Id ?? current.Id)
                         {
+                            EndDistanceMeters = end - vehicleAlong,
                             JunctionId = "prefab:" + prefab,
                             HasSeparateApproachRoad = previous is not null && PrefabKey(previous) is null,
                             IsMainRoadContinuation = mainContinuation

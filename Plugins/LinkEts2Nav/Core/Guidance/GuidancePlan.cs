@@ -18,6 +18,8 @@ public sealed record SpeechTrigger(string Id,string EventId,SpeechTriggerKind Ki
     public int Priority { get; init; } = 10;
     public double SequenceOrder { get; init; }
     public bool Enabled { get; init; } = true;
+    /// <summary>Points placed at a preceding action's end become due after crossing that boundary.</summary>
+    public bool StrictCrossing { get; init; }
     public double? SkipAtSpeedKph { get; init; }
     public bool Silent { get; init; }
     public IReadOnlyList<string> Supersedes { get; init; } = [];

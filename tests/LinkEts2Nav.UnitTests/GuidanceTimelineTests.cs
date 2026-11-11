@@ -3,6 +3,17 @@ using LinkEts2Nav.Core.Guidance;
 namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceTimelineTests
 {
+    [Fact]
+    public void SequenceEndDiagnosticsContainOnlyJsonNumbers()
+    {
+        var timeline=new GuidanceTimeline();var scheduler=new SpeechTriggerScheduler();
+        var now=DateTimeOffset.UtcNow;
+        timeline.Publish(new("navigation","s","r",11,true,now,[new("event",5,"turn")],[])
+            {Sequences=[new("event",10)]});
+        var ended=Assert.Single(scheduler.Update(timeline,now,0));
+        Assert.Equal(TriggerDisposition.Ended,ended.Disposition);
+        Assert.Contains("sequence-end:",System.Text.Json.JsonSerializer.Serialize(ended));
+    }
     private static readonly DateTimeOffset Now=DateTimeOffset.Parse("2026-11-11T00:00:00Z");
     private static GuidanceSourcePlan Plan(double player,string text="500",string revision="a")=>new("route","session",revision,player,true,Now,
         [new("landmark",1000,"landmark")],[new("500","landmark",SpeechTriggerKind.Advance,500,text){SequenceOrder=-500},

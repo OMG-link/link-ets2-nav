@@ -37,7 +37,7 @@ public sealed class SpeechTriggerScheduler
         EnsureSession(sources);
         var due=sources.Where(p=>Fresh(p,now)&&(onlySource is null||p.Source==onlySource))
             .SelectMany(p=>Points(p).Where(point=>point.Trigger.Enabled
-                &&(point.Observed||(point.Trigger.Kind==SpeechTriggerKind.SequenceEnd?point.Trigger.AlongMeters<p.PlayerAlongMeters:point.Trigger.AlongMeters<=p.PlayerAlongMeters))
+                &&(point.Observed||(point.Trigger.Kind==SpeechTriggerKind.SequenceEnd||point.Trigger.StrictCrossing?point.Trigger.AlongMeters<p.PlayerAlongMeters:point.Trigger.AlongMeters<=p.PlayerAlongMeters))
                 &&!IsConsumed(p.Source,point.Trigger.Id)).Select(point=>(Plan:p,Trigger:point.Trigger)))
             .OrderBy(p=>p.Trigger.AlongMeters-p.Plan.PlayerAlongMeters)
             .ThenBy(p=>p.Trigger.Kind==SpeechTriggerKind.SequenceEnd?1:0)
@@ -75,6 +75,7 @@ public sealed class SpeechTriggerScheduler
                 if(disposition==TriggerDisposition.Queued)pending[key]=results.Count;
                 else if(disposition==TriggerDisposition.Ended)pending.Remove(key);
             }
+            consumed[(p.Source,t.Id)]=(disposition,t.EventId);
             results.Add(new(p.Source,e,t,disposition));
         }
         return results;
@@ -90,7 +91,7 @@ public sealed class SpeechTriggerScheduler
             // no absolute along coordinate is available (e.g. no-navigation cameras).
             double end=sequence.Ended?plan.PlayerAlongMeters:sequence.EndAlongMeters!.Value;
             yield return (new SpeechTrigger(SpeechSequence.EndTriggerId(sequence.Id),owner.Id,SpeechTriggerKind.SequenceEnd,end,"")
-                {SequenceOrder=double.PositiveInfinity},sequence.Ended);
+                {SequenceOrder=0},sequence.Ended);
         }
     }
     private void EnsureSession(IReadOnlyList<GuidanceSourcePlan> sources)

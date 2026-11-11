@@ -14,6 +14,18 @@ public sealed class NavigationInstructionPolicyTests
         =>p.UpdateSequence(m,"session",Now.AddSeconds(seconds),Now.AddSeconds(seconds),true,ready);
 
     [Theory]
+    [InlineData(NavigationAnnouncementMode.Silent)]
+    [InlineData(NavigationAnnouncementMode.NoticeAt500)]
+    public void MergeAheadDoesNotSilenceAnInterveningStraightJunction(NavigationAnnouncementMode mode)
+    {
+        var policy=new NavigationInstructionPolicy();
+        var merge=M(1000,"merge",ManeuverKind.MergeLeft) with {AnnouncementMode=mode};
+        var straight=M(40,"junction",ManeuverKind.Straight);
+        Assert.Equal("保持直行。",Assert.Single(Update(policy,[straight,merge])));
+        Assert.Empty(Update(policy,[straight with{DistanceMeters=30},merge],seconds:1));
+    }
+
+    [Theory]
     [InlineData(999, "沿当前道路，继续行驶九百五十米。")]
     [InlineData(1250, "沿当前道路，继续行驶一点二公里。")]
     [InlineData(2650, "沿当前道路，继续行驶二点六公里。")]

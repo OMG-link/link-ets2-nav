@@ -275,7 +275,9 @@ public sealed class NavigationInstructionPolicy
                 if(current.Text.Length>0)output.Add(current.Text);
             }
         }
-        if (output.Count == 0 && (index<0 || maneuvers[index].AnnouncementMode==NavigationAnnouncementMode.Normal))
+        // A silent or single-stage merge suppresses its own announcements,
+        // not straight-through guidance at intervening junctions.
+        if (output.Count == 0)
         {
             var straight = maneuvers.Take(index >= 0 ? index : maneuvers.Count)
                 .FirstOrDefault(m=>m.Kind==ManeuverKind.Straight && !m.IsMainRoadContinuation);

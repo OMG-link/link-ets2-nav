@@ -1,0 +1,45 @@
+﻿using LinkEts2Nav.Core.Guidance;
+namespace LinkEts2Nav.UnitTests;
+public sealed class EnvironmentPreviewPlannerTests
+{
+    private static readonly DateTimeOffset Now=DateTimeOffset.Parse("2026-11-12T00:00:00Z");
+    private static EnvironmentPreviewEvent E(string id,string kind,double along,double? end=null)=>new(id,kind,along,end,d=>d+":"+id);
+    [Theory]
+    [InlineData(450,450,1)] [InlineData(350,350,1)] [InlineData(200,200,1)] [InlineData(150,150,1)]
+    [InlineData(49,0,1)] [InlineData(500,500,2)] [InlineData(700,500,2)]
+    public void FirstDistanceDeterminesTheWholeEnvironmentProfile(double distance,int first,int count)
+    {
+        var p=new EnvironmentPreviewPlanner();var s=new SpeechTriggerScheduler();var plan=p.Build("e",0,[E("a","camera",distance,distance)],s,true);
+        Assert.Equal(count,plan.Triggers.Count);Assert.Equal(first+":a",plan.Triggers[0].Text);
+        Assert.Equal(Math.Max(0,distance-500),plan.Triggers[0].AlongMeters);
+    }
+    [Fact]
+    public void OnlyTheSameKindDelaysAFirstPointAndItsDistanceIsFrozenBeforeArrival()
+    {
+        var p=new EnvironmentPreviewPlanner();var s=new SpeechTriggerScheduler();
+        var plan=p.Build("e",0,[E("a","camera",300,300),E("b","camera",750,750),E("lane","lane",700,700)],s,true);
+        var camera=Assert.Single(plan.Triggers,t=>t.EventId=="b");Assert.Equal(300,camera.AlongMeters);Assert.Equal("450:b",camera.Text);
+        Assert.Equal(new double[]{200,500},plan.Triggers.Where(t=>t.EventId=="lane").Select(t=>t.AlongMeters));
+        var later=p.Build("e",310,[E("b","camera",750,750)],s,true);
+        Assert.Equal(camera,Assert.Single(later.Triggers));
+    }
+    [Fact]
+    public void UnknownEarlierEndWaitsForAPassageFactInsteadOfInventingABoundary()
+    {
+        var p=new EnvironmentPreviewPlanner();var s=new SpeechTriggerScheduler();
+        var plan=p.Build("e",0,[E("a","camera",100),E("b","camera",450,450)],s,true);
+        Assert.DoesNotContain(plan.Triggers,t=>t.EventId=="b");
+        var later=p.Build("e",100,[E("a","camera",100) with{Ended=true},E("b","camera",450,450)],s,true);
+        Assert.Equal("350:b",Assert.Single(later.Triggers,t=>t.EventId=="b").Text);
+    }
+    [Fact]
+    public void APreviousEndAndNextFirstPointAtTheSameCoordinateAreBothConsumed()
+    {
+        var p=new EnvironmentPreviewPlanner();var s=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        var plan=p.Build("e",0,[E("a","camera",300,300),E("b","camera",750,750)],s,true);
+        timeline.Publish(new("e","s","r",301,true,Now,plan.Events,plan.Triggers){Sequences=plan.Sequences});
+        var results=s.Update(timeline,Now,0);
+        Assert.Contains(results,r=>r.Event.Id=="a"&&r.Disposition==TriggerDisposition.Ended);
+        Assert.Contains(results,r=>r.Event.Id=="b"&&r.Disposition==TriggerDisposition.Queued&&r.Trigger.Text=="450:b");
+    }
+}

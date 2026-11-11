@@ -51,7 +51,7 @@ public sealed class GuidanceTimelineTests
     public void NewerStageSuppressesAnOlderStageCrossedInTheSameSample()
     {
         var timeline=new GuidanceTimeline();var scheduler=new SpeechTriggerScheduler();timeline.Publish(Plan(850));
-        Assert.Equal("200",Assert.Single(scheduler.Update(timeline,Now,0)).Trigger.Id);
+        Assert.Equal("200",Assert.Single(scheduler.Update(timeline,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Id);
         Assert.Equal(TriggerDisposition.Superseded,scheduler.Disposition("route","500"));
     }
     [Theory]

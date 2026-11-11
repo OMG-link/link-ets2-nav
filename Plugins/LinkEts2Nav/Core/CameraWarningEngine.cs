@@ -36,6 +36,8 @@ public sealed record WarningSnapshot(
     DateTimeOffset ObservedAt,
     IReadOnlyList<CameraCandidate> Candidates);
 
+public sealed record CameraPassage(string CameraId,CameraWarningKind Kind,long EncounterRevision);
+
 public sealed record CameraWarning(
     string CameraId,
     double DistanceMeters,
@@ -67,6 +69,7 @@ public sealed record PlannedCameraWarning(
 /// </summary>
 public sealed class CameraWarningEngine
 {
+    public IReadOnlyList<CameraPassage> PassedEncounters { get; private set; } = [];
     private readonly double[] stages;
     private readonly CameraWarningKind kind;
     private readonly double rearmDistance;
@@ -107,6 +110,7 @@ public sealed class CameraWarningEngine
     public IReadOnlyList<PlannedCameraWarning> GetPlans(WarningSnapshot snapshot, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        PassedEncounters=[];
         var age = now - snapshot.ObservedAt;
         if (!snapshot.IsActive || age < TimeSpan.Zero || age > maximumAge)
             return [];
@@ -117,6 +121,7 @@ public sealed class CameraWarningEngine
         }
 
         var result = new List<PlannedCameraWarning>();
+        var passed = new List<CameraPassage>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var candidate in snapshot.Candidates)
         {
@@ -138,6 +143,8 @@ public sealed class CameraWarningEngine
                 nearPassage.Add(candidate.Id);
             if (candidate.EuclideanDistanceMeters >= rearmDistance && nearPassage.Remove(candidate.Id))
             {
+                if(kind==CameraWarningKind.UncalibratedProximity)
+                    passed.Add(new(candidate.Id,kind,encounters.GetValueOrDefault(candidate.Id)));
                 departedPeaks[candidate.Id] = candidate.EuclideanDistanceMeters;
             }
             if (departedPeaks.TryGetValue(candidate.Id, out double peak))
@@ -156,6 +163,10 @@ public sealed class CameraWarningEngine
             }
             if (candidate.Approach == CameraApproach.Behind)
             {
+                // A signed road projection (or an earlier ordered route chunk) proves
+                // passage. Merely entering the 20m vicinity does not finish a series.
+                if(firstConfirmedDistances.ContainsKey(candidate.Id)&&candidate.RoadDistanceMeters is not 0)
+                    passed.Add(new(candidate.Id,kind,encounters.GetValueOrDefault(candidate.Id)));
                 if (nearPassage.Contains(candidate.Id)) consumed[candidate.Id] = AllStages;
                 continue;
             }
@@ -183,6 +194,7 @@ public sealed class CameraWarningEngine
                 });
             }
         }
+        PassedEncounters=passed;
         return result.OrderBy(plan => plan.DistanceUntilTriggerMeters)
             .ThenBy(plan => plan.DistanceMeters)
             .ThenBy(plan => plan.CameraId, StringComparer.Ordinal).ToArray();
@@ -211,7 +223,7 @@ public sealed class CameraWarningEngine
 
     public void Reset()
     {
-        consumed.Clear();encounters.Clear();
+        consumed.Clear();encounters.Clear();PassedEncounters=[];
         nearPassage.Clear();
         firstConfirmedDistances.Clear();
         departedPeaks.Clear();

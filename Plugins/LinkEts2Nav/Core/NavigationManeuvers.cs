@@ -107,6 +107,7 @@ public sealed class NavigationManeuverDetector
                     result.Add(new(id+":exit:"+exit.Number,selected?ManeuverKind.ExitRoundabout:ManeuverKind.PassRoundaboutExit,
                         location-vehicleAlong,current.Id,current.Id)
                     {EndDistanceMeters=end-vehicleAlong,JunctionId="roundabout:"+ring.Id,ExecutionOnly=true,
+                        SpeechSequenceId=id+":exits",SpeechSequenceOrder=exit.Number,
                         Instruction=selected?"驶出环岛":"经过第"+NavigationPrompts.Number(exit.Number)+"出口"});
                 }
                 confirmedUntil = end; offset = end; continue;

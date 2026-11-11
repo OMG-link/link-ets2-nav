@@ -1,100 +1,131 @@
 namespace LinkEts2Nav.Core.Guidance;
 
-/// <summary>Expands the confirmed maneuver sequence into landmarks and upstream speech points.</summary>
+/// <summary>Places speech on the route when actions are discovered, never when they become current.</summary>
 public sealed class NavigationEventPlanner
 {
-    private static readonly int[] Stages=[2000,1000,500,200,100];
-    private sealed class Encounter(int generation,double distance)
-    { public int Generation=generation;public double Minimum=distance;public double? InitialDistance; }
-    private readonly Dictionary<string,Encounter> encounters=new(StringComparer.Ordinal);
-    private string? session,previousAction;
-    private int leg;
-    public void Reset(){encounters.Clear();session=previousAction=null;leg=0;}
+    private static readonly int[] Stages = [2000,1000,500,200,100];
+    private sealed class ActionPlan(NavigationManeuver maneuver, string id, double along)
+    {
+        public NavigationManeuver Maneuver = maneuver;
+        public readonly string Id = id;
+        public readonly double Along = along;
+        public double? EndAlong;
+        public double? BriefingAlong;
+        public double Minimum = maneuver.DistanceMeters;
+        public int Generation;
+    }
+    private readonly Dictionary<string,ActionPlan> actions = new(StringComparer.Ordinal);
+    private string? session, frame;
+    private double? origin;
+    public void Reset(){actions.Clear();session=frame=null;origin=null;}
 
     public GuidanceSourcePlan Build(string sessionId,string routeRevision,DateTimeOffset observedAt,
         double playerAlong,IReadOnlyList<NavigationManeuver> maneuvers,bool active,bool deferred,
-        bool confirmedContinuation,SpeechTriggerScheduler scheduler)
+        bool confirmedContinuation,SpeechTriggerScheduler scheduler,string? coordinateFrame=null,
+        double? initialBoundaryAlong=null,bool replaceRoute=false)
     {
-        if(session!=sessionId){Reset();session=sessionId;}
-        int current=ActionIndex(maneuvers,0);
-        string? next=current>=0?maneuvers[current].Id:null;
-        if(previousAction is not null&&previousAction!=next)leg++;
-        previousAction=next;
-        var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
-        bool continuationCovered=scheduler.IsConsumed("navigation","continuation:"+leg+":overview");
-        for(int i=0;i<maneuvers.Count;i++)
+        if(session!=sessionId||frame!=coordinateFrame){Reset();session=sessionId;frame=coordinateFrame;}
+        origin ??= playerAlong;
+        var incoming = maneuvers.Select(m=>m.Id).ToHashSet(StringComparer.Ordinal);
+        if(replaceRoute)
+            foreach(var key in actions.Where(p=>p.Value.Along>playerAlong&&!incoming.Contains(p.Key)).Select(p=>p.Key).ToArray())
+                actions.Remove(key);
+        foreach(var m in maneuvers)
         {
-            var m=maneuvers[i];
-            if(!encounters.TryGetValue(m.Id,out var state))encounters[m.Id]=state=new(0,m.DistanceMeters);
-            else if(state.Minimum<=20&&m.DistanceMeters>550)encounters[m.Id]=state=new(state.Generation+1,m.DistanceMeters);
+            if(!actions.TryGetValue(m.Id,out var state))
+                actions[m.Id]=state=new(m,m.Id+"@0"+FrameSuffix(),playerAlong+m.DistanceMeters);
+            else if(state.EndAlong is {} oldEnd&&playerAlong+m.DistanceMeters>oldEnd
+                ||state.EndAlong is null&&state.Minimum<=20&&m.DistanceMeters>550)
+            {
+                int generation=state.Generation+1;
+                actions[m.Id]=state=new(m,m.Id+"@"+generation+FrameSuffix(),playerAlong+m.DistanceMeters){Generation=generation};
+            }
+            state.Maneuver=m;
             state.Minimum=Math.Min(state.Minimum,m.DistanceMeters);
-            string id=m.Id+"@"+state.Generation;
-            double eventAlong=playerAlong+m.DistanceMeters;
-            events.Add(new(id,eventAlong,m.Instruction??NavigationPrompts.Action(m.Kind)));
-            bool isCurrent=i==current;
-            bool enabled=active&&!deferred&&isCurrent;
+            if(m.EndDistanceMeters is {} end) state.EndAlong ??= playerAlong+end;
+        }
+        var ordered=actions.Values.OrderBy(p=>p.Along).ThenBy(p=>p.Maneuver.SpeechSequenceOrder).ToArray();
+        var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
+        var sequences=new Dictionary<string,SpeechSequence>(StringComparer.Ordinal);
+        for(int i=0;i<ordered.Length;i++)
+        {
+            var state=ordered[i];var m=state.Maneuver;
+            string sequence=m.SpeechSequenceId is null?state.Id:m.SpeechSequenceId+"@"+state.Generation+FrameSuffix();
+            if(scheduler.IsConsumed("navigation",SpeechSequence.EndTriggerId(sequence)))continue;
+            events.Add(new(state.Id,state.Along,m.Instruction??NavigationPrompts.Action(m.Kind)){SpeechSequenceId=sequence});
+            if(!sequences.TryGetValue(sequence,out var previousSequence)||previousSequence.EndAlongMeters is null)
+                sequences[sequence]=new(sequence,state.EndAlong);
             bool silent=m.AnnouncementMode==NavigationAnnouncementMode.Silent;
             if(m.Kind==ManeuverKind.Straight)
             {
                 if(!m.IsMainRoadContinuation)
-                    triggers.Add(new(id+":passage",id,SpeechTriggerKind.Passage,eventAlong-50,"保持直行。")
-                        {Enabled=active&&!deferred&&(current<0||i<current),SequenceOrder=0});
+                    triggers.Add(new(state.Id+":passage",state.Id,SpeechTriggerKind.Passage,state.Along-50,"保持直行。")
+                        {Enabled=active,SequenceOrder=0});
                 continue;
             }
+            ActionPlan? predecessor=ordered.Take(i).LastOrDefault(p=>IsNavigationAction(p.Maneuver));
+            if(state.BriefingAlong is null)
+            {
+                // An unknown previous end is not the previous action's start.
+                if(predecessor is null)state.BriefingAlong=Math.Max(playerAlong,initialBoundaryAlong??playerAlong);
+                else if(predecessor.EndAlong is {} end)state.BriefingAlong=Math.Max(playerAlong,end);
+            }
+            double? initial=state.BriefingAlong is {} anchor?Math.Max(0,state.Along-anchor):null;
+            int priorIndex=predecessor is null?-1:Array.IndexOf(ordered,predecessor);
+            var wording=ordered.Select(p=>p.Maneuver with{DistanceMeters=p.Along-playerAlong}).ToArray();
+            int ordinal=Ordinal(wording,priorIndex+1,i);
+            bool precedingStraight=wording.Skip(priorIndex+1).Take(i-priorIndex-1)
+                .Any(p=>p.Kind==ManeuverKind.Straight&&!p.IsMainRoadContinuation);
+            string overviewId=state.Id+":overview";
             if(m.AnnouncementMode==NavigationAnnouncementMode.NoticeAt500)
             {
-                triggers.Add(new(id+":500",id,SpeechTriggerKind.Advance,eventAlong-500,
-                    NavigationPrompts.Execute(m.Kind,m.Instruction)){Enabled=enabled,SequenceOrder=-500});
+                triggers.Add(new(state.Id+":500",state.Id,SpeechTriggerKind.Advance,state.Along-500,
+                    NavigationPrompts.Execute(m.Kind,m.Instruction)){Enabled=active,SequenceOrder=-500});
                 continue;
             }
-            int previous=PreviousAction(maneuvers,i);
-            double available=previous>=0?Math.Max(0,m.DistanceMeters-maneuvers[previous].DistanceMeters):m.DistanceMeters;
-            if(enabled&&state.InitialDistance is null)state.InitialDistance=m.DistanceMeters;
-            double initial=state.InitialDistance??available;
-            int ordinal=Ordinal(maneuvers,previous+1,i);
-            bool precedingStraight=maneuvers.Skip(previous+1).Take(i-previous-1)
-                .Any(p=>p.Kind==ManeuverKind.Straight&&!p.IsMainRoadContinuation);
-            string overviewId=id+":overview";
-            bool covered=isCurrent&&continuationCovered;
-            if(!m.ExecutionOnly&&initial>=50&&!covered)
+            if(!m.ExecutionOnly&&initial is >=50)
             {
-                int rounded=(int)NavigationPrompts.RoundDistance(initial);
-                string text=initial>800?NavigationPrompts.Continue(initial)
-                    :NavigationPrompts.FirstLayer(m.Kind,initial,ordinal,Instruction(m,rounded));
-                triggers.Add(new(overviewId,id,SpeechTriggerKind.Overview,eventAlong-initial,text)
-                    {Enabled=enabled,SequenceOrder=-rounded,Silent=silent,
-                    SkipAtSpeedKph=rounded==100?60:null});
+                int rounded=(int)NavigationPrompts.RoundDistance(initial.Value);
+                string text=initial>800?NavigationPrompts.Continue(initial.Value)
+                    :NavigationPrompts.FirstLayer(m.Kind,initial.Value,ordinal,Instruction(m,rounded));
+                triggers.Add(new(overviewId,state.Id,SpeechTriggerKind.Overview,state.BriefingAlong!.Value,text)
+                    {Enabled=active,SequenceOrder=-rounded,Silent=silent,SkipAtSpeedKph=rounded==100?60:null});
             }
-            int nearest=Stages.FirstOrDefault(s=>s<initial);
+            int nearest=initial is {} distance?Stages.FirstOrDefault(s=>s<distance):0;
             foreach(int stage in Stages)
             {
-                if(m.ExecutionOnly||stage>=initial||(!covered&&initial<=800&&!Stages.Contains((int)initial)&&stage==nearest))continue;
+                if(m.ExecutionOnly||initial is null||stage>=initial.Value
+                    ||(initial<=800&&!Stages.Contains((int)initial.Value)&&stage==nearest))continue;
                 string text=NavigationPrompts.AtDistance(m.Kind,stage,stage==200?ordinal:0,Instruction(m,stage));
                 if(stage==100&&precedingStraight&&m.Kind!=ManeuverKind.EnterRoundabout)
                     text=text.TrimEnd('。')+"，前方路口直行。";
-                triggers.Add(new(id+":"+stage,id,SpeechTriggerKind.Advance,eventAlong-stage,text)
-                    {Enabled=enabled,Silent=silent,SequenceOrder=-stage,SkipAtSpeedKph=stage==100?60:null,
-                    Supersedes=Stages.Where(s=>s>stage).Select(s=>id+":"+s).Append(overviewId).ToArray()});
+                triggers.Add(new(state.Id+":"+stage,state.Id,SpeechTriggerKind.Advance,state.Along-stage,text)
+                    {Enabled=active,Silent=silent,SequenceOrder=-stage,SkipAtSpeedKph=stage==100?60:null});
             }
-            triggers.Add(new(id+":execute",id,SpeechTriggerKind.Execution,eventAlong-20,Execution(maneuvers,i))
-                {Enabled=enabled,Silent=silent,Priority=0,SequenceOrder=0,
-                Supersedes=Stages.Select(s=>id+":"+s).Append(overviewId).ToArray()});
+            triggers.Add(new(state.Id+":execute",state.Id,SpeechTriggerKind.Execution,state.Along-20,Execution(wording,i))
+                {Enabled=active,Silent=silent,Priority=0,SequenceOrder=m.ExecutionOnly?m.SpeechSequenceOrder:0});
         }
-        if(current<0&&confirmedContinuation)
+        if(!maneuvers.Any(IsNavigationAction)&&confirmedContinuation)
         {
-            string id="continuation:"+leg;
-            events.Add(new(id,playerAlong,"沿当前道路行驶"));
-            triggers.Add(new(id+":overview",id,SpeechTriggerKind.Overview,playerAlong,NavigationPrompts.Continue())
-                {Enabled=active&&!deferred,SequenceOrder=0});
+            var previous=ordered.LastOrDefault(p=>IsNavigationAction(p.Maneuver));
+            string id="continuation:"+(previous?.Id??"origin"+FrameSuffix());
+            double? anchor=previous?.EndAlong??(previous is null?initialBoundaryAlong??origin:null);
+            if(anchor is {} start)
+            {
+                events.Add(new(id,start,"沿当前道路行驶"));
+                triggers.Add(new(id+":overview",id,SpeechTriggerKind.Overview,start,NavigationPrompts.Continue()){Enabled=active});
+            }
         }
         return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,events,triggers)
-            {PrepareWhileInactive=active};
+            {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame,Sequences=sequences.Values.ToArray()};
     }
+    private static bool IsNavigationAction(NavigationManeuver m)=>m.Kind!=ManeuverKind.Straight&&m.AnnouncementMode==NavigationAnnouncementMode.Normal;
+    private string FrameSuffix()=>frame is null?"":"#"+frame;
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
     private static int ActionIndex(IReadOnlyList<NavigationManeuver> list,int start)
-    {for(int i=start;i<list.Count;i++)if(list[i].Kind!=ManeuverKind.Straight)return i;return -1;}
+    {for(int i=start;i<list.Count;i++)if(IsNavigationAction(list[i]))return i;return -1;}
     private static int PreviousAction(IReadOnlyList<NavigationManeuver> list,int index)
-    {for(int i=index-1;i>=0;i--)if(list[i].Kind!=ManeuverKind.Straight)return i;return -1;}
+    {for(int i=index-1;i>=0;i--)if(IsNavigationAction(list[i]))return i;return -1;}
     private static int Ordinal(IReadOnlyList<NavigationManeuver> list,int start,int end)
     {
         if(list[end].Kind==ManeuverKind.EnterRoundabout)return 0;

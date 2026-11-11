@@ -4,7 +4,7 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class NavigationEventPlannerTests
 {
     private static readonly DateTimeOffset Now=DateTimeOffset.Parse("2026-11-11T00:00:00Z");
-    private static NavigationManeuver Turn(double distance,string id="turn")=>new(id,ManeuverKind.TurnLeft,distance,"in","out"){JunctionId=id};
+    private static NavigationManeuver Turn(double distance,string id="turn")=>new(id,ManeuverKind.TurnLeft,distance,"in","out"){JunctionId=id,EndDistanceMeters=distance+50};
     [Theory]
     [InlineData(25,null)] [InlineData(55,"五十米后，左转。")] [InlineData(88,"五十米后，左转。")]
     [InlineData(128,"一百米后，左转。")] [InlineData(158,"一百五十米后，左转。")]
@@ -37,13 +37,13 @@ public sealed class NavigationEventPlannerTests
         var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
         t.Publish(p.Build("s","r",Now,0,[Turn(300),Turn(1400,"later")],true,false,false,s));
         Assert.Equal(2,t.Sources[0].Events.Count);
-        Assert.Contains(t.Sources[0].Triggers,x=>x.EventId.StartsWith("later@")&&x.Kind==SpeechTriggerKind.Execution&&!x.Enabled);
+        Assert.Contains(t.Sources[0].Triggers,x=>x.EventId.StartsWith("later@")&&x.Kind==SpeechTriggerKind.Execution&&x.Enabled);
         Assert.Contains("五百米后，左转。",s.Prepare(t,Now));
         Assert.All(s.Update(t,Now,0),r=>Assert.StartsWith("turn@",r.Event.Id));
         t.Publish(p.Build("s","r",Now,300,[Turn(1100,"later")],true,true,false,s));
-        Assert.Empty(s.Update(t,Now,0));Assert.NotEmpty(s.Prepare(t,Now));
-        t.Publish(p.Build("s","r",Now,400,[Turn(1000,"later")],true,false,false,s));
-        Assert.Equal("沿当前道路，继续行驶一公里。",Assert.Single(s.Update(t,Now,0)).Trigger.Text);
+        Assert.DoesNotContain(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued&&r.Event.Id.StartsWith("later@"));Assert.NotEmpty(s.Prepare(t,Now));
+        t.Publish(p.Build("s","r",Now,350,[Turn(1050,"later")],true,false,false,s));
+        Assert.Equal("沿当前道路，继续行驶一公里。",Assert.Single(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
     }
     [Fact]
     public void FastHundredMeterPointStaysPreparedAndIsConsumedWithoutDroppingExecution()
@@ -61,7 +61,7 @@ public sealed class NavigationEventPlannerTests
     {
         var planner=new NavigationEventPlanner();
         var plan=planner.Build("s","r",Now,0,[Turn(20),Turn(80,"second")],true,false,false,new());
-        Assert.Equal("左转，然后六十米左转。",Assert.Single(plan.Triggers,t=>t.Enabled&&t.Kind==SpeechTriggerKind.Execution).Text);
+        Assert.Equal("左转，然后六十米左转。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("turn@")&&t.Kind==SpeechTriggerKind.Execution).Text);
     }
     [Fact]
     public void RoundaboutExitHasOnlyExecutionAndMergeSilenceDoesNotHideInterveningStraight()

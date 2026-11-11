@@ -9,6 +9,8 @@ namespace LinkEts2Nav.Runtime;
 public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner? planner = null,GuidanceCoordinator? guidance=null)
 {
     private readonly CameraWarningEngine engine = new();
+    private readonly LinkEts2Nav.Core.Guidance.RouteProgressTracker progress=new();
+    private readonly DirectedPathMatcher matcher=new();
     private readonly CameraWarningEngine uncalibrated = new(kind: CameraWarningKind.UncalibratedProximity);
     private TruckLib.ScsMap.Map? previousMap;
     private RoadPathSource? paths;
@@ -75,7 +77,11 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
             .Concat(uncalibrated.GetPlans(proximitySnapshot, now)).ToArray();
         if(guidance is not null)
         {
-            guidance.PublishLandmarks(proximitySnapshot,plans);
+            var path=paths!.GetPath(position,vehicle.ForwardDirection,data.Route,data.RouteAvailability);
+            var local=matcher.ProjectDistance(position,vehicle.ForwardDirection,path);
+            double? playerAlong=local is {} value?progress.Update(data.SessionId,path,value):null;
+            guidance.PublishLandmarks(proximitySnapshot,plans,engine.PassedEncounters.Concat(uncalibrated.PassedEncounters).ToArray(),
+                playerAlong,playerAlong is null?null:"camera:"+progress.Frame);
             lastWarning=guidance.LastQueued("landmarks")??lastWarning;
         }
         else
@@ -99,7 +105,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
 
     public void Reset()
     {
-        engine.Reset();
+        engine.Reset();progress.Reset();
         uncalibrated.Reset();
         planner?.ClearPlan();guidance?.Suspend("landmarks");
         previousMap = null;

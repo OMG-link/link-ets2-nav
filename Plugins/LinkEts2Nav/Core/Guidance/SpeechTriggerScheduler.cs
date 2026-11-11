@@ -36,17 +36,22 @@ public sealed class SpeechTriggerScheduler
         if(sources.Count==0)return [];
         EnsureSession(sources);
         var due=sources.Where(p=>Fresh(p,now)&&(onlySource is null||p.Source==onlySource))
-            .SelectMany(p=>p.Triggers.Where(t=>t.Enabled&&t.AlongMeters<=p.PlayerAlongMeters&&!IsConsumed(p.Source,t.Id))
-                .Select(t=>(Plan:p,Trigger:t))).OrderBy(p=>p.Trigger.Priority)
-            .ThenByDescending(p=>p.Trigger.AlongMeters-p.Plan.PlayerAlongMeters).ToArray();
+            .SelectMany(p=>Points(p).Where(point=>point.Trigger.Enabled
+                &&(point.Observed||(point.Trigger.Kind==SpeechTriggerKind.SequenceEnd?point.Trigger.AlongMeters<p.PlayerAlongMeters:point.Trigger.AlongMeters<=p.PlayerAlongMeters))
+                &&!IsConsumed(p.Source,point.Trigger.Id)).Select(point=>(Plan:p,Trigger:point.Trigger)))
+            .OrderBy(p=>p.Trigger.AlongMeters-p.Plan.PlayerAlongMeters)
+            .ThenBy(p=>p.Trigger.Kind==SpeechTriggerKind.SequenceEnd?1:0)
+            .ThenBy(p=>p.Trigger.SequenceOrder).ToArray();
         var results=new List<GuidanceTriggerResult>();
+        var pending=new Dictionary<(string Source,string Sequence),int>();
         foreach(var item in due)
         {
             var p=item.Plan;var t=item.Trigger;
             if(IsConsumed(p.Source,t.Id))continue;
             var e=p.Events.First(e=>e.Id==t.EventId);
             TriggerDisposition disposition;
-            if(t.SkipAtSpeedKph is {} threshold&&speedMetersPerSecond*3.6>=threshold)disposition=TriggerDisposition.SpeedSkipped;
+            if(t.Kind==SpeechTriggerKind.SequenceEnd)disposition=TriggerDisposition.Ended;
+            else if(t.SkipAtSpeedKph is {} threshold&&speedMetersPerSecond*3.6>=threshold)disposition=TriggerDisposition.SpeedSkipped;
             else if(t.Silent||t.Text.Length==0)disposition=TriggerDisposition.Silent;
             else
             {
@@ -54,9 +59,39 @@ public sealed class SpeechTriggerScheduler
             }
             consumed[(p.Source,t.Id)]=(disposition,t.EventId);
             foreach(var id in t.Supersedes)consumed[(p.Source,id)]=(TriggerDisposition.Superseded,t.EventId);
+            var key=(p.Source,e.SequenceId);
+            if(disposition is TriggerDisposition.Queued or TriggerDisposition.Ended)
+            {
+                if(pending.TryGetValue(key,out int prior))
+                {
+                    var old=results[prior];
+                    if(disposition==TriggerDisposition.Ended||t.SequenceOrder>=old.Trigger.SequenceOrder)
+                    {
+                        results[prior]=old with{Disposition=TriggerDisposition.Superseded};
+                        consumed[(old.Source,old.Trigger.Id)]=(TriggerDisposition.Superseded,old.Event.Id);
+                    }
+                    else disposition=TriggerDisposition.Superseded;
+                }
+                if(disposition==TriggerDisposition.Queued)pending[key]=results.Count;
+                else if(disposition==TriggerDisposition.Ended)pending.Remove(key);
+            }
             results.Add(new(p.Source,e,t,disposition));
         }
         return results;
+    }
+    private static IEnumerable<(SpeechTrigger Trigger,bool Observed)> Points(GuidanceSourcePlan plan)
+    {
+        foreach(var trigger in plan.Triggers)yield return (trigger,false);
+        foreach(var sequence in plan.Sequences)
+        {
+            var owner=plan.Events.LastOrDefault(e=>e.SequenceId==sequence.Id);
+            if(owner is null||!sequence.Ended&&sequence.EndAlongMeters is null)continue;
+            // An observed passage fact is already beyond its boundary, even when
+            // no absolute along coordinate is available (e.g. no-navigation cameras).
+            double end=sequence.Ended?plan.PlayerAlongMeters:sequence.EndAlongMeters!.Value;
+            yield return (new SpeechTrigger(SpeechSequence.EndTriggerId(sequence.Id),owner.Id,SpeechTriggerKind.SequenceEnd,end,"")
+                {SequenceOrder=double.PositiveInfinity},sequence.Ended);
+        }
     }
     private void EnsureSession(IReadOnlyList<GuidanceSourcePlan> sources)
     {

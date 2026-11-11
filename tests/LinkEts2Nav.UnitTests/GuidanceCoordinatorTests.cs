@@ -82,7 +82,8 @@ public sealed class GuidanceCoordinatorTests
         c.Publish(new("navigation","s","r",0,true,Now,[new("turn",20,"turn")],
             [new("execute","turn",SpeechTriggerKind.Execution,0,"左转。"){Priority=0}]));
         c.PublishLandmarks(new("s","r",true,true,Now,[]),[new("camera",200,200,WarningDistanceKind.Road,0)]);
-        c.Tick(Data(),Now);Assert.Equal(2,queued.Count);Assert.Equal("左转。",queued[0].Text);
-        Assert.Equal(10,queued[1].Priority);
+        c.Tick(Data(),Now);Assert.Equal(2,queued.Count);
+        Assert.Equal(0,Assert.Single(queued,q=>q.Text=="左转。").Priority);
+        Assert.Equal(10,Assert.Single(queued,q=>q.EventId.StartsWith("landmark:")).Priority);
     }
 }

@@ -16,6 +16,8 @@ public sealed class GuidanceCoordinator
     private readonly GuidancePlaybackManager? playback;
     private readonly Action<string> log;
     private readonly object gate=new();
+    private readonly EnvironmentPreviewPlanner environment=new();
+    private string? environmentFrame;
     private string? session,lastPlayed;
     private readonly Dictionary<string,string> playedBySource=new(StringComparer.Ordinal);
     private IReadOnlyList<GuidanceTriggerResult> latest=[];
@@ -38,9 +40,10 @@ public sealed class GuidanceCoordinator
         .Where(t=>!Scheduler.IsConsumed(p.Source,t.Id)&&!t.Silent)
         .Select(t=>new GuidancePointDiagnostic(t.EventId,t.Id,t.Text,t.AlongMeters-p.PlayerAlongMeters,t.Enabled)))
         .OrderBy(p=>p.RemainingMeters).Take(64).ToArray()};}}
+    public bool WillReplaceSource(string source,string revision)=>replacementRevision==revision&&!replacementApplied.Contains(source);
     public void Publish(GuidanceSourcePlan plan)
     {
-        EnsureSession(plan.SessionId);
+        EnsureSession(plan.SessionId);playback?.BeginUpdate();
         var previous=Timeline.Sources.FirstOrDefault(p=>p.Source==plan.Source);
         if(previous is not null&&replacementRevision==plan.RouteRevision&&replacementApplied.Add(plan.Source))
         {
@@ -54,39 +57,48 @@ public sealed class GuidanceCoordinator
         }
         Timeline.Publish(plan);playback?.Refresh(plan.Source,plan.Triggers);
     }
-    public void PublishLandmarks(WarningSnapshot snapshot,IReadOnlyList<PlannedCameraWarning> plans)
+    public void PublishLandmarks(WarningSnapshot snapshot,IReadOnlyList<PlannedCameraWarning> plans,
+        IReadOnlyList<CameraPassage>? passages=null,double? cameraPlayerAlong=null,string? cameraFrame=null)
     {
-        var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
+        EnsureSession(snapshot.SessionId);
         var route=Timeline.Sources.FirstOrDefault(p=>p.Source=="navigation"&&p.Active
             &&p.ObservedAt==snapshot.ObservedAt&&p.CoordinateFrame is not null);
-        double playerAlong=route?.PlayerAlongMeters??0;
+        double playerAlong=route?.PlayerAlongMeters??cameraPlayerAlong??0;
+        string? frame=route?.CoordinateFrame??cameraFrame;
+        if(environmentFrame!=frame){environment.Reset();environmentFrame=frame;}
+        var input=new List<EnvironmentPreviewEvent>();
+        var kinds=new Dictionary<string,WarningDistanceKind>();
         foreach(var group in plans.GroupBy(p=>(p.CameraId,p.Kind,p.EncounterRevision)))
         {
             var sample=group.First();string id=$"landmark:{sample.CameraId}:{sample.Kind}:{sample.EncounterRevision}";
-            events.Add(new(id,playerAlong+sample.DistanceMeters,"测速照相"){DistanceKind=sample.DistanceKind});
-            var stages=group.OrderByDescending(p=>p.StageDistanceMeters).ToArray();
-            foreach(var p in stages)
-            {
-                string trigger=id+":"+p.StageDistanceMeters.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                double actual=p.DistanceUntilTriggerMeters>0?p.StageDistanceMeters:p.DistanceMeters;
-                triggers.Add(new(trigger,id,SpeechTriggerKind.Advance,playerAlong+(p.DistanceUntilTriggerMeters>0?p.DistanceUntilTriggerMeters:Math.Min(0,p.DistanceMeters-p.StageDistanceMeters)),
-                    PlannedSpeechAnnouncer.Text(p.StageDistanceMeters,Math.Min(actual,p.StageDistanceMeters),p.FirstConfirmedInside200Meters,p.SpeedLimitKph,p.Kind))
-                    {SequenceOrder=-p.StageDistanceMeters,Supersedes=stages.Where(s=>s.StageDistanceMeters>p.StageDistanceMeters)
-                        .Select(s=>id+":"+s.StageDistanceMeters.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray()});
-            }
+            bool road=frame is not null&&sample.DistanceKind==WarningDistanceKind.Road;
+            input.Add(new(id,"camera",playerAlong+sample.DistanceMeters,road?playerAlong+sample.DistanceMeters:null,
+                meters=>PlannedSpeechAnnouncer.DistanceText(meters,sample.SpeedLimitKph,sample.Kind),
+                DynamicDistance:!road,IncludeTwoHundred:sample.Kind==CameraWarningKind.Calibrated));
+            kinds[id]=sample.DistanceKind;
         }
-        Publish(new("landmarks",snapshot.SessionId,snapshot.RouteRevision,playerAlong,snapshot.IsActive,snapshot.ObservedAt,events,triggers));
+        foreach(var passage in passages??[])
+        {
+            string id=$"landmark:{passage.CameraId}:{passage.Kind}:{passage.EncounterRevision}";
+            input.RemoveAll(e=>e.Id==id);
+            input.Add(new(id,"camera",playerAlong,null,_=>"",Ended:true));
+        }
+        var plan=environment.Build("landmarks",playerAlong,input,Scheduler,snapshot.IsActive);
+        Publish(new("landmarks",snapshot.SessionId,snapshot.RouteRevision,playerAlong,snapshot.IsActive,snapshot.ObservedAt,
+            plan.Events.Select(e=>e with{DistanceKind=kinds.GetValueOrDefault(e.Id)}).ToArray(),plan.Triggers)
+            {Sequences=plan.Sequences,CoordinateFrame=frame});
     }
     public void Suspend(string source)=>Timeline.Suspend(source);
     public void Observe(GameDataSnapshot data,DateTimeOffset now)
     {
-        EnsureSession(data.SessionId);
+        EnsureSession(data.SessionId);playback?.BeginUpdate();
         if(observedRoute is not null&&observedRoute.Revision!=data.Route.Revision)
         {
             replacementRevision=IsForwardExtension(observedRoute,data.Route)?null:data.Route.Revision;
             replacementApplied.Clear();
         }
         observedRoute=data.Route;
+        // Playback is released only after the whole trigger batch has been applied.
         playback?.SetActive(data.IsVehicleUsable&&data.Vehicle is {Paused:false,SdkActive:true,IsFinite:true,SpeedMetersPerSecond:>=-.1} v
             &&now>=v.ReceivedAt&&now-v.ReceivedAt<=TimeSpan.FromSeconds(2));
     }
@@ -108,24 +120,26 @@ public sealed class GuidanceCoordinator
         bool active=data.IsVehicleUsable&&data.Vehicle is {SdkActive:true,Paused:false,IsFinite:true,SpeedMetersPerSecond:>=-.1} v
             &&now>=v.ReceivedAt&&now-v.ReceivedAt<=TimeSpan.FromSeconds(2);
         playback?.SetActive(active);
-        if(!active){cache?.ClearPlan("guidance-preparation");latest=[];return;}
-        cache?.UpdatePlan("guidance-preparation",Scheduler.Prepare(Timeline,now));
+        if(!active){cache?.ClearPlan("guidance-preparation");latest=[];playback?.ApplyBatch([],false);return;}
         latest=Scheduler.Update(Timeline,now,data.Vehicle!.SpeedMetersPerSecond);
+        cache?.UpdatePlan("guidance-preparation",Scheduler.Prepare(Timeline,now));
         foreach(var result in latest)
         {
+            if(result.Disposition==TriggerDisposition.Ended){log("语音系列结束："+result.Event.SequenceId);continue;}
             if(result.Disposition!=TriggerDisposition.Queued)continue;
             var t=result.Trigger;
-            var item=new QueuedGuidanceSpeech(result.Source,result.Event.Id,t.Id,t.SequenceOrder,t.Priority,t.Text);
+            var item=new QueuedGuidanceSpeech(result.Source,result.Event.Id,t.Id,t.SequenceOrder,t.Priority,t.Text){SpeechSequenceId=result.Event.SequenceId};
             lastQueued[result.Source]=t.Text;
             log("语音触发入队："+t.Text+" 事件="+result.Event.Id+" 触发点="+t.Id);
-            playback?.Enqueue(item);Queued?.Invoke(item);
+            Queued?.Invoke(item);
         }
+        playback?.ApplyBatch(latest,active);
     }
     private void EnsureSession(string value)
     {if(session!=value){Reset();session=value;}}
     public void Reset()
     {
         Timeline.Reset();Scheduler.Reset();playback?.Reset();cache?.ClearPlan("guidance-preparation");
-        latest=[];lastQueued.Clear();session=null;observedRoute=null;replacementRevision=null;replacementApplied.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}
+        latest=[];lastQueued.Clear();environment.Reset();environmentFrame=null;session=null;observedRoute=null;replacementRevision=null;replacementApplied.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}
     }
 }

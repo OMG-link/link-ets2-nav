@@ -105,7 +105,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         // an already verified long road before that join.
         upcoming = exitApproach.Apply(upcoming, instructionRoute, paths.GetNavigationGraph(), along.Value);
         double confirmedAhead = Math.Max(0, Math.Min(confirmedUntil, firstUnresolvedJoinAlong) - along.Value);
-        bool confirmedContinuation = !yardApproach && !upcoming.Any(m => m.Kind != ManeuverKind.Straight) && confirmedAhead >= 800;
+        bool confirmedContinuation = !yardApproach && !upcoming.Any(m => m.Kind != ManeuverKind.Straight && m.AnnouncementMode==NavigationAnnouncementMode.Normal) && confirmedAhead >= 800;
         var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
         string? currentJunction=yardApproach ? null : CurrentJunction(instructionRoute,along.Value);
         bool finishingTrackedTurn=currentJunction is not null && currentJunction==approachingJunction && !approachingStraight;
@@ -122,7 +122,9 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         {
             double playerAlong=progress.Update(data.SessionId,route,along.Value);
             guidance.Publish(eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
-                playerAlong,upcoming,true,defer,confirmedContinuation,guidance.Scheduler) with{CoordinateFrame=progress.Frame});
+                playerAlong,upcoming,true,false,confirmedContinuation,guidance.Scheduler,progress.Frame,
+                CurrentComponentEnd(instructionRoute,along.Value) is {} boundary?playerAlong-along.Value+boundary:null,
+                guidance.WillReplaceSource("navigation",data.Route.Revision)));
             lastSpoken=guidance.LastPlayed("navigation");
         }
         else
@@ -146,6 +148,19 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             : "当前连续路径内没有可确认的普通路口操作。";
         Report(state, next, now);
         return new(state, next, lastSpoken) { LaneRoute = laneRoute, LaneMerges = merges, Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
+    }
+
+    private static double? CurrentComponentEnd(IReadOnlyList<DirectedRoad> route,double along)
+    {
+        double offset=0;
+        foreach(var edge in route)
+        {
+            double end=offset+edge.Points.Zip(edge.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+            if(along>offset&&along<end)
+                return edge.Roundabout is not null||edge.Id.StartsWith("prefab:",StringComparison.Ordinal)?end:null;
+            offset=end;
+        }
+        return null;
     }
 
     private static string? CurrentJunction(IReadOnlyList<DirectedRoad> route,double along)

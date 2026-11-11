@@ -38,6 +38,14 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
         return speedLimitKph is > 0 and <= 300 ? text.TrimEnd('。') + "，限速" + Number(speedLimitKph.Value) + "。" : text;
     }
 
+    public static string DistanceText(int meters,int? speedLimitKph=null,CameraWarningKind kind=CameraWarningKind.Calibrated)
+    {
+        if(kind==CameraWarningKind.UncalibratedProximity)return UncalibratedText;
+        string prefix=meters>0?NavigationPrompts.Number(meters).Replace("二百","两百",StringComparison.Ordinal)+"米处，":"";
+        string limit=speedLimitKph is >0 and <=300?"，限速"+Number(speedLimitKph.Value):"";
+        return prefix+"有测速照相"+limit+"。";
+    }
+
     public static string Number(int value)
     {
         if (value is < 1 or > 999) throw new ArgumentOutOfRangeException(nameof(value));

@@ -20,7 +20,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
 {
     private readonly object gate=new();
     private readonly Dictionary<(string,string),(QueuedGuidanceSpeech Speech,long Order)> pending=[];
-    private readonly Dictionary<(string,string),double> latest=[];
+    private readonly Dictionary<(string,string),QueuedGuidanceSpeech> latest=[];
     private readonly Channel<bool> changed=Channel.CreateBounded<bool>(new BoundedChannelOptions(1){FullMode=BoundedChannelFullMode.DropWrite,SingleReader=true});
     private readonly CancellationTokenSource stop;
     private readonly SpeechAnnouncementQueue? cache;
@@ -29,7 +29,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
     private readonly Action<string> log;
     private readonly Task worker;
     private long order,generation;
-    private bool active=true;
+    private bool active=true,updateHeld;
     public event Action<QueuedGuidanceSpeech>? Played;
     public IReadOnlyList<QueuedGuidanceSpeech> Pending
     {get{lock(gate)return pending.Values.OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order).Select(p=>p.Speech).ToArray();}}
@@ -43,23 +43,48 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         worker=Task.Run(RunAsync);
     }
     public void SetActive(bool value){lock(gate)active=value;Wake();}
-    public void Enqueue(QueuedGuidanceSpeech speech)
+    /// <summary>Prevent the playback worker from starting a stale item while a sample is being planned.</summary>
+    public void BeginUpdate(){lock(gate)updateHeld=true;}
+    public void ApplyBatch(IReadOnlyList<GuidanceTriggerResult> results,bool isActive)
     {
-        if(stop.IsCancellationRequested||speech.Text.Length==0)return;
         lock(gate)
         {
-            var key=(speech.Source,speech.EventId);
-            if(latest.TryGetValue(key,out var rank)&&speech.SequenceOrder<rank)return;
-            if(pending.TryGetValue(key,out var existing)&&existing.Speech.TriggerId==speech.TriggerId)
-                pending[key]=(speech,existing.Order);
-            else
+            foreach(var result in results)
             {
-                if(latest.TryGetValue(key,out rank)&&speech.SequenceOrder==rank)return;
-                pending[key]=(speech,++order);
+                if(result.Disposition==TriggerDisposition.Ended)
+                {
+                    var key=(result.Source,result.Event.SequenceId);
+                    pending.Remove(key);latest.Remove(key);
+                }
+                else if(result.Disposition==TriggerDisposition.Queued)
+                {
+                    var t=result.Trigger;
+                    EnqueueLocked(new(result.Source,result.Event.Id,t.Id,t.SequenceOrder,t.Priority,t.Text)
+                        {SpeechSequenceId=result.Event.SequenceId});
+                }
             }
-            latest[key]=speech.SequenceOrder;
+            active=isActive;updateHeld=false;
         }
         PreparePending();Wake();
+    }
+    public void Enqueue(QueuedGuidanceSpeech speech)
+    {
+        lock(gate)EnqueueLocked(speech);
+        PreparePending();Wake();
+    }
+    private void EnqueueLocked(QueuedGuidanceSpeech speech)
+    {
+        if(stop.IsCancellationRequested||speech.Text.Length==0)return;
+        var key=(speech.Source,speech.SequenceId);
+        if(latest.TryGetValue(key,out var previous)&&speech.SequenceOrder<previous.SequenceOrder)return;
+        if(pending.TryGetValue(key,out var existing)&&existing.Speech.TriggerId==speech.TriggerId)
+            pending[key]=(speech,existing.Order);
+        else
+        {
+            if(previous is not null&&speech.SequenceOrder==previous.SequenceOrder)return;
+            pending[key]=(speech,++order);
+        }
+        latest[key]=speech;
     }
     public void Refresh(string source,IReadOnlyList<SpeechTrigger> triggers)
     {
@@ -77,10 +102,18 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
     }
     // Route replacement explicitly withdraws affected events; normal map windows do not erase queued audio.
     public void Withdraw(string source,IEnumerable<string> eventIds)
-    {lock(gate)foreach(var id in eventIds){pending.Remove((source,id));latest.Remove((source,id));}PreparePending();Wake();}
+    {
+        var ids=eventIds.ToHashSet(StringComparer.Ordinal);
+        lock(gate)
+        {
+            foreach(var key in pending.Where(p=>p.Key.Item1==source&&ids.Contains(p.Value.Speech.EventId)).Select(p=>p.Key).ToArray())pending.Remove(key);
+            foreach(var key in latest.Where(p=>p.Key.Item1==source&&ids.Contains(p.Value.EventId)).Select(p=>p.Key).ToArray())latest.Remove(key);
+        }
+        PreparePending();Wake();
+    }
     public void Reset()
     {
-        lock(gate){pending.Clear();latest.Clear();generation++;}
+        lock(gate){pending.Clear();latest.Clear();generation++;updateHeld=false;}
         PreparePending();Wake();
     }
     private void PreparePending()=>cache?.UpdatePlan("guidance-playback",Pending.Select(p=>p.Text).ToArray(),-10);
@@ -97,7 +130,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                     (QueuedGuidanceSpeech Speech,long Generation,string File)? next=null;
                     lock(gate)
                     {
-                        if(!active)break;
+                        if(!active||updateHeld)break;
                         foreach(var item in pending.Values.OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order))
                         {
                             string? file=null;
@@ -110,7 +143,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                             if(file is null)continue;
                             next=(item.Speech,generation,file);break;
                         }
-                        if(next is {} selected)pending.Remove((selected.Speech.Source,selected.Speech.EventId));
+                        if(next is {} selected)pending.Remove((selected.Speech.Source,selected.Speech.SequenceId));
                     }
                     if(next is not {} job)break;
                     PreparePending();
@@ -130,8 +163,8 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                         log("语音播放失败，保留待播项："+ex.Message);
                         lock(gate)
                         {
-                            var key=(job.Speech.Source,job.Speech.EventId);
-                            if(job.Generation==generation&&!pending.ContainsKey(key)&&latest.GetValueOrDefault(key)==job.Speech.SequenceOrder)
+                            var key=(job.Speech.Source,job.Speech.SequenceId);
+                            if(job.Generation==generation&&!pending.ContainsKey(key)&&latest.TryGetValue(key,out var newest)&&newest.TriggerId==job.Speech.TriggerId)
                                 pending[key]=(job.Speech,++order);
                         }
                         await Task.Delay(500,stop.Token).ConfigureAwait(false);

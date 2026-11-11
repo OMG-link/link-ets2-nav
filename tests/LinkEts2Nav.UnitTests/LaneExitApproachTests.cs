@@ -39,17 +39,16 @@ public sealed class LaneExitApproachTests
         Assert.Equal(200,Assert.Single(detector.Apply([s.Action with{DistanceMeters=200}],s.Route.Skip(1).ToArray(),s.Graph,0)).DistanceMeters);
     }
     [Fact]
-    public void DedicatedExitCanBeIdentifiedWithoutAnyAngularManeuver()
+    public void DedicatedLaneNeverCreatesAnActionOrReplacesAStraightDecision()
     {
         var s=Scene();var detector=new LaneExitApproach();
-        var first=Assert.Single(detector.Apply([],s.Route,s.Graph,0));
-        Assert.Equal(ManeuverKind.KeepRight,first.Kind);Assert.Equal(20,first.DistanceMeters);
-        var after=Assert.Single(detector.Apply([],s.Route.Skip(1).ToArray(),s.Graph,0));
-        Assert.Equal(first.Id,after.Id);Assert.Equal(0,after.DistanceMeters);
+        Assert.Empty(detector.Apply([],s.Route,s.Graph,0));
         var straight=s.Action with{Kind=ManeuverKind.Straight};
-        Assert.Equal(ManeuverKind.KeepRight,Assert.Single(new LaneExitApproach().Apply([straight],s.Route,s.Graph,0)).Kind);
-        var main=s.Graph[^1] with{LanePaths=[s.Route[^1].LanePaths[0] with{ExitNodeUid=22}]};
-        Assert.Empty(new LaneExitApproach().Apply([],s.Route,[..s.Route,main],0));
+        Assert.Equal(straight,Assert.Single(detector.Apply([straight],s.Route,s.Graph,0)));
+        Assert.Equal(s.Action with{DistanceMeters=20},Assert.Single(detector.Apply([s.Action],s.Route,s.Graph,0)));
+        // Previously cached lead distances must not revive absent or changed actions.
+        Assert.Empty(detector.Apply([],s.Route,s.Graph,0));
+        Assert.Equal(straight,Assert.Single(detector.Apply([straight],s.Route,s.Graph,0)));
     }
 
     [Fact]

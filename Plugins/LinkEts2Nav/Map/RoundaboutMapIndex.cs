@@ -61,13 +61,9 @@ public sealed class RoundaboutMapIndex
         if (road.Node is null || road.ForwardNode is null || curves.ContainsKey(new(road.Uid, -1))) return;
         int samples = Math.Clamp((int)Math.Ceiling(road.Length / 3), 8, 1024);
         var points = Enumerable.Range(0, samples + 1).Select(i => road.InterpolateCurve((float)i / samples).Position).ToArray();
-        // Null is an explicit zero item UID in the map. Unresolved nonzero references
-        // must remain incomplete boundaries, rather than being treated as dead ends.
-        bool Terminal(INode endpoint) => endpoint is Node node && ((node.ForwardItem?.Uid == road.Uid && node.BackwardItem is null)
-            || (node.BackwardItem?.Uid == road.Uid && node.ForwardItem is null));
         // Road states describe road connectivity, not a claim about exact lane trajectories.
-        curves[new(road.Uid, -1)] = new(new(road.Uid, -1), null, road.LeftHandTraffic, points, [], road.Node.Uid, road.ForwardNode.Uid) { TerminalExit = Terminal(road.ForwardNode) };
-        curves[new(road.Uid, -2)] = new(new(road.Uid, -2), null, road.LeftHandTraffic, points.Reverse().ToArray(), [], road.ForwardNode.Uid, road.Node.Uid) { TerminalExit = Terminal(road.Node) };
+        curves[new(road.Uid, -1)] = new(new(road.Uid, -1), null, road.LeftHandTraffic, points, [], road.Node.Uid, road.ForwardNode.Uid);
+        curves[new(road.Uid, -2)] = new(new(road.Uid, -2), null, road.LeftHandTraffic, points.Reverse().ToArray(), [], road.ForwardNode.Uid, road.Node.Uid);
     }
 
     public void BuildNewSectors(IEnumerable<SectorCoordinate> sectors, CancellationToken token = default)

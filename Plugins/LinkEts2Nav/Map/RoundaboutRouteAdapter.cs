@@ -19,13 +19,13 @@ public static class RoundaboutRouteAdapter
                 && annotations.TryGetValue(nextUid, out var nextRing) && nextRing.Id == ring.Id) last++;
             var entry = ring.EntryPorts.SingleOrDefault(p => p.NodeUid == route[i].StartNodeUid);
             var exitMatches = ring.ExitPorts.Where(p => p.BoundaryNodeUid == route[last].EndNodeUid)
-                .GroupBy(p => (p.ExternalItemUid, p.ExternalNodeUid)).ToArray();
+                .GroupBy(p => p.BoundaryNodeUid).ToArray();
             if (entry is null || exitMatches.Length != 1 || ring.RingLength <= 0)
             { result.AddRange(route.Skip(i).Take(last - i + 1)); i = last; continue; }
             // Bearings already follow the ring's native circulation direction.
             double Ahead(RoundaboutExitPort port)
             { return (port.Bearing - entry.Bearing + 2 * Math.PI) % (2 * Math.PI); }
-            var ordered = ring.ExitPorts.GroupBy(p => (p.ExternalItemUid, p.ExternalNodeUid))
+            var ordered = ring.ExitPorts.GroupBy(p => p.BoundaryNodeUid)
                 .Select(g => (g.Key, Along: g.Min(p => Ahead(p)))).OrderBy(p => p.Along).ToArray();
             bool ambiguous = ordered.Zip(ordered.Skip(1)).Any(p => Math.Abs(p.First.Along - p.Second.Along) < 1e-6);
             int ordinal = Array.FindIndex(ordered, p => p.Key == exitMatches[0].Key) + 1;
@@ -38,7 +38,7 @@ public static class RoundaboutRouteAdapter
             var cues=new List<RoundaboutExitCue>();double previous=0;
             for(int n=0;n<ordinal-1;n++)
             {
-                var port=ring.ExitPorts.Where(p=>(p.ExternalItemUid,p.ExternalNodeUid)==ordered[n].Key)
+                var port=ring.ExitPorts.Where(p=>p.BoundaryNodeUid==ordered[n].Key)
                     .MinBy(p=>Ahead(p))!;
                 double along=Project(port.DeparturePosition,points,previous,departure);
                 cues.Add(new(n+1,along));previous=along;

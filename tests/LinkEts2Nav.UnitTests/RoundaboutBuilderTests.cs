@@ -65,42 +65,67 @@ public sealed class RoundaboutBuilderTests
         ring[0]=current with {Next=[exit.Key,branch.Key]};
         Assert.NotNull(new RoundaboutBuilder(ring.Append(exit)).Find(1,[current.Key], TestContext.Current.CancellationToken));
     }
-    [Fact]
-    public void CombinesExitLanesButKeepsDifferentPortsOnSameExternalPrefab()
-    {
-        var ring=Circle(); var exits=new[]{
-            new RoundaboutCurve(new(2,1),2,false,[Point(0),new(30,0,0)],[],10),
-            new RoundaboutCurve(new(2,2),2,false,[Point(0),new(30,0,0)],[],10),
-            new RoundaboutCurve(new(2,3),2,false,[Point(0),new(30,0,0)],[],20)};
-        // Attach exits to a separate branch reachable from the ring; innermost selector stays on ring.
-        var branch=new RoundaboutCurve(new(1,99),1,false,[Point(0),new(30,0,0)],exits.Select(e=>e.Key).ToArray());
-        ring[0]=ring[0] with {Next=[ring[1].Key,branch.Key]};
-        var found=new RoundaboutBuilder(ring.Append(branch).Concat(exits)).Find(1,[ring[0].Key], TestContext.Current.CancellationToken)!;
-        Assert.Equal(2,found.Exits.Count);Assert.Equal(new ulong[]{10,20},found.Exits.Select(e=>e.NodeUid));
-    }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void OnlyVerifiedDeadEndCountsAsCompleteExit(bool verified)
+    public void CombinesExitLanesByBoundaryRegardlessOfSharedExternalDestination(bool externalLoaded)
+    {
+        var ring = Circle();
+        RoundaboutCurve Exit(int index, ulong node) => new(new(1, index), 1, false,
+            [ring[0].Points[^1], new(40, 0, 0)], [new(900, index)], ExitNode: node);
+        var lanes = new[] { Exit(100, 10), Exit(101, 10), Exit(102, 20) };
+        ring[0] = ring[0] with { Next = [ring[1].Key, .. lanes.Select(c => c.Key)] };
+        var external = lanes.Select(c => new RoundaboutCurve(c.Next[0], 900, false,
+            [new(40, 0, 0), new(60, 0, 0)], [], EntryNode: 500));
+        var graph = ring.Concat(lanes).Concat(externalLoaded ? external : []);
+        var found = new RoundaboutBuilder(graph).Find(1, [ring[0].Key], TestContext.Current.CancellationToken)!;
+        Assert.Equal(new ulong[] { 10, 20 }, found.Exits.Select(e => e.NodeUid));
+        Assert.Equal(2, found.Exits[0].Branches.Count);
+        Assert.Equal(new ulong[] { 10, 20 }, found.ExitPorts.Select(p => p.BoundaryNodeUid));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExternalRoadCompletenessDoesNotChangeBoundaryExit(bool loaded)
     {
         var ring = Circle();
         var branch = new RoundaboutCurve(new(1, 99), 1, false,
             [ring[0].Points[^1], new(40, 0, 0)], [new(2, -1)], ExitNode: 10);
         var road = new RoundaboutCurve(new(2, -1), null, false,
-            [new(40, 0, 0), new(60, 0, 0)], [], 10, 20) { TerminalExit = verified };
+            [new(40, 0, 0), new(60, 0, 0)], [], 10, 20);
         ring[0] = ring[0] with { Next = [ring[1].Key, branch.Key] };
-        var found = new RoundaboutBuilder(ring.Append(branch).Append(road))
-            .Find(1, [ring[0].Key], TestContext.Current.CancellationToken);
-        if (!verified) { Assert.Null(found); return; }
-        Assert.NotNull(found);
-        var exit = Assert.Single(found.Exits);
-        Assert.Equal(2UL, exit.ExternalItemUid);
-        Assert.Equal(20UL, exit.NodeUid);
+        var graph = ring.Append(branch).Concat(loaded ? [road] : []);
+        var found = new RoundaboutBuilder(graph).Find(1, [ring[0].Key], TestContext.Current.CancellationToken)!;
+        Assert.Equal(10UL, Assert.Single(found.Exits).NodeUid);
         var port = Assert.Single(found.ExitPorts);
         Assert.Equal(10UL, port.BoundaryNodeUid);
-        Assert.Equal(20UL, port.ExternalNodeUid);
-        // Execution is at the departure, not at the distant road's dead end.
+        // Execution stays at the departure, not the outer boundary or road end.
         Assert.InRange(port.DepartureToBoundaryMeters, 19, 21);
+    }
+
+    [Fact]
+    public void CompositeRingExcludesInternalPrefabAndRoadInterfaces()
+    {
+        var ring = Circle(2);
+        // Interface 50 joins two member prefabs directly. Interface 60/70 uses
+        // an ordinary road belonging to the ring, in both travel directions.
+        ring[15] = ring[15] with { ExitNode = 50 };
+        ring[16] = ring[16] with { EntryNode = 50 };
+        ring[31] = ring[31] with { ExitNode = 60, Next = [new(3, -1)],
+            Points = [.. ring[31].Points.Take(4), ring[0].Points[0] + new Vector3(0, 0, 1)] };
+        ring[0] = ring[0] with { EntryNode = 70 };
+        var road = new RoundaboutCurve(new(3, -1), null, false,
+            [ring[31].Points[^1], ring[0].Points[0]], [ring[0].Key], 60, 70);
+        var reverseRoad = new RoundaboutCurve(new(3, -2), null, false,
+            road.Points.Reverse().ToArray(), [], 70, 60);
+        var exit = new RoundaboutCurve(new(2, 99), 2, false,
+            [ring[20].Points[^1], new(-40, 0, 0)], [], ExitNode: 80);
+        ring[20] = ring[20] with { Next = [ring[21].Key, exit.Key] };
+        var found = new RoundaboutBuilder(ring.Append(road).Append(reverseRoad).Append(exit))
+            .Find(1, [ring[0].Key], TestContext.Current.CancellationToken)!;
+        Assert.Equal(80UL, Assert.Single(found.ExitPorts).BoundaryNodeUid);
+        Assert.DoesNotContain(found.EntryPorts, p => p.NodeUid is 50 or 60 or 70);
     }
 
     [Fact]

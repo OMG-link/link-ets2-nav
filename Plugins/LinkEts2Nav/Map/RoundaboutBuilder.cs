@@ -3,7 +3,7 @@ using System.Numerics;
 namespace LinkEts2Nav.Map;
 
 public sealed record RoundaboutCurveKey(ulong ItemUid, int CurveIndex);
-public sealed record RoundaboutExit(ulong ExternalItemUid, ulong NodeUid, IReadOnlyList<RoundaboutCurveKey> Branches);
+public sealed record RoundaboutExit(ulong NodeUid, IReadOnlyList<RoundaboutCurveKey> Branches);
 public sealed record RoundaboutStructure(string Id, IReadOnlyList<ulong> PrefabUids,
     IReadOnlyList<RoundaboutCurveKey> Ring, IReadOnlyList<Vector3> Geometry,
     double Circularity, IReadOnlyList<RoundaboutExit> Exits)
@@ -17,11 +17,7 @@ public sealed record RoundaboutStructure(string Id, IReadOnlyList<ulong> PrefabU
 /// <summary>Actual directed PPD curves; road links are explicitly distinguished from prefab curves.</summary>
 public sealed record RoundaboutCurve(RoundaboutCurveKey Key, ulong? PrefabUid,
     bool LeftHandTraffic, IReadOnlyList<Vector3> Points, IReadOnlyList<RoundaboutCurveKey> Next,
-    ulong EntryNode = 0, ulong ExitNode = 0)
-{
-    /// <summary>Map endpoint explicitly has no further item; not merely absent from the loaded graph.</summary>
-    public bool TerminalExit { get; init; }
-}
+    ulong EntryNode = 0, ulong ExitNode = 0);
 
 /// <summary>One short-lived search session per newly constructed sector. Does not own map objects.</summary>
 public sealed class RoundaboutBuilder
@@ -72,11 +68,10 @@ public sealed class RoundaboutBuilder
     private RoundaboutStructure? Assemble(RoundaboutCurveKey[] ring, ulong[] members,
         Vector3[] points, double quality, CancellationToken token)
     {
-        var exits = CollectExits(ring, members, token);
-        if (exits is null) return null;
         // Multiple lane rings of the same prefab set identify one physical roundabout.
         var id = string.Join("/", members.Select(uid => $"{uid:X16}"));
-        var ports = RoundaboutPorts.Build(graph, ring, members);
+        var ports = RoundaboutPorts.Build(graph, ring, members, token);
+        var exits = ports.Exits.Select(p => new RoundaboutExit(p.BoundaryNodeUid, p.Branches)).ToArray();
         return new(id, members, ring, points, quality, exits)
         { EntryPorts=ports.Entries, ExitPorts=ports.Exits, RingLength=ports.Length };
     }
@@ -138,36 +133,6 @@ public sealed class RoundaboutBuilder
         return candidates.Select(c => (c.Key, Angle: Angle(tangent, Ahead(c.Points, distance) - c.Points[0])))
             .OrderBy(c => current.LeftHandTraffic ? -c.Angle : c.Angle)
             .ThenBy(c => c.Key.ItemUid).ThenBy(c => c.Key.CurveIndex).First().Key;
-    }
-
-    private IReadOnlyList<RoundaboutExit>? CollectExits(RoundaboutCurveKey[] ring, ulong[] owners, CancellationToken token)
-    {
-        var members = owners.ToHashSet(); var visited = new HashSet<RoundaboutCurveKey>();
-        var pending = new Stack<RoundaboutCurveKey>(ring);
-        var exits = new Dictionary<(ulong, ulong), HashSet<RoundaboutCurveKey>>();
-        while (pending.TryPop(out var key))
-        {
-            token.ThrowIfCancellationRequested();
-            if (!visited.Add(key) || !graph.TryGetValue(key, out var curve)) continue;
-            if (curve.Next.Count == 0 && curve.ExitNode != 0)
-            {
-                if (!curve.TerminalExit) return null;
-                exits.TryAdd((curve.Key.ItemUid, curve.ExitNode), [key]);
-            }
-            foreach (var next in curve.Next)
-            {
-                if (!graph.TryGetValue(next, out var target)) return null;
-                if (target.PrefabUid is { } owner && !members.Contains(owner))
-                {
-                    var exit = (owner, target.EntryNode);
-                    if (!exits.TryGetValue(exit, out var branches)) exits[exit] = branches = [];
-                    branches.Add(key);
-                }
-                else pending.Push(next);
-            }
-        }
-        return exits.OrderBy(p => p.Key.Item1).ThenBy(p => p.Key.Item2)
-            .Select(p => new RoundaboutExit(p.Key.Item1, p.Key.Item2, p.Value.OrderBy(k => k.ItemUid).ThenBy(k => k.CurveIndex).ToArray())).ToArray();
     }
 
     private Vector3[] Join(IEnumerable<RoundaboutCurveKey> ring)

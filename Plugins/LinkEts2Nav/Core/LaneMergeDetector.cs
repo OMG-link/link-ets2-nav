@@ -97,6 +97,7 @@ public sealed class LaneMergeDetector
     {
         var points=current.Points.Take(endIndex+1).Reverse().ToList();double length=new LanePolyline(points).Length;
         var visited=new HashSet<(ulong,ulong,int,ulong,int)>();
+        var visitedRoads=new HashSet<(string,ulong,ulong)>();
         void Add(IEnumerable<Vector3> source)
         {
             foreach(var p in source){if(points.Count>0){double gap=Vector3.Distance(points[^1],p);if(gap<.001)continue;length+=gap;}points.Add(p);if(length>=550)break;}
@@ -104,18 +105,22 @@ public sealed class LaneMergeDetector
         while(length<550&&visited.Add((current.PrefabUid,current.EntryNodeUid,current.EntryLane,current.ExitNodeUid,current.ExitLane)))
         {
             var currentLine=new LanePolyline(current.Points);var heading=currentLine.Heading(0);
-            var roads=(roadEnds.GetValueOrDefault(current.EntryNodeUid)??[]).Where(e=>Vector3.Dot(new LanePolyline(e.Points).Heading(new LanePolyline(e.Points).Length),heading)>.7).ToArray();
-            ulong boundary=current.EntryNodeUid;Vector3 expected=current.Points[0];
-            if(roads.Length>1)break;
-            if(roads.Length==1)
+            ulong boundary=current.EntryNodeUid;Vector3 expected=current.Points[0];bool blocked=false;
+            // Several ordinary road items can connect directly without a prefab between them.
+            while(length<550)
             {
-                var road=roads[0];var line=new LanePolyline(road.Points);var h=line.Heading(line.Length);var right=new Vector3(-h.Z,0,h.X);
+                var roads=(roadEnds.GetValueOrDefault(boundary)??[]).Where(e=>Vector3.Dot(new LanePolyline(e.Points).Heading(new LanePolyline(e.Points).Length),heading)>.7).ToArray();
+                if(roads.Length==0)break;
+                if(roads.Length>1){blocked=true;break;}
+                var road=roads[0];
+                if(!visitedRoads.Add((road.Id,road.StartNodeUid,road.EndNodeUid))){blocked=true;break;}
+                var line=new LanePolyline(road.Points);var h=line.Heading(line.Length);var right=new Vector3(-h.Z,0,h.X);
                 float lateral=Vector3.Dot(expected-road.Points[^1],right);
                 var shifted=road.Points.Select((p,i)=>{var t=line.Heading(line.Along[i]);return p+new Vector3(-t.Z,0,t.X)*lateral;}).ToArray();
-                if(Vector3.Distance(shifted[^1],expected)>1)break;
-                Add(shifted.Reverse());boundary=road.StartNodeUid;expected=shifted[0];
-                if(length>=550)break;
+                if(Vector3.Distance(shifted[^1],expected)>1){blocked=true;break;}
+                Add(shifted.Reverse());boundary=road.StartNodeUid;expected=shifted[0];heading=line.Heading(0);
             }
+            if(blocked||length>=550)break;
             var prior=(laneEnds.GetValueOrDefault(boundary)??[]).Where(p=>p.ExitOrder==current.EntryOrder&&p.ExitLaneCount==current.EntryLaneCount
                 &&Vector3.Distance(p.Points[^1],expected)<1).ToArray();
             if(prior.Length!=1)break;

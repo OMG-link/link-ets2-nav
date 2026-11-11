@@ -41,6 +41,24 @@ public sealed class LaneMergeDetectorTests
         Assert.Equal(500,observation.ParallelDistanceMeters);Assert.Equal(!left,observation.MoveLeft);
         Assert.Equal(1,observation.RecommendedLaneCount);
     }
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void ConsecutiveRoadItemsDoNotTruncateParallelHistory(bool curved)
+    {
+        var scene=Scene(curved:curved);var source=scene.Graph[0];
+        var sections=new List<DirectedRoad>();
+        for(int start=0;start<source.Points.Count-1;start+=80)
+        {
+            int end=Math.Min(start+80,source.Points.Count-1);
+            ulong from=start==0?source.StartNodeUid:(ulong)(1000+start);
+            ulong to=end==source.Points.Count-1?source.EndNodeUid:(ulong)(1000+end);
+            sections.Add(new("road-"+start,from,to,source.Points.Skip(start).Take(end-start+1).ToArray()));
+        }
+        var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..sections,scene.Edge],scene.Plan,0));
+        Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);
+        Assert.Equal(500,observation.ParallelDistanceMeters);
+    }
+
     [Fact]
     public void ShortParallelApproachWithKnownDivergenceIsRamp()
     {

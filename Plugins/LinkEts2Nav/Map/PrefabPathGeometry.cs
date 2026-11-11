@@ -38,6 +38,7 @@ public static class PrefabPathGeometry
             return valid.OrderBy(p=>Vector3.Dot(Position(p.line)-prefab.Nodes[node].Position,right)).ThenBy(p=>p.slot)
                 .Select((p,rank)=>(p.slot,rank)).ToDictionary(p=>p.slot,p=>p.rank);
         }
+        var forks=PrefabForkTopology.Build(prefab,descriptor,placement,node=>Order(node,true));
         for(int from=0;from<count;from++)
         for(int to=0;to<count;to++)
         {
@@ -68,7 +69,7 @@ public static class PrefabPathGeometry
             var referencePoints=Sample(prefab,descriptor,placement,from,to,representative);
             if(referencePoints is null)continue;
             result.Add(new($"prefab:{prefab.Uid:X16}:{from}:{to}",prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,referencePoints)
-                {LaneConnections=laneConnections,LanePaths=candidates.ToArray(),Junction=junction,
+                {LaneConnections=laneConnections,LanePaths=candidates.ToArray(),Junction=junction,ForkInfo=forks.GetValueOrDefault(prefab.Nodes[from].Uid),
                     NativeEntryTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[representative[0]].StartRotation)),
                     NativeExitTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[representative[^1]].EndRotation))});
         }

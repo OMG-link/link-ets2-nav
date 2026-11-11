@@ -74,4 +74,24 @@ public sealed class NavigationEventPlannerTests
         Assert.Equal("保持直行。",Assert.Single(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
         Assert.Single(t.Sources[0].Triggers,x=>x.EventId.StartsWith("exit@"));
     }
+
+    [Fact]
+    public void DedicatedForkChoosesLaneAtOpeningAndReleasesNextBriefingOnEntry()
+    {
+        var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
+        var fork=new NavigationManeuver("fork",ManeuverKind.ChooseLanes,100,"in","out")
+            {EndDistanceMeters=300,Instruction="走最右侧车道",ForkInstruction=new(ManeuverKind.ChooseLanes,false,"走最右侧车道",[2],[2])};
+        t.Publish(p.Build("s","r",Now,0,[fork,Turn(700,"next")],true,false,false,s));
+        Assert.Contains("一百米后，走最右侧车道。",s.Prepare(t,Now));
+        Assert.DoesNotContain(s.Prepare(t,Now),x=>x.Contains("个路口走"));
+        s.Update(t,Now,0);
+        t.Publish(p.Build("s","r",Now,80,[fork with{DistanceMeters=20,EndDistanceMeters=220},Turn(620,"next")],true,false,false,s));
+        Assert.Equal("走最右侧车道。",Assert.Single(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
+        t.Publish(p.Build("s","r",Now,300,[Turn(400,"next")],true,false,false,s));
+        Assert.DoesNotContain(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Ended||r.Disposition==TriggerDisposition.Queued);
+        t.Publish(p.Build("s","r",Now,301,[Turn(399,"next")],true,false,false,s));
+        var results=s.Update(t,Now,0);
+        Assert.Contains(results,r=>r.Disposition==TriggerDisposition.Ended);
+        Assert.Equal("四百米后，左转。",Assert.Single(results,r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
+    }
 }

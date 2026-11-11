@@ -11,6 +11,7 @@ public static class NavigationPrompts
         ManeuverKind.MergeLeft => "向左前方进入主路", ManeuverKind.MergeRight => "向右前方进入主路",
         ManeuverKind.EnterRoundabout => "进入环岛", ManeuverKind.ExitRoundabout => "驶出环岛", ManeuverKind.PassRoundaboutExit => "经过出口",
         ManeuverKind.Straight => "直行", ManeuverKind.UTurn => "掉头",
+        ManeuverKind.ChooseLanes => "按指定车道行驶",
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
 
@@ -107,6 +108,9 @@ public static class NavigationPrompts
     {
         foreach (var kind in Enum.GetValues<ManeuverKind>())
         {
+            // Lane selection carries its actual lane set in Instruction and is
+            // synthesized through the normal dynamic-text cache.
+            if(kind==ManeuverKind.ChooseLanes)continue;
             foreach (int distance in new[] { 2000,1000,500,450,400,350,300,250,200,150,100,50 })
                 yield return AtDistance(kind,distance);
             yield return Immediate(kind);

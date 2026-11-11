@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace LinkEts2Nav.Core;
 
-public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit }
+public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit, ChooseLanes }
 
 public enum NavigationAnnouncementMode { Normal, Silent, DistancePreview }
 
@@ -25,6 +25,7 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     public bool HasSeparateApproachRoad { get; init; } = true;
     /// <summary>True when a straight decision explicitly continues the main road.</summary>
     public bool IsMainRoadContinuation { get; init; }
+    public RoadForkInstruction? ForkInstruction { get; init; }
 }
 
 /// <summary>
@@ -34,6 +35,7 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
 /// </summary>
 public sealed class NavigationManeuverDetector
 {
+    public IReadOnlyList<RoadForkDiagnostic> ForkDiagnostics { get; private set; }=[];
     private const double TurnAngleDegrees = 45;
     private const double ForkAngleDegrees = 55;
     private const double MinimumForkSpreadDegrees = 5;
@@ -76,11 +78,12 @@ public sealed class NavigationManeuverDetector
         ArgumentNullException.ThrowIfNull(route);
         ArgumentNullException.ThrowIfNull(graph);
         var result = new List<NavigationManeuver>();
+        var forkIssues=new List<RoadForkDiagnostic>();ForkDiagnostics=forkIssues;
         if (!double.IsFinite(vehicleAlong) || vehicleAlong < 0 || route.Count == 0) return result;
         if (route.Any(r => !Valid(r))) return result;
         for (int i = 1; i < route.Count; i++)
             if (!Connected(route[i - 1], route[i])) return result;
-        if (route.Count == 1 && route[0].Roundabout is null)
+        if (route.Count == 1 && route[0].Roundabout is null && route[0].ForkInfo is null)
         {
             if (PrefabKey(route[0]) is null) confirmedUntil = Length(route[0]);
             return result;
@@ -119,6 +122,28 @@ public sealed class NavigationManeuverDetector
             {
                 // Unsupported winding geometry remains a barrier while the vehicle
                 // approaches or traverses it. A normal, already entered turn does not.
+                if(current.ForkInfo is null&&ComplexInternalBend(current))return result;
+                var connections = prefabStarts.GetValueOrDefault((prefab, current.StartNodeUid)) ?? [];
+                // Crossing junction angles retain their own rules. Ordinary road
+                // splits need no crossing, extra entrance or IsJunction marker.
+                if(current.Junction?.IsJunction!=true&&(connections.Length>=2||current.ForkInfo?.Branches.Count>1))
+                {
+                    var instruction=current.ForkInfo is {} info?RoadForkRules.Decide(info,current.EndNodeUid)
+                        :new RoadForkInstruction(ManeuverKind.Straight,true,null,[],[],"分流的完整原生灯光与入口车道数据不可用");
+                    if(instruction.Failure is {} reason)
+                    {
+                        forkIssues.Add(new(prefab,current.StartNodeUid,current.EndNodeUid,reason));
+                        hasUnresolvedJoin=true;firstUnresolvedJoinAlong=Math.Min(firstUnresolvedJoinAlong,offset);
+                    }
+                    else if(!instruction.Silent&&offset>=vehicleAlong)
+                    {
+                        result.Add(new($"fork:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",instruction.Kind,
+                            offset-vehicleAlong,i>0?route[i-1].Id:current.Id,current.Id)
+                        {JunctionId="prefab:"+prefab,EndDistanceMeters=offset-vehicleAlong,ForkInstruction=instruction,
+                            Instruction=instruction.Text,HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
+                    }
+                    confirmedUntil=end;offset=end;continue;
+                }
                 if (ComplexInternalBend(current)) return result;
                 if (offset < vehicleAlong)
                 {
@@ -132,7 +157,6 @@ public sealed class NavigationManeuverDetector
                     confirmedUntil = end; offset = end; continue;
                 }
                 if (!NativeGeometrySupported(current)) return result;
-                var connections = prefabStarts.GetValueOrDefault((prefab, current.StartNodeUid)) ?? [];
                 if (!connections.Any(g => g[0].EndNodeUid == current.EndNodeUid)) return result;
                 if (connections.Length == 1)
                 {

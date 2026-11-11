@@ -351,7 +351,7 @@ public sealed class NavigationInstructionPolicy
     }
     private static int Ordinal(IReadOnlyList<NavigationManeuver> list,int start,int end)
     {
-        if(list[end].Kind==ManeuverKind.EnterRoundabout)return 0;
+        if(list[end].Kind==ManeuverKind.EnterRoundabout||list[end].ForkInstruction is not null)return 0;
         if(list.Skip(start).Take(end-start+1).Any(m=>!m.HasSeparateApproachRoad))return 0;
         return list.Skip(start).Take(end-start+1)
             .Select(m=>string.IsNullOrEmpty(m.JunctionId)?m.Id:m.JunctionId).Distinct(StringComparer.Ordinal).Count();

@@ -142,7 +142,7 @@ public sealed class NavigationEventPlanner
     {for(int i=index-1;i>=0;i--)if(IsNavigationAction(list[i]))return i;return -1;}
     private static int Ordinal(IReadOnlyList<NavigationManeuver> list,int start,int end)
     {
-        if(list[end].Kind==ManeuverKind.EnterRoundabout)return 0;
+        if(list[end].Kind==ManeuverKind.EnterRoundabout||list[end].ForkInstruction is not null)return 0;
         var span=list.Skip(start).Take(end-start+1).ToArray();
         if(span.Any(m=>!m.HasSeparateApproachRoad))return 0;
         return span.Select(m=>m.JunctionId??m.Id).Distinct(StringComparer.Ordinal).Count();

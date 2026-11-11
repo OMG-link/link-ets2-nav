@@ -26,6 +26,7 @@ public sealed record DirectedRoad(
     public IReadOnlyList<LaneConnection>? LaneConnections { get; init; }
     /// <summary>Snapshot-local decision for independent entrance groups adding disjoint exit lanes.</summary>
     public RoadJoinPriority? JoinPriority { get; init; }
+    public RoadForkInfo? ForkInfo { get; init; }
 }
 
 public sealed record RoundaboutPassage(string Id, int ExitNumber, double ExitConnectorMeters = 0)

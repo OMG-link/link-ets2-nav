@@ -8,6 +8,7 @@ namespace LinkEts2Nav.Runtime;
 public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next = null, string? LastSpoken = null)
 {
     public IReadOnlyList<LaneMergeObservation> LaneMerges { get; init; } = [];
+    public IReadOnlyList<RoadForkDiagnostic> RoadForks { get; init; } = [];
     public LaneNavigationPlan? LaneRoute { get; init; }
     public IReadOnlyList<NavigationManeuver> Upcoming { get; init; } = [];
     public double? ConfirmedAheadMeters { get; init; }
@@ -29,6 +30,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
     private string? lastSpoken, signature, mergeSignature;
+    private string? forkSignature;
     private string? approachingJunction;
     private bool approachingStraight;
     private DateTimeOffset reportedAt;
@@ -71,6 +73,13 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
         var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
         var upcoming = detector.FindSequence(instructionRoute, along.Value, paths.GetNavigationGraph(), out double confirmedUntil, out _, out double firstUnresolvedJoinAlong);
+        string forkState=string.Join("|",detector.ForkDiagnostics.Select(f=>$"{f.Prefab}:{f.EntryNode}:{f.ExitNode}:{f.Reason}"));
+        if(forkState!=forkSignature)
+        {
+            foreach(var issue in detector.ForkDiagnostics)
+                log?.Invoke($"道路分流未定：{issue.Prefab}，入口={issue.EntryNode:X16}，出口={issue.ExitNode:X16}；{issue.Reason}");
+            forkSignature=forkState;
+        }
         var laneRoute=lanePlanner.Build(route,position,along.Value,paths.GetNavigationGraph());
         // Recognized roundabouts already own entry/exit guidance; their internal joins are not ramp actions.
         var merges=mergeDetector.Find(route,paths.GetNavigationGraph(),laneRoute,along.Value)
@@ -147,7 +156,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             : confirmedContinuation ? "已确认前方长直路，沿当前道路行驶，等待下一操作提示。"
             : "当前连续路径内没有可确认的普通路口操作。";
         Report(state, next, now);
-        return new(state, next, lastSpoken) { LaneRoute = laneRoute, LaneMerges = merges, Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
+        return new(state, next, lastSpoken) { LaneRoute = laneRoute, LaneMerges = merges, RoadForks=detector.ForkDiagnostics, Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
     }
 
     private static double? CurrentComponentEnd(IReadOnlyList<DirectedRoad> route,double along)
@@ -202,7 +211,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
     {
         policy.Reset();eventPlanner.Reset();progress.Reset();guidance?.Suspend("navigation");
         mergeDetector.Reset(); exitApproach.Reset();
-        mergeSignature=null;
+        mergeSignature=forkSignature=null;
         speech?.ClearPlan("navigation");
         map = null;
         paths = null;

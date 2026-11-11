@@ -55,6 +55,7 @@ public sealed record PlannedCameraWarning(
     WarningDistanceKind DistanceKind,
     double DistanceUntilTriggerMeters)
 {
+    public long EncounterRevision { get; init; }
     public CameraWarningKind Kind { get; init; }
     public bool FirstConfirmedInside200Meters { get; init; }
     public int? SpeedLimitKph { get; init; }
@@ -72,6 +73,7 @@ public sealed class CameraWarningEngine
     private readonly TimeSpan maximumAge;
     private const double PassageRadiusMeters = 20;
     private readonly HashSet<string> nearPassage = new(StringComparer.Ordinal);
+    private readonly Dictionary<string,long> encounters=new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> consumed = new(StringComparer.Ordinal);
     private readonly Dictionary<string, double> departedPeaks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, double> firstConfirmedDistances = new(StringComparer.Ordinal);
@@ -150,6 +152,7 @@ public sealed class CameraWarningEngine
                 departedPeaks.Remove(candidate.Id);
                 consumed.Remove(candidate.Id);
                 firstConfirmedDistances.Remove(candidate.Id);
+                encounters[candidate.Id]=encounters.GetValueOrDefault(candidate.Id)+1;
             }
             if (candidate.Approach == CameraApproach.Behind)
             {
@@ -174,6 +177,7 @@ public sealed class CameraWarningEngine
                     Math.Max(0, triggerDistance - stages[index]))
                 {
                     Kind = kind,
+                    EncounterRevision=encounters.GetValueOrDefault(candidate.Id),
                     FirstConfirmedInside200Meters = firstConfirmedDistances[candidate.Id] < 200,
                     SpeedLimitKph = candidate.SpeedLimitKph
                 });
@@ -207,7 +211,7 @@ public sealed class CameraWarningEngine
 
     public void Reset()
     {
-        consumed.Clear();
+        consumed.Clear();encounters.Clear();
         nearPassage.Clear();
         firstConfirmedDistances.Clear();
         departedPeaks.Clear();

@@ -11,6 +11,7 @@ public sealed record NavDiagnosticSnapshot(DateTimeOffset UpdatedAt, string Stat
 {
     public CurrentSpeedLimitDiagnostic? CurrentSpeedLimit { get; init; }
     public NavigationDiagnostic? Navigation { get; init; }
+    public GuidanceDiagnostic? Guidance { get; init; }
 }
 
 /// <summary>Read-only in-process diagnostics shared with the plugin's Razor page.</summary>

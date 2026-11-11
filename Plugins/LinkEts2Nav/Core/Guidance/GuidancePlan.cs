@@ -23,7 +23,11 @@ public sealed record SpeechTrigger(string Id,string EventId,SpeechTriggerKind Ki
 
 public sealed record GuidanceSourcePlan(string Source,string SessionId,string RouteRevision,
     double PlayerAlongMeters,bool Active,DateTimeOffset ObservedAt,
-    IReadOnlyList<GuidanceEvent> Events,IReadOnlyList<SpeechTrigger> Triggers);
+    IReadOnlyList<GuidanceEvent> Events,IReadOnlyList<SpeechTrigger> Triggers)
+{
+    public string? CoordinateFrame { get; init; }
+    public bool PrepareWhileInactive { get; init; }
+}
 
 public sealed record GuidanceTriggerResult(string Source,GuidanceEvent Event,
     SpeechTrigger Trigger,TriggerDisposition Disposition);

@@ -1,5 +1,6 @@
 using System.Numerics;
 using LinkEts2Nav.Core;
+using LinkEts2Nav.Core.Guidance;
 using LinkEts2Nav.Map;
 
 namespace LinkEts2Nav.Runtime;
@@ -13,15 +14,17 @@ public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next
     public bool DeferredUntilJunctionExit { get; init; }
 }
 
-/// <summary>Ordinary junction instructions along the game's selected route; no lane guidance.</summary>
+/// <summary>Collects route events for the shared coordinator. Standalone callers retain the legacy policy adapter.</summary>
 public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Action? fallback = null,
-    Action<string>? log = null)
+    Action<string>? log = null,GuidanceCoordinator? guidance=null)
 {
     private readonly LaneMergeDetector mergeDetector = new();
     private readonly LaneExitApproach exitApproach = new();
     private readonly LaneRoutePlanner lanePlanner = new();
     private readonly NavigationManeuverDetector detector = new();
     private readonly NavigationInstructionPolicy policy = new();
+    private readonly NavigationEventPlanner eventPlanner=new();
+    private readonly RouteProgressTracker progress=new();
     private readonly DirectedPathMatcher matcher = new();
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
@@ -114,6 +117,15 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         // but defer the next briefing until exit; an imminent execution cue remains urgent.
         bool defer=currentJunction is not null && currentJunction==approachingJunction && !approachingStraight && currentJunction!=next?.JunctionId
             && !(next is { Kind: not ManeuverKind.Straight, DistanceMeters: <=20 });
+        if(guidance is not null)
+        {
+            double playerAlong=progress.Update(data.SessionId,route,along.Value);
+            guidance.Publish(eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
+                playerAlong,upcoming,true,defer,confirmedContinuation,guidance.Scheduler) with{CoordinateFrame=progress.Frame});
+            lastSpoken=guidance.LastPlayed("navigation");
+        }
+        else
+        {
         var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation);
         speech?.UpdatePlan("navigation", plan, priority: 10);
         foreach (string text in policy.UpdateSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, !defer,
@@ -126,6 +138,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
                 fallback?.Invoke();
             }
             lastSpoken = text;
+        }
         }
         string state = yardApproach ? "货场出口方向提示（距出口采用直线距离）。" : defer ? "正在通过当前路口，驶出后继续提示下一动作。" : next is not null ? "沿游戏导航路线提供基础路口提示。"
             : confirmedContinuation ? "已确认前方长直路，沿当前道路行驶，等待下一操作提示。"
@@ -154,7 +167,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
 
     public NavigationDiagnostic Suspend(string state, DateTimeOffset now)
     {
-        speech?.ClearPlan("navigation");
+        speech?.ClearPlan("navigation");guidance?.Suspend("navigation");
         Report(state, null, now);
         return new(state, null, lastSpoken);
     }
@@ -171,7 +184,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
 
     public void Reset()
     {
-        policy.Reset();
+        policy.Reset();eventPlanner.Reset();progress.Reset();guidance?.Suspend("navigation");
         mergeDetector.Reset(); exitApproach.Reset();
         mergeSignature=null;
         speech?.ClearPlan("navigation");

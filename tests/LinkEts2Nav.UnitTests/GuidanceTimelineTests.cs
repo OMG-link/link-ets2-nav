@@ -1,3 +1,4 @@
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceTimelineTests
@@ -6,6 +7,23 @@ public sealed class GuidanceTimelineTests
     private static GuidanceSourcePlan Plan(double player,string text="500",string revision="a")=>new("route","session",revision,player,true,Now,
         [new("landmark",1000,"landmark")],[new("500","landmark",SpeechTriggerKind.Advance,500,text){SequenceOrder=-500},
         new("200","landmark",SpeechTriggerKind.Advance,800,"200"){SequenceOrder=-200,Supersedes=["500"]}]);
+    [Fact]
+    public void PrefixTrimmingDoesNotLoseAnExecutionPointWhoseEventJustLeftTheDetector()
+    {
+        var progress=new RouteProgressTracker();
+        DirectedRoad Road(string id,ulong from,ulong to,float start)=>new(id,from,to,[new(start,0,0),new(start+100,0,0)]);
+        var a=Road("a",1,2,0);var b=Road("b",2,3,100);var c=Road("c",3,4,200);
+        double first=progress.Update("s",[a,b],70);string frame=progress.Frame;
+        var timeline=new GuidanceTimeline();var scheduler=new SpeechTriggerScheduler();
+        timeline.Publish(new("navigation","s","old",first,true,Now,[new("turn",100,"turn")],
+            [new("execute","turn",SpeechTriggerKind.Execution,80,"左转。"){Priority=0}]){CoordinateFrame=frame});
+        Assert.Empty(scheduler.Update(timeline,Now,0));
+        double second=progress.Update("s",[b,c],10);Assert.Equal(110,second);Assert.Equal(frame,progress.Frame);
+        timeline.Publish(new("navigation","s","trimmed",second,true,Now,[new("later",220,"later")],[]){CoordinateFrame=frame});
+        Assert.Equal("左转。",Assert.Single(scheduler.Update(timeline,Now,0)).Trigger.Text);
+        progress.Update("s",[Road("unrelated",10,11,300)],0);Assert.NotEqual(frame,progress.Frame);
+    }
+
     [Fact]
     public void AppendAndRouteRevisionKeepConsumedPrefixButReplaceFutureContent()
     {
@@ -16,6 +34,18 @@ public sealed class GuidanceTimelineTests
         Assert.Empty(scheduler.Update(timeline,Now,0));
         Assert.Equal(new[]{"200","later"},scheduler.Prepare(timeline,Now));
         timeline.Publish(Plan(800,revision:"c"));Assert.Equal("200",Assert.Single(scheduler.Update(timeline,Now,0)).Trigger.Text);
+    }
+    [Fact]
+    public void WithdrawingAnEventForgetsStagesNoLongerPresentInTheLatestPlan()
+    {
+        var timeline=new GuidanceTimeline();var scheduler=new SpeechTriggerScheduler();
+        timeline.Publish(Plan(500));scheduler.Update(timeline,Now,0);
+        timeline.Publish(Plan(800));scheduler.Update(timeline,Now,0);
+        scheduler.ForgetEvents("route",["landmark"]);
+        Assert.False(scheduler.IsConsumed("route","500"));
+        Assert.False(scheduler.IsConsumed("route","200"));
+        timeline.Publish(Plan(500));
+        Assert.Equal("500",Assert.Single(scheduler.Update(timeline,Now,0)).Trigger.Id);
     }
     [Fact]
     public void NewerStageSuppressesAnOlderStageCrossedInTheSameSample()

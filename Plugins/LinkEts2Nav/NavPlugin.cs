@@ -111,9 +111,13 @@ public sealed class NavPlugin : Plugin
         logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
         var fallback = new Ets2LaWarningAnnouncer(cancellationToken: token);
         await using var speech = CreateSpeech(fallback, logOutput, token);
-        var pipeline = new WarningPipeline(new LoggedAnnouncer((IWarningAnnouncer?)speech ?? fallback, logOutput), speech);
+        await using var playback=new GuidancePlaybackManager(speech?.Queue,new Ets2LaGuidanceAudioPlayer(),
+            ()=>Ets2LaGuidanceAudioPlayer.FallbackFile(AppContext.BaseDirectory,message=>logOutput.Event(message,DateTimeOffset.UtcNow),allowCustom:speech is null),
+            message=>logOutput.Event(message,DateTimeOffset.UtcNow),token);
+        var guidance=new GuidanceCoordinator(speech?.Queue,playback,message=>logOutput.Event(message,DateTimeOffset.UtcNow));
+        var pipeline = new WarningPipeline(new LoggedAnnouncer((IWarningAnnouncer?)speech ?? fallback, logOutput), speech,guidance);
         var navigation = new NavigationRuntime(speech?.Queue, () => fallback.TryPlay(),
-            message => logOutput.Event(message, DateTimeOffset.UtcNow));
+            message => logOutput.Event(message, DateTimeOffset.UtcNow),guidance);
         void Publish(NavDiagnosticSnapshot snapshot, bool isWarning = false)
         {
             if (token.IsCancellationRequested) return;
@@ -148,6 +152,7 @@ public sealed class NavPlugin : Plugin
                 token.ThrowIfCancellationRequested();
                 var data = source.Capture();
                 var now = DateTimeOffset.UtcNow;
+                guidance.Observe(data,now);
                 if (!data.IsVehicleUsable) speech?.ClearPlan();
                 logOutput.ReportFines(source.Store.DrainFines(), data.DroppedFineCount, now);
                 logOutput.ReportCurrentLimit(data, now);
@@ -173,7 +178,7 @@ public sealed class NavPlugin : Plugin
                 if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2 || !currentInstallation.IsParsed)
                 {
                     speech?.ClearPlan();
-                    if (installation is not null) { mapScanner.Invalidate(); pipeline.Reset(); navigation.Reset(); installation = null; }
+                    if (installation is not null) { mapScanner.Invalidate(); pipeline.Reset(); navigation.Reset(); guidance.Reset(); installation = null; }
                     Publish(new(now, "等待 ETS2 当前地图就绪。", data.RouteAvailability.ToString(), 0, []));
                     continue;
                 }
@@ -188,7 +193,7 @@ public sealed class NavPlugin : Plugin
                         if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature || !ReferenceEquals(installationMap, currentInstallation.GetMapData()))
                         {
                             mapScanner.Invalidate();
-                            pipeline.Reset(); navigation.Reset();
+                            pipeline.Reset(); navigation.Reset(); guidance.Reset();
                             logOutput.ResetTargets("准备复用宿主地图并补充附近缺失对象：" + currentInstallation.Path, now);
                             gameLog = log;
                             resourceVersion++;
@@ -225,7 +230,7 @@ public sealed class NavPlugin : Plugin
                         logOutput.ResetTargets("车辆会话变化：已重置目标和预警状态（首次连接、读档或传送等）。", now);
                         session = data.SessionId;
                         mapScanner.Invalidate();
-                        pipeline.Reset(); navigation.Reset();
+                        pipeline.Reset(); navigation.Reset(); guidance.Reset();
                     }
                     logOutput.Change("scan-coverage", data.RouteAvailability == RouteAvailability.Available
                         ? "地图扫描范围：附近 1100 m，并沿游戏导航路线预读前方 5 km；后台优先准备附近地图。"
@@ -266,9 +271,12 @@ public sealed class NavPlugin : Plugin
                     var latest = source.Capture();
                     if (latest.SessionId != session) { mapScanner.Invalidate(); speech?.ClearPlan(); continue; }
                     token.ThrowIfCancellationRequested();
+                    guidance.Observe(latest,DateTimeOffset.UtcNow);
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
-                    var diagnostic = pipeline.Process(latest, calibrated, DateTimeOffset.UtcNow);
-                    diagnostic = diagnostic with { Navigation = navigation.Process(latest, calibrated, DateTimeOffset.UtcNow) };
+                    var navigationDiagnostic=navigation.Process(latest,calibrated,DateTimeOffset.UtcNow);
+                    var diagnostic=pipeline.Process(latest,calibrated,DateTimeOffset.UtcNow) with{Navigation=navigationDiagnostic};
+                    guidance.Tick(latest,DateTimeOffset.UtcNow);
+                    diagnostic=diagnostic with{Guidance=guidance.Diagnostic};
                     motionTrace.Record(latest, calibrated, diagnostic, signature, currentInstallation.Path);
                     if (latest.Vehicle is { Paused: true })
                         diagnostic = diagnostic with { State = "附近地图已准备；游戏已暂停，预警暂挂。" };
@@ -284,7 +292,7 @@ public sealed class NavPlugin : Plugin
                     Publish(new(DateTimeOffset.UtcNow, "地图暂不可用：" + ex.GetType().Name + ": " + ex.Message,
                         data.RouteAvailability.ToString(), 0, []), isWarning: true);
                     mapScanner.Invalidate();
-                    pipeline.Reset(); navigation.Reset();
+                    pipeline.Reset(); navigation.Reset(); guidance.Reset();
                     // Back off setup retries without blocking the telemetry/diagnostic loop.
                     setupRetryAfter = DateTimeOffset.UtcNow.AddSeconds(5);
                 }

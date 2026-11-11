@@ -73,7 +73,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
     }
     // Route replacement explicitly withdraws affected events; normal map windows do not erase queued audio.
     public void Withdraw(string source,IEnumerable<string> eventIds)
-    {lock(gate)foreach(var id in eventIds)pending.Remove((source,id));PreparePending();Wake();}
+    {lock(gate)foreach(var id in eventIds){pending.Remove((source,id));latest.Remove((source,id));}PreparePending();Wake();}
     public void Reset()
     {
         lock(gate){pending.Clear();latest.Clear();generation++;}
@@ -98,7 +98,11 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                         {
                             string? file=null;
                             if(cache?.TryGetAudio(item.Speech.Text,out var ready)==true)file=ready;
-                            else if(cache is null||cache.HasFailed(item.Speech.Text))file=fallback();
+                            else if(cache is null||cache.HasFailed(item.Speech.Text))
+                            {
+                                try{file=fallback();}
+                                catch(Exception ex){log("回退音频配置不可用，保留待播项："+ex.Message);}
+                            }
                             if(file is null)continue;
                             next=(item.Speech,generation,file);break;
                         }

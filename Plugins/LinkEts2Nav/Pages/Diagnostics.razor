@@ -40,6 +40,24 @@
         }
         <p>最近指令：@(navigation.LastSpoken ?? "无")</p>
     }
+    @if (snapshot.Guidance is { } guidance)
+    {
+        <details>
+            <summary>统一语音计划：@guidance.EventCount 个事件 · @guidance.TriggerCount 个触发点 · @guidance.Pending.Count 条待播</summary>
+            <p>最近播放完成：@(guidance.LastPlayed ?? "无")</p>
+            @foreach (var pending in guidance.Pending)
+            { <p>待播（优先级 @pending.Priority）：@pending.Text</p> }
+            <table style="width:100%;text-align:left">
+                <thead><tr><th>距触发点</th><th>文案</th><th>已激活</th></tr></thead>
+                <tbody>
+                @foreach(var point in guidance.Upcoming.Take(20))
+                { <tr><td>@point.RemainingMeters.ToString("F0") 米</td><td title="@point.TriggerId">@point.Text</td><td>@(point.Enabled ? "是" : "等待前一动作完成")</td></tr> }
+                </tbody>
+            </table>
+            @foreach(var result in guidance.LatestTriggers)
+            { <p>最近触发：@result.Trigger.Text · @result.Disposition</p> }
+        </details>
+    }
     @if (snapshot.LatestFine is { } fine)
     {
         <details>

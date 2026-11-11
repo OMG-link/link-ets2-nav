@@ -64,7 +64,10 @@ public sealed class LaneMergeDetector
                 if(y.CurveStartPointIndices.Count==y.CurveIndices.Count)yi=y.CurveStartPointIndices[^common];
                 var xp=new LanePolyline(x.Points);var yp=new LanePolyline(y.Points);
                 double xa=xp.Along[xi],ya=yp.Along[yi];if(xa<6||ya<6||xp.Length-xa<1)continue;
-                double outgoing=xp.Curvature(Math.Min(xp.Length,xa+3));
+                // Measure only the shared suffix. Short suffixes must not borrow
+                // curvature from either competing approach before the merge.
+                var shared=new LanePolyline(x.Points.Skip(xi));
+                double outgoing=shared.Curvature(Math.Min(3,shared.Length*.5));
                 double xs=Continuity(xp,xa,outgoing),ys=Continuity(yp,ya,outgoing);
                 if(Math.Abs(xs-ys)<.015||Math.Max(xs,ys)<1.5*Math.Max(.0001,Math.Min(xs,ys)))continue;
                 bool xEnds=xs>ys;

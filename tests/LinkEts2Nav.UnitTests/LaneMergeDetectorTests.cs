@@ -59,6 +59,106 @@ public sealed class LaneMergeDetectorTests
         Assert.Equal(500,observation.ParallelDistanceMeters);
     }
 
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void ShortSharedSuffixDoesNotReverseTheEndingLane(bool reverseOrder)
+    {
+        // Saved two-to-one road: left lane continues, right lane ends;
+        // the common downstream curve is only about 1.5 metres long.
+        Vector3[] left=[new(35.5160f,0.0000f,-11.8240f),
+            new(35.3160f,0.0000f,-11.5080f),
+            new(35.1170f,0.0000f,-11.1880f),
+            new(34.9180f,0.0000f,-10.8700f),
+            new(34.7200f,0.0000f,-10.5550f),
+            new(34.7200f,0.0000f,-10.5550f),
+            new(33.9900f,0.0000f,-9.3900f),
+            new(33.2540f,0.0000f,-8.2270f),
+            new(32.5230f,0.0000f,-7.0620f),
+            new(31.8100f,0.0000f,-5.8870f),
+            new(31.8100f,0.0000f,-5.8870f),
+            new(30.2770f,0.0000f,-3.3320f),
+            new(28.7460f,0.0000f,-0.7730f),
+            new(27.2230f,0.0000f,1.7850f),
+            new(25.6950f,0.0000f,4.3480f),
+            new(24.1760f,0.0000f,6.9060f),
+            new(22.6560f,0.0000f,9.4700f),
+            new(21.1370f,0.0000f,12.0350f),
+            new(19.6170f,0.0000f,14.5980f),
+            new(18.0980f,0.0000f,17.1600f),
+            new(16.5800f,0.0000f,19.7230f),
+            new(15.0600f,0.0000f,22.2850f),
+            new(13.5350f,0.0000f,24.8480f),
+            new(12.0100f,0.0000f,27.4100f),
+            new(10.4900f,0.0000f,29.9700f),
+            new(8.9570f,0.0000f,32.5270f),
+            new(7.4260f,0.0000f,35.0820f),
+            new(5.8900f,0.0000f,37.6370f),
+            new(4.3500f,0.0000f,40.1880f),
+            new(2.8100f,0.0000f,42.7340f),
+            new(1.2580f,0.0000f,45.2800f),
+            new(-0.2970f,0.0000f,47.8200f),
+            new(-1.8600f,0.0000f,50.3600f),
+            new(-3.4260f,0.0000f,52.8950f),
+            new(-5.0000f,0.0000f,55.4200f),
+            new(-5.0000f,0.0000f,55.4200f),
+            new(-5.2000f,0.0000f,55.7420f),
+            new(-5.4000f,0.0000f,56.0600f),
+            new(-5.5980f,0.0000f,56.3800f),
+            new(-5.7970f,0.0000f,56.6950f)];
+        Vector3[] right=[new(31.7000f,0.0000f,-14.2070f),
+            new(31.5000f,0.0000f,-13.8900f),
+            new(31.3000f,0.0000f,-13.5740f),
+            new(31.1000f,0.0000f,-13.2540f),
+            new(30.9020f,0.0000f,-12.9380f),
+            new(30.9020f,0.0000f,-12.9380f),
+            new(30.1700f,0.0000f,-11.7730f),
+            new(29.4340f,0.0000f,-10.6100f),
+            new(28.7030f,0.0000f,-9.4450f),
+            new(27.9920f,0.0000f,-8.2700f),
+            new(27.9920f,0.0000f,-8.2700f),
+            new(26.4800f,0.0000f,-5.6900f),
+            new(25.0100f,0.0000f,-3.0900f),
+            new(23.5800f,0.0000f,-0.4700f),
+            new(22.1760f,0.0000f,2.1700f),
+            new(20.8050f,0.0000f,4.8300f),
+            new(19.4530f,0.0000f,7.4960f),
+            new(18.1250f,0.0000f,10.1760f),
+            new(16.8120f,0.0000f,12.8630f),
+            new(15.5100f,0.0000f,15.5620f),
+            new(14.2230f,0.0000f,18.2600f),
+            new(12.9380f,0.0000f,20.9700f),
+            new(11.6560f,0.0000f,23.6700f),
+            new(10.3700f,0.0000f,26.3800f),
+            new(9.0800f,0.0000f,29.0800f),
+            new(7.7770f,0.0000f,31.7730f),
+            new(6.4600f,0.0000f,34.4600f),
+            new(5.1300f,0.0000f,37.1370f),
+            new(3.7770f,0.0000f,39.8050f),
+            new(2.4000f,0.0000f,42.4530f),
+            new(0.9920f,0.0000f,45.0900f),
+            new(-0.4500f,0.0000f,47.7070f),
+            new(-1.9260f,0.0000f,50.3000f),
+            new(-3.4400f,0.0000f,52.8750f),
+            new(-5.0000f,0.0000f,55.4200f),
+            new(-5.0000f,0.0000f,55.4200f),
+            new(-5.2000f,0.0000f,55.7420f),
+            new(-5.4000f,0.0000f,56.0600f),
+            new(-5.5980f,0.0000f,56.3800f),
+            new(-5.7970f,0.0000f,56.6950f)];
+        var continuing=new PrefabLanePath(42,10,20,0,0,0,0,2,1,[0,1,2,3],left,80)
+            {CurveStartPointIndices=[0,5,10,35]};
+        var ending=new PrefabLanePath(42,10,20,1,0,1,0,2,1,[4,5,6,3],right,80)
+            {CurveStartPointIndices=[0,5,10,35]};
+        var edge=new DirectedRoad("prefab:000000000000002A:0:1",10,20,left)
+            {LanePaths=reverseOrder?[ending,continuing]:[continuing,ending]};
+        var plan=new LaneNavigationPlan([new(edge.Id,ending)],[],true,null);
+        var result=Assert.Single(new LaneMergeDetector().Find([edge],[edge],plan,0));
+        Assert.Equal(1,result.EndingEntryLane);
+        Assert.Equal(0,result.MainEntryLane);
+        Assert.True(result.MoveLeft);
+        Assert.Equal(1,result.RecommendedLaneCount);
+    }
+
     [Fact]
     public void ShortParallelApproachWithKnownDivergenceIsRamp()
     {

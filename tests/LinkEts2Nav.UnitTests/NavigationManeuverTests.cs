@@ -7,7 +7,11 @@ public sealed class NavigationManeuverTests
 {
     private static Vector3 P(float x, float z) => new(x, 0, z);
     private static DirectedRoad R(string id, ulong start, ulong end, params Vector3[] points)
-        => new(id, start, end, points);
+        => new(id, start, end, points) {
+            // Short synthetic connections describe only the outgoing leg;
+            // their independent native entry direction is southbound.
+            NativeEntryTangent=id.StartsWith("prefab:")&&points.Length<4?-Vector3.UnitZ:null,
+            NativeExitTangent=id.StartsWith("prefab:")&&points.Length<4?points[^1]-points[0]:null };
     // Synthetic confirmed crossing: branches share a prefab, with explicit PPD classification.
     private static DirectedRoad J(string id, ulong start, ulong end, params Vector3[] points)
         => R($"prefab:{start}:0:{end}", start, end, points) with { Junction = new(2, 2, 1) };
@@ -36,15 +40,14 @@ public sealed class NavigationManeuverTests
 
     [Theory]
     [InlineData(-8,-49)] [InlineData(8,49)]
-    public void GentlyBendingThroughRoadWinsOverAMuchSharperSideRoad(double through,double side)
+    public void ExternalRoadBendsDoNotChangeNativeJunctionDirections(double through,double side)
     {
         Vector3 End(double degrees)=>P((float)(100*Math.Sin(degrees*Math.PI/180)),(float)(-100-100*Math.Cos(degrees*Math.PI/180)));
         var entry=R("entry",1,2,P(0,0),P(0,-100));
-        var chosen=R("prefab:CROSS:0:1",2,3,P(0,-100),End(through)) with{Junction=new(3,3,1)};
-        var other=R("prefab:CROSS:0:2",2,4,P(0,-100),End(side)) with{Junction=chosen.Junction};
+        var chosen=R("prefab:CROSS:0:1",2,3,P(0,-100),End(through)) with{Junction=new(3,3,1),NativeEntryTangent=-Vector3.UnitZ,NativeExitTangent=-Vector3.UnitZ};
+        var other=R("prefab:CROSS:0:2",2,4,P(0,-100),End(side)) with{Junction=chosen.Junction,NativeEntryTangent=-Vector3.UnitZ,NativeExitTangent=side<0?-Vector3.UnitX:Vector3.UnitX};
         var result=Detector.FindNext([entry,chosen],0,[entry,chosen,other]);
         Assert.Equal(ManeuverKind.Straight,result!.Kind);
-        Assert.True(result.IsMainRoadContinuation);
     }
 
     [Fact]
@@ -121,8 +124,8 @@ public sealed class NavigationManeuverTests
     public void PrefabMainRoadUsesItsExternalRoadTypes()
     {
         var entry = R("entry", 1, 2, P(0, 100), P(0, 0)) with { RoadType = "main" };
-        var chosen = R("prefab:FORK:0:1", 2, 3, P(0, 0), P(0, -30)) with { Junction = new(2, 2, 1) };
-        var side = R("prefab:FORK:0:2", 2, 4, P(0, 0), P(30, 0)) with { Junction = new(2, 2, 1) };
+        var chosen = R("prefab:FORK:0:1", 2, 3, P(0, 0), P(0, -30)) with { Junction = new(2, 2, 1),NativeExitTangent=new(.3f,0,-1) };
+        var side = R("prefab:FORK:0:2", 2, 4, P(0, 0), P(30, 0)) with { Junction = new(2, 2, 1),NativeExitTangent=new(-.3f,0,-1) };
         var main = R("main", 3, 5, P(0, -30), P(30, -130)) with { RoadType = "main" };
         var ramp = R("ramp", 4, 6, P(30, 0), P(0, -100)) with { RoadType = "ramp" };
         var result = Detector.FindNext([entry, chosen, main], 0, [entry, chosen, side, main, ramp]);
@@ -216,7 +219,8 @@ public sealed class NavigationManeuverTests
     }
 
     private static DirectedRoad JExitAt(string id, ulong node, double angle)
-        => ExitAt(id, node, angle) with { Id = $"prefab:2:0:{node}", Junction = new(2, 2, 1) };
+        => ExitAt(id, node, angle) with { Id = $"prefab:2:0:{node}", Junction = new(2, 2, 1),
+            NativeEntryTangent=-Vector3.UnitZ,NativeExitTangent=P((float)Math.Sin(angle*Math.PI/180),-(float)Math.Cos(angle*Math.PI/180)) };
 
     private static DirectedRoad ExitAt(string id,ulong node,double angle)
     {
@@ -406,8 +410,8 @@ public sealed class NavigationManeuverTests
         var alternative = R("prefab:CIRCLE:0:2", 2, 4, P(0, 0), P(0, -60));
         var exit = R("exit", 3, 5, P(-41, -1), P(-141, -1));
         var straight = R("straight", 4, 6, P(0, -60), P(0, -160));
-        var laterTurn = J("later-turn", 5, 7, P(-141, -1), P(-141, -101));
-        var laterStraight = J("later-straight", 5, 8, P(-141, -1), P(-241, -1));
+        var laterTurn = J("later-turn", 5, 7, P(-141, -1), P(-141, -101)) with{NativeEntryTangent=-Vector3.UnitX};
+        var laterStraight = J("later-straight", 5, 8, P(-141, -1), P(-241, -1)) with{NativeEntryTangent=-Vector3.UnitX};
         DirectedRoad[] route = [entry, circular, exit, laterTurn];
         DirectedRoad[] graph = [entry, circular, alternative, exit, straight, laterTurn, laterStraight];
         Assert.Null(Detector.FindNext(route, 0, graph));
@@ -431,7 +435,7 @@ public sealed class NavigationManeuverTests
         var straight = R("straight", 4, 6, P(0, -50), P(0, -150));
         var instruction = Detector.FindNext([entry, selected, exit], 0,
             [entry, selected, alternative, exit, straight]);
-        Assert.Equal(ManeuverKind.TurnLeft, instruction!.Kind);
+        Assert.Equal(ManeuverKind.Straight, instruction!.Kind);
     }
 
     [Fact]
@@ -484,11 +488,11 @@ public sealed class NavigationManeuverTests
     }
 
     [Fact]
-    public void PrefabUsesExternalRoadTangentsInsteadOfShortLaneReferenceJoins()
+    public void PrefabUsesNativeTangentsInsteadOfExternalRoadsAndReferenceJoins()
     {
         var entry = R("entry", 1, 2, P(0, 0), P(0, -100));
         // The initial tiny lane-reference segment points right, despite the complete exit being left.
-        var selected = R("prefab:ABC:0:1", 2, 3, P(0, -100), P(2, -100), P(-40, -140)) with { Junction = new(2, 2, 1) };
+        var selected = R("prefab:ABC:0:1", 2, 3, P(0, -100), P(2, -100), P(-40, -140)) with { Junction = new(2, 2, 1),NativeEntryTangent=-Vector3.UnitZ,NativeExitTangent=-Vector3.UnitX };
         var alternative = R("prefab:ABC:0:2", 2, 4, P(0, -100), P(0, -140)) with { Junction = new(2, 2, 1) };
         var exit = R("left", 3, 5, P(-40, -140), P(-140, -140));
         var straight = R("straight", 4, 6, P(0, -140), P(0, -240));

@@ -172,6 +172,8 @@ public sealed class JunctionNavigationTests
         var link = Assert.Single(PrefabPathGeometry.Build(prefab,descriptor));
         Assert.Equal(a.Uid,link.StartNodeUid);
         Assert.Equal(b.Uid,link.EndNodeUid);
+        Assert.InRange(Vector3.Distance(Vector3.UnitZ,link.NativeEntryTangent!.Value),0,0.00001f);
+        Assert.InRange(Vector3.Distance(Vector3.UnitZ,link.NativeExitTangent!.Value),0,0.00001f);
         Assert.Equal(50,new DirectedPathMatcher().ProjectDistance(new(10,5,80),Vector3.UnitZ,[link])!.Value,2);
         b.Position += new Vector3(4,0,0);
         Assert.Empty(PrefabPathGeometry.Build(prefab,descriptor));

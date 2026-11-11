@@ -67,7 +67,9 @@ public static class PrefabPathGeometry
             var referencePoints=Sample(prefab,descriptor,placement,from,to,representative);
             if(referencePoints is null)continue;
             result.Add(new($"prefab:{prefab.Uid:X16}:{from}:{to}",prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,referencePoints)
-                {LaneConnections=laneConnections,LanePaths=candidates.ToArray(),Junction=junction});
+                {LaneConnections=laneConnections,LanePaths=candidates.ToArray(),Junction=junction,
+                    NativeEntryTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[representative[0]].StartRotation)),
+                    NativeExitTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[representative[^1]].EndRotation))});
         }
         return result;
     }

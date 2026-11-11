@@ -55,6 +55,8 @@ public sealed class LaneNavigationTests
             Curve(-2,0,-20,2),Curve(2,0,-20,3),Curve(-2,-20,-40),Curve(2,-20,-40)]};
         var path=Assert.Single(PrefabPathGeometry.Build(prefab,descriptor));
         Assert.Equal(2,path.LanePaths.Count);
+        Assert.Equal(-Vector3.UnitZ,path.NativeEntryTangent);
+        Assert.Equal(-Vector3.UnitZ,path.NativeExitTangent);
         Assert.Contains(path.LanePaths,p=>p.CurveIndices.SequenceEqual(new[]{0,2})&&p.EntryLane==0&&p.ExitLane==0);
         Assert.Contains(path.LanePaths,p=>p.CurveIndices.SequenceEqual(new[]{1,3})&&p.EntryLane==1&&p.ExitLane==1);
         Assert.All(path.LanePaths,p=>{Assert.Equal(40,p.LengthMeters,2);Assert.Equal(a.Uid,p.EntryNodeUid);Assert.Equal(b.Uid,p.ExitNodeUid);});

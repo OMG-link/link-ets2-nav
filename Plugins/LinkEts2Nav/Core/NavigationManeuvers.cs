@@ -144,11 +144,7 @@ public sealed class NavigationManeuverDetector
                 {
                     var previous = i > 0 ? route[i - 1] : null;
                     var following = i + 1 < route.Count ? route[i + 1] : null;
-                    // At an adjacent prefab boundary use the current PPD curve's
-                    // native tangent, never the lateral road-reference connector.
-                    var entry = previous is not null && PrefabKey(previous) is null
-                        ? Tangent(previous, false)
-                        : NativeTangent(current, true) ?? (previous is null ? null : TravelTangent(previous, false));
+                    var entry = NativeTangent(current, true);
                     if (entry is null) return result;
                     var exits = new List<(ulong End, Vector2 Direction, string? RoadType)>();
                     Vector2? chosen = null;
@@ -160,8 +156,7 @@ public sealed class NavigationManeuverDetector
                         string? roadType = null;
                         if (group[0].EndNodeUid == current.EndNodeUid)
                         {
-                            direction = following is not null && PrefabKey(following) is null
-                                ? Tangent(following, true) : TravelTangent(current, false);
+                            direction = NativeTangent(current, false);
                             chosen = direction;
                             roadType = following?.RoadType;
                         }
@@ -174,18 +169,12 @@ public sealed class NavigationManeuverDetector
                             if (outside.Length == 1)
                             {
                                 if (!Valid(outside[0]) || !valid.Any(c => Connected(c, outside[0]))) return result;
-                                direction = Tangent(outside[0], true);
                                 roadType = outside[0].RoadType;
                             }
-                            else
-                            {
-                                // An explicit PPD exit is useful even when the next
-                                // item is another prefab or lies outside this window.
-                                var headings = valid.Select(c => TravelTangent(c, false)).ToArray();
-                                if (headings.Any(h => h is null)) return result;
-                                direction = headings[0];
-                                if (headings.Any(h => Vector2.Dot(direction!.Value, h!.Value) < .98f)) return result;
-                            }
+                            var headings = valid.Select(c => NativeTangent(c, false)).ToArray();
+                            if (headings.Any(h => h is null)) return result;
+                            direction = headings[0];
+                            if (headings.Any(h => Vector2.Dot(direction!.Value, h!.Value) < .98f)) return result;
                         }
                         if (direction is null) return result;
                         exits.Add((group[0].EndNodeUid, direction.Value, roadType));
@@ -303,8 +292,8 @@ public sealed class NavigationManeuverDetector
             }
             if (mainEnd is null)
             {
-                var straight = choices.Where(c => Math.Abs(c.Angle) <= 15).OrderBy(c => Math.Abs(c.Angle)).ToArray();
-                if (straight.Length > 0 && choices.Where(c => c.End != straight[0].End)
+                var straight = choices.Where(c => Math.Abs(c.Angle) <= 5).ToArray();
+                if (straight.Length == 1 && choices.Where(c => c.End != straight[0].End)
                     .All(c => Math.Abs(c.Angle) - Math.Abs(straight[0].Angle) >= 5))
                     mainEnd = straight[0].End;
             }
@@ -328,12 +317,18 @@ public sealed class NavigationManeuverDetector
     private static bool NativeGeometrySupported(DirectedRoad edge)
         => edge.Points.Count < 4 || NativeTangent(edge, true).HasValue && NativeTangent(edge, false).HasValue;
 
-    private static Vector2? TravelTangent(DirectedRoad edge, bool fromStart)
-        => PrefabKey(edge) is not null && edge.Points.Count >= 4
-            ? NativeTangent(edge, fromStart) : Tangent(edge, fromStart);
-
     private static Vector2? NativeTangent(DirectedRoad prefab, bool fromStart)
     {
+        var native = fromStart ? prefab.NativeEntryTangent : prefab.NativeExitTangent;
+        if (native is { } value)
+        {
+            var horizontal = new Vector2(value.X,value.Z);
+            return float.IsFinite(horizontal.X)&&float.IsFinite(horizontal.Y)&&horizontal.LengthSquared()> .000001f
+                ? Vector2.Normalize(horizontal) : null;
+        }
+        // Legacy/synthetic paths can still derive direction from their own geometry.
+        // Never sample an adjacent road to infer a prefab's direction.
+        if (prefab.Points.Count < 4) return Tangent(prefab,fromStart);
         // First/last points are road-control centers. Interior points are samples
         // of directed PPD curves, and their endpoint tangents describe this junction.
         if (prefab.Points.Count < 4) return null;

@@ -16,6 +16,8 @@ public sealed class PrefabPlacement
         var p=point-localOrigin;
         return worldOrigin+new Vector3(p.X*cos-p.Z*sin,p.Y,p.X*sin+p.Z*cos);
     }
+    public Vector3 ToWorldDirection(Vector3 direction)
+        => new(direction.X*cos-direction.Z*sin,direction.Y,direction.X*sin+direction.Z*cos);
     public static bool TryCreate(Prefab prefab,PrefabDescriptor descriptor,out PrefabPlacement placement)
     {
         placement=null!;int count=descriptor.Nodes.Count;

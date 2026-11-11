@@ -42,7 +42,7 @@ public sealed class NavigationEventPlannerTests
         Assert.All(s.Update(t,Now,0),r=>Assert.StartsWith("turn@",r.Event.Id));
         t.Publish(p.Build("s","r",Now,300,[Turn(1100,"later")],true,true,false,s));
         Assert.DoesNotContain(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued&&r.Event.Id.StartsWith("later@"));Assert.NotEmpty(s.Prepare(t,Now));
-        t.Publish(p.Build("s","r",Now,350,[Turn(1050,"later")],true,false,false,s));
+        t.Publish(p.Build("s","r",Now,351,[Turn(1049,"later")],true,false,false,s));
         Assert.Equal("沿当前道路，继续行驶一公里。",Assert.Single(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
     }
     [Fact]

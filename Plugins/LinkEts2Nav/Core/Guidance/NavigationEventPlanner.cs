@@ -11,13 +11,15 @@ public sealed class NavigationEventPlanner
         public readonly double Along = along;
         public double? EndAlong;
         public double? BriefingAlong;
+        public bool BriefingStrict;
         public double Minimum = maneuver.DistanceMeters;
         public int Generation;
     }
     private readonly Dictionary<string,ActionPlan> actions = new(StringComparer.Ordinal);
+    private readonly EnvironmentPreviewPlanner environment=new();
     private string? session, frame;
     private double? origin;
-    public void Reset(){actions.Clear();session=frame=null;origin=null;}
+    public void Reset(){actions.Clear();environment.Reset();session=frame=null;origin=null;}
 
     public GuidanceSourcePlan Build(string sessionId,string routeRevision,DateTimeOffset observedAt,
         double playerAlong,IReadOnlyList<NavigationManeuver> maneuvers,bool active,bool deferred,
@@ -46,12 +48,19 @@ public sealed class NavigationEventPlanner
         }
         var ordered=actions.Values.OrderBy(p=>p.Along).ThenBy(p=>p.Maneuver.SpeechSequenceOrder).ToArray();
         var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
+        var environmentEvents=new List<EnvironmentPreviewEvent>();
         var sequences=new Dictionary<string,SpeechSequence>(StringComparer.Ordinal);
         for(int i=0;i<ordered.Length;i++)
         {
             var state=ordered[i];var m=state.Maneuver;
             string sequence=m.SpeechSequenceId is null?state.Id:m.SpeechSequenceId+"@"+state.Generation+FrameSuffix();
             if(scheduler.IsConsumed("navigation",SpeechSequence.EndTriggerId(sequence)))continue;
+            if(m.AnnouncementMode==NavigationAnnouncementMode.DistancePreview)
+            {
+                environmentEvents.Add(new(state.Id,"lane-reduction",state.Along,state.EndAlong,
+                    meters=>meters>0?NavigationPrompts.AtDistance(m.Kind,meters,0,m.Instruction):NavigationPrompts.Execute(m.Kind,m.Instruction)));
+                continue;
+            }
             events.Add(new(state.Id,state.Along,m.Instruction??NavigationPrompts.Action(m.Kind)){SpeechSequenceId=sequence});
             if(!sequences.TryGetValue(sequence,out var previousSequence)||previousSequence.EndAlongMeters is null)
                 sequences[sequence]=new(sequence,state.EndAlong);
@@ -67,8 +76,15 @@ public sealed class NavigationEventPlanner
             if(state.BriefingAlong is null)
             {
                 // An unknown previous end is not the previous action's start.
-                if(predecessor is null)state.BriefingAlong=Math.Max(playerAlong,initialBoundaryAlong??playerAlong);
-                else if(predecessor.EndAlong is {} end)state.BriefingAlong=Math.Max(playerAlong,end);
+                if(predecessor is null)
+                {
+                    state.BriefingAlong=Math.Max(playerAlong,initialBoundaryAlong??playerAlong);
+                    state.BriefingStrict=initialBoundaryAlong is {} boundary&&state.BriefingAlong==boundary;
+                }
+                else if(predecessor.EndAlong is {} end)
+                {
+                    state.BriefingAlong=Math.Max(playerAlong,end);state.BriefingStrict=state.BriefingAlong==end;
+                }
             }
             double? initial=state.BriefingAlong is {} anchor?Math.Max(0,state.Along-anchor):null;
             int priorIndex=predecessor is null?-1:Array.IndexOf(ordered,predecessor);
@@ -77,19 +93,13 @@ public sealed class NavigationEventPlanner
             bool precedingStraight=wording.Skip(priorIndex+1).Take(i-priorIndex-1)
                 .Any(p=>p.Kind==ManeuverKind.Straight&&!p.IsMainRoadContinuation);
             string overviewId=state.Id+":overview";
-            if(m.AnnouncementMode==NavigationAnnouncementMode.NoticeAt500)
-            {
-                triggers.Add(new(state.Id+":500",state.Id,SpeechTriggerKind.Advance,state.Along-500,
-                    NavigationPrompts.Execute(m.Kind,m.Instruction)){Enabled=active,SequenceOrder=-500});
-                continue;
-            }
             if(!m.ExecutionOnly&&initial is >=50)
             {
                 int rounded=(int)NavigationPrompts.RoundDistance(initial.Value);
                 string text=initial>800?NavigationPrompts.Continue(initial.Value)
                     :NavigationPrompts.FirstLayer(m.Kind,initial.Value,ordinal,Instruction(m,rounded));
                 triggers.Add(new(overviewId,state.Id,SpeechTriggerKind.Overview,state.BriefingAlong!.Value,text)
-                    {Enabled=active,SequenceOrder=-rounded,Silent=silent,SkipAtSpeedKph=rounded==100?60:null});
+                    {Enabled=active,StrictCrossing=state.BriefingStrict,SequenceOrder=-rounded,Silent=silent,SkipAtSpeedKph=rounded==100?60:null});
             }
             int nearest=initial is {} distance?Stages.FirstOrDefault(s=>s<distance):0;
             foreach(int stage in Stages)
@@ -116,6 +126,10 @@ public sealed class NavigationEventPlanner
                 triggers.Add(new(id+":overview",id,SpeechTriggerKind.Overview,start,NavigationPrompts.Continue()){Enabled=active});
             }
         }
+        if(replaceRoute)environment.Reconcile(environmentEvents.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,scheduler,"navigation");
+        var environmental=environment.Build("navigation",playerAlong,environmentEvents,scheduler,active);
+        events.AddRange(environmental.Events);triggers.AddRange(environmental.Triggers);
+        foreach(var sequence in environmental.Sequences)sequences[sequence.Id]=sequence;
         return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,events,triggers)
             {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame,Sequences=sequences.Values.ToArray()};
     }

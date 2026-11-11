@@ -25,14 +25,14 @@ public sealed class NavigationAnnouncementModeTests
         var policy=new NavigationInstructionPolicy();int i=0;
         foreach(double distance in new[]{700d,501,500,200,20})
         {
-            var now=Now.AddSeconds(i++);var output=policy.Update(Target(distance,NavigationAnnouncementMode.NoticeAt500),"s",now,now,true);
+            var now=Now.AddSeconds(i++);var output=policy.Update(Target(distance,NavigationAnnouncementMode.DistancePreview),"s",now,now,true);
             if(distance==500)Assert.Equal("请注意前方车道合并，建议走左侧车道。",Assert.Single(output));else Assert.Empty(output);
         }
     }
     [Fact]
     public void LateNoticeIsImmediateAndUnavailableAudioDoesNotConsumeIt()
     {
-        var policy=new NavigationInstructionPolicy();var target=Target(350,NavigationAnnouncementMode.NoticeAt500);
+        var policy=new NavigationInstructionPolicy();var target=Target(350,NavigationAnnouncementMode.DistancePreview);
         Assert.Empty(policy.Update(target,"s",Now,Now,true,_=>false));
         Assert.Single(policy.Update(target,"s",Now.AddSeconds(1),Now.AddSeconds(1),true));
     }

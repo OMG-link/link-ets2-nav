@@ -37,6 +37,8 @@ public sealed class EnvironmentPreviewPlannerTests
     {
         var p=new EnvironmentPreviewPlanner();var s=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
         var plan=p.Build("e",0,[E("a","camera",300,300),E("b","camera",750,750)],s,true);
+        timeline.Publish(new("e","s","r",300,true,Now,plan.Events,plan.Triggers){Sequences=plan.Sequences});
+        Assert.DoesNotContain(s.Update(timeline,Now,0),r=>r.Event.Id=="b"&&r.Disposition==TriggerDisposition.Queued);
         timeline.Publish(new("e","s","r",301,true,Now,plan.Events,plan.Triggers){Sequences=plan.Sequences});
         var results=s.Update(timeline,Now,0);
         Assert.Contains(results,r=>r.Event.Id=="a"&&r.Disposition==TriggerDisposition.Ended);

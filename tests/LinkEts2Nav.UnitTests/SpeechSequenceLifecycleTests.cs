@@ -1,4 +1,4 @@
-﻿using LinkEts2Nav.Core;
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 using LinkEts2Nav.Runtime;
 namespace LinkEts2Nav.UnitTests;
@@ -40,7 +40,7 @@ public sealed class SpeechSequenceLifecycleTests
         var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
         NavigationManeuver[] input=environment?
             [Turn("first",100,150),new("narrow",ManeuverKind.MergeLeft,350,"lane","lane")
-                {EndDistanceMeters=350,AnnouncementMode=NavigationAnnouncementMode.NoticeAt500},Turn("next",600,650)]:
+                {EndDistanceMeters=350,AnnouncementMode=NavigationAnnouncementMode.DistancePreview},Turn("next",600,650)]:
             [Turn("first",100,150),Turn("next",600,650)];
         var first=p.Build("s","r",Now,0,input,true,false,false,s);
         var cue=Assert.Single(first.Triggers,x=>x.Id.StartsWith("next@")&&x.Kind==SpeechTriggerKind.Overview);
@@ -90,6 +90,19 @@ public sealed class SpeechSequenceLifecycleTests
 
     private sealed class NoPlayer:IGuidanceAudioPlayer
     {public int Started;public Task PlayAsync(string path,CancellationToken token){Interlocked.Increment(ref Started);return Task.CompletedTask;}}
+    [Fact]
+    public async Task AnActiveAtomicBatchCannotStartAnItemWhoseEndWasCrossedInThatBatch()
+    {
+        var player=new NoPlayer();await using var manager=new GuidancePlaybackManager(null,player,()=>"ready.wav");
+        var finished=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        manager.Played+=s=>{if(s.Text=="fresh")finished.TrySetResult();};
+        manager.BeginUpdate();manager.Enqueue(new("navigation","old","old",0,0,"old"));
+        var e=new GuidanceEvent("old",100,"old");
+        manager.ApplyBatch([new("navigation",e,new("end","old",SpeechTriggerKind.SequenceEnd,150,""),TriggerDisposition.Ended)],true);
+        manager.Enqueue(new("navigation","fresh","fresh",0,0,"fresh"));
+        await finished.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
+        Assert.Equal(1,player.Started);
+    }
     [Fact]
     public async Task BatchEndRemovesPendingBeforePlaybackCanStartAndEventWithdrawalDoesNotEraseASharedSeries()
     {

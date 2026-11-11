@@ -205,7 +205,7 @@ public sealed class NavigationInstructionPolicy
 
     private static Decision? Select(Encounter state,NavigationManeuver target,int ordinal,bool precedingStraight,string executionText)
     {
-        if(target.AnnouncementMode==NavigationAnnouncementMode.NoticeAt500)
+        if(target.AnnouncementMode==NavigationAnnouncementMode.DistancePreview)
             return !state.Executed&&target.DistanceMeters<=500?new(NavigationPrompts.Execute(target.Kind,target.Instruction),AllStages,true):null;
         var decision=SelectNormal(state,target,ordinal,precedingStraight);
         if(decision is {Execute:true} && target.AnnouncementMode==NavigationAnnouncementMode.Normal)

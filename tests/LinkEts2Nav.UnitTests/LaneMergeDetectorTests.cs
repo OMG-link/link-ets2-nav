@@ -41,6 +41,7 @@ public sealed class LaneMergeDetectorTests
         Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);
         Assert.Equal(500,observation.ParallelDistanceMeters);Assert.Equal(!left,observation.MoveLeft);
         Assert.Equal(1,observation.RecommendedLaneCount);
+        Assert.Equal(observation.DistanceMeters,observation.EndDistanceMeters);
     }
     [Theory]
     [InlineData(false)] [InlineData(true)]
@@ -229,8 +230,8 @@ public sealed class LaneMergeDetectorTests
         int sounds=0;var runtime=new NavigationRuntime(fallback:()=>sounds++);
         var first=runtime.Process(Data(4.5,shortApproach?70:500,now),nearby,now);
         Assert.Contains(first.LaneMerges,m=>m.Kind==(shortApproach?LaneMergeKind.Ramp:LaneMergeKind.LaneReduction));
-        Assert.Equal(shortApproach?NavigationAnnouncementMode.Silent:NavigationAnnouncementMode.NoticeAt500,first.Next!.AnnouncementMode);
-        if(shortApproach)Assert.Null(first.LastSpoken);else Assert.Equal("请注意前方车道合并，建议走左侧车道。",first.LastSpoken);
+        Assert.Equal(shortApproach?NavigationAnnouncementMode.Silent:NavigationAnnouncementMode.DistancePreview,first.Next!.AnnouncementMode);
+        if(shortApproach)Assert.Null(first.LastSpoken);else Assert.Equal("车道合并，建议提前走左侧车道。",first.LastSpoken);
         Assert.Equal(shortApproach?0:1,sounds);
         runtime.Process(Data(1,10,now.AddSeconds(1)),nearby,now.AddSeconds(1));
         Assert.Equal(shortApproach?0:1,sounds);

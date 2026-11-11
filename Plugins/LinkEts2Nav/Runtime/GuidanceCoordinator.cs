@@ -3,10 +3,12 @@ using LinkEts2Nav.Core.Guidance;
 namespace LinkEts2Nav.Runtime;
 
 public sealed record GuidancePointDiagnostic(string EventId,string TriggerId,string Text,double RemainingMeters,bool Enabled);
+public sealed record GuidanceSequenceEndDiagnostic(string Source,string SequenceId,double? RemainingMeters,bool ObservedPassage);
 public sealed record GuidanceDiagnostic(int EventCount,int TriggerCount,
     IReadOnlyList<QueuedGuidanceSpeech> Pending,IReadOnlyList<GuidanceTriggerResult> LatestTriggers,string? LastPlayed)
 {
     public IReadOnlyList<GuidancePointDiagnostic> Upcoming {get;init;}=[];
+    public IReadOnlyList<GuidanceSequenceEndDiagnostic> SequenceEnds {get;init;}=[];
 }
 
 /// <summary>Single bridge between the event table, trigger scheduler, synthesis cache and playback owner.</summary>
@@ -39,7 +41,8 @@ public sealed class GuidanceCoordinator
     {get{lock(gate)return new(Timeline.Sources.Sum(p=>p.Events.Count),Timeline.Sources.Sum(p=>p.Triggers.Count),playback?.Pending??[],latest,lastPlayed){Upcoming=Timeline.Sources.SelectMany(p=>p.Triggers
         .Where(t=>!Scheduler.IsConsumed(p.Source,t.Id)&&!t.Silent)
         .Select(t=>new GuidancePointDiagnostic(t.EventId,t.Id,t.Text,t.AlongMeters-p.PlayerAlongMeters,t.Enabled)))
-        .OrderBy(p=>p.RemainingMeters).Take(64).ToArray()};}}
+        .OrderBy(p=>p.RemainingMeters).Take(64).ToArray(),SequenceEnds=Timeline.Sources.SelectMany(p=>p.Sequences
+            .Select(s=>new GuidanceSequenceEndDiagnostic(p.Source,s.Id,s.EndAlongMeters-p.PlayerAlongMeters,s.Ended))).ToArray()};}}
     public bool WillReplaceSource(string source,string revision)=>replacementRevision==revision&&!replacementApplied.Contains(source);
     public void Publish(GuidanceSourcePlan plan)
     {
@@ -72,22 +75,32 @@ public sealed class GuidanceCoordinator
         {
             var sample=group.First();string id=$"landmark:{sample.CameraId}:{sample.Kind}:{sample.EncounterRevision}";
             bool road=frame is not null&&sample.DistanceKind==WarningDistanceKind.Road;
-            input.Add(new(id,"camera",playerAlong+sample.DistanceMeters,road?playerAlong+sample.DistanceMeters:null,
+            // Preserve the producer's route-length lower bound across unknown map
+            // gaps; a physically close camera may still lie after a long detour.
+            double distance=Math.Max(sample.DistanceMeters,group.Where(p=>p.DistanceUntilTriggerMeters>0)
+                .Select(p=>p.StageDistanceMeters+p.DistanceUntilTriggerMeters).DefaultIfEmpty(0).Max());
+            input.Add(new(id,CameraChain(sample.Kind,sample.CameraId),playerAlong+sample.DistanceMeters,road?playerAlong+sample.DistanceMeters:null,
                 meters=>PlannedSpeechAnnouncer.DistanceText(meters,sample.SpeedLimitKph,sample.Kind),
-                DynamicDistance:!road,IncludeTwoHundred:sample.Kind==CameraWarningKind.Calibrated));
+                DynamicDistance:!road,IncludeTwoHundred:sample.Kind==CameraWarningKind.Calibrated,DistanceLowerBoundMeters:distance));
             kinds[id]=sample.DistanceKind;
         }
         foreach(var passage in passages??[])
         {
             string id=$"landmark:{passage.CameraId}:{passage.Kind}:{passage.EncounterRevision}";
             input.RemoveAll(e=>e.Id==id);
-            input.Add(new(id,"camera",playerAlong,null,_=>"",Ended:true));
+            input.Add(new(id,CameraChain(passage.Kind,passage.CameraId),playerAlong,null,_=>"",Ended:true));
         }
+        if(WillReplaceSource("landmarks",snapshot.RouteRevision))
+            environment.Reconcile(input.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,Scheduler,"landmarks");
         var plan=environment.Build("landmarks",playerAlong,input,Scheduler,snapshot.IsActive);
         Publish(new("landmarks",snapshot.SessionId,snapshot.RouteRevision,playerAlong,snapshot.IsActive,snapshot.ObservedAt,
             plan.Events.Select(e=>e with{DistanceKind=kinds.GetValueOrDefault(e.Id)}).ToArray(),plan.Triggers)
             {Sequences=plan.Sequences,CoordinateFrame=frame});
     }
+    // Unknown proximity notices have no proven route order or monitoring boundary;
+    // they cannot be predecessors of calibrated road-camera events or each other.
+    private static string CameraChain(CameraWarningKind kind,string cameraId)
+        =>kind==CameraWarningKind.Calibrated?"camera":"uncalibrated-proximity:"+cameraId;
     public void Suspend(string source)=>Timeline.Suspend(source);
     public void Observe(GameDataSnapshot data,DateTimeOffset now)
     {

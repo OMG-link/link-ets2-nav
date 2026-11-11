@@ -9,6 +9,27 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class WarningPipelineTests
 {
+    private sealed class NeverPlayer:IGuidanceAudioPlayer
+    {public Task PlayAsync(string file,CancellationToken token)=>throw new InvalidOperationException("No fallback audio is configured.");}
+    [Fact]
+    public async Task NoNavigationCameraEndsOnlyAfterCrossingItsRealMonitoringPoint()
+    {
+        var map=new GameMap();AddRoad(map,Point(0),Point(800));
+        var nearby=Nearby(map,Camera());var empty=RouteSnapshot.Parse([],Now);
+        await using var playback=new GuidancePlaybackManager(null,new NeverPlayer(),()=>null);
+        var guidance=new GuidanceCoordinator(playback:playback);
+        var pipeline=new WarningPipeline(new RecordingAnnouncer(),guidance:guidance);
+        void Step(double x)
+        {
+            var data=Data(empty,Vehicle(x));guidance.Observe(data,Now);
+            pipeline.Process(data,nearby,Now);guidance.Tick(data,Now);
+        }
+        Step(50);Assert.Single(playback.Pending);
+        Step(348);Assert.Single(playback.Pending);
+        Step(349);Assert.Single(playback.Pending);
+        Step(350);Assert.Empty(playback.Pending);
+        Assert.Contains(guidance.Diagnostic.LatestTriggers,t=>t.Disposition==LinkEts2Nav.Core.Guidance.TriggerDisposition.Ended);
+    }
     private static readonly DateTimeOffset Now = new(2026, 11, 6, 0, 0, 0, TimeSpan.Zero);
     private static Vector3 Point(float x, float z = 0, float y = 0) => new(x, y, z);
     private static Road AddRoad(GameMap map, Vector3 start, Vector3 end) =>

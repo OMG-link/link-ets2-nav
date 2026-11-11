@@ -1,4 +1,4 @@
-using LinkEts2Nav.Core;
+﻿using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 using LinkEts2Nav.Runtime;
 namespace LinkEts2Nav.UnitTests;
@@ -8,6 +8,34 @@ public sealed class GuidanceCoordinatorTests
     private static GameDataSnapshot Data()=>new(new(0,0,0,0,10,1000,true,false,1,Now),RouteSnapshot.Parse([],Now),RouteAvailability.None,"s",true);
     private sealed class NoPlayer:IGuidanceAudioPlayer
     {public Task PlayAsync(string file,CancellationToken token)=>throw new InvalidOperationException("No audio is ready in this test.");}
+    [Fact]
+    public void UnknownProximityWithoutAnEndCannotBlockTheCalibratedCameraChain()
+    {
+        var c=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();c.Queued+=queued.Add;
+        c.PublishLandmarks(new("s","r",false,true,Now,[]),
+            [new("unknown",500,300,WarningDistanceKind.Euclidean,0){Kind=CameraWarningKind.UncalibratedProximity},
+             new("known",500,450,WarningDistanceKind.Road,0)]);
+        c.Tick(Data(),Now);
+        Assert.Contains(queued,q=>q.EventId.Contains("unknown")&&q.Text==PlannedSpeechAnnouncer.UncalibratedText);
+        Assert.Contains(queued,q=>q.EventId.Contains("known:Calibrated")&&q.Text=="四百五十米处，有测速照相。");
+        Assert.DoesNotContain(queued,q=>q.Text.Contains("零米"));
+    }
+    [Fact]
+    public void EuclideanFallbackStillHonorsTheKnownRouteLengthLowerBound()
+    {
+        var c=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();c.Queued+=queued.Add;
+        c.PublishLandmarks(new("s","r",true,true,Now,[]),
+            [new("detour",500,100,WarningDistanceKind.Euclidean,1500),
+             new("detour",200,100,WarningDistanceKind.Euclidean,1800)]);
+        c.Tick(Data(),Now);Assert.Empty(queued);
+        Assert.Empty(c.Timeline.Sources[0].Triggers);
+        c.PublishLandmarks(new("s","r",true,true,Now,[]),
+            [new("detour",500,100,WarningDistanceKind.Euclidean,0),
+             new("detour",200,100,WarningDistanceKind.Euclidean,250)]);
+        c.Tick(Data(),Now);
+        Assert.Equal("一百米处，有测速照相。",Assert.Single(queued).Text);
+        Assert.Single(c.Timeline.Sources[0].Triggers);
+    }
     [Fact]
     public async Task ForwardRouteTrimmingKeepsPendingSpeechWhileReroutingWithdrawsOnlyRemovedFutureEvents()
     {
@@ -39,7 +67,8 @@ public sealed class GuidanceCoordinatorTests
         void Step(double distance,CameraApproach approach)
         {
             var snapshot=new WarningSnapshot("s","r",true,true,Now,[new("camera",approach,Math.Abs(distance),distance)]);
-            c.PublishLandmarks(snapshot,engine.GetPlans(snapshot,Now));c.Tick(Data(),Now);
+            var plans=engine.GetPlans(snapshot,Now);
+            c.PublishLandmarks(snapshot,plans,engine.PassedEncounters);c.Tick(Data(),Now);
         }
         Step(600,CameraApproach.RouteAhead);Assert.Empty(queued);
         Step(490,CameraApproach.RouteAhead);Step(190,CameraApproach.RouteAhead);Assert.Equal(2,queued.Count);

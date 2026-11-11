@@ -90,8 +90,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             string lanes=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
             var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,merge.DistanceMeters,"lane","lane")
             { EndDistanceMeters=merge.EndDistanceMeters,JunctionId="lane-merge:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
-                AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.NoticeAt500:NavigationAnnouncementMode.Silent,
-                Instruction=$"请注意前方车道合并，建议走{side}侧{lanes}" };
+                AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.DistancePreview:NavigationAnnouncementMode.Silent,
+                Instruction=$"车道合并，建议提前走{side}侧{lanes}" };
             upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
         }
         if(yardApproach)
@@ -116,7 +116,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         }
         // Entering a turn's PPD curve is not completion. Keep preparing future audio,
         // but defer the next briefing until exit; an imminent execution cue remains urgent.
-        bool defer=currentJunction is not null && currentJunction==approachingJunction && !approachingStraight && currentJunction!=next?.JunctionId
+        bool defer=guidance is null && currentJunction is not null && currentJunction==approachingJunction && !approachingStraight && currentJunction!=next?.JunctionId
             && !(next is { Kind: not ManeuverKind.Straight, DistanceMeters: <=20 });
         if(guidance is not null)
         {

@@ -40,7 +40,7 @@ public sealed class LaneMergeDetector
                 result.Add(new(id,m.Ending.PrefabUid,m.Left is null?null:m.Ending.EntryNodeUid,m.Left is null?null:m.Ending.EntryLane,
                     m.Left is null?null:m.Main.EntryNodeUid,m.Left is null?null:m.Main.EntryLane,
                     m.Position,m.Left,m.Count,m.Parallel,m.Kind,distance,m.Reason)
-                    {EndDistanceMeters=offset+new LanePolyline(edge.Points).Length-vehicleAlong});
+                    {EndDistanceMeters=distance});
             }
             offset+=new LanePolyline(edge.Points).Length;
         }

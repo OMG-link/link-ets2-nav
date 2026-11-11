@@ -4,7 +4,7 @@ namespace LinkEts2Nav.Core;
 
 public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit }
 
-public enum NavigationAnnouncementMode { Normal, Silent, NoticeAt500 }
+public enum NavigationAnnouncementMode { Normal, Silent, DistancePreview }
 
 public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double DistanceMeters,
     string EntryId, string ExitId)

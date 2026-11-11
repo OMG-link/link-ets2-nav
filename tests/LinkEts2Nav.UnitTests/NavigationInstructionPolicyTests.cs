@@ -40,7 +40,7 @@ public sealed class NavigationInstructionPolicyTests
 
     [Theory]
     [InlineData(NavigationAnnouncementMode.Silent)]
-    [InlineData(NavigationAnnouncementMode.NoticeAt500)]
+    [InlineData(NavigationAnnouncementMode.DistancePreview)]
     public void MergeAheadDoesNotSilenceAnInterveningStraightJunction(NavigationAnnouncementMode mode)
     {
         var policy=new NavigationInstructionPolicy();

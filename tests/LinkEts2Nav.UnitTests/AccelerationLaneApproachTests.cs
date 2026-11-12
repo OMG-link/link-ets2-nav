@@ -37,6 +37,8 @@ public sealed class AccelerationLaneApproachTests
     {
         var s=Scene(false,leftSide);var action=Assert.Single(new AccelerationLaneApproach().Find(s.Route,s.Graph,0));
         Assert.Equal(leftSide?ManeuverKind.MergeRight:ManeuverKind.MergeLeft,action.Kind);
+        Assert.Equal(NavigationJunctionKind.Ramp,action.JunctionKind);
+        Assert.StartsWith("prefab:",action.JunctionId);
         Assert.Equal(60,action.DistanceMeters);Assert.Equal(240,action.EndDistanceMeters);
         Assert.Equal(new LaneActionInterval(40,240),action.ApproachInterval);
     }
@@ -47,6 +49,8 @@ public sealed class AccelerationLaneApproachTests
     {
         var s=Scene(true,leftSide);var action=Assert.Single(new AccelerationLaneApproach().Find(s.Route,s.Graph,0));
         Assert.Equal(leftSide?ManeuverKind.MergeRight:ManeuverKind.MergeLeft,action.Kind);
+        Assert.Equal(NavigationJunctionKind.Ramp,action.JunctionKind);
+        Assert.StartsWith("prefab:",action.JunctionId);
         Assert.Equal(62,action.DistanceMeters);Assert.Equal(260,action.EndDistanceMeters);
     }
     [Fact]

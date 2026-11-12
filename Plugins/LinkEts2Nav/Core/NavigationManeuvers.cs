@@ -151,7 +151,7 @@ public sealed class NavigationManeuverDetector
                         result.Add(new($"fork:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",instruction.Kind,
                             offset-vehicleAlong,i>0?route[i-1].Id:current.Id,current.Id)
                         {JunctionId="prefab:"+prefab,EndDistanceMeters=instruction.Kind==ManeuverKind.Straight?end-vehicleAlong:offset-vehicleAlong,ForkInstruction=instruction,
-                            JunctionKind=NavigationJunctionKind.Ramp,IsMinorStraight=instruction.Kind==ManeuverKind.Straight&&current.IsMinorStraight,
+                            JunctionKind=NavigationJunctionKind.Ramp,IsMinorStraight=false,
                             IsMainRoadContinuation=instruction.Kind==ManeuverKind.Straight,
                             Instruction=instruction.Text,HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
                     }
@@ -191,7 +191,7 @@ public sealed class NavigationManeuverDetector
                             offset-vehicleAlong,i>0?route[i-1].Id:current.Id,i+1<route.Count?route[i+1].Id:current.Id)
                         {EndDistanceMeters=end-vehicleAlong,JunctionId="prefab:"+prefab,
                             JunctionKind=current.Junction.IsRampJunction?NavigationJunctionKind.Ramp:NavigationJunctionKind.Ordinary,
-                            IsMinorStraight=current.IsMinorStraight,IsMainRoadContinuation=true,
+                            IsMinorStraight=current.Junction.IsJunction&&current.IsMinorStraight,IsMainRoadContinuation=true,
                             HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
                 }
                 // All angle-based maneuvers share this junction-only rule.

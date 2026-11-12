@@ -49,7 +49,7 @@ public sealed class AccelerationLaneApproach
             double end=offsets[endIndex]+s.EndOffset-vehicleAlong;
             if(end<0)continue;
             result.Add(new(s.Id,s.Left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,new LaneActionInterval(end-s.Length,end).AtFraction(.1),s.Origin,s.EndEdge)
-                {EndDistanceMeters=end,JunctionId=s.Junction,HasSeparateApproachRoad=false,ApproachInterval=new(end-s.Length,end)});
+                {EndDistanceMeters=end,JunctionKind=NavigationJunctionKind.Ramp,JunctionId=s.Junction,HasSeparateApproachRoad=false,ApproachInterval=new(end-s.Length,end)});
         }
         return result.OrderBy(m=>m.DistanceMeters).ToArray();
 
@@ -113,7 +113,7 @@ public sealed class AccelerationLaneApproach
                 }
                 if(end is not {} finish||finish<=start||finish-start>500)return null;
                 string id="acceleration:"+route[origin].Id+":"+edge.Id;
-                string junction="lane-merge:"+edge.Id.Split(':')[1];
+                string junction="prefab:"+edge.Id.Split(':')[1];
                 return new(id,route[origin].Id,edge.Id,finish-offsets[j],finish-start,left.Value,junction,corridor);
             }
             return null;

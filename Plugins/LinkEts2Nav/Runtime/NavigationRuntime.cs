@@ -31,7 +31,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
     private string? lastSpoken, signature, mergeSignature;
-    private string? forkSignature;
+    private string? forkSignature, connectionFailureSignature;
     private DateTimeOffset reportedAt;
 
     public NavigationDiagnostic Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
@@ -71,7 +71,18 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         }
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
         var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
-        var upcoming = detector.FindSequence(instructionRoute, along.Value, paths.GetNavigationGraph(), out double confirmedUntil, out _, out double firstUnresolvedJoinAlong);
+        // Classify the current component from its entrance too. Starting the plugin
+        // inside a transparent straight must not invent a preceding action boundary.
+        double detectionAlong=CurrentComponentStart(instructionRoute,along.Value)??along.Value;
+        var detected=detector.FindSequence(instructionRoute,detectionAlong,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong);
+        double shift=detectionAlong-along.Value;
+        double? initialActionEnd=detected.Where(NavigationEventPlanner.IsNavigationAction)
+            .Where(m=>m.DistanceMeters+shift<0&&m.EndDistanceMeters+shift>0)
+            .Select(m=>m.EndDistanceMeters+shift).FirstOrDefault();
+        IReadOnlyList<NavigationManeuver> upcoming=detected.Select(m=>m with{DistanceMeters=m.DistanceMeters+shift,
+            EndDistanceMeters=m.EndDistanceMeters+shift,SpeechSequenceStartDistanceMeters=m.SpeechSequenceStartDistanceMeters+shift})
+            .Where(m=>m.DistanceMeters>=0).ToArray();
+        ReportConnectionFailure(instructionRoute, confirmedUntil, unresolvedJoin, firstUnresolvedJoinAlong);
         string forkState=string.Join("|",detector.ForkDiagnostics.Select(f=>$"{f.Prefab}:{f.EntryNode}:{f.ExitNode}:{f.Reason}"));
         if(forkState!=forkSignature)
         {
@@ -85,7 +96,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
         var accelerationActions=acceleration.Find(instructionRoute,paths.GetNavigationGraph(),along.Value);
         NavigationManeuver? ProvenAcceleration(LaneMergeObservation m)=>accelerationActions.FirstOrDefault(a=>
-            a.JunctionId=="lane-merge:"+m.PrefabUid.ToString("X16")&&m.MoveLeft is {} left
+            a.JunctionId=="prefab:"+m.PrefabUid.ToString("X16")&&m.MoveLeft is {} left
             &&a.Kind==(left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight)&&a.EndDistanceMeters is {} end&&Math.Abs(end-m.DistanceMeters)<2);
         merges=merges.Select(m=>ProvenAcceleration(m) is {} proof?m with{Kind=LaneMergeKind.Ramp,
             ParallelDistanceMeters=proof.ApproachInterval!.LengthMeters,Reason="已沿原生车道继承证明独立入口、并行及最终收口完整区间"}:m).ToArray();
@@ -98,20 +109,23 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         foreach(var merge in merges)
         {
             string group=$"prefab:{merge.PrefabUid:X16}";
-            upcoming=upcoming.Where(m=>m.JunctionId!=group||m.Kind is ManeuverKind.TurnLeft or ManeuverKind.TurnRight or ManeuverKind.UTurn or ManeuverKind.EnterRoundabout or ManeuverKind.ExitRoundabout or ManeuverKind.PassRoundaboutExit).ToArray();
-            if(ProvenAcceleration(merge) is not null)continue;
+            var accelerationProof=ProvenAcceleration(merge);
+            bool replacesNavigation=accelerationProof is not null||merge.Kind==LaneMergeKind.Ramp&&merge.MoveLeft is not null;
+            if(replacesNavigation)
+                upcoming=upcoming.Where(m=>m.JunctionId!=group||m.Kind is ManeuverKind.TurnLeft or ManeuverKind.TurnRight or ManeuverKind.UTurn or ManeuverKind.EnterRoundabout or ManeuverKind.ExitRoundabout or ManeuverKind.PassRoundaboutExit).ToArray();
+            if(accelerationProof is not null)continue;
             if(merge.MoveLeft is null)continue;
             string side=merge.MoveLeft==true?"左":"右";
             string lanes=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
             double anchor=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} length?new LaneActionInterval(merge.DistanceMeters-length,merge.DistanceMeters).AtFraction(.1):merge.DistanceMeters;
             var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,anchor,"lane","lane")
-            { EndDistanceMeters=merge.EndDistanceMeters,JunctionId="lane-merge:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
+            { EndDistanceMeters=merge.EndDistanceMeters,JunctionKind=NavigationJunctionKind.Ramp,JunctionId="prefab:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
                 AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.DistancePreview:merge.Kind==LaneMergeKind.Ramp?NavigationAnnouncementMode.Normal:NavigationAnnouncementMode.Silent,
                 ApproachInterval=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} span?new(merge.DistanceMeters-span,merge.DistanceMeters):null,
                 Instruction=merge.Kind==LaneMergeKind.LaneReduction?$"车道合并，建议提前走{side}侧{lanes}":null };
             upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
         }
-        upcoming=upcoming.Where(m=>!accelerationActions.Any(a=>m.JunctionId==a.JunctionId?.Replace("lane-merge:","prefab:",StringComparison.Ordinal)))
+        upcoming=upcoming.Where(m=>!accelerationActions.Any(a=>m.JunctionId==a.JunctionId))
             .Concat(accelerationActions).OrderBy(m=>m.DistanceMeters).ToArray();
         if(yardApproach)
         {
@@ -125,13 +139,13 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         // an already verified long road before that join.
         upcoming = exitApproach.Apply(upcoming, instructionRoute, paths.GetNavigationGraph(), along.Value);
         double confirmedAhead = Math.Max(0, Math.Min(confirmedUntil, firstUnresolvedJoinAlong) - along.Value);
-        bool confirmedContinuation = !yardApproach && !upcoming.Any(NavigationEventPlanner.IsNavigationAction) && confirmedAhead >= 800;
-        var next = upcoming.FirstOrDefault(NavigationEventPlanner.IsNavigationAction) ?? upcoming.FirstOrDefault();
+        bool confirmedContinuation = !yardApproach && !upcoming.Any(NavigationEventPlanner.IsNavigationAction);
+        var next = upcoming.FirstOrDefault(NavigationEventPlanner.IsNavigationAction);
         string? currentJunction=yardApproach ? null : CurrentJunction(instructionRoute,along.Value);
         // This is a diagnostic only. Both execution paths use the planner's
         // same physical-end boundary instead of a separate turn/straight gate.
-        bool defer=currentJunction is not null&&next is not null&&currentJunction!=next.JunctionId;
-        double? componentEnd=CurrentComponentEnd(instructionRoute,along.Value);
+        bool defer=initialActionEnd is not null&&currentJunction is not null&&next is not null&&currentJunction!=next.JunctionId;
+        double? componentEnd=initialActionEnd is {} remaining?along.Value+remaining:null;
         if(guidance is not null)
         {
             double playerAlong=progress.Update(data.SessionId,route,along.Value);
@@ -152,21 +166,44 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             lastSpoken = text;
         }
         }
-        string state = yardApproach ? "货场出口方向提示（距出口采用直线距离）。" : defer ? "正在通过当前路口，驶出后继续提示下一动作。" : next is not null ? "沿游戏导航路线提供基础路口提示。"
-            : confirmedContinuation ? "已确认前方长直路，沿当前道路行驶，等待下一操作提示。"
+        string state = yardApproach ? "货场出口方向提示（距出口采用直线距离）。" : defer ? "正在通过当前路口。" : next is not null ? "沿游戏导航路线提供基础路口提示。"
+            : confirmedContinuation ? "当前可见路线没有非直行动作，沿当前道路行驶，等待下一操作提示。"
             : "当前连续路径内没有可确认的普通路口操作。";
         Report(state, next, now);
         return new(state, next, lastSpoken) { LaneRoute = laneRoute, LaneMerges = merges, RoadForks=detector.ForkDiagnostics, Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
     }
 
-    private static double? CurrentComponentEnd(IReadOnlyList<DirectedRoad> route,double along)
+    // Missing map tails are normal. A failure inside the already constructed
+    // continuous graph is different: retain the physical edge identities for replay diagnosis.
+    private void ReportConnectionFailure(IReadOnlyList<DirectedRoad> route,double confirmedUntil,
+        bool unresolved,double unresolvedAlong)
+    {
+        double total=route.Sum(r=>r.Points.Zip(r.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)));
+        string? failure=null;
+        if(unresolved||confirmedUntil<total-.01)
+        {
+            double at=unresolved?Math.Min(confirmedUntil,unresolvedAlong):confirmedUntil;
+            double offset=0;DirectedRoad? edge=null;
+            foreach(var candidate in route)
+            {
+                double end=offset+candidate.Points.Zip(candidate.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+                if(end>at+.001){edge=candidate;break;}offset=end;
+            }
+            failure=$"{edge?.Id}:{edge?.StartNodeUid:X16}:{edge?.EndNodeUid:X16}:{unresolved}";
+            if(failure!=connectionFailureSignature)
+                log?.Invoke($"导航连接解析错误：已加载的连续路线内存在未能确认的连接；对象={edge?.Id}，入口={edge?.StartNodeUid:X16}，出口={edge?.EndNodeUid:X16}，原因={(unresolved?"合流或分流结构未定":"原生几何或路口连接无法解析")}。");
+        }
+        connectionFailureSignature=failure;
+    }
+
+    private static double? CurrentComponentStart(IReadOnlyList<DirectedRoad> route,double along)
     {
         double offset=0;
         foreach(var edge in route)
         {
             double end=offset+edge.Points.Zip(edge.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
-            if(along>offset&&along<end)
-                return edge.Roundabout is not null||edge.Id.StartsWith("prefab:",StringComparison.Ordinal)?end:null;
+            if(along>=offset&&along<end)
+                return edge.Roundabout is not null||edge.Id.StartsWith("prefab:",StringComparison.Ordinal)?offset:null;
             offset=end;
         }
         return null;
@@ -211,7 +248,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     {
         policy.Reset();eventPlanner.Reset();progress.Reset();guidance?.Suspend("navigation");
         mergeDetector.Reset(); exitApproach.Reset();acceleration.Reset();
-        mergeSignature=forkSignature=null;
+        mergeSignature=forkSignature=connectionFailureSignature=null;
         speech?.ClearPlan("navigation");
         map = null;
         paths = null;

@@ -83,6 +83,22 @@ public sealed class RoadPathSourceTests
         Assert.DoesNotContain(path,p=>p.Id==s.Roads[^1].Uid.ToString("X16"));
     }
 
+    [Fact]
+    public void LoadedConflictingConnectionIsLoggedOnceButMissingMapTailIsNotAnError()
+    {
+        var s=LongLoadedRoute();
+        var duplicate=AddRoad(s.Map,Point(7000,100),Point(8000,100));
+        duplicate.Node=s.Roads[7].Node;duplicate.ForwardNode=s.Roads[7].ForwardNode;
+        var lines=new List<string>();var source=new RoadPathSource(s.Map,log:lines.Add);
+        source.GetPath(Point(100),Vector3.UnitX,s.Route,s.Route.Availability);
+        source.GetPath(Point(150),Vector3.UnitX,s.Route,s.Route.Availability);
+        Assert.Single(lines,l=>l.StartsWith("导航连接解析错误："));
+        Assert.Contains(s.Roads[7].Node.Uid.ToString("X16"),lines[0]);
+        lines.Clear();var missing=new RoadPathSource(new GameMap(),log:lines.Add);
+        missing.GetPath(Point(100),Vector3.UnitX,s.Route,s.Route.Availability);
+        Assert.Empty(lines);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

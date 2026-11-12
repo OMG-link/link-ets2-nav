@@ -41,7 +41,7 @@ public sealed class JunctionStructureTests
         var straight=Assert.Single(detector.FindSequence([approach,main],0,[approach,main,side]));
         Assert.Equal(ManeuverKind.Straight,straight.Kind);
         Assert.Equal(NavigationJunctionKind.Ramp,straight.JunctionKind);
-        Assert.Equal(minor,straight.IsMinorStraight);
+        Assert.False(straight.IsMinorStraight);
         Assert.Equal(100,straight.DistanceMeters);Assert.Equal(150,straight.EndDistanceMeters);
         Assert.True(straight.IsMainRoadContinuation);
         var turn=Assert.Single(detector.FindSequence([approach,side],0,[approach,main,side]));

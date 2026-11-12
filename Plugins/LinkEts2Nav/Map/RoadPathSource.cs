@@ -17,6 +17,8 @@ public sealed class RoadPathSource
     private readonly Dictionary<(ulong, ulong), DirectedRoad> junctionLinks = new();
     private readonly HashSet<ulong> boundaryNodes = new();
     private readonly DirectedPathMatcher matcher = new();
+    private readonly Action<string>? diagnosticLog;
+    private readonly HashSet<(ulong,ulong)> reportedAmbiguities = new();
     private RouteSnapshot? cachedRoute;
     private Vector3 cachedPosition;
     private List<List<DirectedRoad>> cachedChunks = [];
@@ -24,6 +26,7 @@ public sealed class RoadPathSource
 
     public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null)
     {
+        diagnosticLog=log;
         roads = map.MapItems.Values.OfType<Road>().ToArray();
         foreach (var road in roads)
         {
@@ -149,6 +152,8 @@ public sealed class RoadPathSource
         {
             var key = (nodes[i - 1].Uid, nodes[i].Uid);
             DirectedRoad? directed = null;
+            if(ambiguous.Contains(key)&&reportedAmbiguities.Add(key))
+                diagnosticLog?.Invoke($"导航连接解析错误：已加载对象存在重复或冲突连接，入口={key.Item1:X16}，出口={key.Item2:X16}。");
             if (!ambiguous.Contains(key))
             {
                 // Exact SDK node UIDs establish route membership. Distance is only

@@ -50,8 +50,9 @@ public sealed class NavigationRuntimeTests
     [Theory]
     [InlineData(1200, true)]
     [InlineData(800, true)]
-    [InlineData(799, false)]
-    public void DistantUnresolvedJoinAllowsOneContinuationButNearbyJoinStillDefers(float distance, bool speaks)
+    [InlineData(799, true)]
+    [InlineData(100, true)]
+    public void UnresolvedLoadedJoinLogsItsCauseAndDoesNotRequireEightHundredMetersForContinuation(float distance, bool speaks)
     {
         var map = new TruckLib.ScsMap.Map();
         var approach = Road.Add(map, new(0, 0, 0), new(0, 0, distance), default);
@@ -69,8 +70,10 @@ public sealed class NavigationRuntimeTests
         var first = runtime.Process(Data(route, 0), nearby, Now);
         Assert.Equal(speaks ? NavigationPrompts.Continue() : null, first.LastSpoken);
         Assert.Equal(distance, first.ConfirmedAheadMeters!.Value, 1);
+        Assert.Single(lines,l=>l.StartsWith("导航连接解析错误："));
         runtime.Process(Data(route, 1), nearby, Now);
         Assert.Equal(speaks ? 1 : 0, lines.Count(l => l.StartsWith("导航指令：")));
+        Assert.Single(lines,l=>l.StartsWith("导航连接解析错误："));
     }
 
     private sealed class DelayedSynth : ISpeechSynthesizer
@@ -118,9 +121,10 @@ public sealed class NavigationRuntimeTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void OrdinaryStraightBlocksNextBriefingButForcedConnectionDoesNotInventAnAction(bool hasChoice)
+    [InlineData(true,false)]
+    [InlineData(false,false)]
+    [InlineData(true,true)]
+    public void OrdinaryStraightIsTransparentAndDoesNotDelayNextTurnBriefing(bool hasChoice,bool startInside)
     {
         var scene=Scene();var map=scene.Map.Map;
         var incoming=map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Uid==scene.Route.Nodes[0].Uid);
@@ -140,18 +144,18 @@ public sealed class NavigationRuntimeTests
         {
             var data=Data(route,z);var result=runtime.Process(data,nearby,Now);guidance.Tick(data,Now);return result;
         }
-        var first=Step(100);
-        Assert.Equal(hasChoice?ManeuverKind.Straight:ManeuverKind.TurnRight,first.Next!.Kind);
-        Step(650);Step(680);var inside=Step(710);
-        if(hasChoice)
+        var first=Step(startInside?710:100);
+        Assert.Equal(ManeuverKind.TurnRight,first.Next!.Kind);
+        if(startInside)
         {
-            Assert.True(inside.DeferredUntilJunctionExit);
-            Assert.Contains(queued,q=>q.Text=="直行。");
-            Assert.DoesNotContain(queued,q=>q.Text.Contains("右转"));
-            Step(760);Assert.DoesNotContain(queued,q=>q.Text.Contains("右转"));
-            Step(761);Assert.Contains(queued,q=>q.Text.Contains("右转"));
+            Assert.False(first.DeferredUntilJunctionExit);
+            Assert.Contains(queued,q=>q.Text=="四百五十米后，右转。");
+            return;
         }
-        else Assert.Contains(queued,q=>q.Text=="五百米后，右转。");
+        Step(650);Step(680);var inside=Step(710);
+        Assert.Contains(queued,q=>q.Text=="五百米后，右转。");
+        Assert.DoesNotContain(queued,q=>q.Text=="直行。");
+        if(hasChoice)Assert.Contains(first.Upcoming,m=>m.Kind==ManeuverKind.Straight);
     }
 
     [Fact]
@@ -213,7 +217,7 @@ public sealed class NavigationRuntimeTests
     }
 
     [Fact]
-    public void UnknownNearbyJunctionCannotBorrowLongRoadFallbackFromALaterChunk()
+    public void UnloadedJunctionUsesCurrentConfirmedCorridorForNoDistanceContinuation()
     {
         var map = new TruckLib.ScsMap.Map();
         var incoming = Road.Add(map,new(0,0,0),new(0,0,400),default);
@@ -223,8 +227,9 @@ public sealed class NavigationRuntimeTests
         int calls = 0;
         var runtime = ObserveDiagnostics(()=>calls++);
         var result = runtime.Process(Data(route,100),new(map,[],[],[]),Now);
-        Assert.Null(result.LastSpoken);
-        Assert.Equal(0,calls);
+        Assert.Equal(NavigationPrompts.Continue(),result.LastSpoken);
+        Assert.Equal(300,result.ConfirmedAheadMeters!.Value,1);
+        Assert.Equal(1,calls);
     }
 
     [Fact]

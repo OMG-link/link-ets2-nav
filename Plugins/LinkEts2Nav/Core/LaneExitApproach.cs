@@ -25,8 +25,8 @@ public sealed class LaneExitApproach
             var orders=action.ForkInstruction?.DedicatedOrders??route[fork].LanePaths
                 .Where(p=>!alternatives.Contains(p.EntryOrder)).Select(p=>p.EntryOrder).Distinct().Order().ToArray();
             string lanes=string.Join(",",orders);
-            double? lead=DedicatedLaneOpening.Find(route,graph,offsets,fork,orders);
-            if(lead is {} value) leads[action.Id]=(action.Kind,lanes,value);
+            var interval=DedicatedLaneOpening.Find(route,graph,offsets,fork,orders);
+            if(interval is {} value) leads[action.Id]=(action.Kind,lanes,value.LengthMeters);
             if(!leads.TryGetValue(action.Id,out var remembered)||remembered.Kind!=action.Kind||remembered.Lanes!=lanes)return action;
             double entry=offsets[fork]-vehicleAlong;
             return action with{DistanceMeters=entry-remembered.Lead,EndDistanceMeters=entry};

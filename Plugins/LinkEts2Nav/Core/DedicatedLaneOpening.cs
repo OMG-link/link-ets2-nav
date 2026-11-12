@@ -4,7 +4,7 @@ namespace LinkEts2Nav.Core;
 /// <summary>Proves where a dedicated exit lane opens on the loaded route.</summary>
 public static class DedicatedLaneOpening
 {
-    public static double? Find(IReadOnlyList<DirectedRoad> route,IReadOnlyList<DirectedRoad> graph,
+    public static LaneActionInterval? Find(IReadOnlyList<DirectedRoad> route,IReadOnlyList<DirectedRoad> graph,
         double[] offsets,int fork,IReadOnlyList<int> dedicatedOrders)
     {
         var selected=route[fork];
@@ -15,7 +15,7 @@ public static class DedicatedLaneOpening
             if(chosen.Length==0||chosen.Select(p=>p.EntryLaneCount).Distinct().Count()!=1)continue;
             if(Trace(order,chosen[0].EntryLaneCount) is {} lead)proofs.Add(lead);
         }
-        return proofs.Count==0?null:proofs.Max();
+        return proofs.Count==0?null:new(offsets[fork]-proofs.Max(),offsets[fork]);
 
         double? Trace(int order,int count)
         {

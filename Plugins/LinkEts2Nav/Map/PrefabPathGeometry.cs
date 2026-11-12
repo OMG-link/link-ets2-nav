@@ -39,6 +39,7 @@ public static class PrefabPathGeometry
                 .Select((p,rank)=>(p.slot,rank)).ToDictionary(p=>p.slot,p=>p.rank);
         }
         var forks=PrefabForkTopology.Build(prefab,descriptor,placement,node=>Order(node,true));
+        var laneSignals=PrefabForkTopology.LaneSignals(prefab,descriptor,placement,node=>Order(node,true));
         for(int from=0;from<count;from++)
         for(int to=0;to<count;to++)
         {
@@ -62,7 +63,8 @@ public static class PrefabPathGeometry
                 candidates.Add(new(prefab.Uid,prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,input,output,
                     entryOrder[input],exitOrder[output],entryOrder.Count,exitOrder.Count,chain,lanePoints,
                     lanePoints.Zip(lanePoints.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)))
-                    {CurveStartPointIndices=Starts(chain),CurveBlinkers=chain.Select(i=>(LaneBlinker)(int)curves[i].Blinker).ToArray()});
+                    {CurveStartPointIndices=Starts(chain),CurveBlinkers=chain.Select(i=>(LaneBlinker)(int)curves[i].Blinker).ToArray(),
+                        NativeBranchSignal=laneSignals.GetValueOrDefault((prefab.Nodes[from].Uid,input,prefab.Nodes[to].Uid,output))});
             }
             if(candidates.Count==0)continue;
             var representative=PrefabCurvePathfinder.Find(descriptor,control[from].InputLines,control[to].OutputLines.Where(Valid).ToHashSet());

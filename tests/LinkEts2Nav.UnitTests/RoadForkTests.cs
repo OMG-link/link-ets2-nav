@@ -100,6 +100,23 @@ public sealed class RoadForkTests
     public void FullNativeAlternativesExposeConflictMissingFromShortestRepresentative()
         =>Assert.Null(Topology(Blinker.RightBlinker,true).Branches.Single(b=>b.ExitNode==30).Signal);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SingleExitLaneBirthReadsWholeNativeDivergenceAndExcludesEarlierLamp(bool conflicting)
+    {
+        var curves=new List<NavCurve>{new(),new(){Blinker=Blinker.LeftBlinker,NextLines={2}},new(){NextLines={3,4}},
+            new(),new(){Blinker=Blinker.RightBlinker,NextLines={5}},new()};
+        if(conflicting){curves[2].NextLines.Add(6);curves.Add(new(){Blinker=Blinker.LeftBlinker,NextLines={5}});}
+        var d=new PrefabDescriptor{Nodes=[new(){Position=Vector3.Zero,InputLines=[0,1],OutputLines=[]},
+            new(){Position=new(0,0,100),InputLines=[],OutputLines=[0,3,5]}],NavCurves=curves};
+        var p=new Prefab{Nodes=[new Node{Uid=10,Position=Vector3.Zero},new Node{Uid=20,Position=new(0,0,100)}]};
+        Assert.True(PrefabPlacement.TryCreate(p,d,out var placement));
+        var signals=PrefabForkTopology.LaneSignals(p,d,placement,_=>new Dictionary<int,int>{{0,0},{1,1}});
+        Assert.Equal(ForkSignal.None,signals[(10,1,20,1)]);
+        if(conflicting)Assert.Null(signals[(10,1,20,2)]);else Assert.Equal(ForkSignal.Right,signals[(10,1,20,2)]);
+    }
+
     // Minimal real PPD topology fixtures: indices, connectivity and lamp commands
     // only. No model meshes, textures or full game assets are embedded.
     [Theory]

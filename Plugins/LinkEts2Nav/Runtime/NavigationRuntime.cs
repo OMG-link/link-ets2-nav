@@ -21,6 +21,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
 {
     private readonly LaneMergeDetector mergeDetector = new();
     private readonly LaneExitApproach exitApproach = new();
+    private readonly AccelerationLaneApproach acceleration = new();
     private readonly LaneRoutePlanner lanePlanner = new();
     private readonly NavigationManeuverDetector detector = new();
     private readonly NavigationInstructionPolicy policy = new();
@@ -84,6 +85,12 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         // Recognized roundabouts already own entry/exit guidance; their internal joins are not ramp actions.
         var merges=mergeDetector.Find(route,paths.GetNavigationGraph(),laneRoute,along.Value)
             .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
+        var accelerationActions=acceleration.Find(instructionRoute,paths.GetNavigationGraph(),along.Value);
+        NavigationManeuver? ProvenAcceleration(LaneMergeObservation m)=>accelerationActions.FirstOrDefault(a=>
+            a.JunctionId=="lane-merge:"+m.PrefabUid.ToString("X16")&&m.MoveLeft is {} left
+            &&a.Kind==(left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight)&&a.EndDistanceMeters is {} end&&Math.Abs(end-m.DistanceMeters)<2);
+        merges=merges.Select(m=>ProvenAcceleration(m) is {} proof?m with{Kind=LaneMergeKind.Ramp,
+            ParallelDistanceMeters=proof.ApproachInterval!.LengthMeters,Reason="已沿原生车道继承证明独立入口、并行及最终收口完整区间"}:m).ToArray();
         string mergeState=string.Join("|",merges.Select(m=>$"{m.Id}:{m.Kind}:{m.ParallelDistanceMeters}:{m.MoveLeft}"));
         if(mergeState!=mergeSignature)
         {
@@ -94,15 +101,20 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         {
             string group=$"prefab:{merge.PrefabUid:X16}";
             upcoming=upcoming.Where(m=>m.JunctionId!=group||m.Kind is ManeuverKind.TurnLeft or ManeuverKind.TurnRight or ManeuverKind.UTurn or ManeuverKind.EnterRoundabout or ManeuverKind.ExitRoundabout or ManeuverKind.PassRoundaboutExit).ToArray();
+            if(ProvenAcceleration(merge) is not null)continue;
             if(merge.MoveLeft is null)continue;
             string side=merge.MoveLeft==true?"左":"右";
             string lanes=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
-            var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,merge.DistanceMeters,"lane","lane")
+            double anchor=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} length?merge.DistanceMeters-length/2:merge.DistanceMeters;
+            var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,anchor,"lane","lane")
             { EndDistanceMeters=merge.EndDistanceMeters,JunctionId="lane-merge:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
-                AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.DistancePreview:NavigationAnnouncementMode.Silent,
-                Instruction=$"车道合并，建议提前走{side}侧{lanes}" };
+                AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.DistancePreview:merge.Kind==LaneMergeKind.Ramp?NavigationAnnouncementMode.Normal:NavigationAnnouncementMode.Silent,
+                ApproachInterval=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} span?new(merge.DistanceMeters-span,merge.DistanceMeters):null,
+                Instruction=merge.Kind==LaneMergeKind.LaneReduction?$"车道合并，建议提前走{side}侧{lanes}":null };
             upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
         }
+        upcoming=upcoming.Where(m=>!accelerationActions.Any(a=>m.JunctionId==a.JunctionId?.Replace("lane-merge:","prefab:",StringComparison.Ordinal)))
+            .Concat(accelerationActions).OrderBy(m=>m.DistanceMeters).ToArray();
         if(yardApproach)
         {
             string group="prefab:"+route[0].Id.Split(':')[1];
@@ -210,7 +222,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
     public void Reset()
     {
         policy.Reset();eventPlanner.Reset();progress.Reset();guidance?.Suspend("navigation");
-        mergeDetector.Reset(); exitApproach.Reset();
+        mergeDetector.Reset(); exitApproach.Reset();acceleration.Reset();
         mergeSignature=forkSignature=null;
         speech?.ClearPlan("navigation");
         map = null;

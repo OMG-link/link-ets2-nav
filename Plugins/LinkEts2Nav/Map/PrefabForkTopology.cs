@@ -16,17 +16,36 @@ public static class PrefabForkTopology
 {
     public static IReadOnlyDictionary<ulong,RoadForkInfo> Build(Prefab prefab,PrefabDescriptor descriptor,
         PrefabPlacement placement,Func<int,IReadOnlyDictionary<int,int>> entryOrders)
+        =>Analyze(prefab,descriptor,placement,entryOrders,false).Forks;
+
+    /// <summary>Same full native graph analysis, with each output lane as its own decision target.</summary>
+    public static IReadOnlyDictionary<(ulong Entry,int Input,ulong Exit,int Output),ForkSignal?> LaneSignals(
+        Prefab prefab,PrefabDescriptor descriptor,PrefabPlacement placement,Func<int,IReadOnlyDictionary<int,int>> entryOrders)
+        =>Analyze(prefab,descriptor,placement,entryOrders,true).Signals;
+
+    private sealed record Analysis(IReadOnlyDictionary<ulong,RoadForkInfo> Forks,
+        IReadOnlyDictionary<(ulong Entry,int Input,ulong Exit,int Output),ForkSignal?> Signals);
+    private static Analysis Analyze(Prefab prefab,PrefabDescriptor descriptor,
+        PrefabPlacement placement,Func<int,IReadOnlyDictionary<int,int>> entryOrders,bool byLane)
     {
         var curves=descriptor.NavCurves;int count=curves.Count;var nodes=placement.ControlNodes;
         var result=new Dictionary<ulong,RoadForkInfo>();
-        if(count==0||nodes.Count>63)return result;
+        var signals=new Dictionary<(ulong,int,ulong,int),ForkSignal?>();
+        Analysis Finish()=>new(result,signals);
+        if(count==0||nodes.Count>63)return Finish();
         var boundary=new ulong[count];var reach=new ulong[count];var previous=Enumerable.Range(0,count).Select(_=>new List<int>()).ToArray();
+        var nodeMasks=new ulong[nodes.Count];var targetNodes=byLane?new List<int>():Enumerable.Range(0,nodes.Count).ToList();
         bool valid=true;
         for(int node=0;node<nodes.Count;node++)foreach(int curve in nodes[node].OutputLines.Where(i=>i>=0))
-            if(curve>=count||boundary[curve]!=0)valid=false;else boundary[curve]=1UL<<node;
+        {
+            int target=byLane?targetNodes.Count:node;
+            if(curve>=count||boundary[curve]!=0||target>=64){valid=false;continue;}
+            if(byLane)targetNodes.Add(node);
+            boundary[curve]=1UL<<target;nodeMasks[node]|=boundary[curve];
+        }
         for(int i=0;i<count;i++)foreach(int next in curves[i].NextLines)
             if(next<0||next>=count)valid=false;else if(boundary[i]==0)previous[next].Add(i);
-        if(!valid)return result;
+        if(!valid)return Finish();
         var queue=new Queue<int>();
         for(int i=0;i<count;i++)if(boundary[i]!=0){reach[i]=boundary[i];queue.Enqueue(i);}
         while(queue.TryDequeue(out int curve))foreach(int parent in previous[curve])
@@ -35,7 +54,7 @@ public static class PrefabForkTopology
         {BlinkerType.NoBlinker or BlinkerType.NoBlinkerForced=>0,BlinkerType.LeftBlinker=>1,BlinkerType.RightBlinker=>2,_=>4};
         for(int from=0;from<nodes.Count;from++)
         {
-            var orders=entryOrders(from);ulong excluded=1UL<<from,all=0;
+            var orders=entryOrders(from);ulong excluded=nodeMasks[from],all=0;
             foreach(int start in nodes[from].InputLines.Where(i=>i>=0&&i<count))all|=reach[start]&~excluded;
             if(BitOperations.PopCount(all)<2)continue;
             var outcomes=new Dictionary<(int Exit,int Lane,int Output),HashSet<int>>();
@@ -53,7 +72,7 @@ public static class PrefabForkTopology
                     if(!visited.Add(state))continue;int i=state.Curve;
                     if(boundary[i]!=0)
                     {
-                        for(int to=0;to<nodes.Count;to++)if(to!=from&&(boundary[i]&(1UL<<to))!=0)
+                        for(int to=0;to<nodes.Count;to++)if(to!=from&&(boundary[i]&nodeMasks[to])!=0)
                             for(int output=0;output<nodes[to].OutputLines.Length;output++)if(nodes[to].OutputLines[output]==i)
                             {
                                 var key=(to,lane,output);
@@ -72,7 +91,7 @@ public static class PrefabForkTopology
                         if(after==root&&BitOperations.PopCount(root)>1)mask=0;
                         if(narrows&&BitOperations.PopCount(after)==1)
                         {
-                            int to=BitOperations.TrailingZeroCount(after);
+                            int to=targetNodes[BitOperations.TrailingZeroCount(after)];
                             if(!decisions.TryGetValue(to,out var points))decisions[to]=points=[];
                             points.Add(new(lane,i,next));
                         }
@@ -81,10 +100,12 @@ public static class PrefabForkTopology
                 }
             }
             var branches=new List<RoadForkBranch>();
-            for(int to=0;to<nodes.Count;to++)if((all&(1UL<<to))!=0)
+            for(int to=0;to<nodes.Count;to++)if((all&nodeMasks[to])!=0)
             {
                 var rows=outcomes.Where(p=>p.Key.Exit==to).ToArray();var lamps=rows.SelectMany(p=>p.Value).Distinct().ToArray();
-                ForkSignal? signal=lamps.Length==1?lamps[0] switch{0=>ForkSignal.None,1=>ForkSignal.Left,2=>ForkSignal.Right,_=>null}:null;
+                ForkSignal? Signal(IEnumerable<int> values){var v=values.Distinct().ToArray();return v.Length==1?v[0] switch{0=>ForkSignal.None,1=>ForkSignal.Left,2=>ForkSignal.Right,_=>null}:null;}
+                ForkSignal? signal=Signal(lamps);
+                foreach(var row in rows)signals[(prefab.Nodes[from].Uid,row.Key.Lane,prefab.Nodes[to].Uid,row.Key.Output)]=Signal(row.Value);
                 var inputs=rows.Select(p=>p.Key.Lane).Distinct().Order().ToArray();
                 bool inherited=inputs.Any(l=>outcomes.Where(p=>p.Key.Lane==l&&p.Value.Contains(0)).Select(p=>p.Key.Exit).Distinct().SequenceEqual(new[]{to})
                     &&rows.Where(p=>p.Key.Lane==l&&p.Value.Contains(0)).Any(p=>!rows.Any(q=>q.Key.Lane!=l&&q.Key.Output==p.Key.Output&&q.Value.Contains(0))));
@@ -94,6 +115,6 @@ public static class PrefabForkTopology
             result[prefab.Nodes[from].Uid]=new(prefab.Nodes[from].Uid,orders.Count,branches,
                 inputValid?null:"原生入口车道索引或顺序数据不完整");
         }
-        return result;
+        return Finish();
     }
 }

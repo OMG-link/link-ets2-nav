@@ -26,6 +26,8 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     /// <summary>True when a straight decision explicitly continues the main road.</summary>
     public bool IsMainRoadContinuation { get; init; }
     public RoadForkInstruction? ForkInstruction { get; init; }
+    /// <summary>Proven lane-change interval relative to the player; the action anchor is its midpoint.</summary>
+    public LaneActionInterval? ApproachInterval { get; init; }
 }
 
 /// <summary>
@@ -260,6 +262,10 @@ public sealed class NavigationManeuverDetector
         var decision = RoadJoinClassifier.Classify(selected);
         if (decision.Role == RoadJoinRole.Ambiguous) return (null, true);
         if (decision.Role != RoadJoinRole.Entering) return (null, false);
+        // Independent side lanes are not yet a required lane change. Their full
+        // approach is handled only once a later merge or mandatory main-road exit
+        // constraint proves that the added lane must be left.
+        if(RoadJoinTopology.IndependentEntries(selected.LaneConnections,selected.EndNodeUid).Count>0)return(null,false);
         var main = alternatives.FirstOrDefault(e => e.StartNodeUid == decision.MainEntry);
         if (main is null || main.Points.Count < 4 || selected.Points.Count < 4
             || NativeTangent(main, false) is not { } direction) return (null, true);

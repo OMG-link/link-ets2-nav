@@ -76,20 +76,24 @@ public sealed class LaneMergeDetector
                 var measured=MeasureParallel(endTrace,mainTrace);
                 if(!measured.Observed)continue;
                 double? parallel=measured.Distance;
-                var kind=direction.FirstEnds is null||parallel is null?LaneMergeKind.Uncertain:parallel<500?LaneMergeKind.Ramp:LaneMergeKind.LaneReduction;
+                bool separateEntrances=ending.EntryNodeUid!=main.EntryNodeUid;
+                var kind=direction.FirstEnds is null||parallel is null?LaneMergeKind.Uncertain:parallel>500?LaneMergeKind.LaneReduction
+                    :separateEntrances?LaneMergeKind.Ramp:LaneMergeKind.Uncertain;
                 var endLine=new LanePolyline(ending.Points);var mainLine=new LanePolyline(main.Points);
                 var endPosition=endLine.At(Math.Max(0,endLine.Along[ei]-Math.Min(30,endLine.Along[ei])));
                 var mainNear=mainLine.Project(endPosition);var heading=mainLine.Heading(mainNear.Along);
                 double lateral=Vector3.Dot(endPosition-mainLine.At(mainNear.Along),new(-heading.Z,0,heading.X));
                 bool? left=direction.FirstEnds is null?null:direction.MoveLeft;
                 string reason=direction.Reason;
+                if(kind==LaneMergeKind.Uncertain&&direction.FirstEnds is not null&&parallel is <=500&&!separateEntrances)
+                    reason+="；短平行几何不足以证明另一端原生分离，等待完整车道段";
                 if(left is not null&&(Math.Abs(lateral)<.1||left.Value!=(lateral>0)))
                 {left=null;kind=LaneMergeKind.Uncertain;reason="原生转向灯与合并前车道侧向位置矛盾";}
                 int count=lanes.Where(p=>p.PrefabUid==ending.PrefabUid&&p.EntryNodeUid==ending.EntryNodeUid&&p.ExitNodeUid==ending.ExitNodeUid)
                     .Where(p=>left==true?p.EntryOrder<ending.EntryOrder:p.EntryOrder>ending.EntryOrder).Select(p=>p.EntryLane).Distinct().Count();
                 count=left is null?0:Math.Max(1,count);
                 result.Add(new(ending,main,ending.Points[ei],left,count,parallel,kind,
-                    reason+(parallel is null?"；上游平行段超出已加载或唯一连接范围":$"；合并前平行接近区间约 {parallel:F0} m")));
+                    reason+(parallel is null?"；上游平行段超出已加载或唯一连接范围":parallel>500?"；已证实平行接近超过500 m（测量下界）":$"；合并前平行接近区间约 {parallel:F0} m")));
             }
         }
         return result.DistinctBy(m=>(m.Ending.PrefabUid,m.Ending.EntryNodeUid,m.Ending.EntryLane,m.Ending.ExitNodeUid,m.Ending.ExitLane)).ToArray();
@@ -148,7 +152,9 @@ public sealed class LaneMergeDetector
             if(parallel){stable++;if(stable>=3)observed=true;}
             else if(observed&&covered)return(true,Math.Max(0,d-2));
             else stable=0;
-            if(observed&&d>=500&&parallel)return(true,500);
+            // 500 m remains inclusive. Only a sample strictly beyond it proves
+            // a long reduction; never reuse a 500 m lower bound as a short ramp.
+            if(observed&&d>500&&parallel)return(true,d);
         }
         return(observed,null);
     }

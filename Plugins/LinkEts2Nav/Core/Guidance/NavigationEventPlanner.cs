@@ -62,6 +62,13 @@ public sealed class NavigationEventPlanner
                 continue;
             }
             events.Add(new(state.Id,state.Along,m.Instruction??NavigationPrompts.Action(m.Kind)){SpeechSequenceId=sequence});
+            if(m.IsMainRoadContinuation&&m.ForkInstruction?.Silent==true)
+            {
+                // Later map facts can prove a previously generic fork to be a
+                // deceleration-lane split. Close its series, including queued audio.
+                sequences[sequence]=new(sequence,state.EndAlong){Ended=true};
+                continue;
+            }
             if(!sequences.TryGetValue(sequence,out var previousSequence)||previousSequence.EndAlongMeters is null)
                 sequences[sequence]=new(sequence,state.EndAlong);
             bool silent=m.AnnouncementMode==NavigationAnnouncementMode.Silent;

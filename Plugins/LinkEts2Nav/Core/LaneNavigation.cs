@@ -12,6 +12,8 @@ public sealed record PrefabLanePath(ulong PrefabUid,ulong EntryNodeUid,ulong Exi
     public IReadOnlyList<int> CurveStartPointIndices { get; init; } = [];
     /// <summary>Native lamp command for each incoming PPD curve, aligned with CurveIndices.</summary>
     public IReadOnlyList<LaneBlinker> CurveBlinkers { get; init; } = [];
+    /// <summary>Effective lamp after this lane's native divergence, verified across all native alternatives.</summary>
+    public ForkSignal? NativeBranchSignal { get; init; }
 }
 public sealed record LaneRouteSection(string EdgeId,PrefabLanePath Path);
 /// <summary>A road corridor connects consecutive selected prefab paths. A requested lane change is explicit, not a PPD curve.</summary>

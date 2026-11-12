@@ -39,7 +39,7 @@ public sealed class LaneMergeDetectorTests
     {
         var scene=Scene(left:left);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
         Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);
-        Assert.Equal(500,observation.ParallelDistanceMeters);Assert.Equal(!left,observation.MoveLeft);
+        Assert.True(observation.ParallelDistanceMeters>500);Assert.Equal(!left,observation.MoveLeft);
         Assert.Equal(1,observation.RecommendedLaneCount);
         Assert.Equal(observation.DistanceMeters,observation.EndDistanceMeters);
     }
@@ -58,7 +58,7 @@ public sealed class LaneMergeDetectorTests
         }
         var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..sections,scene.Edge],scene.Plan,0));
         Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);
-        Assert.Equal(500,observation.ParallelDistanceMeters);
+        Assert.True(observation.ParallelDistanceMeters>500);
     }
 
     [Theory]
@@ -174,14 +174,28 @@ public sealed class LaneMergeDetectorTests
             new("prefab:000000000000002B:2:1",40,5,side.Points){LanePaths=[side]}];
         var result=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..upstream,..scene.Graph],scene.Plan,0));
         Assert.Equal(LaneMergeKind.LaneReduction,result.Kind);
-        Assert.Equal(500,result.ParallelDistanceMeters);
+        Assert.True(result.ParallelDistanceMeters>500);
     }
 
     [Fact]
-    public void ShortParallelApproachWithKnownDivergenceIsRamp()
+    public void ShortParallelGeometryWithoutNativeSeparateOriginDoesNotProveRamp()
     {
         var scene=Scene(shortApproach:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
-        Assert.Equal(LaneMergeKind.Ramp,observation.Kind);Assert.InRange(observation.ParallelDistanceMeters!.Value,70,110);
+        Assert.Equal(LaneMergeKind.Uncertain,observation.Kind);Assert.InRange(observation.ParallelDistanceMeters!.Value,70,110);
+    }
+    [Fact]
+    public void SharedSuffixAndDistinctNativeEntrancesProveShortRamp()
+    {
+        var scene=Scene(shortApproach:true);
+        var main=scene.Edge.LanePaths[0] with{EntryLane=0,EntryOrder=0,EntryLaneCount=1};
+        var side=scene.Edge.LanePaths[1] with{EntryNodeUid=99,EntryLane=0,EntryOrder=0,EntryLaneCount=1};
+        var mainEdge=scene.Edge with{LanePaths=[main]};
+        var sideEdge=scene.Edge with{Id="prefab:000000000000002A:2:1",StartNodeUid=99,LanePaths=[side]};
+        var sideRoad=scene.Graph[0] with{Id="side-road",StartNodeUid=6,EndNodeUid=99,
+            Points=scene.Graph[0].Points.Select(p=>p+new Vector3(side.Points[0].X,0,0)).ToArray()};
+        var plan=new LaneNavigationPlan([new(sideEdge.Id,side)],[],true,null);
+        var observation=Assert.Single(new LaneMergeDetector().Find([sideEdge],[scene.Graph[0],sideRoad,mainEdge,sideEdge],plan,0));
+        Assert.Equal(LaneMergeKind.Ramp,observation.Kind);Assert.True(observation.MoveLeft);
     }
     [Fact]
     public void MissingUpstreamCoverageDoesNotTurnLongUnknownRoadIntoRamp()
@@ -229,9 +243,10 @@ public sealed class LaneMergeDetectorTests
         GameDataSnapshot Data(double x,double z,DateTimeOffset time)=>new(new(x,0,z,0,15,2100,true,false,1,time),route,RouteAvailability.Available,"s",true);
         int sounds=0;var runtime=new NavigationRuntime(fallback:()=>sounds++);
         var first=runtime.Process(Data(4.5,shortApproach?70:500,now),nearby,now);
-        Assert.Contains(first.LaneMerges,m=>m.Kind==(shortApproach?LaneMergeKind.Ramp:LaneMergeKind.LaneReduction));
+        Assert.Contains(first.LaneMerges,m=>m.Kind==(shortApproach?LaneMergeKind.Uncertain:LaneMergeKind.LaneReduction));
         Assert.Equal(shortApproach?NavigationAnnouncementMode.Silent:NavigationAnnouncementMode.DistancePreview,first.Next!.AnnouncementMode);
-        if(shortApproach)Assert.Null(first.LastSpoken);else Assert.Equal("车道合并，建议提前走左侧车道。",first.LastSpoken);
+        if(shortApproach)Assert.Null(first.LastSpoken);
+        else Assert.Equal("车道合并，建议提前走左侧车道。",first.LastSpoken);
         Assert.Equal(shortApproach?0:1,sounds);
         runtime.Process(Data(1,10,now.AddSeconds(1)),nearby,now.AddSeconds(1));
         Assert.Equal(shortApproach?0:1,sounds);

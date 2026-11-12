@@ -94,4 +94,20 @@ public sealed class NavigationEventPlannerTests
         Assert.Contains(results,r=>r.Disposition==TriggerDisposition.Ended);
         Assert.Equal("四百米后，左转。",Assert.Single(results,r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
     }
+
+    [Fact]
+    public void LaterProofOfMainContinuationEndsOldGenericForkSpeechSeries()
+    {
+        var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
+        var fork=new NavigationManeuver("fork",ManeuverKind.ChooseLanes,100,"a","b")
+            {EndDistanceMeters=200,Instruction="走左侧两车道",ForkInstruction=new(ManeuverKind.ChooseLanes,false,"走左侧两车道",[0,1],[0,1])};
+        t.Publish(p.Build("s","r",Now,0,[fork],true,false,false,s));
+        Assert.Contains(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued);
+        var main=fork with{Kind=ManeuverKind.Straight,IsMainRoadContinuation=true,AnnouncementMode=NavigationAnnouncementMode.Silent,
+            ForkInstruction=fork.ForkInstruction with{Silent=true}};
+        t.Publish(p.Build("s","r",Now,1,[main],true,false,false,s));
+        var result=s.Update(t,Now,0);
+        Assert.Contains(result,r=>r.Disposition==TriggerDisposition.Ended);
+        Assert.DoesNotContain(result,r=>r.Disposition==TriggerDisposition.Queued);
+    }
 }

@@ -96,15 +96,12 @@ public sealed class NavigationEventPlanner
             double? initial=state.BriefingAlong is {} anchor?Math.Max(0,state.Along-anchor):null;
             int priorIndex=predecessor is null?-1:Array.IndexOf(ordered,predecessor);
             var wording=ordered.Select(p=>p.Maneuver with{DistanceMeters=p.Along-playerAlong}).ToArray();
-            int ordinal=Ordinal(wording,priorIndex+1,i);
-            bool precedingStraight=wording.Skip(priorIndex+1).Take(i-priorIndex-1)
-                .Any(p=>p.Kind==ManeuverKind.Straight&&!p.IsMainRoadContinuation);
             string overviewId=state.Id+":overview";
             if(!m.ExecutionOnly&&initial is >=50)
             {
                 int rounded=(int)NavigationPrompts.RoundDistance(initial.Value);
                 string text=initial>800?NavigationPrompts.Continue(initial.Value)
-                    :NavigationPrompts.FirstLayer(m.Kind,initial.Value,ordinal,Instruction(m,rounded));
+                    :NavigationPrompts.FirstLayer(m.Kind,initial.Value,Ordinal(ordered,priorIndex+1,i,state.BriefingAlong!.Value),Instruction(m,rounded));
                 triggers.Add(new(overviewId,state.Id,SpeechTriggerKind.Overview,state.BriefingAlong!.Value,text)
                     {Enabled=active,StrictCrossing=state.BriefingStrict,SequenceOrder=-rounded,Silent=silent,SkipAtSpeedKph=rounded==100?60:null});
             }
@@ -113,7 +110,10 @@ public sealed class NavigationEventPlanner
             {
                 if(m.ExecutionOnly||initial is null||stage>=initial.Value
                     ||(initial<=800&&!Stages.Contains((int)initial.Value)&&stage==nearest))continue;
-                string text=NavigationPrompts.AtDistance(m.Kind,stage,stage==200?ordinal:0,Instruction(m,stage));
+                double triggerAlong=state.Along-stage;
+                string text=NavigationPrompts.AtDistance(m.Kind,stage,stage==200?Ordinal(ordered,priorIndex+1,i,triggerAlong):0,Instruction(m,stage));
+                bool precedingStraight=ordered.Skip(priorIndex+1).Take(i-priorIndex-1)
+                    .Any(p=>p.Along>=triggerAlong&&p.Maneuver.Kind==ManeuverKind.Straight&&!p.Maneuver.IsMainRoadContinuation);
                 if(stage==100&&precedingStraight&&m.Kind!=ManeuverKind.EnterRoundabout)
                     text=text.TrimEnd('。')+"，前方路口直行。";
                 triggers.Add(new(state.Id+":"+stage,state.Id,SpeechTriggerKind.Advance,state.Along-stage,text)
@@ -147,10 +147,13 @@ public sealed class NavigationEventPlanner
     {for(int i=start;i<list.Count;i++)if(IsNavigationAction(list[i]))return i;return -1;}
     private static int PreviousAction(IReadOnlyList<NavigationManeuver> list,int index)
     {for(int i=index-1;i>=0;i--)if(IsNavigationAction(list[i]))return i;return -1;}
-    private static int Ordinal(IReadOnlyList<NavigationManeuver> list,int start,int end)
+    // Every phrase describes the route AFTER its own preplanned point, not the
+    // whole leg or the player's position when the future audio was prepared.
+    private static int Ordinal(IReadOnlyList<ActionPlan> list,int start,int end,double triggerAlong)
     {
-        if(list[end].Kind==ManeuverKind.EnterRoundabout||list[end].ForkInstruction is not null)return 0;
-        var span=list.Skip(start).Take(end-start+1).ToArray();
+        var target=list[end].Maneuver;
+        if(target.Kind==ManeuverKind.EnterRoundabout||target.ForkInstruction is not null)return 0;
+        var span=list.Skip(start).Take(end-start+1).Where(p=>p.Along>=triggerAlong).Select(p=>p.Maneuver).ToArray();
         if(span.Any(m=>!m.HasSeparateApproachRoad))return 0;
         return span.Select(m=>m.JunctionId??m.Id).Distinct(StringComparer.Ordinal).Count();
     }

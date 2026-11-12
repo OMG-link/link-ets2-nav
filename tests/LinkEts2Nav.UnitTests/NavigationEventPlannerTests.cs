@@ -76,6 +76,64 @@ public sealed class NavigationEventPlannerTests
     }
 
     [Fact]
+    public void FutureBriefingCountsJunctionsAfterItsOwnAnchorBeforeThePlayerGetsThere()
+    {
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();
+        NavigationManeuver Straight(string id,double distance)=>new(id,ManeuverKind.Straight,distance,"in","out"){JunctionId=id,EndDistanceMeters=distance+20};
+        var plan=planner.Build("s","r",Now,0,
+            [Straight("first",70),Straight("second",130),Straight("third",270),Turn(460)],true,false,false,scheduler,
+            initialBoundaryAlong:315);
+        var briefing=Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("turn@")&&t.Kind==SpeechTriggerKind.Overview);
+        Assert.Equal(315,briefing.AlongMeters);
+        Assert.Equal("一百米后，左转。",briefing.Text);
+        Assert.DoesNotContain("个路口",briefing.Text);
+    }
+
+    [Fact]
+    public void EachAdvancePointHasItsOwnOrdinalAndPassedStraightDoesNotAddNearInstruction()
+    {
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();
+        NavigationManeuver Straight(string id,double distance,string? junction=null)=>new(id,ManeuverKind.Straight,distance,"in","out")
+            {JunctionId=junction??id,EndDistanceMeters=distance+20};
+        var plan=planner.Build("s","r",Now,0,
+            [Straight("behind-200",200),Straight("ahead-200",400),Turn(550)],true,false,false,scheduler,initialBoundaryAlong:50);
+        var advance=Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("turn@")&&t.Id.EndsWith(":200"));
+        Assert.Equal(350,advance.AlongMeters);
+        Assert.Equal("两百米后，在第二个路口左转。",advance.Text);
+        var near=Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("turn@")&&t.Id.EndsWith(":100"));
+        Assert.Equal("一百米后，左转。",near.Text);
+        // The text is prepared once against its fixed point and does not shrink
+        // its ordinal merely because the player approaches before that point.
+        var moved=planner.Build("s","r",Now,300,
+            [Straight("ahead-200",100),Turn(250)],true,false,false,scheduler);
+        Assert.Equal(advance,Assert.Single(moved.Triggers,t=>t.EventId.StartsWith("turn@")&&t.Id.EndsWith(":200")));
+    }
+
+    [Fact]
+    public void NearPointStillMentionsAStraightJunctionThatIsAheadOfThatPoint()
+    {
+        var planner=new NavigationEventPlanner();
+        var straight=new NavigationManeuver("straight",ManeuverKind.Straight,490,"in","out")
+            {JunctionId="straight",EndDistanceMeters=510};
+        var plan=planner.Build("s","r",Now,0,[straight,Turn(550)],true,false,false,new(),initialBoundaryAlong:50);
+        Assert.Equal("一百米后，左转，前方路口直行。",
+            Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("turn@")&&t.Id.EndsWith(":100")).Text);
+    }
+
+    [Fact]
+    public void CountUsesPhysicalJunctionIdentityAndIgnoresUnknownApproachesBeforeThePoint()
+    {
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();
+        NavigationManeuver Straight(string id,double distance,string junction,bool separate=true)=>new(id,ManeuverKind.Straight,distance,"in","out")
+            {JunctionId=junction,HasSeparateApproachRoad=separate,EndDistanceMeters=distance+20};
+        var plan=planner.Build("s","r",Now,0,
+            [Straight("past",200,"past",false),Straight("one-lane",350,"shared"),Straight("other-lane",360,"shared"),Turn(550)],
+            true,false,false,scheduler,initialBoundaryAlong:50);
+        Assert.Equal("两百米后，在第二个路口左转。",
+            Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("turn@")&&t.Id.EndsWith(":200")).Text);
+    }
+
+    [Fact]
     public void DedicatedForkChoosesLaneAtOpeningAndReleasesNextBriefingOnEntry()
     {
         var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();

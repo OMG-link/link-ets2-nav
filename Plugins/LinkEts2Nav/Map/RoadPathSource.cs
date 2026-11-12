@@ -343,7 +343,7 @@ public sealed class RoadPathSource
     }
 
     private static bool Near(Road road, Vector3 position)
-        => Vector3.Distance(road.Node.Position, position) < 2500 || Vector3.Distance(road.ForwardNode.Position, position) < 2500;
+        => Vector3.Distance(road.Node.Position, position) <= 800 || Vector3.Distance(road.ForwardNode.Position, position) <= 800;
 
     private DirectedRoad Orient(Road road, ulong start)
     {

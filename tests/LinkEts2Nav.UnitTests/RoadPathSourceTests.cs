@@ -46,6 +46,26 @@ public sealed class RoadPathSourceTests
     }
 
     [Theory]
+    [InlineData(799,true)]
+    [InlineData(800,true)]
+    [InlineData(800.01f,false)]
+    [InlineData(1000,false)]
+    [InlineData(1199.99f,false)]
+    [InlineData(1200,true)]
+    [InlineData(1201,true)]
+    public void LocalizationIncludesRoadWhenEitherEndpointIsWithinEightHundredMeters(float x,bool near)
+    {
+        // A deliberately long test road separates the endpoint coarse filter
+        // from the player's exact interior projection onto its centerline.
+        var map=new GameMap();var road=AddRoad(map,Point(0),Point(2000));
+        var source=new RoadPathSource(map);var path=source.GetNavigationGraph()
+            .Where(e=>e.StartNodeUid==road.Node.Uid).ToArray();
+        Assert.Equal(near,source.IsPositionOnPath(Point(x),path));
+        var noRoute=Route();
+        Assert.Equal(near,source.GetPath(Point(x),Vector3.UnitX,noRoute,noRoute.Availability).Count==1);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void MissingOrAmbiguousDistantUidStillBreaksTheContinuousRoute(bool ambiguous)

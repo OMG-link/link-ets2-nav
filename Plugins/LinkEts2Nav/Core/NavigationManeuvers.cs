@@ -26,7 +26,7 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     /// <summary>True when a straight decision explicitly continues the main road.</summary>
     public bool IsMainRoadContinuation { get; init; }
     public RoadForkInstruction? ForkInstruction { get; init; }
-    /// <summary>Proven lane-change interval relative to the player; the action anchor is its midpoint.</summary>
+    /// <summary>Proven lane-change interval relative to the player; the action anchor is at ten percent from its start.</summary>
     public LaneActionInterval? ApproachInterval { get; init; }
 }
 

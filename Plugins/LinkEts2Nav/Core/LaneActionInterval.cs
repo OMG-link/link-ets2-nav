@@ -4,5 +4,5 @@ namespace LinkEts2Nav.Core;
 public sealed record LaneActionInterval(double StartMeters,double EndMeters)
 {
     public double LengthMeters=>EndMeters-StartMeters;
-    public double MidpointMeters=>(StartMeters+EndMeters)/2;
+    public double AtFraction(double fraction)=>StartMeters+LengthMeters*fraction;
 }

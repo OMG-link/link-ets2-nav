@@ -105,7 +105,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             if(merge.MoveLeft is null)continue;
             string side=merge.MoveLeft==true?"左":"右";
             string lanes=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
-            double anchor=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} length?merge.DistanceMeters-length/2:merge.DistanceMeters;
+            double anchor=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} length?new LaneActionInterval(merge.DistanceMeters-length,merge.DistanceMeters).AtFraction(.1):merge.DistanceMeters;
             var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,anchor,"lane","lane")
             { EndDistanceMeters=merge.EndDistanceMeters,JunctionId="lane-merge:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
                 AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.DistancePreview:merge.Kind==LaneMergeKind.Ramp?NavigationAnnouncementMode.Normal:NavigationAnnouncementMode.Silent,

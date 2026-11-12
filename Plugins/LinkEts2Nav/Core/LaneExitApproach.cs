@@ -52,7 +52,7 @@ public sealed class LaneExitApproach
             var kind=remembered.Signal switch{ForkSignal.Left=>ManeuverKind.KeepLeft,ForkSignal.Right=>ManeuverKind.KeepRight,_=>action.Kind};
             return action with{Kind=kind,Instruction=kind==action.Kind?action.Instruction:null,
                 ForkInstruction=kind!=action.Kind&&action.ForkInstruction is {} original?original with{Kind=kind,Text=null}:action.ForkInstruction,
-                DistanceMeters=entry-remembered.Lead/2,EndDistanceMeters=entry,ApproachInterval=new(entry-remembered.Lead,entry)};
+                DistanceMeters=new LaneActionInterval(entry-remembered.Lead,entry).AtFraction(.1),EndDistanceMeters=entry,ApproachInterval=new(entry-remembered.Lead,entry)};
         }).Where(a=>a.EndDistanceMeters is null or >=0).OrderBy(a=>a.DistanceMeters).ToArray();
     }
     private static double Length(DirectedRoad road)=>road.Points.Zip(road.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));

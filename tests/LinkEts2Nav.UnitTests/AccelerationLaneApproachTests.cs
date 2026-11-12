@@ -33,11 +33,11 @@ public sealed class AccelerationLaneApproachTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void RequiredNavigationLaneChangeUsesWholeAddedLaneInterval(bool leftSide)
+    public void RequiredNavigationLaneChangeUsesTenPercentOfWholeAddedLaneInterval(bool leftSide)
     {
         var s=Scene(false,leftSide);var action=Assert.Single(new AccelerationLaneApproach().Find(s.Route,s.Graph,0));
         Assert.Equal(leftSide?ManeuverKind.MergeRight:ManeuverKind.MergeLeft,action.Kind);
-        Assert.Equal(140,action.DistanceMeters);Assert.Equal(240,action.EndDistanceMeters);
+        Assert.Equal(60,action.DistanceMeters);Assert.Equal(240,action.EndDistanceMeters);
         Assert.Equal(new LaneActionInterval(40,240),action.ApproachInterval);
     }
     [Theory]
@@ -47,7 +47,7 @@ public sealed class AccelerationLaneApproachTests
     {
         var s=Scene(true,leftSide);var action=Assert.Single(new AccelerationLaneApproach().Find(s.Route,s.Graph,0));
         Assert.Equal(leftSide?ManeuverKind.MergeRight:ManeuverKind.MergeLeft,action.Kind);
-        Assert.Equal(150,action.DistanceMeters);Assert.Equal(260,action.EndDistanceMeters);
+        Assert.Equal(62,action.DistanceMeters);Assert.Equal(260,action.EndDistanceMeters);
     }
     [Fact]
     public void FuturePlannerLaneChangeCannotEraseStructuralNeedAndTrimmedOriginKeepsInterval()
@@ -55,7 +55,7 @@ public sealed class AccelerationLaneApproachTests
         var s=Scene(false);var detector=new AccelerationLaneApproach();
         Assert.Single(detector.Find(s.Route,s.Graph,0));
         var trimmed=Assert.Single(detector.Find(s.Route.Skip(1).ToArray(),s.Graph,0));
-        Assert.Equal(100,trimmed.DistanceMeters);Assert.Equal(200,trimmed.EndDistanceMeters);
+        Assert.Equal(20,trimmed.DistanceMeters);Assert.Equal(200,trimmed.EndDistanceMeters);
         Assert.Empty(detector.Find(s.Route.Skip(1).ToArray(),s.Graph,201));
         detector.Reset();Assert.Empty(detector.Find(s.Route.Skip(1).ToArray(),s.Graph,0));
     }

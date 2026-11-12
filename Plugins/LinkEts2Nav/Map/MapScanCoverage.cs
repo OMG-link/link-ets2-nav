@@ -3,10 +3,10 @@ using LinkEts2Nav.Runtime;
 using TruckLib.ScsMap;
 namespace LinkEts2Nav.Map;
 
-/// <summary>Nearby disk plus a narrow corridor along the game's route; never a five-kilometre disk.</summary>
+/// <summary>Nearby disk plus a narrow corridor along the game's route; never a ten-kilometre disk.</summary>
 public sealed class MapScanCoverage
 {
-    public const float LookaheadMeters = 5000;
+    public const float LookaheadMeters = 10000;
     private const float CorridorRadius = 100;
     public Vector3 Position { get; }
     public float NearbyRadius { get; }
@@ -43,7 +43,7 @@ public sealed class MapScanCoverage
             if (node.DistanceToEndMeters > remaining)
             { previous = (resolved, node.DistanceToEndMeters); continue; }
             // Official distances locate the current edge, but contain map scale. Never
-            // subtract 5000 from them to select a five-kilometre world-space horizon.
+            // subtract the horizon from them to select a world-space distance.
             var points = previous is { } prior ? Connection(prior.Node, resolved) : [position, point];
             if (!started)
             {

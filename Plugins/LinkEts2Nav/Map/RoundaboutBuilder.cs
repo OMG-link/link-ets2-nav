@@ -13,6 +13,7 @@ public sealed record RoundaboutStructure(string Id, IReadOnlyList<ulong> PrefabU
     public double RingLength { get; init; }
     public string? SpecialDefinitionId { get; init; }
     public RoundaboutDirectionResult? DirectionCheck { get; init; }
+    public RoundaboutLaneGeometryInfo? LaneGeometry { get; init; }
 }
 
 /// <summary>Actual directed PPD curves; road links are explicitly distinguished from prefab curves.</summary>
@@ -26,6 +27,8 @@ public sealed record RoundaboutCurve(RoundaboutCurveKey Key, ulong? PrefabUid,
     public bool TrafficKnown { get; init; } = true;
     public int EntryLane { get; init; } = -1;
     public int ExitLane { get; init; } = -1;
+    /// <summary>Upstream Road.InterpolateCurve lateral basis at the same uniform parameters as Points.</summary>
+    public IReadOnlyList<Vector3>? RoadNormals { get; init; }
 }
 
 /// <summary>One short-lived search session per newly constructed sector. Does not own map objects.</summary>
@@ -36,6 +39,7 @@ public sealed class RoundaboutBuilder
     internal const double MinimumCircularity = .85;
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurve> graph;
     public List<RoundaboutDirectionResult> DirectionChecks { get; } = [];
+    public List<RoundaboutLaneGeometryInfo> GeometryChecks { get; } = [];
     // Session-only memo 1: deterministic branch choice, including unresolved branches.
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurveKey?> successors = new();
     // Session-only memo 2: resolved suffix and ALL owners traversed to reach it.
@@ -53,7 +57,9 @@ public sealed class RoundaboutBuilder
             cancellationToken.ThrowIfCancellationRequested();
             var ring = Walk(entrance, cancellationToken);
             if (ring.Length == 0 || !ring.Any(k => graph[k].PrefabUid == initialPrefab)) continue;
-            var points = Join(ring);
+            var laneGeometry=RoundaboutLaneGeometry.Build(graph,ring);
+            GeometryChecks.Add(laneGeometry.Info);
+            var points = laneGeometry.Points;
             double quality = Circularity(points);
             if (quality < MinimumCircularity) continue;
             var check=RoundaboutDirection.Check(graph,ring,cancellationToken);
@@ -61,7 +67,7 @@ public sealed class RoundaboutBuilder
             if(check.OppositeWalk)continue;
             var members = ring.Select(k => graph[k].PrefabUid).OfType<ulong>().Distinct().Order().ToArray();
             var structure = Assemble(ring, members, points, quality, cancellationToken);
-            if (structure is not null) return structure with{DirectionCheck=check};
+            if (structure is not null) return structure with{DirectionCheck=check,LaneGeometry=laneGeometry.Info};
         }
         return null;
     }
@@ -74,12 +80,13 @@ public sealed class RoundaboutBuilder
         var ring=reference.ToArray();
         var members=ring.Select(k=>graph[k].PrefabUid).OfType<ulong>().Distinct().Order().ToArray();
         if(members.Length==0)return null;
-        var points=Join(ring);
+        var laneGeometry=RoundaboutLaneGeometry.Build(graph,ring);GeometryChecks.Add(laneGeometry.Info);
+        var points=laneGeometry.Points;
         var check=RoundaboutDirection.Check(graph,ring,token);DirectionChecks.Add(check);
         // Explicit reviewed declarations retain authority; expose any contradiction
         // rather than silently changing the user-maintained exception database.
         var assembled=Assemble(ring,members,points,Circularity(points),token);
-        return assembled is null?null:assembled with {DirectionCheck=check};
+        return assembled is null?null:assembled with {DirectionCheck=check,LaneGeometry=laneGeometry.Info};
     }
 
     private RoundaboutStructure? Assemble(RoundaboutCurveKey[] ring, ulong[] members,
@@ -152,8 +159,6 @@ public sealed class RoundaboutBuilder
             .ThenBy(c => c.Key.ItemUid).ThenBy(c => c.Key.CurveIndex).First().Key;
     }
 
-    private Vector3[] Join(IEnumerable<RoundaboutCurveKey> ring)
-        => ring.SelectMany(k => graph[k].Points).ToArray();
     private static double Length(IReadOnlyList<Vector3> points)
         => points.Zip(points.Skip(1)).Sum(p => (double)Vector3.Distance(p.First, p.Second));
     private static Vector3 Direction(IReadOnlyList<Vector3> points, bool start)

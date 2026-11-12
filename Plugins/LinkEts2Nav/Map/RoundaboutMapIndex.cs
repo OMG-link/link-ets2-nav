@@ -68,16 +68,19 @@ public sealed class RoundaboutMapIndex
     {
         if (road.Node is null || road.ForwardNode is null || curves.ContainsKey(new(road.Uid, -1))) return;
         int samples = Math.Clamp((int)Math.Ceiling(road.Length / 3), 8, 1024);
-        var points = Enumerable.Range(0, samples + 1).Select(i => road.InterpolateCurve((float)i / samples).Position).ToArray();
+        var interpolated=Enumerable.Range(0,samples+1).Select(i=>road.InterpolateCurve((float)i/samples)).ToArray();
+        var points=interpolated.Select(p=>p.Position).ToArray();
+        var normals=interpolated.Select(p=>Vector3.Normalize(Vector3.Transform(Vector3.UnitX,p.Rotation))).ToArray();
         var native=Native(road.Node.Position,road.ForwardNode.Position,
             Vector3.Transform(new Vector3(0,0,-road.Length),road.Node.Rotation),
             Vector3.Transform(new Vector3(0,0,-road.Length),road.ForwardNode.Rotation));
         var traffic=definitions?.RoadTrafficDirections(road);
         // Road states describe road connectivity, not a claim about exact lane trajectories.
         curves[new(road.Uid, -1)] = new(new(road.Uid, -1), null, road.LeftHandTraffic, points, [], road.Node.Uid, road.ForwardNode.Uid)
-            {NativeCurve=native,ProvenTraffic=traffic?.Forward==true,TrafficKnown=traffic?.Forward.HasValue==true};
+            {NativeCurve=native,ProvenTraffic=traffic?.Forward==true,TrafficKnown=traffic?.Forward.HasValue==true,RoadNormals=normals};
         curves[new(road.Uid, -2)] = new(new(road.Uid, -2), null, road.LeftHandTraffic, points.Reverse().ToArray(), [], road.ForwardNode.Uid, road.Node.Uid)
-            {NativeCurve=native.Reverse(),ProvenTraffic=traffic?.Reverse==true,TrafficKnown=traffic?.Reverse.HasValue==true};
+            {NativeCurve=native.Reverse(),ProvenTraffic=traffic?.Reverse==true,TrafficKnown=traffic?.Reverse.HasValue==true,
+                RoadNormals=normals.Reverse().Select(n=>-n).ToArray()};
     }
 
     public void BuildNewSectors(IEnumerable<SectorCoordinate> sectors, CancellationToken token = default)
@@ -96,6 +99,7 @@ public sealed class RoundaboutMapIndex
         foreach(var declared in special.Build(linked,resources,classified,message=>diagnostics.Add(message),token))
         {
             if(declared.DirectionCheck is { } check)diagnostics.Add($"Declared {declared.SpecialDefinitionId}: {check}");
+            if(declared.LaneGeometry is { } geometry)diagnostics.Add($"Declared {declared.SpecialDefinitionId}: {geometry}");
             foreach(var automatic in structures.Values.Where(r=>r.SpecialDefinitionId is null
                 &&r.PrefabUids.Intersect(declared.PrefabUids).Any()).Select(r=>r.Id).ToArray())structures.Remove(automatic);
             structures[declared.Id]=declared;
@@ -114,6 +118,7 @@ public sealed class RoundaboutMapIndex
                 if (found is not null) additions.Add(found);
             }
             foreach(var check in builder.DirectionChecks)diagnostics.Add(check.ToString());
+            foreach(var geometry in builder.GeometryChecks)diagnostics.Add(geometry.ToString());
             token.ThrowIfCancellationRequested();
             foreach (var found in additions) structures.TryAdd(found.Id, found);
             built.Add(sector);

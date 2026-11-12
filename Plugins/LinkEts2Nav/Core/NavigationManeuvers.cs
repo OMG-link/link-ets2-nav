@@ -5,12 +5,15 @@ namespace LinkEts2Nav.Core;
 public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit, ChooseLanes }
 
 public enum NavigationAnnouncementMode { Normal, Silent, DistancePreview }
+public enum NavigationJunctionKind { Ordinary, Ramp }
 
 public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double DistanceMeters,
     string EntryId, string ExitId)
 {
     /// <summary>Multiple connection curves inside one prefab share this physical-junction group.</summary>
     public string? JunctionId { get; init; }
+    public NavigationJunctionKind JunctionKind { get; init; }=NavigationJunctionKind.Ordinary;
+    public bool IsMinorStraight { get; init; }
     /// <summary>Selected route position where this action's physical component ends, relative to the player.</summary>
     public double? EndDistanceMeters { get; init; }
     /// <summary>Optional common playback series; event IDs remain distinct for reconciliation.</summary>
@@ -87,7 +90,7 @@ public sealed class NavigationManeuverDetector
         if (route.Any(r => !Valid(r))) return result;
         for (int i = 1; i < route.Count; i++)
             if (!Connected(route[i - 1], route[i])) return result;
-        if (route.Count == 1 && route[0].Roundabout is null && route[0].ForkInfo is null)
+        if (route.Count == 1 && route[0].Roundabout is null && route[0].ForkInfo is null&&route[0].Junction?.IsAnyJunction!=true)
         {
             if (PrefabKey(route[0]) is null) confirmedUntil = Length(route[0]);
             return result;
@@ -142,11 +145,13 @@ public sealed class NavigationManeuverDetector
                         forkIssues.Add(new(prefab,current.StartNodeUid,current.EndNodeUid,reason));
                         hasUnresolvedJoin=true;firstUnresolvedJoinAlong=Math.Min(firstUnresolvedJoinAlong,offset);
                     }
-                    else if(!instruction.Silent&&offset>=vehicleAlong)
+                    else if((!instruction.Silent||instruction.Kind==ManeuverKind.Straight&&current.Junction?.IsRampJunction==true)&&offset>=vehicleAlong)
                     {
                         result.Add(new($"fork:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",instruction.Kind,
                             offset-vehicleAlong,i>0?route[i-1].Id:current.Id,current.Id)
-                        {JunctionId="prefab:"+prefab,EndDistanceMeters=offset-vehicleAlong,ForkInstruction=instruction,
+                        {JunctionId="prefab:"+prefab,EndDistanceMeters=instruction.Kind==ManeuverKind.Straight?end-vehicleAlong:offset-vehicleAlong,ForkInstruction=instruction,
+                            JunctionKind=NavigationJunctionKind.Ramp,IsMinorStraight=instruction.Kind==ManeuverKind.Straight&&current.IsMinorStraight,
+                            IsMainRoadContinuation=instruction.Kind==ManeuverKind.Straight,
                             Instruction=instruction.Text,HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
                     }
                     confirmedUntil=end;offset=end;continue;
@@ -174,7 +179,18 @@ public sealed class NavigationManeuverDetector
                         result.Add(new($"merge:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
                             mergeKind, offset - vehicleAlong, i > 0 ? route[i - 1].Id : current.Id,
                             i + 1 < route.Count ? route[i + 1].Id : current.Id)
-                        { EndDistanceMeters = end - vehicleAlong, JunctionId = "prefab:" + prefab, HasSeparateApproachRoad = i > 0 && PrefabKey(route[i - 1]) is null });
+                        { EndDistanceMeters = end - vehicleAlong, JunctionId = "prefab:" + prefab,
+                            JunctionKind=current.Junction?.IsRampJunction==true?NavigationJunctionKind.Ramp:NavigationJunctionKind.Ordinary,
+                            HasSeparateApproachRoad = i > 0 && PrefabKey(route[i - 1]) is null });
+                    else if(!merge.Ambiguous&&current.Junction?.IsAnyJunction==true
+                        &&NativeTangent(current,true) is {} incoming&&NativeTangent(current,false) is {} outgoing
+                        &&Math.Abs(Angle(incoming,outgoing))<TurnAngleDegrees)
+                        result.Add(new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",ManeuverKind.Straight,
+                            offset-vehicleAlong,i>0?route[i-1].Id:current.Id,i+1<route.Count?route[i+1].Id:current.Id)
+                        {EndDistanceMeters=end-vehicleAlong,JunctionId="prefab:"+prefab,
+                            JunctionKind=current.Junction.IsRampJunction?NavigationJunctionKind.Ramp:NavigationJunctionKind.Ordinary,
+                            IsMinorStraight=current.IsMinorStraight,IsMainRoadContinuation=true,
+                            HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
                 }
                 // All angle-based maneuvers share this junction-only rule.
                 if (connections.Length >= 2 && current.Junction?.IsJunction == true)
@@ -224,7 +240,8 @@ public sealed class NavigationManeuverDetector
                             EndDistanceMeters = end - vehicleAlong,
                             JunctionId = "prefab:" + prefab,
                             HasSeparateApproachRoad = previous is not null && PrefabKey(previous) is null,
-                            IsMainRoadContinuation = mainContinuation
+                            IsMainRoadContinuation = mainContinuation,
+                            IsMinorStraight=kind==ManeuverKind.Straight&&current.IsMinorStraight
                         });
                 }
             }

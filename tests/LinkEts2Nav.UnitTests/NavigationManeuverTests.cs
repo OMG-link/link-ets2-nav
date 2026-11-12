@@ -324,9 +324,9 @@ public sealed class NavigationManeuverTests
         var side = J("side", 2, 4, P(0, 0), P(100, 0));
         DirectedRoad[] fork = [entry, straight, side];
         DirectedRoad[] forced = [entry, straight];
-        Assert.NotNull(Detector.FindNext([entry, straight], 0, fork));
-        Assert.Null(Detector.FindNext([entry, straight], 0, forced));
-        Assert.NotNull(Detector.FindNext([entry, straight], 0, fork));
+        Assert.False(Detector.FindNext([entry, straight], 0, fork)!.IsMainRoadContinuation);
+        Assert.True(Detector.FindNext([entry, straight], 0, forced)!.IsMainRoadContinuation);
+        Assert.False(Detector.FindNext([entry, straight], 0, fork)!.IsMainRoadContinuation);
     }
 
     private static (DirectedRoad[] Route, DirectedRoad[] Graph) AdjacentTurns()

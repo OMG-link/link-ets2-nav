@@ -6,6 +6,16 @@ namespace LinkEts2Nav.Core;
 public sealed record PrefabJunctionInfo(int EntranceCount,int ExitCount,int CrossingCount)
 {
     public bool IsJunction => EntranceCount>=2 && ExitCount>=2 && CrossingCount>0;
+    public int InterfaceCount { get; init; }
+    /// <summary>Native control-interface widths, measured between the outermost input/output lane centers.</summary>
+    public IReadOnlyList<double> InterfaceWidths { get; init; }=[];
+    public bool IsRampJunction => !IsJunction && CrossingCount==0 && InterfaceCount>=3
+        && (EntranceCount>=2 || ExitCount>=2);
+    public bool IsAnyJunction => IsJunction || IsRampJunction;
+    public bool IsMinorPassage(int entry,int exit)
+        =>entry!=exit&&entry>=0&&exit>=0&&entry<InterfaceWidths.Count&&exit<InterfaceWidths.Count
+            &&InterfaceWidths[entry]>=3&&InterfaceWidths[exit]>=3
+            &&InterfaceWidths.Count(w=>w>=3)==2;
 }
 
 /// <summary>Polyline points and node UIDs are ordered in the permitted direction of travel.</summary>
@@ -18,6 +28,8 @@ public sealed record DirectedRoad(
     /// <summary>Map road-type token; absent for prefab connections or unavailable metadata.</summary>
     public string? RoadType { get; init; }
     public PrefabJunctionInfo? Junction { get; init; }
+    /// <summary>Only the chosen entrance and exit are interfaces at least three meters wide.</summary>
+    public bool IsMinorStraight { get; init; }
     /// <summary>World-space endpoint tangents from native PPD rotations.</summary>
     public Vector3? NativeEntryTangent { get; init; }
     public Vector3? NativeExitTangent { get; init; }

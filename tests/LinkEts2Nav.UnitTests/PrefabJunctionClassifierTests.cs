@@ -1,5 +1,6 @@
 using LinkEts2Nav.Map;
 using TruckLib.Models.Ppd;
+using System.Numerics;
 namespace LinkEts2Nav.UnitTests;
 public sealed class PrefabJunctionClassifierTests
 {
@@ -44,5 +45,36 @@ public sealed class PrefabJunctionClassifierTests
     {
         var d=Crossing();d.Intersections.Clear();Assert.False(PrefabJunctionClassifier.Analyze(d).IsJunction);
         d=Crossing(48);Assert.False(PrefabJunctionClassifier.Analyze(d).IsJunction);
+    }
+
+    [Fact]
+    public void UncrossedForkAndMergeAreRampJunctionsButTwoInterfaceRoadIsNot()
+    {
+        var d=new PrefabDescriptor{NavCurves=[new(),new()],Nodes=[new(){InputLines=[0,1],OutputLines=[]},
+            new(){OutputLines=[0],InputLines=[]},new(){OutputLines=[1],InputLines=[]}]};
+        var fork=PrefabJunctionClassifier.Analyze(d);
+        Assert.False(fork.IsJunction);Assert.True(fork.IsRampJunction);Assert.True(fork.IsAnyJunction);
+        d.Nodes=[new(){InputLines=[0],OutputLines=[]},new(){InputLines=[1],OutputLines=[]},new(){OutputLines=[0,1],InputLines=[]}];
+        Assert.True(PrefabJunctionClassifier.Analyze(d).IsRampJunction);
+        d.Nodes=[new(){InputLines=[0],OutputLines=[1]},new(){InputLines=[1],OutputLines=[0]}];
+        Assert.False(PrefabJunctionClassifier.Analyze(d).IsAnyJunction);
+    }
+
+    [Fact]
+    public void MinorPassageUsesAllLaneCentersAndRequiresBothChosenInterfacesToBeWide()
+    {
+        var d=new PrefabDescriptor{NavCurves=[
+            new(){StartPosition=new(-1.5f,0,0),EndPosition=new(-1.5f,0,100)},
+            new(){StartPosition=new(1.5f,0,100),EndPosition=new(1.5f,0,0)},
+            new(){StartPosition=new(10,0,40),EndPosition=new(10,0,60)}],
+            Nodes=[new(){InputLines=[0],OutputLines=[1]},new(){InputLines=[1],OutputLines=[0]},
+                new(){InputLines=[2],OutputLines=[]},new(){OutputLines=[2],InputLines=[]}]};
+        var info=PrefabJunctionClassifier.Analyze(d);
+        Assert.Equal(new[]{3d,3d,0d,0d},info.InterfaceWidths);
+        Assert.True(info.IsMinorPassage(0,1));
+        Assert.False(info.IsMinorPassage(2,3));
+        Assert.False(info.IsMinorPassage(0,2));
+        d.NavCurves[1].EndPosition=new(1.49f,0,0);
+        Assert.False(PrefabJunctionClassifier.Analyze(d).IsMinorPassage(0,1));
     }
 }

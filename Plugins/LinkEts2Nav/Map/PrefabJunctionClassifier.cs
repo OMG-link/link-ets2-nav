@@ -1,4 +1,5 @@
 using TruckLib.Models.Ppd;
+using System.Numerics;
 using LinkEts2Nav.Core;
 namespace LinkEts2Nav.Map;
 
@@ -15,7 +16,18 @@ public static class PrefabJunctionClassifier
         bool Valid(int i)=>i>=0&&i<count;
         int entrances=descriptor.Nodes.Count(n=>n.InputLines.Any(Valid));
         int exits=descriptor.Nodes.Count(n=>n.OutputLines.Any(Valid));
-        if(entrances<2||exits<2||count>8192)return new(entrances,exits,0);
+        var widths=descriptor.Nodes.Select(n=>
+        {
+            var points=n.InputLines.Where(Valid).Select(i=>descriptor.NavCurves[i].StartPosition)
+                .Concat(n.OutputLines.Where(Valid).Select(i=>descriptor.NavCurves[i].EndPosition)).ToArray();
+            double width=0;
+            for(int a=0;a<points.Length;a++)for(int b=a+1;b<points.Length;b++)
+                width=Math.Max(width,Vector3.Distance(points[a],points[b]));
+            return width;
+        }).ToArray();
+        PrefabJunctionInfo Result(int crossings)=>new(entrances,exits,crossings)
+        {InterfaceCount=descriptor.Nodes.Count(n=>n.InputLines.Any(Valid)||n.OutputLines.Any(Valid)),InterfaceWidths=widths};
+        if(entrances<2||exits<2||count>8192)return Result(0);
         var starts=Enumerable.Range(0,count).Select(_=>new HashSet<int>()).ToArray();
         var ends=Enumerable.Range(0,count).Select(_=>new HashSet<int>()).ToArray();
         var reverse=Enumerable.Range(0,count).Select(_=>new List<int>()).ToArray();
@@ -52,6 +64,6 @@ public static class PrefabJunctionClassifier
             }
             i+=siblings-1;
         }
-        return new(entrances,exits,crossings);
+        return Result(crossings);
     }
 }

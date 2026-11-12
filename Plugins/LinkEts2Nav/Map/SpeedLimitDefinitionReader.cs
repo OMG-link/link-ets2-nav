@@ -155,6 +155,20 @@ public sealed class SpeedLimitDefinitionReader
     // An unresolved template is not proof that traffic is forbidden. An explicitly empty lane list is.
     private bool HasLanes(Road road,bool left)=>RoadLanes(road,left)?.Any(l=>l.Length>0)??true;
 
+    /// <summary>Strict evidence for directed traffic; unresolved definitions stay unknown.</summary>
+    public (bool? Forward,bool? Reverse) RoadTrafficDirections(Road road)
+    {
+        bool? Known(bool left)
+        {
+            var lanes=RoadLanes(road,left);
+            if(lanes is null)return null;
+            if(lanes.Any(a=>a.Any(v=>!laneClasses.ContainsKey(Link(v)))))return null;
+            var states=lanes.Select(a=>a.Length>0).Distinct().ToArray();
+            return states.Length==1?states[0]:null;
+        }
+        return (Known(road.LeftHandTraffic),Known(!road.LeftHandTraffic));
+    }
+
     private string? RoadClass(Road road,bool left)
     {
         var lanes=RoadLanes(road,left);

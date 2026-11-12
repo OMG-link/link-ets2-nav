@@ -64,9 +64,11 @@ public sealed class SpeedLimitDefinitionTests
         var map=new TruckLib.ScsMap.Map();
         var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);road.RoadType="un11";
         road.Right.TrafficRule="motorway";
-        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        var reader=new SpeedLimitDefinitionReader(fs);
+        var data=reader.Build(map,TestContext.Current.CancellationToken);
         Assert.Null(data.Error);
         Assert.Null(data.Roads[road.Uid].ClassFor(data.Roads[road.Uid].Geometry));
+        Assert.Null(reader.RoadTrafficDirections(road).Forward);
     }
 
     [Fact]
@@ -204,9 +206,12 @@ public sealed class SpeedLimitDefinitionTests
         var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
         Assert.Equal(!leftHand,data.Roads[road.Uid].ForwardTraffic);
         Assert.Equal(leftHand,data.Roads[road.Uid].ReverseTraffic);
+        var reader=new SpeedLimitDefinitionReader(fs);
+        Assert.Equal((!leftHand,leftHand),(reader.RoadTrafficDirections(road).Forward!.Value,reader.RoadTrafficDirections(road).Reverse!.Value));
         road.RoadType="unresolved";
         data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
         Assert.True(data.Roads[road.Uid].ForwardTraffic);Assert.True(data.Roads[road.Uid].ReverseTraffic);
+        Assert.Null(reader.RoadTrafficDirections(road).Forward);Assert.Null(reader.RoadTrafficDirections(road).Reverse);
     }
 
 }

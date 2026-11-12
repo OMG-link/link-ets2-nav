@@ -12,12 +12,21 @@ public sealed record RoundaboutStructure(string Id, IReadOnlyList<ulong> PrefabU
     public IReadOnlyList<RoundaboutExitPort> ExitPorts { get; init; } = [];
     public double RingLength { get; init; }
     public string? SpecialDefinitionId { get; init; }
+    public RoundaboutDirectionResult? DirectionCheck { get; init; }
 }
 
 /// <summary>Actual directed PPD curves; road links are explicitly distinguished from prefab curves.</summary>
 public sealed record RoundaboutCurve(RoundaboutCurveKey Key, ulong? PrefabUid,
     bool LeftHandTraffic, IReadOnlyList<Vector3> Points, IReadOnlyList<RoundaboutCurveKey> Next,
-    ulong EntryNode = 0, ulong ExitNode = 0);
+    ulong EntryNode = 0, ulong ExitNode = 0)
+{
+    public CubicPlaneCurve? NativeCurve { get; init; }
+    // Unknown road traffic is not proof of a legal directed walk.
+    public bool ProvenTraffic { get; init; } = true;
+    public bool TrafficKnown { get; init; } = true;
+    public int EntryLane { get; init; } = -1;
+    public int ExitLane { get; init; } = -1;
+}
 
 /// <summary>One short-lived search session per newly constructed sector. Does not own map objects.</summary>
 public sealed class RoundaboutBuilder
@@ -26,6 +35,7 @@ public sealed class RoundaboutBuilder
     // Initial threshold separates the two verified rings from a nearby road-block loop (Q=.805).
     internal const double MinimumCircularity = .85;
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurve> graph;
+    public List<RoundaboutDirectionResult> DirectionChecks { get; } = [];
     // Session-only memo 1: deterministic branch choice, including unresolved branches.
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurveKey?> successors = new();
     // Session-only memo 2: resolved suffix and ALL owners traversed to reach it.
@@ -46,9 +56,12 @@ public sealed class RoundaboutBuilder
             var points = Join(ring);
             double quality = Circularity(points);
             if (quality < MinimumCircularity) continue;
+            var check=RoundaboutDirection.Check(graph,ring,cancellationToken);
+            DirectionChecks.Add(check);
+            if(check.OppositeWalk)continue;
             var members = ring.Select(k => graph[k].PrefabUid).OfType<ulong>().Distinct().Order().ToArray();
             var structure = Assemble(ring, members, points, quality, cancellationToken);
-            if (structure is not null) return structure;
+            if (structure is not null) return structure with{DirectionCheck=check};
         }
         return null;
     }
@@ -62,7 +75,11 @@ public sealed class RoundaboutBuilder
         var members=ring.Select(k=>graph[k].PrefabUid).OfType<ulong>().Distinct().Order().ToArray();
         if(members.Length==0)return null;
         var points=Join(ring);
-        return Assemble(ring,members,points,Circularity(points),token);
+        var check=RoundaboutDirection.Check(graph,ring,token);DirectionChecks.Add(check);
+        // Explicit reviewed declarations retain authority; expose any contradiction
+        // rather than silently changing the user-maintained exception database.
+        var assembled=Assemble(ring,members,points,Circularity(points),token);
+        return assembled is null?null:assembled with {DirectionCheck=check};
     }
 
     private RoundaboutStructure? Assemble(RoundaboutCurveKey[] ring, ulong[] members,

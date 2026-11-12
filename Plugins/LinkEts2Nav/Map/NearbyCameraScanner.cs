@@ -115,7 +115,7 @@ public sealed class NearbyCameraScanner
                     issues.Add($"Prefab {resource}: {ex.Message}");
                 }
             }
-            foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road);
+            foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road,speedReader);
             roundaboutIndex.BuildNewSectors(sectors,cancellationToken);
             areaCache ??= new(fileSystem,mapPath);
             var regionData=areaCache.Update(nextMap,sectors,

@@ -27,10 +27,13 @@ public sealed class RoundaboutMapIndex
         if (prefabs.ContainsKey(prefab.Uid) || !PrefabPlacement.TryCreate(prefab, descriptor, out var placement)) return;
         if(resource is not null)resources[prefab.Uid]=new(resource,descriptor.NavCurves.Count,descriptor.Nodes.Count);
         var entry = new Dictionary<int, ulong>(); var exit = new Dictionary<int, ulong>();
+        var entryLanes = new Dictionary<int,int>(); var exitLanes=new Dictionary<int,int>();
         for (int n = 0; n < placement.ControlNodes.Count; n++)
         {
             foreach (int i in placement.ControlNodes[n].InputLines.Where(i => i >= 0)) entry[i] = prefab.Nodes[n].Uid;
             foreach (int i in placement.ControlNodes[n].OutputLines.Where(i => i >= 0)) exit[i] = prefab.Nodes[n].Uid;
+            for(int lane=0;lane<placement.ControlNodes[n].InputLines.Length;lane++)entryLanes[placement.ControlNodes[n].InputLines[lane]]=lane;
+            for(int lane=0;lane<placement.ControlNodes[n].OutputLines.Length;lane++)exitLanes[placement.ControlNodes[n].OutputLines[lane]]=lane;
         }
         var result = new List<RoundaboutCurve>();
         for (int i = 0; i < descriptor.NavCurves.Count; i++)
@@ -49,21 +52,32 @@ public sealed class RoundaboutMapIndex
             }).ToArray();
             if (points.Any(p => !float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z))) continue;
             result.Add(new(new(prefab.Uid, i), prefab.Uid, prefab.LeftHandTraffic, points,
-                curve.NextLines.Select(j => new RoundaboutCurveKey(prefab.Uid, j)).ToArray(), entry.GetValueOrDefault(i), exit.GetValueOrDefault(i)));
+                curve.NextLines.Where(j=>j>=0).Select(j => new RoundaboutCurveKey(prefab.Uid, j)).ToArray(), entry.GetValueOrDefault(i), exit.GetValueOrDefault(i))
+            {NativeCurve=Native(placement.ToWorld(curve.StartPosition),placement.ToWorld(curve.EndPosition),
+                placement.ToWorldDirection(a),placement.ToWorldDirection(b)),EntryLane=entryLanes.GetValueOrDefault(i,-1),ExitLane=exitLanes.GetValueOrDefault(i,-1)});
         }
         var sector = TruckLib.ScsMap.Map.GetSectorOfCoordinate(prefab.Nodes[0].Position);
         prefabs[prefab.Uid] = (sector, result.ToArray(), entry.Keys.Select(i => new RoundaboutCurveKey(prefab.Uid, i)).ToArray());
         foreach (var curve in result) curves[curve.Key] = curve;
     }
 
-    public void AddRoad(Road road)
+    private static CubicPlaneCurve Native(Vector3 p,Vector3 q,Vector3 u,Vector3 v)
+        => CubicPlaneCurve.Hermite(new(p.X,-(double)p.Z),new(q.X,-(double)q.Z),new(u.X,-(double)u.Z),new(v.X,-(double)v.Z));
+
+    public void AddRoad(Road road,SpeedLimitDefinitionReader? definitions=null)
     {
         if (road.Node is null || road.ForwardNode is null || curves.ContainsKey(new(road.Uid, -1))) return;
         int samples = Math.Clamp((int)Math.Ceiling(road.Length / 3), 8, 1024);
         var points = Enumerable.Range(0, samples + 1).Select(i => road.InterpolateCurve((float)i / samples).Position).ToArray();
+        var native=Native(road.Node.Position,road.ForwardNode.Position,
+            Vector3.Transform(new Vector3(0,0,-road.Length),road.Node.Rotation),
+            Vector3.Transform(new Vector3(0,0,-road.Length),road.ForwardNode.Rotation));
+        var traffic=definitions?.RoadTrafficDirections(road);
         // Road states describe road connectivity, not a claim about exact lane trajectories.
-        curves[new(road.Uid, -1)] = new(new(road.Uid, -1), null, road.LeftHandTraffic, points, [], road.Node.Uid, road.ForwardNode.Uid);
-        curves[new(road.Uid, -2)] = new(new(road.Uid, -2), null, road.LeftHandTraffic, points.Reverse().ToArray(), [], road.ForwardNode.Uid, road.Node.Uid);
+        curves[new(road.Uid, -1)] = new(new(road.Uid, -1), null, road.LeftHandTraffic, points, [], road.Node.Uid, road.ForwardNode.Uid)
+            {NativeCurve=native,ProvenTraffic=traffic?.Forward==true,TrafficKnown=traffic?.Forward.HasValue==true};
+        curves[new(road.Uid, -2)] = new(new(road.Uid, -2), null, road.LeftHandTraffic, points.Reverse().ToArray(), [], road.ForwardNode.Uid, road.Node.Uid)
+            {NativeCurve=native.Reverse(),ProvenTraffic=traffic?.Reverse==true,TrafficKnown=traffic?.Reverse.HasValue==true};
     }
 
     public void BuildNewSectors(IEnumerable<SectorCoordinate> sectors, CancellationToken token = default)
@@ -81,6 +95,7 @@ public sealed class RoundaboutMapIndex
         var classified=structures.Values.Where(r=>r.SpecialDefinitionId is not null).SelectMany(r=>r.PrefabUids).ToHashSet();
         foreach(var declared in special.Build(linked,resources,classified,message=>diagnostics.Add(message),token))
         {
+            if(declared.DirectionCheck is { } check)diagnostics.Add($"Declared {declared.SpecialDefinitionId}: {check}");
             foreach(var automatic in structures.Values.Where(r=>r.SpecialDefinitionId is null
                 &&r.PrefabUids.Intersect(declared.PrefabUids).Any()).Select(r=>r.Id).ToArray())structures.Remove(automatic);
             structures[declared.Id]=declared;
@@ -98,6 +113,7 @@ public sealed class RoundaboutMapIndex
                 var found = builder.Find(pair.Key, pair.Value.Entrances, token);
                 if (found is not null) additions.Add(found);
             }
+            foreach(var check in builder.DirectionChecks)diagnostics.Add(check.ToString());
             token.ThrowIfCancellationRequested();
             foreach (var found in additions) structures.TryAdd(found.Id, found);
             built.Add(sector);

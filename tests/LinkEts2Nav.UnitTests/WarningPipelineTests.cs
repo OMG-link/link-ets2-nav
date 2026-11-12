@@ -18,7 +18,7 @@ public sealed class WarningPipelineTests
         var nearby=Nearby(map,Camera());var empty=RouteSnapshot.Parse([],Now);
         await using var playback=new GuidancePlaybackManager(null,new NeverPlayer(),()=>null);
         var guidance=new GuidanceCoordinator(playback:playback);
-        var pipeline=new WarningPipeline(new RecordingAnnouncer(),guidance:guidance);
+        var pipeline=new WarningPipeline(guidance:guidance);
         void Step(double x)
         {
             var data=Data(empty,Vehicle(x));guidance.Observe(data,Now);
@@ -52,27 +52,21 @@ public sealed class WarningPipelineTests
     private static GameDataSnapshot Data(RouteSnapshot route, VehicleSnapshot? vehicle = null,
         string session = "session") => new(vehicle ?? Vehicle(), route, route.Availability, session, true);
 
-    private sealed class RecordingAnnouncer : IWarningAnnouncer
-    {
-        public List<CameraWarning> Warnings { get; } = [];
-        public void Announce(CameraWarning warning) => Warnings.Add(warning);
-    }
-
     [Fact]
     public void VerifiedForwardCameraOnActualNavigationRoadWarnsOnlyOnce()
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(500));
-        var announcer = new RecordingAnnouncer();
-        var pipeline = new WarningPipeline(announcer);
+        var announcer = new RecordedWarningPipeline();
+        var pipeline = announcer;
         var nearby = Nearby(map, Camera());
         var data = Data(Route(road));
         pipeline.Process(data, nearby, Now);
         pipeline.Process(data, nearby, Now);
-        var warning = Assert.Single(announcer.Warnings);
-        Assert.Equal("camera", warning.CameraId);
-        Assert.Equal(WarningDistanceKind.Road, warning.DistanceKind);
-        Assert.InRange(warning.DistanceMeters, 298.99, 299.01);
+        var warning = Assert.Single(announcer.Queued);
+        Assert.StartsWith("landmark:camera:", warning.EventId);
+        Assert.Equal(WarningDistanceKind.Road,Assert.Single(announcer.Guidance.Timeline.Sources.Single(s=>s.Source=="landmarks").Events).DistanceKind);
+        Assert.InRange(Assert.Single(announcer.Latest!.Cameras).RoadDistanceMeters??Assert.Single(announcer.Latest.Cameras).DistanceMeters, 298.99, 299.01);
     }
 
     [Fact]
@@ -80,14 +74,14 @@ public sealed class WarningPipelineTests
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(800));
-        var announcer = new RecordingAnnouncer();
-        var pipeline = new WarningPipeline(announcer);
+        var announcer = new RecordedWarningPipeline();
+        var pipeline = announcer;
         var nearby = Nearby(map, Camera(position: Point(549)));
         var route = Route(road);
         pipeline.Process(Data(route, Vehicle(x: 40)), nearby, Now);
-        Assert.Empty(announcer.Warnings);
+        Assert.Empty(announcer.Queued);
         pipeline.Process(Data(route, Vehicle(x: 50)), nearby, Now);
-        Assert.Single(announcer.Warnings);
+        Assert.Single(announcer.Queued);
     }
 
     [Fact]
@@ -95,10 +89,10 @@ public sealed class WarningPipelineTests
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(500));
-        var announcer = new RecordingAnnouncer();
-        var diagnostic = new WarningPipeline(announcer).Process(Data(Route(road)),
+        var announcer = new RecordedWarningPipeline();
+        var diagnostic = announcer.Process(Data(Route(road)),
             Nearby(map, Camera(verified: false)), Now);
-        Assert.Empty(announcer.Warnings);
+        Assert.Empty(announcer.Queued);
         Assert.False(Assert.Single(diagnostic.Cameras).DirectionVerified);
     }
 
@@ -107,9 +101,9 @@ public sealed class WarningPipelineTests
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(500));
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(Data(Route(road)), Nearby(map, Camera(direction: Vector3.Zero)), Now);
-        Assert.Empty(announcer.Warnings);
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(Data(Route(road)), Nearby(map, Camera(direction: Vector3.Zero)), Now);
+        Assert.Empty(announcer.Queued);
     }
 
     [Fact]
@@ -117,9 +111,9 @@ public sealed class WarningPipelineTests
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(500));
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(Data(Route(road)), Nearby(map, Camera(direction: -Vector3.UnitX)), Now);
-        Assert.Empty(announcer.Warnings);
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(Data(Route(road)), Nearby(map, Camera(direction: -Vector3.UnitX)), Now);
+        Assert.Empty(announcer.Queued);
     }
 
     [Fact]
@@ -128,9 +122,9 @@ public sealed class WarningPipelineTests
         var map = new GameMap();
         AddRoad(map, Point(0), Point(500));
         var noRoute = RouteSnapshot.Parse([], Now);
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(Data(noRoute), Nearby(map, Camera()), Now);
-        Assert.Single(announcer.Warnings);
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(Data(noRoute), Nearby(map, Camera()), Now);
+        Assert.Single(announcer.Queued);
     }
 
     [Fact]
@@ -139,10 +133,10 @@ public sealed class WarningPipelineTests
         var map = new GameMap();
         var routeRoad = AddRoad(map, Point(0), Point(500));
         AddRoad(map, Point(0, 8), Point(500, 8));
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(Data(Route(routeRoad)),
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(Data(Route(routeRoad)),
             Nearby(map, Camera(position: Point(349, 8))), Now);
-        Assert.Empty(announcer.Warnings);
+        Assert.Empty(announcer.Queued);
     }
 
     [Fact]
@@ -150,10 +144,10 @@ public sealed class WarningPipelineTests
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(500));
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(Data(Route(road), Vehicle(received: Now.AddSeconds(-3))),
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(Data(Route(road), Vehicle(received: Now.AddSeconds(-3))),
             Nearby(map, Camera()), Now);
-        Assert.Empty(announcer.Warnings);
+        Assert.Empty(announcer.Queued);
     }
 
     [Fact]
@@ -164,9 +158,9 @@ public sealed class WarningPipelineTests
         var store = new GameSnapshotStore();
         store.UpdateVehicle(Vehicle() with { Paused = true });
         store.UpdateRoute(Route(road));
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(store.Capture(Now), Nearby(map, Camera()), Now);
-        Assert.Empty(announcer.Warnings);
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(store.Capture(Now), Nearby(map, Camera()), Now);
+        Assert.Empty(announcer.Queued);
     }
 
     [Theory]
@@ -177,10 +171,10 @@ public sealed class WarningPipelineTests
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(500));
-        var announcer = new RecordingAnnouncer();
+        var announcer = new RecordedWarningPipeline();
         var data = Data(Route(road)) with { RouteAvailability = availability };
-        new WarningPipeline(announcer).Process(data, Nearby(map, Camera()), Now);
-        Assert.Empty(announcer.Warnings);
+        announcer.Process(data, Nearby(map, Camera()), Now);
+        Assert.Empty(announcer.Queued);
     }
 
     [Fact]
@@ -189,12 +183,15 @@ public sealed class WarningPipelineTests
         var firstMap = new GameMap();
         var firstRoad = AddRoad(firstMap, Point(0), Point(500));
         var secondMap = new GameMap();
-        var secondRoad = AddRoad(secondMap, Point(0), Point(500));
-        var announcer = new RecordingAnnouncer();
-        var pipeline = new WarningPipeline(announcer);
+        var secondRoad = AddRoad(secondMap, Point(0), Point(800));
+        var announcer = new RecordedWarningPipeline();
+        var pipeline = announcer;
         pipeline.Process(Data(Route(firstRoad)), Nearby(firstMap, Camera()), Now);
-        pipeline.Process(Data(Route(secondRoad)), Nearby(secondMap, Camera(), Camera(id: "new-camera")), Now);
-        Assert.Equal(["camera", "new-camera"], announcer.Warnings.Select(warning => warning.CameraId));
+        var cameras=Nearby(secondMap,Camera(),Camera(id:"new-camera",position:Point(700)));
+        pipeline.Process(Data(Route(secondRoad)), cameras, Now);
+        Assert.Single(announcer.Queued); // The later same-kind preview waits for the first camera's end.
+        pipeline.Process(Data(Route(secondRoad),Vehicle(350)),cameras,Now);
+        Assert.Equal(["camera", "new-camera"], announcer.Queued.Select(warning => warning.EventId.Split(':')[1]));
     }
 
     [Fact]
@@ -202,13 +199,13 @@ public sealed class WarningPipelineTests
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(500));
-        var announcer = new RecordingAnnouncer();
-        var pipeline = new WarningPipeline(announcer);
+        var announcer = new RecordedWarningPipeline();
+        var pipeline = announcer;
         var route = Route(road);
         var nearby = Nearby(map, Camera());
         pipeline.Process(Data(route), nearby, Now);
         pipeline.Process(Data(route, session: "loaded-session"), nearby, Now);
-        Assert.Equal(2, announcer.Warnings.Count);
+        Assert.Equal(2, announcer.Queued.Count);
     }
     [Fact]
     public void VehicleOnParallelNonRouteRoadCannotBorrowNearbyRouteGeometry()
@@ -216,10 +213,10 @@ public sealed class WarningPipelineTests
         var map = new GameMap();
         var routeRoad = AddRoad(map, Point(0), Point(500));
         AddRoad(map, Point(0, 8), Point(500, 8));
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(Data(Route(routeRoad), Vehicle() with { Z = 8 }),
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(Data(Route(routeRoad), Vehicle() with { Z = 8 }),
             Nearby(map, Camera()), Now);
-        Assert.Empty(announcer.Warnings);
+        Assert.Empty(announcer.Queued);
     }    [Fact]
     public void VerifiedFutureRouteChunkUsesDirectDistanceWhenPrefabGeometryIsUnknown()
     {
@@ -228,11 +225,11 @@ public sealed class WarningPipelineTests
         var second = AddRoad(map, Point(250), Point(500));
         var route = RouteSnapshot.Parse([new(first.Node.Uid, 500, 25), new(first.ForwardNode.Uid, 300, 15),
             new(second.Node.Uid, 250, 12), new(second.ForwardNode.Uid, 0, 0)], Now);
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(Data(route), Nearby(map, Camera()), Now);
-        var warning = Assert.Single(announcer.Warnings);
-        Assert.Equal(WarningDistanceKind.Euclidean, warning.DistanceKind);
-        Assert.InRange(warning.DistanceMeters, 298.99, 299.01);
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(Data(route), Nearby(map, Camera()), Now);
+        var warning = Assert.Single(announcer.Queued);
+        Assert.Equal(WarningDistanceKind.Euclidean,Assert.Single(announcer.Guidance.Diagnostic.LatestTriggers).Event.DistanceKind);
+        Assert.InRange(Assert.Single(announcer.Latest!.Cameras).RoadDistanceMeters??Assert.Single(announcer.Latest.Cameras).DistanceMeters, 298.99, 299.01);
     }
 
     [Fact]
@@ -241,9 +238,10 @@ public sealed class WarningPipelineTests
         var map = new GameMap();
         var first = AddRoad(map, Point(0), Point(200));
         first.Append(Point(500));
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(Data(RouteSnapshot.Parse([], Now)), Nearby(map, Camera()), Now);
-        Assert.Equal(WarningDistanceKind.Road, Assert.Single(announcer.Warnings).DistanceKind);
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(Data(RouteSnapshot.Parse([], Now)), Nearby(map, Camera()), Now);
+        Assert.Single(announcer.Queued);
+        Assert.Equal(WarningDistanceKind.Road,Assert.Single(announcer.Guidance.Diagnostic.LatestTriggers).Event.DistanceKind);
     }
 
     [Fact]
@@ -252,7 +250,7 @@ public sealed class WarningPipelineTests
         var map = new GameMap();
         AddRoad(map, Point(0), Point(200));
         AddRoad(map, Point(250), Point(500));
-        var announcer = new RecordingAnnouncer();
-        new WarningPipeline(announcer).Process(Data(RouteSnapshot.Parse([], Now)), Nearby(map, Camera()), Now);
-        Assert.Empty(announcer.Warnings);
+        var announcer = new RecordedWarningPipeline();
+        announcer.Process(Data(RouteSnapshot.Parse([], Now)), Nearby(map, Camera()), Now);
+        Assert.Empty(announcer.Queued);
     }}

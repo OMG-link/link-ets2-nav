@@ -5,11 +5,6 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class UncalibratedWarningTests
 {
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
-    private sealed class Audio : IWarningAnnouncer
-    {
-        public List<CameraWarning> Warnings { get; } = [];
-        public void Announce(CameraWarning warning) => Warnings.Add(warning);
-    }
     private static GameDataSnapshot Data(double distance, RouteAvailability state = RouteAvailability.None,
         bool usable = true, bool stale = false, double speed = 20) => new(
         new(distance,0,0,0,speed,0,true,!usable,1,stale?Now.AddSeconds(-3):Now),
@@ -25,46 +20,45 @@ public sealed class UncalibratedWarningTests
     [InlineData(RouteAvailability.Stale)]
     public void NoticeUsesLocatorDistanceWithoutDirectionOrRouteAndHasOnlyOneStage(RouteAvailability state)
     {
-        var audio = new Audio();
-        var pipeline = new WarningPipeline(audio);
+        var audio = new RecordedWarningPipeline();
+        var pipeline = audio;
         pipeline.Process(Data(501,state),Map(),Now);
-        Assert.Empty(audio.Warnings);
+        Assert.Empty(audio.Queued);
         pipeline.Process(Data(500,state),Map(),Now);
         pipeline.Process(Data(499,state),Map(),Now);
         pipeline.Process(Data(100,state),Map(),Now);
-        var warning = Assert.Single(audio.Warnings);
-        Assert.Equal(CameraWarningKind.UncalibratedProximity, warning.Kind);
-        Assert.Equal(WarningDistanceKind.Euclidean,warning.DistanceKind);
-        Assert.Equal(500,warning.DistanceMeters);
-        Assert.Null(warning.SpeedLimitKph);
+        var warning = Assert.Single(audio.Queued);
+        Assert.Contains(":UncalibratedProximity:",warning.EventId);
+        Assert.Equal(WarningDistanceKind.Euclidean,Assert.Single(audio.Guidance.Timeline.Sources[0].Events).DistanceKind);
+        Assert.Equal(PlannedSpeechAnnouncer.UncalibratedText,warning.Text);
     }
 
     [Fact]
     public void PauseStaleDataReverseAndInactivePartsCannotProduceNotice()
     {
-        var audio = new Audio();
-        var pipeline = new WarningPipeline(audio);
+        var audio = new RecordedWarningPipeline();
+        var pipeline = audio;
         pipeline.Process(Data(100,usable:false),Map(),Now);
         pipeline.Process(Data(100,stale:true),Map(),Now);
         pipeline.Process(Data(100,speed:-1),Map(),Now);
         pipeline.Process(Data(100),Map(active:false),Now);
         pipeline.Process(Data(100),Map(verified:true),Now);
-        Assert.Empty(audio.Warnings);
+        Assert.Empty(audio.Queued);
     }
 
     [Fact]
     public void MissingScanDoesNotResetNoticeAndNewApproachAfterPassCanRearm()
     {
-        var audio = new Audio();
-        var pipeline = new WarningPipeline(audio);
+        var audio = new RecordedWarningPipeline();
+        var pipeline = audio;
         pipeline.Process(Data(499),Map(),Now);
         pipeline.Process(Data(490),new(new(),[],[],[]),Now);
         pipeline.Process(Data(480),Map(),Now);
-        Assert.Single(audio.Warnings);
+        Assert.Single(audio.Queued);
         foreach(double d in new[]{10d,50,60,70})pipeline.Process(Data(d),Map(),Now);
-        Assert.Single(audio.Warnings);
+        Assert.Single(audio.Queued);
         pipeline.Process(Data(60),Map(),Now);
-        Assert.Equal(2,audio.Warnings.Count);
+        Assert.Equal(2,audio.Queued.Count);
     }
 
     [Fact]

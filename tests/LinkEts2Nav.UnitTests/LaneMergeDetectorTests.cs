@@ -241,7 +241,7 @@ public sealed class LaneMergeDetectorTests
         var route=RouteSnapshot.Parse([new(incoming.Node.Uid,2310,100),new(incoming.ForwardNode.Uid,2120,90),
             new(outgoing.Node.Uid,2000,80),new(outgoing.ForwardNode.Uid,0,0)],now);
         GameDataSnapshot Data(double x,double z,DateTimeOffset time)=>new(new(x,0,z,0,15,2100,true,false,1,time),route,RouteAvailability.Available,"s",true);
-        int sounds=0;var spoken=new List<string>();var runtime=new NavigationRuntime(log:spoken.Add,fallback:()=>sounds++);
+        int sounds=0;var spoken=new List<string>();var runtime=new NavigationRuntime(log:line=>{spoken.Add(line);if(line.StartsWith("\u5bfc\u822a\u6307\u4ee4\uff1a",StringComparison.Ordinal))sounds++;});
         var first=runtime.Process(Data(4.5,shortApproach?70:500,now),nearby,now);
         Assert.Contains(first.LaneMerges,m=>m.Kind==(shortApproach?LaneMergeKind.Uncertain:LaneMergeKind.LaneReduction));
         Assert.Equal(shortApproach?NavigationAnnouncementMode.Silent:NavigationAnnouncementMode.DistancePreview,first.Next!.AnnouncementMode);

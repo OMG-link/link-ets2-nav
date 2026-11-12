@@ -136,7 +136,7 @@ public sealed class RouteSpeedLimitTests
         TruckLib.ScsMap.Road.Add(map,P(0),P(1000),default);
         var pose=new VehicleSnapshot(10,0,0,.75,20,1000,true,false,1,now){CurrentSpeedLimitKph=50};
         var game=new GameDataSnapshot(pose,RouteSnapshot.Parse([],now),RouteAvailability.None,"s",true);
-        var snapshot=new WarningPipeline(new SilentAnnouncer()).Process(game,new(map,[],[],[]),now);
+        var snapshot=new WarningPipeline().Process(game,new(map,[],[],[]),now);
         Assert.Null(snapshot.CurrentSpeedLimit);
     }
     [Fact]
@@ -150,9 +150,9 @@ public sealed class RouteSpeedLimitTests
         var nearby=new NearbyMapSnapshot(map,[camera],[],[]){SpeedLimits=limits};
         var pose=new VehicleSnapshot(50,0,0,.75,20,1000,true,false,1,now){CurrentSpeedLimitKph=50};
         var game=new GameDataSnapshot(pose,RouteSnapshot.Parse([],now),RouteAvailability.None,"s",true);
-        var announcer=new SilentAnnouncer();var snapshot=new WarningPipeline(announcer).Process(game,nearby,now);
+        var recorder=new RecordedWarningPipeline();var snapshot=recorder.Process(game,nearby,now);
         Assert.Equal(60,Assert.Single(snapshot.Cameras).SpeedLimitKph);
-        Assert.Equal(60,Assert.Single(announcer.Warnings).SpeedLimitKph);
+        Assert.Contains("限速六十",Assert.Single(recorder.Queued).Text);
         Assert.Null(snapshot.CurrentSpeedLimit);
     }
 

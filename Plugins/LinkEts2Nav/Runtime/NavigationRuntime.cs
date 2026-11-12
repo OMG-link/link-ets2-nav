@@ -15,8 +15,8 @@ public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next
     public bool DeferredUntilJunctionExit { get; init; }
 }
 
-/// <summary>Collects route events for the shared coordinator. Standalone callers retain the legacy policy adapter.</summary>
-public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Action? fallback = null,
+/// <summary>Collects route events for the shared coordinator. Standalone callers only prepare and inspect due text; they never play audio.</summary>
+public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     Action<string>? log = null,GuidanceCoordinator? guidance=null)
 {
     private readonly LaneMergeDetector mergeDetector = new();
@@ -149,11 +149,6 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text), confirmedContinuation,vehicle.SpeedMetersPerSecond,componentEnd-along.Value,confirmedAhead))
         {
             log?.Invoke("导航指令：" + text + " 当前路口=" + upcoming.FirstOrDefault()?.Id + "；下一动作=" + next?.Id);
-            if (speech is null || !speech.TryAnnounce(text, "导航"))
-            {
-                log?.Invoke("导航语音未就绪，使用提示音且不延迟补播：" + text);
-                fallback?.Invoke();
-            }
             lastSpoken = text;
         }
         }

@@ -115,8 +115,8 @@ public sealed class NavPlugin : Plugin
             ()=>Ets2LaGuidanceAudioPlayer.FallbackFile(AppContext.BaseDirectory,message=>logOutput.Event(message,DateTimeOffset.UtcNow),allowCustom:speech is null),
             message=>logOutput.Event(message,DateTimeOffset.UtcNow),token);
         var guidance=new GuidanceCoordinator(speech?.Queue,playback,message=>logOutput.Event(message,DateTimeOffset.UtcNow));
-        var pipeline = new WarningPipeline(new LoggedAnnouncer((IWarningAnnouncer?)speech ?? fallback, logOutput), speech,guidance);
-        var navigation = new NavigationRuntime(speech?.Queue, () => fallback.TryPlay(),
+        var pipeline = new WarningPipeline(speech,guidance);
+        var navigation = new NavigationRuntime(speech?.Queue,
             message => logOutput.Event(message, DateTimeOffset.UtcNow),guidance);
         void Publish(NavDiagnosticSnapshot snapshot, bool isWarning = false)
         {
@@ -305,14 +305,6 @@ public sealed class NavPlugin : Plugin
             await mapScanner.DisposeAsync().ConfigureAwait(false);
             ReplayCapture.Detach(motionTrace);
             logOutput.Event("后台扫描已停止。", DateTimeOffset.UtcNow);
-        }
-    }
-    private sealed class LoggedAnnouncer(IWarningAnnouncer inner, NavigationLogReporter log) : IWarningAnnouncer
-    {
-        public void Announce(LinkEts2Nav.Core.CameraWarning warning)
-        {
-            log.Triggered(warning, DateTimeOffset.UtcNow);
-            inner.Announce(warning);
         }
     }
 }

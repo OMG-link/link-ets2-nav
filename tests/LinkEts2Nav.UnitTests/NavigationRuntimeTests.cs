@@ -25,20 +25,26 @@ public sealed class NavigationRuntimeTests
         bool paused=false,bool stale=false)=>new(
         new(0,0,z,.5,20,1000,true,paused,1,stale?Now.AddSeconds(-3):Now),
         route,availability,"session",!paused);
+    private static NavigationRuntime ObserveDiagnostics(Action cue,Action<string>? log=null)=>new(log:line=>
+    {
+        if(line.StartsWith("\u5bfc\u822a\u6307\u4ee4\uff1a",StringComparison.Ordinal))cue();
+        log?.Invoke(line);
+    });
+
     [Fact]
     public void SharedCoordinatorReceivesEventsBeforeAnyPlaybackAndOwnsTriggerConsumption()
     {
         var scene=Scene();var guidance=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();guidance.Queued+=queued.Add;
-        int directPlayback=0;var runtime=new NavigationRuntime(fallback:()=>directPlayback++,guidance:guidance);
+        var runtime=new NavigationRuntime(guidance:guidance);
         var first=Data(scene.Route,500);
         runtime.Process(first,scene.Map,Now);
-        Assert.Empty(queued);Assert.Equal(0,directPlayback);
+        Assert.Empty(queued);
         Assert.NotEmpty(guidance.Timeline.Sources.Single(p=>p.Source=="navigation").Events);
         guidance.Tick(first,Now);Assert.Single(queued);
         var hundred=Data(scene.Route,600);runtime.Process(hundred,scene.Map,Now);guidance.Tick(hundred,Now);
         Assert.Single(queued); // 72 km/h suppresses the hundred-metre point.
         var execute=Data(scene.Route,680);runtime.Process(execute,scene.Map,Now);guidance.Tick(execute,Now);
-        Assert.Equal(2,queued.Count);Assert.Equal(0,queued[^1].Priority);Assert.Equal(0,directPlayback);
+        Assert.Equal(2,queued.Count);Assert.Equal(0,queued[^1].Priority);
     }
 
     [Theory]
@@ -99,7 +105,7 @@ public sealed class NavigationRuntimeTests
         var nearby=scene.Map with{FreeNavigationAreas=[area]};
         var data=Data(route,670);
         data=data with{Vehicle=data.Vehicle! with{X=inArea ? 0 : 30,HeadingTurns=towardExit ? .5 : 0}};
-        int calls=0;var runtime=new NavigationRuntime(fallback:()=>calls++);
+        int calls=0;var runtime=ObserveDiagnostics(()=>calls++);
         var first=runtime.Process(data,nearby,Now);
         if(expected)
         {
@@ -162,7 +168,7 @@ public sealed class NavigationRuntimeTests
         var nodes=scene.Route.Nodes.Take(4).Select((n,i)=>n with{DistanceToEndMeters=2000-i*400}).ToList();
         nodes.Add(new(nextExit.Node.Uid,400,20));nodes.Add(new(nextExit.ForwardNode.Uid,0,0));
         var route=RouteSnapshot.Parse(nodes,Now);
-        int calls=0;var runtime=new NavigationRuntime(fallback:()=>calls++);
+        int calls=0;var runtime=ObserveDiagnostics(()=>calls++);
         runtime.Process(Data(route,680),nearby,Now);
         Assert.Equal(1,calls);
         var inside=Data(route,725);inside=inside with{Vehicle=inside.Vehicle! with{X=-10,HeadingTurns=.25}};
@@ -195,7 +201,7 @@ public sealed class NavigationRuntimeTests
         var route = RouteSnapshot.Parse([new(road.Node.Uid,4000,200),new(road.ForwardNode.Uid,0,0)],Now);
         var nearby = new NearbyMapSnapshot(map,[],[],[]);
         int calls = 0;
-        var runtime = new NavigationRuntime(fallback:()=>calls++);
+        var runtime = ObserveDiagnostics(()=>calls++);
         var first = runtime.Process(Data(route,100),nearby,Now);
         Assert.Equal(NavigationPrompts.Continue(),first.LastSpoken);
         Assert.Null(first.Next);
@@ -215,7 +221,7 @@ public sealed class NavigationRuntimeTests
         var route = RouteSnapshot.Parse([new(incoming.Node.Uid,4000,200),new(incoming.ForwardNode.Uid,3600,180),
             new(outgoing.Node.Uid,3550,175),new(outgoing.ForwardNode.Uid,0,0)],Now);
         int calls = 0;
-        var runtime = new NavigationRuntime(fallback:()=>calls++);
+        var runtime = ObserveDiagnostics(()=>calls++);
         var result = runtime.Process(Data(route,100),new(map,[],[],[]),Now);
         Assert.Null(result.LastSpoken);
         Assert.Equal(0,calls);
@@ -229,11 +235,15 @@ public sealed class NavigationRuntimeTests
         await using var queue = new SpeechAnnouncementQueue(new FailedSynth(), _ => {},
             message => { if (message.StartsWith("TTS 合成失败")) failed.TrySetResult(); });
         int beeps = 0;
-        var runtime = new NavigationRuntime(queue, () => beeps++);
-        runtime.Process(Data(scene.Route,621), scene.Map, Now);
+        var played=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var playback=new GuidancePlaybackManager(queue,new CallbackPlayer(_=>{beeps++;played.TrySetResult();}),()=>"beep.wav");
+        var guidance=new GuidanceCoordinator(queue,playback);
+        var runtime = new NavigationRuntime(queue,guidance:guidance);
+        void Step(float z){var data=Data(scene.Route,z);guidance.Observe(data,Now);runtime.Process(data,scene.Map,Now);guidance.Tick(data,Now);}
+        Step(621);
         await failed.Task.WaitAsync(TestContext.Current.CancellationToken);
-        runtime.Process(Data(scene.Route,621), scene.Map, Now);
-        runtime.Process(Data(scene.Route,622), scene.Map, Now);
+        await played.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
+        Step(621);Step(622);
         Assert.Equal(1, beeps);
     }
 
@@ -250,27 +260,50 @@ public sealed class NavigationRuntimeTests
         {
             await using var queue = new SpeechAnnouncementQueue(synth, played.Add,
                 message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.TrySetResult(); });
-            var runtime = new NavigationRuntime(queue, () => beeps++);
-            runtime.Process(Data(scene.Route,621), scene.Map, Now);
+            var completed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var playback=new GuidancePlaybackManager(queue,new CallbackPlayer(path=>
+                {if(path=="beep.wav")beeps++;else played.Add(path);completed.TrySetResult();}),()=>"beep.wav");
+            var guidance=new GuidanceCoordinator(queue,playback);
+            var runtime = new NavigationRuntime(queue,guidance:guidance);
+            void Step(float z){var data=Data(scene.Route,z);guidance.Observe(data,Now);runtime.Process(data,scene.Map,Now);guidance.Tick(data,Now);}
+            Step(621);
             string text = await synth.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
             Assert.Contains("右转", text);
             Assert.Empty(played);
             Assert.Equal(0, beeps);
             synth.Result.TrySetResult(file);
             await ready.Task.WaitAsync(TestContext.Current.CancellationToken);
-            runtime.Process(Data(scene.Route,621), scene.Map, Now);
-            runtime.Process(Data(scene.Route,622), scene.Map, Now);
+            await completed.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
+            Step(621);Step(622);
             Assert.Single(played);
             Assert.Equal(0, beeps);
         }
         finally { File.Delete(file); }
     }
+    [Fact]
+    public async Task StandaloneAnalysisNeverPlaysEvenWhenItsSpeechIsAlreadyCached()
+    {
+        var scene=Scene();string file=Path.GetTempFileName();int directPlayback=0;
+        try
+        {
+            const string text="五十米后，右转。";
+            await using var queue=new SpeechAnnouncementQueue(new FailedSynth(),_=>directPlayback++,
+                preGenerated:new Dictionary<string,string>{{text,file}});
+            Assert.True(queue.IsReady(text));
+            var runtime=new NavigationRuntime(queue);
+            Assert.Equal(text,runtime.Process(Data(scene.Route,621),scene.Map,Now).LastSpoken);
+            Assert.Equal(0,directPlayback);
+        }
+        finally{File.Delete(file);}
+    }
+    private sealed class CallbackPlayer(Action<string> callback):IGuidanceAudioPlayer
+    {public Task PlayAsync(string path,CancellationToken token){callback(path);return Task.CompletedTask;}}
 
     [Fact]
     public void FirstDetectionAt79MetersRepeatsOnlyForTwentyMeterExecution()
     {
         var scene=Scene();var calls=0;var logs=new List<string>();
-        var runtime=new NavigationRuntime(fallback:()=>calls++,log:logs.Add);
+        var runtime=ObserveDiagnostics(()=>calls++,logs.Add);
         runtime.Process(Data(scene.Route,621),scene.Map,Now);
         runtime.Process(Data(scene.Route,651),scene.Map,Now);
         runtime.Process(Data(scene.Route,680),scene.Map,Now);
@@ -282,7 +315,7 @@ public sealed class NavigationRuntimeTests
     public void OfficialRouteSkipsHundredAtHighSpeedAndKeepsExecution()
     {
         var scene=Scene();var calls=0;var logs=new List<string>();
-        var runtime=new NavigationRuntime(fallback:()=>calls++,log:logs.Add);
+        var runtime=ObserveDiagnostics(()=>calls++,logs.Add);
         var next=runtime.Process(Data(scene.Route,100),scene.Map,Now);
         Assert.Equal(ManeuverKind.TurnRight,next.Next!.Kind);
         Assert.InRange(next.Next.DistanceMeters,599,601);
@@ -300,7 +333,7 @@ public sealed class NavigationRuntimeTests
     public void MissingNavigationPauseAndStalePoseNeverAnnounce()
     {
         var scene=Scene();var calls=0;
-        var runtime=new NavigationRuntime(fallback:()=>calls++);
+        var runtime=ObserveDiagnostics(()=>calls++);
         Assert.Null(runtime.Process(Data(scene.Route,500,RouteAvailability.None),scene.Map,Now).Next);
         Assert.Null(runtime.Process(Data(scene.Route,500,paused:true),scene.Map,Now).Next);
         Assert.Null(runtime.Process(Data(scene.Route,500,stale:true),scene.Map,Now).Next);

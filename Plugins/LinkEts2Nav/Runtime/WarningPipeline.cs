@@ -6,7 +6,7 @@ using TruckLib.ScsMap;
 namespace LinkEts2Nav.Runtime;
 
 /// <summary>Connects immutable game samples to geometry matching and the pure warning policy.</summary>
-public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner? planner = null,GuidanceCoordinator? guidance=null)
+public sealed class WarningPipeline(IWarningPlanner? planner = null,GuidanceCoordinator? guidance=null)
 {
     private readonly CameraWarningEngine engine = new();
     private readonly LinkEts2Nav.Core.Guidance.RouteProgressTracker progress=new();
@@ -90,7 +90,6 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
         var warnings = engine.Update(warningSnapshot, now).Concat(uncalibrated.Update(proximitySnapshot, now));
         foreach (var warning in warnings)
         {
-            announcer.Announce(warning);
             lastWarning = $"{warning.CameraId} · {warning.StageDistanceMeters:F0} m 阶段 · 实距 {warning.DistanceMeters:F0} m · {warning.DistanceKind}";
         }
         }

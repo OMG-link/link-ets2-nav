@@ -15,6 +15,54 @@ public sealed class RoadPathSourceTests
     private static RouteSnapshot Route(params (ulong Uid, float Distance)[] nodes) =>
         RouteSnapshot.Parse(nodes.Select(node => new RouteNode(node.Uid, node.Distance, node.Distance / 20)), Now);
 
+    private static (GameMap Map,Road[] Roads,RouteSnapshot Route) LongLoadedRoute()
+    {
+        var map=new GameMap();var roads=new List<Road>{AddRoad(map,Point(0),Point(1000))};
+        for(int i=2;i<=10;i++)roads.Add(roads[^1].Append(Point(i*1000)));
+        var nodes=new[]{(roads[0].Node.Uid,10000f)}.Concat(roads.Select((r,i)=>(r.ForwardNode.Uid,(float)(9000-i*1000)))).ToArray();
+        return(map,roads.ToArray(),Route(nodes));
+    }
+
+    [Theory]
+    [InlineData(100)]
+    [InlineData(499)]
+    [InlineData(501)]
+    public void KnownSdkRoadUidsKeepEntireLoadedRouteBeyondLocalizationRadius(float x)
+    {
+        var s=LongLoadedRoute();var source=new RoadPathSource(s.Map);
+        var path=source.GetPath(Point(x),Vector3.UnitX,s.Route,s.Route.Availability);
+        Assert.Equal(s.Roads.Select(r=>r.Uid.ToString("X16")),path.Select(p=>p.Id));
+        Assert.Equal(10000,path.Sum(p=>p.Points.Zip(p.Points.Skip(1)).Sum(q=>(double)Vector3.Distance(q.First,q.Second))),2);
+    }
+
+    [Fact]
+    public void Crossing2500MeterEndpointBoundaryDoesNotAttachANewRouteTail()
+    {
+        var s=LongLoadedRoute();var source=new RoadPathSource(s.Map);
+        var before=source.GetPath(Point(499),Vector3.UnitX,s.Route,s.Route.Availability);
+        var after=source.GetPath(Point(501),Vector3.UnitX,s.Route,s.Route.Availability);
+        Assert.Equal(before.Select(p=>p.Id),after.Select(p=>p.Id));
+        Assert.Equal(10,before.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MissingOrAmbiguousDistantUidStillBreaksTheContinuousRoute(bool ambiguous)
+    {
+        var s=LongLoadedRoute();var route=s.Route;
+        if(ambiguous)
+        {
+            var duplicate=AddRoad(s.Map,Point(7000,100),Point(8000,100));
+            duplicate.Node=s.Roads[7].Node;duplicate.ForwardNode=s.Roads[7].ForwardNode;
+        }
+        else route=Route(s.Route.Nodes.Select((n,i)=>(i==8?999UL:n.Uid,n.DistanceToEndMeters)).ToArray());
+        var path=new RoadPathSource(s.Map).GetPath(Point(100),Vector3.UnitX,route,route.Availability);
+        Assert.NotEmpty(path);
+        Assert.DoesNotContain(path,p=>p.Id==s.Roads[7].Uid.ToString("X16"));
+        Assert.DoesNotContain(path,p=>p.Id==s.Roads[^1].Uid.ToString("X16"));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

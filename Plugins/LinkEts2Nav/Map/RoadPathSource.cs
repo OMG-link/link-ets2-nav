@@ -151,7 +151,9 @@ public sealed class RoadPathSource
             DirectedRoad? directed = null;
             if (!ambiguous.Contains(key))
             {
-                if (links.TryGetValue(key, out var road) && Near(road, position)) directed = Orient(road, key.Item1);
+                // Exact SDK node UIDs establish route membership. Distance is only
+                // a player-location search filter, not a limit on known route tails.
+                if (links.TryGetValue(key, out var road)) directed = Orient(road, key.Item1);
                 else if (junctionLinks.TryGetValue(key, out var junction)) directed = junction;
                 else
                 {

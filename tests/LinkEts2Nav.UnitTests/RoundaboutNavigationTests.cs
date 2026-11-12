@@ -93,8 +93,10 @@ public sealed class RoundaboutNavigationTests
     {
         var now=DateTimeOffset.UtcNow;var policy=new NavigationInstructionPolicy();
         NavigationManeuver[] actions=[
-            new("enter",ManeuverKind.EnterRoundabout,200,"in","out"){Instruction="进入环岛，从第二出口驶出"},
-            new("exit",ManeuverKind.ExitRoundabout,300,"in","out"){ExecutionOnly=true}];
+            new("enter",ManeuverKind.EnterRoundabout,200,"in","out"){Instruction="进入环岛，从第二出口驶出",
+                JunctionId="roundabout:ring",EndDistanceMeters=350,SpeechSequenceId="roundabout:ring:in",SpeechSequenceStartDistanceMeters=200},
+            new("exit",ManeuverKind.ExitRoundabout,300,"in","out"){ExecutionOnly=true,
+                JunctionId="roundabout:ring",EndDistanceMeters=350,SpeechSequenceId="roundabout:ring:in",SpeechSequenceStartDistanceMeters=200}];
         var plan=policy.PlanSequence(actions,"s",now,now,true);
         Assert.Contains("驶出环岛。",plan);
         Assert.DoesNotContain(plan,t=>t.Contains("米后，从此出口"));

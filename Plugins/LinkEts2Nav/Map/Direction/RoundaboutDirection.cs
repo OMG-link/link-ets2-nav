@@ -28,13 +28,21 @@ public static class RoundaboutDirection
         var local=graph.Values.Where(c=>items.Contains(c.Key.ItemUid)).OrderBy(c=>c.Key.ItemUid).ThenBy(c=>c.Key.CurveIndex).ToArray();
         PlanePoint? center=null;double centerMs=0,weightMs=0,searchMs=0;bool complete=true;string? uncertainty=null;
         int vertices=local.Length*2,edgeCount=0,k=0;
-        bool closed=ring.Select((key,i)=>graph[key].Next.Contains(ring[(i+1)%ring.Count])).All(v=>v);
+        bool LegalConnection(RoundaboutCurve a,RoundaboutCurve b)
+        {
+            if(!a.Next.Contains(b.Key))return false;
+            if(a.Key.ItemUid==b.Key.ItemUid)return true;
+            if(a.ExitNode==0||a.ExitNode!=b.EntryNode)return false;
+            return a.PrefabUid is null||b.PrefabUid is null||a.ExitLane>=0&&a.ExitLane==b.EntryLane;
+        }
+        bool closed=ring.Select((key,i)=>graph[key].ProvenTraffic&&graph[key].TrafficKnown
+            &&LegalConnection(graph[key],graph[ring[(i+1)%ring.Count]])).All(v=>v);
         RoundaboutDirectionResult Result(bool opposite=false,bool cycle=false)=>new(id,opposite,cycle,complete,uncertainty,center,vertices,edgeCount,k,centerMs,weightMs,searchMs,total.Elapsed.TotalMilliseconds)
             {NativeClosedReference=closed};
         void Unknown(string message){complete=false;uncertainty??=message;}
         if(ring.Any(key=>graph[key].NativeCurve is null))
         {Unknown("Native reference coefficients unavailable (synthetic/legacy geometry).");return Result();}
-        if(!closed)Unknown("Declared reference is not a native closed walk; its explicit endpoint attachments define the integration circuit.");
+        if(!closed)Unknown("Reference is not a proven native closed walk; its explicit endpoint attachments define the integration circuit.");
         try
         {
             CubicPlaneCurve Connector(PlanePoint p,PlanePoint q)=>new(new(0,0),new(0,0),q-p,p);
@@ -74,16 +82,10 @@ public static class RoundaboutDirection
                 {
                     if(!index.TryGetValue(next,out int j)||!local[j].ProvenTraffic||native[j] is null)continue;
                     var target=local[j];
-                    bool same=c.Key.ItemUid==target.Key.ItemUid;
-                    if(!same)
-                    {
-                        if(c.ExitNode==0||c.ExitNode!=target.EntryNode)continue;
-                        // Direct prefab interfaces retain the actual native lane slot.
-                        // A road object is a same-direction traffic corridor and permits
-                        // natural lane changes; its opposite direction is a separate edge.
-                        if(c.PrefabUid is not null&&target.PrefabUid is not null
-                            &&(c.ExitLane<0||c.ExitLane!=target.EntryLane))continue;
-                    }
+                    // Direct prefab interfaces retain native lane slots. A road is
+                    // a same-direction corridor permitting natural lane changes;
+                    // opposite-direction traffic is always a separate edge.
+                    if(!LegalConnection(c,target))continue;
                     var p=native[i]!.At(1);var q=native[j]!.D;
                     if(!SafeAttachment(p,q)){Unknown("Interface attachment not confined to a centre-free local half-plane.");continue;}
                     geometricEdges.Add((2*i+1,2*j,Connector(p,q)));

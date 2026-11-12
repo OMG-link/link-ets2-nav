@@ -32,8 +32,6 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
     private RoadPathSource? paths;
     private string? lastSpoken, signature, mergeSignature;
     private string? forkSignature;
-    private string? approachingJunction;
-    private bool approachingStraight;
     private DateTimeOffset reportedAt;
 
     public NavigationDiagnostic Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
@@ -126,34 +124,28 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         // an already verified long road before that join.
         upcoming = exitApproach.Apply(upcoming, instructionRoute, paths.GetNavigationGraph(), along.Value);
         double confirmedAhead = Math.Max(0, Math.Min(confirmedUntil, firstUnresolvedJoinAlong) - along.Value);
-        bool confirmedContinuation = !yardApproach && !upcoming.Any(m => m.Kind != ManeuverKind.Straight && m.AnnouncementMode==NavigationAnnouncementMode.Normal) && confirmedAhead >= 800;
-        var next = upcoming.FirstOrDefault(m => m.Kind != ManeuverKind.Straight) ?? upcoming.FirstOrDefault();
+        bool confirmedContinuation = !yardApproach && !upcoming.Any(NavigationEventPlanner.IsNavigationAction) && confirmedAhead >= 800;
+        var next = upcoming.FirstOrDefault(NavigationEventPlanner.IsNavigationAction) ?? upcoming.FirstOrDefault();
         string? currentJunction=yardApproach ? null : CurrentJunction(instructionRoute,along.Value);
-        bool finishingTrackedTurn=currentJunction is not null && currentJunction==approachingJunction && !approachingStraight;
-        if(!finishingTrackedTurn && upcoming.FirstOrDefault() is { DistanceMeters: <=50, JunctionId: not null } approach)
-        {
-            approachingJunction=approach.JunctionId;
-            approachingStraight=approach.Kind==ManeuverKind.Straight;
-        }
-        // Entering a turn's PPD curve is not completion. Keep preparing future audio,
-        // but defer the next briefing until exit; an imminent execution cue remains urgent.
-        bool defer=guidance is null && currentJunction is not null && currentJunction==approachingJunction && !approachingStraight && currentJunction!=next?.JunctionId
-            && !(next is { Kind: not ManeuverKind.Straight, DistanceMeters: <=20 });
+        // This is a diagnostic only. Both execution paths use the planner's
+        // same physical-end boundary instead of a separate turn/straight gate.
+        bool defer=currentJunction is not null&&next is not null&&currentJunction!=next.JunctionId;
+        double? componentEnd=CurrentComponentEnd(instructionRoute,along.Value);
         if(guidance is not null)
         {
             double playerAlong=progress.Update(data.SessionId,route,along.Value);
             guidance.Publish(eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
                 playerAlong,upcoming,true,false,confirmedContinuation,guidance.Scheduler,progress.Frame,
-                CurrentComponentEnd(instructionRoute,along.Value) is {} boundary?playerAlong-along.Value+boundary:null,
+                componentEnd is {} boundary?playerAlong-along.Value+boundary:null,
                 guidance.WillReplaceSource("navigation",data.Route.Revision)));
             lastSpoken=guidance.LastPlayed("navigation");
         }
         else
         {
-        var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation);
+        var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation,componentEnd-along.Value);
         speech?.UpdatePlan("navigation", plan, priority: 10);
-        foreach (string text in policy.UpdateSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, !defer,
-            speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text), confirmedContinuation,vehicle.SpeedMetersPerSecond))
+        foreach (string text in policy.UpdateSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true,
+            speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text), confirmedContinuation,vehicle.SpeedMetersPerSecond,componentEnd-along.Value))
         {
             log?.Invoke("导航指令：" + text + " 当前路口=" + upcoming.FirstOrDefault()?.Id + "；下一动作=" + next?.Id);
             if (speech is null || !speech.TryAnnounce(text, "导航"))
@@ -227,7 +219,6 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
         speech?.ClearPlan("navigation");
         map = null;
         paths = null;
-        lastSpoken = signature = approachingJunction = null;
-        approachingStraight=false;
+        lastSpoken = signature = null;
     }
 }

@@ -72,14 +72,12 @@ public sealed class NavigationEventPlanner
             if(!sequences.TryGetValue(sequence,out var previousSequence)||previousSequence.EndAlongMeters is null)
                 sequences[sequence]=new(sequence,state.EndAlong);
             bool silent=m.AnnouncementMode==NavigationAnnouncementMode.Silent;
-            if(m.Kind==ManeuverKind.Straight)
-            {
-                if(!m.IsMainRoadContinuation)
-                    triggers.Add(new(state.Id+":passage",state.Id,SpeechTriggerKind.Passage,state.Along-50,"保持直行。")
-                        {Enabled=active,SequenceOrder=0});
-                continue;
-            }
-            ActionPlan? predecessor=ordered.Take(i).LastOrDefault(p=>IsNavigationAction(p.Maneuver));
+            if(m.IsMainRoadContinuation)continue;
+            // Execution-only points belong to a component's ongoing series, not
+            // a fresh action after its end. Only independent component actions
+            // become predecessors; a child does not wait for its own parent to end.
+            ActionPlan? predecessor=ordered.Take(i).LastOrDefault(p=>IsNavigationAction(p.Maneuver)&&!p.Maneuver.ExecutionOnly
+                &&(!m.ExecutionOnly||m.JunctionId is null||p.Maneuver.JunctionId!=m.JunctionId));
             if(state.BriefingAlong is null)
             {
                 // An unknown previous end is not the previous action's start.
@@ -112,15 +110,19 @@ public sealed class NavigationEventPlanner
                     ||(initial<=800&&!Stages.Contains((int)initial.Value)&&stage==nearest))continue;
                 double triggerAlong=state.Along-stage;
                 string text=NavigationPrompts.AtDistance(m.Kind,stage,stage==200?Ordinal(ordered,priorIndex+1,i,triggerAlong):0,Instruction(m,stage));
-                bool precedingStraight=ordered.Skip(priorIndex+1).Take(i-priorIndex-1)
-                    .Any(p=>p.Along>=triggerAlong&&p.Maneuver.Kind==ManeuverKind.Straight&&!p.Maneuver.IsMainRoadContinuation);
-                if(stage==100&&precedingStraight&&m.Kind!=ManeuverKind.EnterRoundabout)
-                    text=text.TrimEnd('。')+"，前方路口直行。";
                 triggers.Add(new(state.Id+":"+stage,state.Id,SpeechTriggerKind.Advance,state.Along-stage,text)
                     {Enabled=active,Silent=silent,SequenceOrder=-stage,SkipAtSpeedKph=stage==100?60:null});
             }
-            triggers.Add(new(state.Id+":execute",state.Id,SpeechTriggerKind.Execution,state.Along-20,Execution(wording,i))
-                {Enabled=active,Silent=silent,Priority=0,SequenceOrder=m.ExecutionOnly?m.SpeechSequenceOrder:0});
+            if(state.BriefingAlong is {} start)
+            {
+                double executionAlong=Math.Max(state.Along-20,start);
+                bool strict=executionAlong==start&&state.BriefingStrict;
+                // A preceding action can leave no part of this action's interval
+                // available. Its normal end still closes the series; do not cue it late.
+                if(state.EndAlong is {} finish&&(executionAlong>finish||executionAlong==finish&&strict))continue;
+                triggers.Add(new(state.Id+":execute",state.Id,SpeechTriggerKind.Execution,executionAlong,Execution(wording,i))
+                    {Enabled=active,StrictCrossing=strict,Silent=silent,Priority=0,SequenceOrder=m.ExecutionOnly?m.SpeechSequenceOrder:0});
+            }
         }
         if(!maneuvers.Any(IsNavigationAction)&&confirmedContinuation)
         {
@@ -140,7 +142,8 @@ public sealed class NavigationEventPlanner
         return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,events,triggers)
             {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame,Sequences=sequences.Values.ToArray()};
     }
-    private static bool IsNavigationAction(NavigationManeuver m)=>m.Kind!=ManeuverKind.Straight&&m.AnnouncementMode==NavigationAnnouncementMode.Normal;
+    /// <summary>Ordinary decisions share one chain; environment and proven main-road continuations do not block it.</summary>
+    public static bool IsNavigationAction(NavigationManeuver m)=>m.AnnouncementMode==NavigationAnnouncementMode.Normal&&!m.IsMainRoadContinuation;
     private string FrameSuffix()=>frame is null?"":"#"+frame;
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
     private static int ActionIndex(IReadOnlyList<NavigationManeuver> list,int start)

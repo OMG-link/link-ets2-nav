@@ -3,7 +3,8 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class NavigationSequenceWordingTests
 {
     private static readonly DateTimeOffset Now=DateTimeOffset.UtcNow;
-    private static NavigationManeuver M(string id,ManeuverKind kind,double distance)=>new(id,kind,distance,"in","out"){JunctionId=id};
+    // Constructed junctions in this wording fixture have known thirty-metre physical intervals.
+    private static NavigationManeuver M(string id,ManeuverKind kind,double distance)=>new(id,kind,distance,"in","out"){JunctionId=id,EndDistanceMeters=distance+30};
     [Theory]
     [InlineData(55,"五十")]
     [InlineData(60,"六十")]

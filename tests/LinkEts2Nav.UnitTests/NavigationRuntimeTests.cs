@@ -114,7 +114,7 @@ public sealed class NavigationRuntimeTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void StraightOrSingleConnectionPassageDoesNotBlockNextTurnsStandardReminder(bool hasChoice)
+    public void OrdinaryStraightBlocksNextBriefingButForcedConnectionDoesNotInventAnAction(bool hasChoice)
     {
         var scene=Scene();var map=scene.Map.Map;
         var incoming=map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Uid==scene.Route.Nodes[0].Uid);
@@ -127,12 +127,25 @@ public sealed class NavigationRuntimeTests
             new("prefab:DEF:0:2",straight.ForwardNode.Uid,continuation.Node.Uid,[new(0,0,1200),new(0,0,1260)]) { Junction = new(2, 2, 1),NativeEntryTangent=Vector3.UnitZ,NativeExitTangent=Vector3.UnitZ }];
         var route=RouteSnapshot.Parse([new(incoming.Node.Uid,2000,100),new(incoming.ForwardNode.Uid,1600,80),
             new(straight.Node.Uid,1500,75),new(straight.ForwardNode.Uid,1000,50),new(turn.Node.Uid,900,45),new(turn.ForwardNode.Uid,0,0)],Now);
-        var nearby=scene.Map with{PrefabPaths=links};var runtime=new NavigationRuntime();
-        runtime.Process(Data(route,100),nearby,Now);
-        runtime.Process(Data(route,650),nearby,Now);
-        var inside=runtime.Process(Data(route,710),nearby,Now);
-        Assert.False(inside.DeferredUntilJunctionExit);
-        Assert.Equal("五百米后，右转。",inside.LastSpoken);
+        var nearby=scene.Map with{PrefabPaths=links};var guidance=new GuidanceCoordinator();
+        var queued=new List<QueuedGuidanceSpeech>();guidance.Queued+=queued.Add;
+        var runtime=new NavigationRuntime(guidance:guidance);
+        NavigationDiagnostic Step(float z)
+        {
+            var data=Data(route,z);var result=runtime.Process(data,nearby,Now);guidance.Tick(data,Now);return result;
+        }
+        var first=Step(100);
+        Assert.Equal(hasChoice?ManeuverKind.Straight:ManeuverKind.TurnRight,first.Next!.Kind);
+        Step(650);Step(680);var inside=Step(710);
+        if(hasChoice)
+        {
+            Assert.True(inside.DeferredUntilJunctionExit);
+            Assert.Contains(queued,q=>q.Text=="直行。");
+            Assert.DoesNotContain(queued,q=>q.Text.Contains("右转"));
+            Step(760);Assert.DoesNotContain(queued,q=>q.Text.Contains("右转"));
+            Step(761);Assert.Contains(queued,q=>q.Text.Contains("右转"));
+        }
+        else Assert.Contains(queued,q=>q.Text=="五百米后，右转。");
     }
 
     [Fact]

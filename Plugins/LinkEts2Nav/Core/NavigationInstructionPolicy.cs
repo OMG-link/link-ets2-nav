@@ -23,18 +23,18 @@ public sealed class NavigationInstructionPolicy
         =>UpdateSequence(maneuver is null?[]:[maneuver],sessionId,observedAt,now,active,canAnnounce);
 
     public IReadOnlyList<string> PlanSequence(IReadOnlyList<NavigationManeuver> maneuvers,string sessionId,
-        DateTimeOffset observedAt,DateTimeOffset now,bool active,bool hasConfirmedContinuation=false)
+        DateTimeOffset observedAt,DateTimeOffset now,bool active,bool hasConfirmedContinuation=false,double? initialBoundaryDistanceMeters=null)
     {
         if(!Valid(maneuvers,sessionId,observedAt,now,active))return [];
-        timeline.Publish(Build(maneuvers,sessionId,observedAt,hasConfirmedContinuation));
+        timeline.Publish(Build(maneuvers,sessionId,observedAt,hasConfirmedContinuation,initialBoundaryDistanceMeters));
         return scheduler.Prepare(timeline,now);
     }
     public IReadOnlyList<string> UpdateSequence(IReadOnlyList<NavigationManeuver> maneuvers,string sessionId,
         DateTimeOffset observedAt,DateTimeOffset now,bool active,Func<string,bool>? canAnnounce=null,
-        bool hasConfirmedContinuation=false,double speedMetersPerSecond=0)
+        bool hasConfirmedContinuation=false,double speedMetersPerSecond=0,double? initialBoundaryDistanceMeters=null)
     {
         if(!Valid(maneuvers,sessionId,observedAt,now,active))return [];
-        var plan=Build(maneuvers,sessionId,observedAt,hasConfirmedContinuation);
+        var plan=Build(maneuvers,sessionId,observedAt,hasConfirmedContinuation,initialBoundaryDistanceMeters);
         // A synchronous caller has no playback worker. Keep unavailable points
         // unconsumed; all timing, same-series ordering and ends remain scheduler-owned.
         if(canAnnounce is not null)plan=plan with{Triggers=plan.Triggers.Select(t=>t with
@@ -47,13 +47,14 @@ public sealed class NavigationInstructionPolicy
             .Select(r=>r.Trigger.Text).ToArray();
     }
     private GuidanceSourcePlan Build(IReadOnlyList<NavigationManeuver> maneuvers,string sessionId,
-        DateTimeOffset observedAt,bool continuation)
+        DateTimeOffset observedAt,bool continuation,double? initialBoundaryDistanceMeters)
     {
         if(session!=sessionId){Reset();session=sessionId;}
         var shared=maneuvers.FirstOrDefault(m=>positions.ContainsKey(m.Id));
         if(shared is not null)playerAlong=positions[shared.Id]-shared.DistanceMeters;
         foreach(var m in maneuvers)positions.TryAdd(m.Id,playerAlong+m.DistanceMeters);
-        var plan=planner.Build(sessionId,"standalone",observedAt,playerAlong,maneuvers,true,false,continuation,scheduler);
+        var plan=planner.Build(sessionId,"standalone",observedAt,playerAlong,maneuvers,true,false,continuation,scheduler,
+            initialBoundaryAlong:playerAlong+initialBoundaryDistanceMeters);
         // Read supersession from the common ledger instead of maintaining a
         // second played-history state for this synchronous interface.
         var series=plan.Events.ToDictionary(e=>e.Id,e=>e.SequenceId,StringComparer.Ordinal);

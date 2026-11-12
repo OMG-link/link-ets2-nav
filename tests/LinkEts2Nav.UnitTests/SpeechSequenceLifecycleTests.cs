@@ -68,9 +68,9 @@ public sealed class SpeechSequenceLifecycleTests
     {
         var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
         NavigationManeuver Exit(string id,int n)=>new(id,n==3?ManeuverKind.ExitRoundabout:ManeuverKind.PassRoundaboutExit,160,"r","r")
-            {EndDistanceMeters=300,ExecutionOnly=true,SpeechSequenceId="ring-exits",SpeechSequenceOrder=n,
+            {JunctionId="ring",EndDistanceMeters=300,ExecutionOnly=true,SpeechSequenceId="ring-exits",SpeechSequenceOrder=n,
                 Instruction=n==3?"驶出环岛":"经过第"+n+"出口"};
-        NavigationManeuver[] input=[new("enter",ManeuverKind.EnterRoundabout,100,"r","r"){EndDistanceMeters=300},Exit("one",1),Exit("two",2),Exit("out",3)];
+        NavigationManeuver[] input=[new("enter",ManeuverKind.EnterRoundabout,100,"r","r"){JunctionId="ring",EndDistanceMeters=300},Exit("one",1),Exit("two",2),Exit("out",3)];
         t.Publish(p.Build("s","r",Now,0,input,true,false,false,s));s.Update(t,Now,10);
         var prepared=s.Prepare(t,Now);Assert.Contains("驶出环岛。",prepared);
         t.Publish(p.Build("s","r",Now,140,[],true,false,false,s));

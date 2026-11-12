@@ -213,7 +213,7 @@ dotnet run --project tools/LinkEts2Nav.Speech -- --model-dir "<model-directory>"
 生产流程按以下职责分工：
 
 - `NavigationRuntime` 从已确认路径收集有序动作；`WarningPipeline` 确认探头归属、方向、接近轮次与动态限速，二者不直接播放。
-- `NavigationEventPlanner` 将全部已确认动作展开为事件及上游触发点。首条简报在规划时安插于前一导航动作的真实结束位置，距离文案由该位置到下一动作的位置计算并固定；后续触发不依赖当前动作选择。直行路口可单独提醒通过。
+- `NavigationEventPlanner` 将全部已确认动作展开为事件及上游触发点。首条简报在规划时安插于前一导航动作的真实结束位置，距离文案由该位置到下一动作的位置计算并固定；后续触发不依赖当前动作选择。直行作为普通动作，与转弯共用首次简报、距离档位、20 米执行和前驱结束约束。
 - `RouteProgressTracker` 在 SDK 截短路线前缀后对齐路线坐标，`GuidanceTimeline` 发布事件和触发点，并保留刚跨过、已经离开动作识别结果的执行点。
 - `SpeechTriggerScheduler` 消费到期触发点，记录已入队、静默、车速跳过及被后续阶段覆盖的状态。`GuidanceCoordinator` 统一处理来源发布、会话、重算、准备及入队。
 - `SpeechAnnouncementQueue` 负责音频合成和文件缓存，`GuidancePlaybackManager` 负责待播队列及优先级，`Ets2LaGuidanceAudioPlayer` 通过宿主公开音频队列回调等待真实播放完成。
@@ -228,7 +228,7 @@ dotnet run --project tools/LinkEts2Nav.Speech -- --model-dir "<model-directory>"
 
 导航动作和环境事件分别规划前驱链；后者不会改变导航首条简报的位置。播放覆盖使用独立的语音系列，环岛进入预告与环内出口提示属于两个系列，环内后续出口提示可覆盖同系列待播的早出口提示。路口系列结束于所选预制件路径末端，环岛两个系列均结束于整个组件的对外出口，测速系列结束于监测点通过事实。结束点与语音点按沿路顺序消费，严格越过结束位置后在同一原子队列批次取消该系列待播项，不使用按年龄淘汰或额外结束墓碑；已开始的片段允许播完。未知结束位置等待数据补充，不将动作开始位置当成结束位置。
 
-诊断页显示完整事件数、触发点、待播内容及最近触发结果。`motion.jsonl` 中的 `Guidance` 字段包含同一诊断。代码中的 `NavigationInstructionPolicy` 及未传入 coordinator 的独立调用适配器保留给现有离线工具；宿主生产路径始终传入统一 coordinator，不再由旧策略调用音频播放。
+诊断页显示完整事件数、触发点、待播内容及最近触发结果。`motion.jsonl` 中的 `Guidance` 字段包含同一诊断。`NavigationInstructionPolicy` 为旧同步接口提供薄适配器，直接复用同一 `NavigationEventPlanner`、`GuidanceTimeline` 和 `SpeechTriggerScheduler`；仅负责将相对距离样本对齐为路线坐标、检查新鲜度和适配音频就绪回调，不另维护直行或转向的触发阶段策略。宿主生产路径始终传入统一 coordinator，由播放管理器选择音频。
 
 ## 导出预制件导航线路 SVG
 

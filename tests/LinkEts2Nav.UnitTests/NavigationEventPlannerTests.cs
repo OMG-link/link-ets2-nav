@@ -43,7 +43,7 @@ public sealed class NavigationEventPlannerTests
         t.Publish(p.Build("s","r",Now,300,[Turn(1100,"later")],true,true,false,s));
         Assert.DoesNotContain(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued&&r.Event.Id.StartsWith("later@"));Assert.NotEmpty(s.Prepare(t,Now));
         t.Publish(p.Build("s","r",Now,351,[Turn(1049,"later")],true,false,false,s));
-        Assert.Equal("沿当前道路，继续行驶一公里。",Assert.Single(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
+        Assert.Equal("一公里后，左转。",Assert.Single(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
     }
     [Fact]
     public void FastHundredMeterPointStaysPreparedAndIsConsumedWithoutDroppingExecution()
@@ -64,16 +64,17 @@ public sealed class NavigationEventPlannerTests
         Assert.Equal("左转，然后六十米左转。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("turn@")&&t.Kind==SpeechTriggerKind.Execution).Text);
     }
     [Fact]
-    public void RoundaboutExitHasOnlyExecutionAndMergeSilenceDoesNotHideInterveningStraight()
+    public void RoundaboutExitHasOnlyExecutionAndStandaloneStraightRemainsStructural()
     {
         var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
         NavigationManeuver[] maneuvers=[new("straight",ManeuverKind.Straight,40,"a","b"){EndDistanceMeters=80},
             new("merge",ManeuverKind.MergeLeft,400,"b","c"){AnnouncementMode=NavigationAnnouncementMode.Silent,EndDistanceMeters=450},
             new("exit",ManeuverKind.ExitRoundabout,600,"c","d"){ExecutionOnly=true,EndDistanceMeters=650}];
         t.Publish(p.Build("s","r",Now,0,maneuvers,true,false,false,s));
-        Assert.Empty(s.Update(t,Now,0));
+        Assert.DoesNotContain(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued);
         var plan=t.Sources[0];t.Publish(plan with{PlayerAlongMeters=20});
-        Assert.Equal("直行。",Assert.Single(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
+        Assert.DoesNotContain(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued);
+        Assert.DoesNotContain(plan.Triggers,t=>t.EventId.StartsWith("straight@"));
         Assert.Single(t.Sources[0].Triggers,x=>x.EventId.StartsWith("exit@"));
     }
 

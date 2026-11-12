@@ -6,13 +6,15 @@ namespace LinkEts2Nav.Core.Guidance;
 public sealed class NavigationEventPlanner
 {
     private static readonly int[] Stages = [2000,1000,500,200,100];
-    private sealed class ActionPlan(NavigationManeuver maneuver, string id, double along)
+    private sealed class ActionPlan(NavigationManeuver maneuver, string id, double along,double discoveredAlong)
     {
         public NavigationManeuver Maneuver = maneuver;
         public readonly string Id = id;
         public readonly double Along = along;
+        public readonly double DiscoveredAlong = discoveredAlong;
         public double? EndAlong;
         public double? SequenceStartAlong;
+        public SpeechSequence? DenseSummary;
         public double? BriefingAlong;
         public bool BriefingStrict;
         public double Minimum = maneuver.DistanceMeters;
@@ -54,12 +56,12 @@ public sealed class NavigationEventPlanner
         foreach(var (m,key,start) in inputs)
         {
             if(!actions.TryGetValue(key,out var state))
-                actions[key]=state=new(m,key+"@0"+FrameSuffix(),playerAlong+m.DistanceMeters){SequenceStartAlong=start};
+                actions[key]=state=new(m,key+"@0"+FrameSuffix(),playerAlong+m.DistanceMeters,playerAlong){SequenceStartAlong=start};
             else if(start is null&&(state.EndAlong is {} oldEnd&&playerAlong+m.DistanceMeters>oldEnd
                 ||state.EndAlong is null&&state.Minimum<=20&&m.DistanceMeters>550))
             {
                 int generation=state.Generation+1;
-                actions[key]=state=new(m,key+"@"+generation+FrameSuffix(),playerAlong+m.DistanceMeters){Generation=generation};
+                actions[key]=state=new(m,key+"@"+generation+FrameSuffix(),playerAlong+m.DistanceMeters,playerAlong){Generation=generation};
             }
             state.Maneuver=m;
             state.Minimum=Math.Min(state.Minimum,m.DistanceMeters);
@@ -71,6 +73,17 @@ public sealed class NavigationEventPlanner
             }
         }
         var ordered=actions.Values.OrderBy(p=>p.Along).ThenBy(p=>p.Maneuver.SpeechSequenceOrder).ToArray();
+        var sites=ordered.Select(p=>new JunctionSpeechSite(p.Id,p.Maneuver.JunctionId??p.Id,p.Along,p.EndAlong,p.DiscoveredAlong,
+            p.Maneuver.Kind==ManeuverKind.Straight,p.Maneuver.IsMinorStraight&&p.Maneuver.JunctionKind==NavigationJunctionKind.Ordinary,
+            IsNavigationAction(p.Maneuver)&&!p.Maneuver.ExecutionOnly)).ToArray();
+        var counted=new HashSet<string>(StringComparer.Ordinal);
+        // Retained action plans also retain the meaning of their earlier fixed
+        // count point after its series ends. No extra "already counted" cache.
+        foreach(var p in ordered.Where(p=>IsNavigationAction(p.Maneuver)&&!p.Maneuver.ExecutionOnly&&p.BriefingAlong is not null))
+            foreach(var site in JunctionSpeechPlanner.CountedStraights(sites,
+                Math.Max(p.BriefingAlong!.Value,p.Along-(p.Maneuver.JunctionKind==NavigationJunctionKind.Ramp?500:200)),
+                p.Along,p.Maneuver.JunctionId??p.Id))counted.Add(site.Id);
+        var auxiliaries=new List<SpeechSequence>();
         var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
         var environmentEvents=new List<EnvironmentPreviewEvent>();
         var sequences=new Dictionary<string,(double? End,bool Ended)>(StringComparer.Ordinal);
@@ -96,7 +109,7 @@ public sealed class NavigationEventPlanner
             if(!sequences.TryGetValue(sequence,out var previousSequence)||previousSequence.End is null)
                 sequences[sequence]=(state.EndAlong,false);
             bool silent=m.AnnouncementMode==NavigationAnnouncementMode.Silent;
-            if(m.IsMainRoadContinuation)continue;
+            if(m.Kind==ManeuverKind.Straight||m.IsMainRoadContinuation)continue;
             // Execution-only points belong to a component's ongoing series, not
             // a fresh action after its end. Only independent component actions
             // become predecessors; a child does not wait for its own parent to end.
@@ -107,8 +120,12 @@ public sealed class NavigationEventPlanner
                 // An unknown previous end is not the previous action's start.
                 if(predecessor is null)
                 {
-                    state.BriefingAlong=Math.Max(playerAlong,initialBoundaryAlong??playerAlong);
-                    state.BriefingStrict=initialBoundaryAlong is {} boundary&&state.BriefingAlong==boundary;
+                    // Starting the plugin inside an existing component must not
+                    // defer that component's own child cues to its external exit.
+                    bool insideOwnSeries=m.ExecutionOnly&&state.SequenceStartAlong<playerAlong;
+                    double? boundary=insideOwnSeries?null:initialBoundaryAlong;
+                    state.BriefingAlong=Math.Max(playerAlong,boundary??playerAlong);
+                    state.BriefingStrict=boundary is {} end&&state.BriefingAlong==end;
                 }
                 else if(predecessor.EndAlong is {} end)
                 {
@@ -116,14 +133,21 @@ public sealed class NavigationEventPlanner
                 }
             }
             double? initial=state.BriefingAlong is {} anchor?Math.Max(0,state.Along-anchor):null;
-            int priorIndex=predecessor is null?-1:Array.IndexOf(ordered,predecessor);
+            int countStage=m.JunctionKind==NavigationJunctionKind.Ramp?500:200;
+            double? countAlong=state.BriefingAlong is {} first?Math.Max(first,state.Along-countStage):null;
+            var countedSites=IsNavigationAction(m)&&!m.ExecutionOnly&&countAlong is {} countPoint
+                ?JunctionSpeechPlanner.CountedStraights(sites,countPoint,state.Along,m.JunctionId??state.Id):[];
+            foreach(var site in countedSites)counted.Add(site.Id);
+            if(countAlong is {} at)auxiliaries.AddRange(JunctionSpeechPlanner.Numbered(state.Id,at,countedSites,active,
+                state.BriefingStrict&&at==state.BriefingAlong));
+            int ordinal=countedSites.Length==0?0:countedSites.Length+1;
             var wording=ordered.Select(p=>p.Maneuver with{DistanceMeters=p.Along-playerAlong}).ToArray();
             string overviewId=state.Id+":overview";
             if(!m.ExecutionOnly&&initial is >=50)
             {
                 int rounded=(int)NavigationPrompts.RoundDistance(initial.Value);
-                string text=initial>800?NavigationPrompts.Continue(initial.Value)
-                    :NavigationPrompts.FirstLayer(m.Kind,initial.Value,Ordinal(ordered,priorIndex+1,i,state.BriefingAlong!.Value),Instruction(m,rounded));
+                string text=initial>2000?NavigationPrompts.Continue(initial.Value)
+                    :NavigationPrompts.AtDistance(m.Kind,rounded,initial<=countStage?ordinal:0,Instruction(m,rounded));
                 triggers.Add(new(overviewId,state.Id,SpeechTriggerKind.Overview,state.BriefingAlong!.Value,text)
                     {Enabled=active,StrictCrossing=state.BriefingStrict,SequenceOrder=-initial.Value,Silent=silent,SkipAtSpeedKph=rounded==100?60:null});
             }
@@ -131,9 +155,9 @@ public sealed class NavigationEventPlanner
             foreach(int stage in Stages)
             {
                 if(m.ExecutionOnly||initial is null||stage>=initial.Value
-                    ||(initial<=800&&!Stages.Contains((int)initial.Value)&&stage==nearest))continue;
-                double triggerAlong=state.Along-stage;
-                string text=NavigationPrompts.AtDistance(m.Kind,stage,stage==200?Ordinal(ordered,priorIndex+1,i,triggerAlong):0,Instruction(m,stage));
+                    ||(initial<=2000&&!Stages.Contains((int)initial.Value)&&stage==nearest
+                        &&!(stage==countStage&&countedSites.Length>0)))continue;
+                string text=NavigationPrompts.AtDistance(m.Kind,stage,stage==countStage?ordinal:0,Instruction(m,stage));
                 triggers.Add(new(state.Id+":"+stage,state.Id,SpeechTriggerKind.Advance,state.Along-stage,text)
                     {Enabled=active,Silent=silent,SequenceOrder=-stage,SkipAtSpeedKph=stage==100?60:null});
             }
@@ -150,7 +174,7 @@ public sealed class NavigationEventPlanner
         }
         if(!maneuvers.Any(IsNavigationAction)&&confirmedContinuation)
         {
-            var previous=ordered.LastOrDefault(p=>IsNavigationAction(p.Maneuver));
+            var previous=ordered.LastOrDefault(p=>IsNavigationAction(p.Maneuver)&&p.Along<=playerAlong);
             string id="continuation:"+(previous?.Id??"origin"+FrameSuffix());
             double? anchor=previous?.EndAlong??(previous is null?initialBoundaryAlong??origin:null);
             if(anchor is {} start&&confirmedContinuationEndAlong is {} finish&&finish>start)
@@ -160,33 +184,43 @@ public sealed class NavigationEventPlanner
                 triggers.Add(new(id+":overview",id,SpeechTriggerKind.Overview,start,NavigationPrompts.Continue()){Enabled=active});
             }
         }
+        var dense=JunctionSpeechPlanner.Dense(sites,counted,active,initialBoundaryAlong).ToArray();
+        foreach(var state in ordered)
+        {
+            string id="straight-chain:"+state.Id;
+            int index=Array.FindIndex(dense,s=>s.Id==id);
+            if(index>=0)
+            {
+                var summary=dense[index];
+                // A missing end may make an otherwise known chain publishable
+                // only after its fixed point. Consume that missed point silently
+                // in the existing ledger, rather than catching up its speech.
+                if(state.DenseSummary?.Triggers.Any(t=>!t.Silent)!=true&&summary.Triggers.Any(t=>t.AlongMeters<playerAlong))
+                    dense[index]=summary.MapTriggers(t=>t with{Silent=true});
+                state.DenseSummary=dense[index];
+            }
+            else if(state.DenseSummary is {} oldSummary)
+            {
+                auxiliaries.Add(new(id,oldSummary.End,[new(id,state.Along,"密集直行提示已被动作计数替代")],[],ended:true));
+                state.DenseSummary=null;
+            }
+        }
+        auxiliaries.AddRange(dense);
         if(replaceRoute)environment.Reconcile(environmentEvents.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,scheduler,"navigation");
         var environmental=environment.Build("navigation",playerAlong,environmentEvents,scheduler,active);
         var complete=events.GroupBy(e=>e.SequenceId).Where(g=>sequences.TryGetValue(g.Key,out var end)&&end.End is not null)
             .Select(g=>new SpeechSequence(g.Key,new RouteSpeechEnd(sequences[g.Key].End!.Value),g.ToArray(),
                 triggers.Where(t=>g.Any(e=>e.Id==t.EventId)).ToArray(),sequences[g.Key].Ended));
-        return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,[..complete,..environmental.Sequences])
+        return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,[..complete,..auxiliaries,..environmental.Sequences])
             {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame};
     }
     /// <summary>Ordinary decisions share one chain; environment and proven main-road continuations do not block it.</summary>
-    public static bool IsNavigationAction(NavigationManeuver m)=>m.AnnouncementMode==NavigationAnnouncementMode.Normal&&!m.IsMainRoadContinuation;
+    public static bool IsNavigationAction(NavigationManeuver m)=>m.Kind!=ManeuverKind.Straight&&m.AnnouncementMode==NavigationAnnouncementMode.Normal&&!m.IsMainRoadContinuation;
     private static string VisitSuffix(double? start)=>start is {} value?":visit:"+value.ToString("R",CultureInfo.InvariantCulture):"";
     private string FrameSuffix()=>frame is null?"":"#"+frame;
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
     private static int ActionIndex(IReadOnlyList<NavigationManeuver> list,int start)
     {for(int i=start;i<list.Count;i++)if(IsNavigationAction(list[i]))return i;return -1;}
-    private static int PreviousAction(IReadOnlyList<NavigationManeuver> list,int index)
-    {for(int i=index-1;i>=0;i--)if(IsNavigationAction(list[i]))return i;return -1;}
-    // Every phrase describes the route AFTER its own preplanned point, not the
-    // whole leg or the player's position when the future audio was prepared.
-    private static int Ordinal(IReadOnlyList<ActionPlan> list,int start,int end,double triggerAlong)
-    {
-        var target=list[end].Maneuver;
-        if(target.Kind==ManeuverKind.EnterRoundabout||target.ForkInstruction is not null)return 0;
-        var span=list.Skip(start).Take(end-start+1).Where(p=>p.Along>=triggerAlong).Select(p=>p.Maneuver).ToArray();
-        if(span.Any(m=>!m.HasSeparateApproachRoad))return 0;
-        return span.Select(m=>m.JunctionId??m.Id).Distinct(StringComparer.Ordinal).Count();
-    }
     private static string Execution(IReadOnlyList<NavigationManeuver> list,int i)
     {
         var m=list[i];string text=NavigationPrompts.Execute(m.Kind,Instruction(m,0));

@@ -41,7 +41,7 @@ public sealed class NavigationSequenceWordingTests
         Assert.Equal("左转。",Assert.Single(q.UpdateSequence([first,M("second",ManeuverKind.MergeLeft,70) with{AnnouncementMode=NavigationAnnouncementMode.Silent}],"s",Now,Now,true)));
     }
     [Theory]
-    [InlineData(500,2,"五百米后，左转。")]
+    [InlineData(500,2,"五百米后，在第二个路口左转。")]
     [InlineData(200,2,"两百米后，在第二个路口左转。")]
     [InlineData(100,0,"一百米后，左转。")]
     public void SharedPromptHonorsOnlyTheOrdinalProvidedByThePlannedPoint(int distance,int ordinal,string expected)

@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace LinkEts2Nav.Core.Guidance;
 
-public enum SpeechTriggerKind { Overview, Advance, Execution, Passage, SequenceEnd }
+public enum SpeechTriggerKind { Overview, Advance, Execution, Passage, SequenceEnd, ActionAssist }
 public enum TriggerDisposition { Queued, Silent, SpeedSkipped, Superseded, Ended }
 
 /// <summary>A route landmark; camera and maneuver descriptions use the same event model.</summary>

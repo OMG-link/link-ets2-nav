@@ -40,7 +40,7 @@ public static class NavigationPrompts
     {
         if (meters is < 50 or > 2000 || meters % 50 != 0)
             throw new ArgumentOutOfRangeException(nameof(meters));
-        return Distance(meters, round: false) + "后，" + (meters<=200 && ordinal>1 ? "在第"+Number(ordinal)+"个路口" : "") + (instruction ?? Action(kind)) + "。";
+        return Distance(meters, round: false) + "后，" + (ordinal>1 ? "在第"+Number(ordinal)+"个路口" : "") + (instruction ?? Action(kind)) + "。";
     }
 
     public static string Execute(ManeuverKind kind, string? instruction = null) => (instruction ?? Action(kind)) + "。";
@@ -60,11 +60,11 @@ public static class NavigationPrompts
     public static string FirstLayer(ManeuverKind kind, double distance, int junctionOrdinal, string? instruction = null)
     {
         if (!double.IsFinite(distance) || distance < 0) throw new ArgumentOutOfRangeException(nameof(distance));
-        if (distance > 800) return Continue(distance);
-        int meters = (int)Math.Floor(distance / 50) * 50;
+        if (distance > 2000) return Continue(distance);
+        int meters = (int)RoundDistance(distance);
         if (meters < 50 && junctionOrdinal <= 1) return Immediate(kind,instruction);
-        string where = distance>200 || junctionOrdinal <= 1 ? "" : "在第" + Number(junctionOrdinal) + "个路口";
-        return (meters >= 50 ? MeterNumber(meters) + "米后，" : "") + where + (instruction ?? Action(kind)) + "。";
+        string where = junctionOrdinal <= 1 ? "" : "在第" + Number(junctionOrdinal) + "个路口";
+        return (meters >= 50 ? Distance(meters,round:false) + "后，" : "") + where + (instruction ?? Action(kind)) + "。";
     }
 
     public static string Continue(double distance)

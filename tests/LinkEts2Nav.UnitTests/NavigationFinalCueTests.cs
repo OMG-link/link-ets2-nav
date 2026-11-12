@@ -3,7 +3,8 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class NavigationFinalCueTests
 {
     private static readonly DateTimeOffset Now=DateTimeOffset.UtcNow;
-    private static NavigationManeuver M(double distance)=>new("turn",ManeuverKind.TurnLeft,distance,"in","out");
+    private static NavigationManeuver M(double distance)=>new("turn",ManeuverKind.TurnLeft,distance,"in","out")
+        {EndDistanceMeters=distance+30}; // This constructed junction has a known 30m physical interval.
     [Theory]
     [InlineData(25,null,false)]
     [InlineData(55,"五十米后，左转。",false)]
@@ -32,7 +33,7 @@ public sealed class NavigationFinalCueTests
     {
         var p=new NavigationInstructionPolicy();
         Assert.Single(p.Update(M(210),"session",Now,Now,true));
-        Assert.Empty(p.Update(M(55),"session",Now.AddSeconds(1),Now.AddSeconds(1),true));
+        Assert.Equal("一百米后，左转。",Assert.Single(p.Update(M(55),"session",Now.AddSeconds(1),Now.AddSeconds(1),true)));
         Assert.Empty(p.Update(M(25),"session",Now.AddSeconds(2),Now.AddSeconds(2),true));
         Assert.Equal("左转。",Assert.Single(p.Update(M(18),"session",Now.AddSeconds(3),Now.AddSeconds(3),true)));
     }

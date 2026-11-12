@@ -48,6 +48,32 @@ public sealed class RoadForkTests
         Assert.NotNull(RoadForkRules.Decide(info,3).Failure);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void IdenticalUnlitLaneSetsRequestMoreSceneInformationBeforeInheritanceChecks(int laneCount)
+    {
+        // Synthetic boundary case, not a claim that this exists in the game map.
+        var info=new RoadForkInfo(10,laneCount,
+            [Branch(20,ForkSignal.None,[0],false),Branch(30,ForkSignal.None,[0],false)]);
+        var instruction=RoadForkRules.Decide(info,20);
+        Assert.True(instruction.Silent);
+        Assert.Null(instruction.Text);
+        Assert.Contains("需要该场景的更多信息才能决定如何处理",instruction.Failure);
+        Assert.Contains("入口总车道数="+laneCount,instruction.Failure);
+        Assert.Contains("出口=0000000000000014",instruction.Failure);
+        Assert.Contains("出口=000000000000001E",instruction.Failure);
+        Assert.Contains("可用入口车道（左起1）=[1]",instruction.Failure);
+        var approach=new DirectedRoad("road",1,10,[Vector3.Zero,new(0,0,100)]);
+        var selected=new DirectedRoad("prefab:1:0:1",10,20,[new(0,0,100),new(0,0,200)]){ForkInfo=info};
+        var detector=new NavigationManeuverDetector();
+        Assert.Empty(detector.FindSequence([approach,selected],0,[approach,selected]));
+        var diagnostic=Assert.Single(detector.ForkDiagnostics);
+        Assert.Equal("1",diagnostic.Prefab);
+        Assert.Equal(10UL,diagnostic.EntryNode);
+        Assert.Equal(20UL,diagnostic.ExitNode);
+        Assert.Equal(instruction.Failure,diagnostic.Reason);
+    }
     private static RoadForkInfo Topology(Blinker delayed,bool extraConflictingPath=false)
     {
         // 0 is a shared approach. Both immediate outgoing curves are unlit.

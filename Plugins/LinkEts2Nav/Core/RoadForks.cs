@@ -26,6 +26,14 @@ public static class RoadForkRules
         if(info.Branches.Any(b=>b.Signal is null))return Unknown("其他出口灯光不确定，无法完整统计无灯分支");
         var unlit=info.Branches.Where(b=>b.Signal==ForkSignal.None).ToArray();
         if(unlit.Length==1)return new(ManeuverKind.Straight,true,null,branch.EntryOrders,dedicated);
+        var selectedOrders=branch.EntryOrders.Distinct().Order().ToArray();
+        var indistinguishable=unlit.Where(b=>b.EntryOrders.Distinct().Order().SequenceEqual(selectedOrders))
+            .OrderBy(b=>b.ExitNode).ToArray();
+        if(selectedOrders.Length>0&&indistinguishable.Length>1)
+            return Unknown("需要该场景的更多信息才能决定如何处理：多个无灯出口的可用入口车道集合相同；"
+                +$"入口总车道数={info.EntryLaneCount}；"
+                +string.Join("；",indistinguishable.Select(b=>$"出口={b.ExitNode:X16}，可用入口车道（左起1）=[{string.Join(",",b.EntryOrders.Distinct().Order().Select(o=>o+1))}]"))
+                +"；需结合原生线路与现场确认可达关系和继承关系");
         if(unlit.Any(b=>!b.HasInheritedLane))return Unknown("无灯分支缺少可独立验证的继承入口车道");
         var text=LaneSelectionText(info.EntryLaneCount,branch.EntryOrders);
         if(text is null)return Unknown("所有入口车道均可达目标无灯分支，无法用选道区别出口");

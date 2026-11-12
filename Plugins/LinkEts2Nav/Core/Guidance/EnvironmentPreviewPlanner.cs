@@ -2,9 +2,12 @@
 
 /// <summary>A directed environment landmark; dynamic coordinates are used only for Euclidean fallback.</summary>
 public sealed record EnvironmentPreviewEvent(string Id,string Kind,double AlongMeters,double? EndAlongMeters,
-    Func<int,string> Text,bool DynamicDistance=false,bool Ended=false,bool IncludeTwoHundred=true,double DistanceLowerBoundMeters=0);
-public sealed record EnvironmentPreviewPlan(IReadOnlyList<GuidanceEvent> Events,IReadOnlyList<SpeechTrigger> Triggers,
-    IReadOnlyList<SpeechSequence> Sequences);
+    Func<int,string> Text,bool DynamicDistance=false,bool Ended=false,bool IncludeTwoHundred=true,double DistanceLowerBoundMeters=0,SpeechEndBoundary? PhysicalEnd=null);
+public sealed record EnvironmentPreviewPlan(IReadOnlyList<SpeechSequence> Sequences)
+{
+    public IReadOnlyList<GuidanceEvent> Events=>Sequences.SelectMany(s=>s.Events).ToArray();
+    public IReadOnlyList<SpeechTrigger> Triggers=>Sequences.SelectMany(s=>s.Triggers).ToArray();
+}
 
 /// <summary>500/200m points on independent same-kind chains. Each landmark remains its own playback series.</summary>
 public sealed class EnvironmentPreviewPlanner
@@ -50,10 +53,10 @@ public sealed class EnvironmentPreviewPlanner
         {
             if(!states.TryGetValue(item.Id,out var state))states[item.Id]=state=new(item,++order);
             else if(state.NeedsRebase)Translate(state,item);
-            else state.Value=item;
+            else state.Value=item with{PhysicalEnd=item.PhysicalEnd??state.Value.PhysicalEnd};
         }
         var visible=input.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal);
-        var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();var sequences=new List<SpeechSequence>();
+        var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();var ends=new Dictionary<string,(SpeechEndBoundary End,bool Ended)>();
         foreach(var chain in states.Values.Where(s=>!s.NeedsRebase).GroupBy(s=>s.Value.Kind))
         {
             State? previous=null;
@@ -94,7 +97,8 @@ public sealed class EnvironmentPreviewPlanner
                 previous=state;
                 if(!visible.Contains(item.Id)||scheduler.IsConsumed(source,SpeechSequence.EndTriggerId(item.Id)))continue;
                 events.Add(new(item.Id,item.AlongMeters,item.Kind));
-                sequences.Add(new(item.Id,item.EndAlongMeters,item.Ended));
+                var boundary=item.EndAlongMeters is {} along?new RouteSpeechEnd(along):item.PhysicalEnd;
+                if(boundary is not null)ends[item.Id]=(boundary,item.Ended);
                 if(item.Ended||unknownFirst||!previousDone&&blocker is null||state.FirstDistance is not {} distance)continue;
                 bool normal=distance>=500;
                 int meters=normal?500:(int)Math.Floor(distance/50)*50;
@@ -112,6 +116,8 @@ public sealed class EnvironmentPreviewPlanner
                 }
             }
         }
-        return new(events,triggers,sequences);
+        return new(events.Where(e=>ends.ContainsKey(e.Id)).Select(e=>new SpeechSequence(e.Id,ends[e.Id].End,[e],
+            triggers.Where(t=>t.EventId==e.Id&&!ends[e.Id].Ended
+                &&(ends[e.Id].End is not RouteSpeechEnd route||t.AlongMeters<=route.AlongMeters)).ToArray(),ends[e.Id].Ended)).ToArray());
     }
 }

@@ -81,7 +81,7 @@ public sealed class WarningPipeline(IWarningAnnouncer announcer, IWarningPlanner
             var local=matcher.ProjectDistance(position,vehicle.ForwardDirection,path);
             double? playerAlong=local is {} value?progress.Update(data.SessionId,path,value):null;
             guidance.PublishLandmarks(proximitySnapshot,plans,engine.PassedEncounters.Concat(uncalibrated.PassedEncounters).ToArray(),
-                playerAlong,playerAlong is null?null:"camera:"+progress.Frame);
+                playerAlong,playerAlong is null?null:"camera:"+progress.Frame,nearby.Cameras);
             lastWarning=guidance.LastQueued("landmarks")??lastWarning;
         }
         else

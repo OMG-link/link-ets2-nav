@@ -67,11 +67,6 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         }
         PreparePending();Wake();
     }
-    public void Enqueue(QueuedGuidanceSpeech speech)
-    {
-        lock(gate)EnqueueLocked(speech);
-        PreparePending();Wake();
-    }
     private void EnqueueLocked(QueuedGuidanceSpeech speech)
     {
         if(stop.IsCancellationRequested||speech.Text.Length==0)return;

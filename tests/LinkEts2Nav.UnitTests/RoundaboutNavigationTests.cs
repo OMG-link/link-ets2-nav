@@ -72,12 +72,12 @@ public sealed class RoundaboutNavigationTests
     public void ExitOnlyHasTwentyMeterExecutionCueAndIsPreparedBeforeItIsNeeded()
     {
         var now=DateTimeOffset.UtcNow;var policy=new NavigationInstructionPolicy();
-        var exit=new NavigationManeuver("exit",ManeuverKind.ExitRoundabout,150,"in","out"){ExecutionOnly=true};
+        var exit=new NavigationManeuver("exit",ManeuverKind.ExitRoundabout,150,"in","out"){ExecutionOnly=true,EndDistanceMeters=180};
         Assert.Equal(new[]{"驶出环岛。"},policy.Plan(exit,"s",now,now,true));
         Assert.Empty(policy.Update(exit,"s",now,now,true));
-        now=now.AddSeconds(1);exit=exit with{DistanceMeters=100};
+        now=now.AddSeconds(1);exit=exit with{DistanceMeters=100,EndDistanceMeters=130};
         Assert.Empty(policy.Update(exit,"s",now,now,true));
-        now=now.AddSeconds(1);exit=exit with{DistanceMeters=20};
+        now=now.AddSeconds(1);exit=exit with{DistanceMeters=20,EndDistanceMeters=50};
         Assert.Equal("驶出环岛。",Assert.Single(policy.Update(exit,"s",now,now,true)));
         Assert.Empty(policy.Update(exit,"s",now,now,true));
     }
@@ -93,10 +93,10 @@ public sealed class RoundaboutNavigationTests
     {
         var now=DateTimeOffset.UtcNow;var policy=new NavigationInstructionPolicy();
         NavigationManeuver[] actions=[
-            new("enter",ManeuverKind.EnterRoundabout,200,"in","out"){Instruction="进入环岛，从第二出口驶出",
-                JunctionId="roundabout:ring",EndDistanceMeters=350,SpeechSequenceId="roundabout:ring:in",SpeechSequenceStartDistanceMeters=200},
-            new("exit",ManeuverKind.ExitRoundabout,300,"in","out"){ExecutionOnly=true,
-                JunctionId="roundabout:ring",EndDistanceMeters=350,SpeechSequenceId="roundabout:ring:in",SpeechSequenceStartDistanceMeters=200}];
+            new("enter",ManeuverKind.EnterRoundabout,200,"in","out")
+                {JunctionId="ring",EndDistanceMeters=350,SpeechSequenceId="ring",SpeechSequenceStartDistanceMeters=200,Instruction="进入环岛，从第二出口驶出"},
+            new("exit",ManeuverKind.ExitRoundabout,300,"in","out")
+                {JunctionId="ring",EndDistanceMeters=350,SpeechSequenceId="ring",SpeechSequenceStartDistanceMeters=200,SpeechSequenceOrder=2,ExecutionOnly=true}];
         var plan=policy.PlanSequence(actions,"s",now,now,true);
         Assert.Contains("驶出环岛。",plan);
         Assert.DoesNotContain(plan,t=>t.Contains("米后，从此出口"));
@@ -119,7 +119,7 @@ public sealed class RoundaboutNavigationTests
     {
         var now=DateTimeOffset.UtcNow;var policy=new NavigationInstructionPolicy();
         var target=new NavigationManeuver("enter",ManeuverKind.EnterRoundabout,500,"in","out")
-            {Instruction="进入环岛",NearInstruction="进入环岛，请从第三出口驶出"};
+            {EndDistanceMeters=700,Instruction="进入环岛",NearInstruction="进入环岛，请从第三出口驶出"};
         Assert.Equal("五百米后，进入环岛。",Assert.Single(policy.Update(target,"s",now,now,true)));
         now=now.AddSeconds(1);target=target with{DistanceMeters=200};
         Assert.Equal("两百米后，进入环岛。",Assert.Single(policy.Update(target,"s",now,now,true)));

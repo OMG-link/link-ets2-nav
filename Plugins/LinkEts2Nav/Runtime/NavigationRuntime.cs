@@ -118,7 +118,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             string group="prefab:"+route[0].Id.Split(':')[1];
             if(!upcoming.Any(m=>m.JunctionId==group && m.Kind!=ManeuverKind.Straight && m.DistanceMeters==0))
                 return Suspend("货场出口路径已找到，但出口操作尚无法确认。",now);
-            upcoming=upcoming.Select(m=>m with{DistanceMeters=m.DistanceMeters+exitDistance,EndDistanceMeters=m.EndDistanceMeters+exitDistance}).ToArray();
+            upcoming=upcoming.Select(m=>m with{DistanceMeters=m.DistanceMeters+exitDistance,EndDistanceMeters=m.EndDistanceMeters+exitDistance,
+                SpeechSequenceStartDistanceMeters=m.SpeechSequenceStartDistanceMeters+exitDistance}).ToArray();
         }
         // A distant unresolved join limits the safe stretch; it does not invalidate
         // an already verified long road before that join.
@@ -137,15 +138,15 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null, Ac
             guidance.Publish(eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
                 playerAlong,upcoming,true,false,confirmedContinuation,guidance.Scheduler,progress.Frame,
                 componentEnd is {} boundary?playerAlong-along.Value+boundary:null,
-                guidance.WillReplaceSource("navigation",data.Route.Revision)));
+                guidance.WillReplaceSource("navigation",data.Route.Revision),playerAlong+confirmedAhead));
             lastSpoken=guidance.LastPlayed("navigation");
         }
         else
         {
-        var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation,componentEnd-along.Value);
+        var plan = policy.PlanSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true, confirmedContinuation,componentEnd-along.Value,confirmedAhead);
         speech?.UpdatePlan("navigation", plan, priority: 10);
         foreach (string text in policy.UpdateSequence(upcoming, data.SessionId, vehicle.ReceivedAt, now, true,
-            speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text), confirmedContinuation,vehicle.SpeedMetersPerSecond,componentEnd-along.Value))
+            speech is null ? null : text => speech.IsReady(text) || speech.HasFailed(text), confirmedContinuation,vehicle.SpeedMetersPerSecond,componentEnd-along.Value,confirmedAhead))
         {
             log?.Invoke("导航指令：" + text + " 当前路口=" + upcoming.FirstOrDefault()?.Id + "；下一动作=" + next?.Id);
             if (speech is null || !speech.TryAnnounce(text, "导航"))

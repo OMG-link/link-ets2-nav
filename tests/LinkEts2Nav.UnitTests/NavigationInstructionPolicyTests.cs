@@ -71,7 +71,7 @@ public sealed class NavigationInstructionPolicyTests
     public void AnUnknownPreviousEndDoesNotReleaseTheNextBriefing()
     {
         var p=new NavigationInstructionPolicy();Plan(p,M(100) with{EndDistanceMeters=null},M(600,"next"));
-        Assert.Equal("左转。",Assert.Single(Update(p,[M(20) with{EndDistanceMeters=null},M(520,"next")])));
+        Assert.Empty(Update(p,[M(20) with{EndDistanceMeters=null},M(520,"next")]));
         Assert.Empty(Update(p,[M(500,"next")]));
         Assert.DoesNotContain("五百米后，左转。",Plan(p,M(500,"next")));
     }
@@ -111,9 +111,9 @@ public sealed class NavigationInstructionPolicyTests
     public void ConfirmedEmptyCorridorSpeaksOnceAndExplicitResetStartsANewSession()
     {
         var p=new NavigationInstructionPolicy();Assert.Empty(Update(p,[]));
-        Assert.Equal(NavigationPrompts.Continue(),Assert.Single(p.UpdateSequence([],"s",Now,Now,true,hasConfirmedContinuation:true)));
-        Assert.Empty(p.UpdateSequence([],"s",Now,Now,true,hasConfirmedContinuation:true));
-        p.Reset();Assert.Equal(NavigationPrompts.Continue(),Assert.Single(p.UpdateSequence([],"s",Now,Now,true,hasConfirmedContinuation:true)));
+        Assert.Equal(NavigationPrompts.Continue(),Assert.Single(p.UpdateSequence([],"s",Now,Now,true,hasConfirmedContinuation:true,confirmedContinuationDistanceMeters:1200)));
+        Assert.Empty(p.UpdateSequence([],"s",Now,Now,true,hasConfirmedContinuation:true,confirmedContinuationDistanceMeters:1200));
+        p.Reset();Assert.Equal(NavigationPrompts.Continue(),Assert.Single(p.UpdateSequence([],"s",Now,Now,true,hasConfirmedContinuation:true,confirmedContinuationDistanceMeters:1200)));
     }
     [Theory]
     [InlineData(999,"沿当前道路，继续行驶九百五十米。")]

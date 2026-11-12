@@ -1,3 +1,4 @@
+using LinkEts2Nav.Map;
 using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 namespace LinkEts2Nav.Runtime;
@@ -47,6 +48,8 @@ public sealed class GuidanceCoordinator
     public void Publish(GuidanceSourcePlan plan)
     {
         EnsureSession(plan.SessionId);playback?.BeginUpdate();
+        try
+        {
         var previous=Timeline.Sources.FirstOrDefault(p=>p.Source==plan.Source);
         if(previous is not null&&replacementRevision==plan.RouteRevision&&replacementApplied.Add(plan.Source))
         {
@@ -59,9 +62,17 @@ public sealed class GuidanceCoordinator
             plan=plan with{CoordinateFrame=null};
         }
         Timeline.Publish(plan);playback?.Refresh(plan.Source,plan.Triggers);
+        }
+        catch(Exception ex)
+        {
+            playback?.ApplyBatch([],false);
+            log("Invalid speech series: "+ex.Message);
+            throw;
+        }
     }
     public void PublishLandmarks(WarningSnapshot snapshot,IReadOnlyList<PlannedCameraWarning> plans,
-        IReadOnlyList<CameraPassage>? passages=null,double? cameraPlayerAlong=null,string? cameraFrame=null)
+        IReadOnlyList<CameraPassage>? passages=null,double? cameraPlayerAlong=null,string? cameraFrame=null,
+        IReadOnlyList<CameraObservation>? observations=null)
     {
         EnsureSession(snapshot.SessionId);
         var route=Timeline.Sources.FirstOrDefault(p=>p.Source=="navigation"&&p.Active
@@ -80,22 +91,32 @@ public sealed class GuidanceCoordinator
                 .Select(p=>p.StageDistanceMeters+p.DistanceUntilTriggerMeters).DefaultIfEmpty(0).Max());
             input.Add(new(id,CameraChain(sample.Kind,sample.CameraId),playerAlong+sample.DistanceMeters,road?playerAlong+sample.DistanceMeters:null,
                 meters=>PlannedSpeechAnnouncer.DistanceText(meters,sample.SpeedLimitKph,sample.Kind),
-                DynamicDistance:!road,IncludeTwoHundred:sample.Kind==CameraWarningKind.Calibrated,DistanceLowerBoundMeters:distance));
+                DynamicDistance:!road,IncludeTwoHundred:sample.Kind==CameraWarningKind.Calibrated,DistanceLowerBoundMeters:distance,
+                PhysicalEnd:Boundary(sample.CameraId,sample.Kind)));
             kinds[id]=sample.DistanceKind;
         }
         foreach(var passage in passages??[])
         {
             string id=$"landmark:{passage.CameraId}:{passage.Kind}:{passage.EncounterRevision}";
             input.RemoveAll(e=>e.Id==id);
-            input.Add(new(id,CameraChain(passage.Kind,passage.CameraId),playerAlong,null,_=>"",Ended:true));
+            input.Add(new(id,CameraChain(passage.Kind,passage.CameraId),playerAlong,null,_=>"",Ended:true,PhysicalEnd:Boundary(passage.CameraId,passage.Kind)));
         }
         if(environmentFrame!=frame){environment.Rebase(input);environmentFrame=frame;}
         if(WillReplaceSource("landmarks",snapshot.RouteRevision))
             environment.Reconcile(input.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,Scheduler,"landmarks");
         var plan=environment.Build("landmarks",playerAlong,input,Scheduler,snapshot.IsActive);
         Publish(new("landmarks",snapshot.SessionId,snapshot.RouteRevision,playerAlong,snapshot.IsActive,snapshot.ObservedAt,
-            plan.Events.Select(e=>e with{DistanceKind=kinds.GetValueOrDefault(e.Id)}).ToArray(),plan.Triggers)
-            {Sequences=plan.Sequences,CoordinateFrame=frame});
+            plan.Sequences.Select(s=>new SpeechSequence(s.Id,s.End,
+                s.Events.Select(e=>e with{DistanceKind=kinds.GetValueOrDefault(e.Id)}).ToArray(),s.Triggers,s.Ended)).ToArray())
+            {CoordinateFrame=frame});
+        SpeechEndBoundary? Boundary(string id,CameraWarningKind kind)
+        {
+            var camera=observations?.FirstOrDefault(c=>c.Id==id);
+            if(camera is null)return null;
+            return kind==CameraWarningKind.Calibrated
+                ?new CameraSpeechEnd(camera.MonitoredPosition,camera.TravelDirection)
+                :new CameraSpeechEnd(camera.LocatorPosition);
+        }
     }
     // Unknown proximity notices have no proven route order or monitoring boundary;
     // they cannot be predecessors of calibrated road-camera events or each other.
@@ -134,6 +155,9 @@ public sealed class GuidanceCoordinator
             &&now>=v.ReceivedAt&&now-v.ReceivedAt<=TimeSpan.FromSeconds(2);
         playback?.SetActive(active);
         if(!active){cache?.ClearPlan("guidance-preparation");latest=[];playback?.ApplyBatch([],false);return;}
+        latest=[];
+        try
+        {
         latest=Scheduler.Update(Timeline,now,data.Vehicle!.SpeedMetersPerSecond);
         cache?.UpdatePlan("guidance-preparation",Scheduler.Prepare(Timeline,now));
         foreach(var result in latest)
@@ -146,7 +170,8 @@ public sealed class GuidanceCoordinator
             log("语音触发入队："+t.Text+" 事件="+result.Event.Id+" 触发点="+t.Id);
             Queued?.Invoke(item);
         }
-        playback?.ApplyBatch(latest,active);
+        }
+        finally {playback?.ApplyBatch(latest,active);}
     }
     private void EnsureSession(string value)
     {if(session!=value){Reset();session=value;}}

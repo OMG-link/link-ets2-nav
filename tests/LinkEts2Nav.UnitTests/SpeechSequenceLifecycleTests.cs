@@ -9,9 +9,10 @@ public sealed class SpeechSequenceLifecycleTests
     private static NavigationManeuver Turn(string id,double start,double? end)=>new(id,ManeuverKind.TurnLeft,start,"in","out")
         {JunctionId=id,EndDistanceMeters=end};
     private static GuidanceSourcePlan Plan(double player)=>new("navigation","s","r",player,true,Now,
-        [new("event",100,"turn")],[new("500","event",SpeechTriggerKind.Advance,-400,"500"){SequenceOrder=-500},
-            new("execute","event",SpeechTriggerKind.Execution,80,"turn"){SequenceOrder=0,Priority=0}])
-        {Sequences=[new("event",150)],CoordinateFrame="f"};
+        [GuidanceTestSeries.Route("event",150,[new("event",100,"turn")],
+            [new("500","event",SpeechTriggerKind.Advance,-400,"500"){SequenceOrder=-500},
+            new("execute","event",SpeechTriggerKind.Execution,80,"turn"){SequenceOrder=0,Priority=0}])])
+        {CoordinateFrame="f"};
 
     [Fact]
     public void EndIsStrictlyAfterTheBoundaryAndConsumedPointsDoNotResurrect()
@@ -24,12 +25,13 @@ public sealed class SpeechSequenceLifecycleTests
     }
 
     [Fact]
-    public void UnknownEndCanBeAppendedWithoutGuessingOrReplayingEarlierPoints()
+    public void UnknownEndRemainsUnpublishedUntilThePhysicalBoundaryIsKnown()
     {
-        var t=new GuidanceTimeline();var s=new SpeechTriggerScheduler();
-        t.Publish(Plan(200) with{Sequences=[new("event")]});s.Update(t,Now,0);
-        t.Publish(Plan(220));Assert.Equal(TriggerDisposition.Ended,Assert.Single(s.Update(t,Now,0)).Disposition);
-        t.Publish(Plan(220));Assert.Empty(s.Update(t,Now,0));
+        var t=new GuidanceTimeline();var s=new SpeechTriggerScheduler();var p=new NavigationEventPlanner();
+        t.Publish(p.Build("s","r",Now,0,[Turn("turn",100,null)],true,false,false,s));
+        Assert.Empty(t.Sources[0].Sequences);Assert.Empty(s.Prepare(t,Now));Assert.Empty(s.Update(t,Now,0));
+        t.Publish(p.Build("s","r",Now,10,[Turn("turn",90,140)],true,false,false,s));
+        Assert.Single(t.Sources[0].Sequences);Assert.Single(s.Update(t,Now,0));
     }
 
     [Theory]
@@ -96,10 +98,10 @@ public sealed class SpeechSequenceLifecycleTests
         var player=new NoPlayer();await using var manager=new GuidancePlaybackManager(null,player,()=>"ready.wav");
         var finished=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         manager.Played+=s=>{if(s.Text=="fresh")finished.TrySetResult();};
-        manager.BeginUpdate();manager.Enqueue(new("navigation","old","old",0,0,"old"));
-        var e=new GuidanceEvent("old",100,"old");
-        manager.ApplyBatch([new("navigation",e,new("end","old",SpeechTriggerKind.SequenceEnd,150,""),TriggerDisposition.Ended)],true);
-        manager.Enqueue(new("navigation","fresh","fresh",0,0,"fresh"));
+        manager.ApplyBatch(GuidanceTestSeries.Due(new("navigation","old","old",0,0,"old")),false);
+        manager.BeginUpdate();
+        manager.ApplyBatch(GuidanceTestSeries.Due(new("navigation","old","old",0,0,"old"),ended:true),true);
+        manager.ApplyBatch(GuidanceTestSeries.Due(new("navigation","fresh","fresh",0,0,"fresh")),true);
         await finished.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
         Assert.Equal(1,player.Started);
     }
@@ -107,12 +109,11 @@ public sealed class SpeechSequenceLifecycleTests
     public async Task BatchEndRemovesPendingBeforePlaybackCanStartAndEventWithdrawalDoesNotEraseASharedSeries()
     {
         var player=new NoPlayer();await using var manager=new GuidancePlaybackManager(null,player,()=>"ready.wav");
-        manager.BeginUpdate();manager.Enqueue(new("navigation","first","one",1,0,"one"){SpeechSequenceId="exits"});
-        manager.Enqueue(new("navigation","last","two",2,0,"two"){SpeechSequenceId="exits"});
+        manager.ApplyBatch(GuidanceTestSeries.Due(new("navigation","first","one",1,0,"one"){SpeechSequenceId="exits"}),false);
+        manager.ApplyBatch(GuidanceTestSeries.Due(new("navigation","last","two",2,0,"two"){SpeechSequenceId="exits"}),false);
         manager.Withdraw("navigation",["first"]);Assert.Equal("two",Assert.Single(manager.Pending).Text);
-        manager.Enqueue(new("navigation","entry","entry",0,10,"entry"));Assert.Equal(2,manager.Pending.Count);
-        var e=new GuidanceEvent("last",100,"exit"){SpeechSequenceId="exits"};
-        manager.ApplyBatch([new("navigation",e,new("end","last",SpeechTriggerKind.SequenceEnd,100,""),TriggerDisposition.Ended)],false);
+        manager.ApplyBatch(GuidanceTestSeries.Due(new("navigation","entry","entry",0,10,"entry")),false);Assert.Equal(2,manager.Pending.Count);
+        manager.ApplyBatch(GuidanceTestSeries.Due(new("navigation","last","two",2,0,"two"){SpeechSequenceId="exits"},ended:true),false);
         Assert.Equal("entry",Assert.Single(manager.Pending).Text);Assert.Equal(0,player.Started);
     }
 

@@ -22,7 +22,8 @@ public sealed class SpeechTriggerScheduler
     public IReadOnlyList<string> Prepare(GuidanceTimeline timeline,DateTimeOffset now)
     {
         EnsureSession(timeline.Sources);
-        return timeline.Sources.Where(p=>(p.Active||p.PrepareWhileInactive)&&now>=p.ObservedAt&&now-p.ObservedAt<=MaximumAge).SelectMany(p=>p.Triggers
+        return timeline.Sources.Where(p=>(p.Active||p.PrepareWhileInactive)&&now>=p.ObservedAt&&now-p.ObservedAt<=MaximumAge)
+            .SelectMany(p=>p.Sequences.Where(s=>!IsConsumed(p.Source,SpeechSequence.EndTriggerId(s.Id))).SelectMany(s=>s.Triggers)
             .Where(t=>!t.Silent&&!IsConsumed(p.Source,t.Id)&&t.Text.Length>0)
             .Select(t=>(Trigger:t,Distance:t.AlongMeters-p.PlayerAlongMeters)))
             .OrderBy(t=>t.Distance).ThenBy(t=>t.Trigger.Priority)
@@ -67,7 +68,7 @@ public sealed class SpeechTriggerScheduler
                     var old=results[prior];
                     if(disposition==TriggerDisposition.Ended||t.SequenceOrder>=old.Trigger.SequenceOrder)
                     {
-                        results[prior]=old with{Disposition=TriggerDisposition.Superseded};
+                        results[prior]=old.WithDisposition(TriggerDisposition.Superseded);
                         consumed[(old.Source,old.Trigger.Id)]=(TriggerDisposition.Superseded,old.Event.Id);
                     }
                     else disposition=TriggerDisposition.Superseded;
@@ -76,21 +77,22 @@ public sealed class SpeechTriggerScheduler
                 else if(disposition==TriggerDisposition.Ended)pending.Remove(key);
             }
             consumed[(p.Source,t.Id)]=(disposition,t.EventId);
-            results.Add(new(p.Source,e,t,disposition));
+            results.Add(new(p.Source,p.Sequences.First(s=>s.Id==e.SequenceId),e,t,disposition));
         }
         return results;
     }
-    private static IEnumerable<(SpeechTrigger Trigger,bool Observed)> Points(GuidanceSourcePlan plan)
+    private IEnumerable<(SpeechTrigger Trigger,bool Observed)> Points(GuidanceSourcePlan plan)
     {
-        foreach(var trigger in plan.Triggers)yield return (trigger,false);
         foreach(var sequence in plan.Sequences)
         {
+            if(IsConsumed(plan.Source,SpeechSequence.EndTriggerId(sequence.Id)))continue;
+            foreach(var trigger in sequence.Triggers)yield return (trigger,false);
             var owner=plan.Events.LastOrDefault(e=>e.SequenceId==sequence.Id);
-            if(owner is null||!sequence.Ended&&sequence.EndAlongMeters is null)continue;
+            if(!sequence.Ended&&sequence.EndAlongMeters is null)continue;
             // An observed passage fact is already beyond its boundary, even when
             // no absolute along coordinate is available (e.g. no-navigation cameras).
             double end=sequence.Ended?plan.PlayerAlongMeters:sequence.EndAlongMeters!.Value;
-            yield return (new SpeechTrigger(SpeechSequence.EndTriggerId(sequence.Id),owner.Id,SpeechTriggerKind.SequenceEnd,end,"")
+            yield return (new SpeechTrigger(SpeechSequence.EndTriggerId(sequence.Id),owner!.Id,SpeechTriggerKind.SequenceEnd,end,"")
                 {SequenceOrder=0},sequence.Ended);
         }
     }

@@ -27,7 +27,7 @@ public sealed class NavigationEventPlanner
     public GuidanceSourcePlan Build(string sessionId,string routeRevision,DateTimeOffset observedAt,
         double playerAlong,IReadOnlyList<NavigationManeuver> maneuvers,bool active,bool deferred,
         bool confirmedContinuation,SpeechTriggerScheduler scheduler,string? coordinateFrame=null,
-        double? initialBoundaryAlong=null,bool replaceRoute=false)
+        double? initialBoundaryAlong=null,bool replaceRoute=false,double? confirmedContinuationEndAlong=null)
     {
         if(session!=sessionId||frame!=coordinateFrame){Reset();session=sessionId;frame=coordinateFrame;}
         origin ??= playerAlong;
@@ -73,7 +73,7 @@ public sealed class NavigationEventPlanner
         var ordered=actions.Values.OrderBy(p=>p.Along).ThenBy(p=>p.Maneuver.SpeechSequenceOrder).ToArray();
         var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
         var environmentEvents=new List<EnvironmentPreviewEvent>();
-        var sequences=new Dictionary<string,SpeechSequence>(StringComparer.Ordinal);
+        var sequences=new Dictionary<string,(double? End,bool Ended)>(StringComparer.Ordinal);
         for(int i=0;i<ordered.Length;i++)
         {
             var state=ordered[i];var m=state.Maneuver;
@@ -90,11 +90,11 @@ public sealed class NavigationEventPlanner
             {
                 // Later map facts can prove a previously generic fork to be a
                 // deceleration-lane split. Close its series, including queued audio.
-                sequences[sequence]=new(sequence,state.EndAlong){Ended=true};
+                sequences[sequence]=(state.EndAlong,true);
                 continue;
             }
-            if(!sequences.TryGetValue(sequence,out var previousSequence)||previousSequence.EndAlongMeters is null)
-                sequences[sequence]=new(sequence,state.EndAlong);
+            if(!sequences.TryGetValue(sequence,out var previousSequence)||previousSequence.End is null)
+                sequences[sequence]=(state.EndAlong,false);
             bool silent=m.AnnouncementMode==NavigationAnnouncementMode.Silent;
             if(m.IsMainRoadContinuation)continue;
             // Execution-only points belong to a component's ongoing series, not
@@ -125,7 +125,7 @@ public sealed class NavigationEventPlanner
                 string text=initial>800?NavigationPrompts.Continue(initial.Value)
                     :NavigationPrompts.FirstLayer(m.Kind,initial.Value,Ordinal(ordered,priorIndex+1,i,state.BriefingAlong!.Value),Instruction(m,rounded));
                 triggers.Add(new(overviewId,state.Id,SpeechTriggerKind.Overview,state.BriefingAlong!.Value,text)
-                    {Enabled=active,StrictCrossing=state.BriefingStrict,SequenceOrder=-rounded,Silent=silent,SkipAtSpeedKph=rounded==100?60:null});
+                    {Enabled=active,StrictCrossing=state.BriefingStrict,SequenceOrder=-initial.Value,Silent=silent,SkipAtSpeedKph=rounded==100?60:null});
             }
             int nearest=initial is {} distance?Stages.FirstOrDefault(s=>s<distance):0;
             foreach(int stage in Stages)
@@ -153,18 +153,20 @@ public sealed class NavigationEventPlanner
             var previous=ordered.LastOrDefault(p=>IsNavigationAction(p.Maneuver));
             string id="continuation:"+(previous?.Id??"origin"+FrameSuffix());
             double? anchor=previous?.EndAlong??(previous is null?initialBoundaryAlong??origin:null);
-            if(anchor is {} start)
+            if(anchor is {} start&&confirmedContinuationEndAlong is {} finish&&finish>start)
             {
+                sequences[id]=(finish,false);
                 events.Add(new(id,start,"沿当前道路行驶"));
                 triggers.Add(new(id+":overview",id,SpeechTriggerKind.Overview,start,NavigationPrompts.Continue()){Enabled=active});
             }
         }
         if(replaceRoute)environment.Reconcile(environmentEvents.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,scheduler,"navigation");
         var environmental=environment.Build("navigation",playerAlong,environmentEvents,scheduler,active);
-        events.AddRange(environmental.Events);triggers.AddRange(environmental.Triggers);
-        foreach(var sequence in environmental.Sequences)sequences[sequence.Id]=sequence;
-        return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,events,triggers)
-            {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame,Sequences=sequences.Values.ToArray()};
+        var complete=events.GroupBy(e=>e.SequenceId).Where(g=>sequences.TryGetValue(g.Key,out var end)&&end.End is not null)
+            .Select(g=>new SpeechSequence(g.Key,new RouteSpeechEnd(sequences[g.Key].End!.Value),g.ToArray(),
+                triggers.Where(t=>g.Any(e=>e.Id==t.EventId)).ToArray(),sequences[g.Key].Ended));
+        return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,[..complete,..environmental.Sequences])
+            {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame};
     }
     /// <summary>Ordinary decisions share one chain; environment and proven main-road continuations do not block it.</summary>
     public static bool IsNavigationAction(NavigationManeuver m)=>m.AnnouncementMode==NavigationAnnouncementMode.Normal&&!m.IsMainRoadContinuation;

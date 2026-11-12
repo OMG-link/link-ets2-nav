@@ -241,15 +241,19 @@ public sealed class LaneMergeDetectorTests
         var route=RouteSnapshot.Parse([new(incoming.Node.Uid,2310,100),new(incoming.ForwardNode.Uid,2120,90),
             new(outgoing.Node.Uid,2000,80),new(outgoing.ForwardNode.Uid,0,0)],now);
         GameDataSnapshot Data(double x,double z,DateTimeOffset time)=>new(new(x,0,z,0,15,2100,true,false,1,time),route,RouteAvailability.Available,"s",true);
-        int sounds=0;var runtime=new NavigationRuntime(fallback:()=>sounds++);
+        int sounds=0;var spoken=new List<string>();var runtime=new NavigationRuntime(log:spoken.Add,fallback:()=>sounds++);
         var first=runtime.Process(Data(4.5,shortApproach?70:500,now),nearby,now);
         Assert.Contains(first.LaneMerges,m=>m.Kind==(shortApproach?LaneMergeKind.Uncertain:LaneMergeKind.LaneReduction));
         Assert.Equal(shortApproach?NavigationAnnouncementMode.Silent:NavigationAnnouncementMode.DistancePreview,first.Next!.AnnouncementMode);
         if(shortApproach)Assert.Null(first.LastSpoken);
-        else Assert.Equal("车道合并，建议提前走左侧车道。",first.LastSpoken);
-        Assert.Equal(shortApproach?0:1,sounds);
+        else
+        {
+            Assert.Contains(spoken,s=>s.StartsWith("导航指令：")&&s.Contains("车道合并，建议提前走左侧车道。"));
+            Assert.Equal(NavigationPrompts.Continue(),first.LastSpoken);
+        }
+        Assert.Equal(shortApproach?0:2,sounds);
         runtime.Process(Data(1,10,now.AddSeconds(1)),nearby,now.AddSeconds(1));
-        Assert.Equal(shortApproach?0:1,sounds);
+        Assert.Equal(shortApproach?0:2,sounds);
         var after=runtime.Process(Data(0,-20,now.AddSeconds(2)),nearby,now.AddSeconds(2));
         Assert.DoesNotContain(after.LaneMerges,m=>m.PrefabUid==42);
         Assert.NotNull(after.LastSpoken);Assert.Equal(shortApproach?1:2,sounds);

@@ -19,7 +19,7 @@ public sealed class StraightJunctionPipelineTests
             [M("action",kind,distance,distance+50),M("next",ManeuverKind.TurnRight,distance+600,distance+650)],true,false,false,new());
         var straight=Plan(ManeuverKind.Straight);var turn=Plan(ManeuverKind.TurnLeft);
         Assert.Equal(turn.Triggers.Select(Shape),straight.Triggers.Select(Shape));
-        Assert.Equal(turn.Sequences,straight.Sequences);
+        Assert.Equal(turn.Sequences.Select(s=>(s.Id,s.End,s.Ended)),straight.Sequences.Select(s=>(s.Id,s.End,s.Ended)));
         Assert.DoesNotContain(straight.Triggers,t=>t.Kind==SpeechTriggerKind.Passage);
         Assert.Contains(straight.Triggers,t=>t.EventId.StartsWith("action@")&&t.Text.Contains("直行"));
         Assert.Equal(distance+50,Assert.Single(straight.Triggers,t=>t.EventId.StartsWith("next@")&&t.Kind==SpeechTriggerKind.Overview).AlongMeters);

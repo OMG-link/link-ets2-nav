@@ -15,6 +15,8 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     public double? EndDistanceMeters { get; init; }
     /// <summary>Optional common playback series; event IDs remain distinct for reconciliation.</summary>
     public string? SpeechSequenceId { get; init; }
+    /// <summary>Physical component entrance relative to the player, shared by all points of one visit.</summary>
+    public double? SpeechSequenceStartDistanceMeters { get; init; }
     public double SpeechSequenceOrder { get; init; }
     public NavigationAnnouncementMode AnnouncementMode { get; init; }
     /// <summary>Optional action-specific wording; distance scheduling remains shared.</summary>
@@ -99,10 +101,13 @@ public sealed class NavigationManeuverDetector
             double end = offset + Length(current);
             if (current.Roundabout is { } ring)
             {
-                string id = $"roundabout:{ring.Id}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}";
+                string sequence = $"roundabout:{ring.Id}:{current.StartNodeUid:X16}";
+                string id = sequence + $":{current.EndNodeUid:X16}";
                 if (offset >= vehicleAlong)
                     result.Add(new(id + ":enter", ManeuverKind.EnterRoundabout, offset - vehicleAlong, current.Id, current.Id)
-                    { EndDistanceMeters = end - vehicleAlong, JunctionId = "roundabout:" + ring.Id, Instruction = "进入环岛", NearInstruction="进入环岛，请从第"+NavigationPrompts.Number(ring.ExitNumber)+"出口驶出" });
+                    { EndDistanceMeters = end - vehicleAlong, JunctionId = "roundabout:" + ring.Id,
+                        SpeechSequenceId=sequence,SpeechSequenceStartDistanceMeters=offset-vehicleAlong,
+                        Instruction = "进入环岛", NearInstruction="进入环岛，请从第"+NavigationPrompts.Number(ring.ExitNumber)+"出口驶出" });
                 var exits=ring.Exits.Count>0 ? ring.Exits : new[]{new RoundaboutExitCue(ring.ExitNumber,Math.Max(0,end-offset-ring.ExitConnectorMeters))};
                 foreach(var exit in exits)
                 {
@@ -112,7 +117,7 @@ public sealed class NavigationManeuverDetector
                     result.Add(new(id+":exit:"+exit.Number,selected?ManeuverKind.ExitRoundabout:ManeuverKind.PassRoundaboutExit,
                         location-vehicleAlong,current.Id,current.Id)
                     {EndDistanceMeters=end-vehicleAlong,JunctionId="roundabout:"+ring.Id,ExecutionOnly=true,
-                        SpeechSequenceId=id+":exits",SpeechSequenceOrder=exit.Number,
+                        SpeechSequenceId=sequence,SpeechSequenceStartDistanceMeters=offset-vehicleAlong,SpeechSequenceOrder=exit.Number,
                         Instruction=selected?"驶出环岛":"经过第"+NavigationPrompts.Number(exit.Number)+"出口"});
                 }
                 confirmedUntil = end; offset = end; continue;

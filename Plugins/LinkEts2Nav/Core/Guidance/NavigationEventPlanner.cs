@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace LinkEts2Nav.Core.Guidance;
 
 /// <summary>Places speech on the route when actions are discovered, never when they become current.</summary>
@@ -10,6 +12,7 @@ public sealed class NavigationEventPlanner
         public readonly string Id = id;
         public readonly double Along = along;
         public double? EndAlong;
+        public double? SequenceStartAlong;
         public double? BriefingAlong;
         public bool BriefingStrict;
         public double Minimum = maneuver.DistanceMeters;
@@ -28,23 +31,44 @@ public sealed class NavigationEventPlanner
     {
         if(session!=sessionId||frame!=coordinateFrame){Reset();session=sessionId;frame=coordinateFrame;}
         origin ??= playerAlong;
-        var incoming = maneuvers.Select(m=>m.Id).ToHashSet(StringComparer.Ordinal);
+        // The retained physical entrance anchors one visit even after the SDK
+        // truncates its route prefix or selects a different exit. Distinct later
+        // visits have distinct entrance positions, without another lifecycle cache.
+        var inputs=new List<(NavigationManeuver Maneuver,string Key,double? Start)>();
+        foreach(var m in maneuvers)
+        {
+            double? start=null;
+            if(m.SpeechSequenceId is not null&&m.SpeechSequenceStartDistanceMeters is {} relative)
+            {
+                double candidate=playerAlong+relative;
+                start=actions.Values.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId)
+                    .Select(p=>p.SequenceStartAlong).Concat(inputs.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId).Select(p=>p.Start))
+                    .FirstOrDefault(p=>p is {} v&&Math.Abs(v-candidate)<=.0001)??candidate;
+            }
+            inputs.Add((m,m.Id+VisitSuffix(start),start));
+        }
+        var incoming=inputs.Select(p=>p.Key).ToHashSet(StringComparer.Ordinal);
         if(replaceRoute)
             foreach(var key in actions.Where(p=>p.Value.Along>playerAlong&&!incoming.Contains(p.Key)).Select(p=>p.Key).ToArray())
                 actions.Remove(key);
-        foreach(var m in maneuvers)
+        foreach(var (m,key,start) in inputs)
         {
-            if(!actions.TryGetValue(m.Id,out var state))
-                actions[m.Id]=state=new(m,m.Id+"@0"+FrameSuffix(),playerAlong+m.DistanceMeters);
-            else if(state.EndAlong is {} oldEnd&&playerAlong+m.DistanceMeters>oldEnd
-                ||state.EndAlong is null&&state.Minimum<=20&&m.DistanceMeters>550)
+            if(!actions.TryGetValue(key,out var state))
+                actions[key]=state=new(m,key+"@0"+FrameSuffix(),playerAlong+m.DistanceMeters){SequenceStartAlong=start};
+            else if(start is null&&(state.EndAlong is {} oldEnd&&playerAlong+m.DistanceMeters>oldEnd
+                ||state.EndAlong is null&&state.Minimum<=20&&m.DistanceMeters>550))
             {
                 int generation=state.Generation+1;
-                actions[m.Id]=state=new(m,m.Id+"@"+generation+FrameSuffix(),playerAlong+m.DistanceMeters){Generation=generation};
+                actions[key]=state=new(m,key+"@"+generation+FrameSuffix(),playerAlong+m.DistanceMeters){Generation=generation};
             }
             state.Maneuver=m;
             state.Minimum=Math.Min(state.Minimum,m.DistanceMeters);
-            if(m.EndDistanceMeters is {} end) state.EndAlong ??= playerAlong+end;
+            if(m.EndDistanceMeters is {} end)
+            {
+                if(start is null)state.EndAlong ??= playerAlong+end;
+                else foreach(var member in actions.Values.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId&&p.SequenceStartAlong==start))
+                    member.EndAlong=playerAlong+end;
+            }
         }
         var ordered=actions.Values.OrderBy(p=>p.Along).ThenBy(p=>p.Maneuver.SpeechSequenceOrder).ToArray();
         var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
@@ -53,7 +77,7 @@ public sealed class NavigationEventPlanner
         for(int i=0;i<ordered.Length;i++)
         {
             var state=ordered[i];var m=state.Maneuver;
-            string sequence=m.SpeechSequenceId is null?state.Id:m.SpeechSequenceId+"@"+state.Generation+FrameSuffix();
+            string sequence=m.SpeechSequenceId is null?state.Id:m.SpeechSequenceId+(state.SequenceStartAlong is {} visit?VisitSuffix(visit):"@"+state.Generation)+FrameSuffix();
             if(scheduler.IsConsumed("navigation",SpeechSequence.EndTriggerId(sequence)))continue;
             if(m.AnnouncementMode==NavigationAnnouncementMode.DistancePreview)
             {
@@ -144,6 +168,7 @@ public sealed class NavigationEventPlanner
     }
     /// <summary>Ordinary decisions share one chain; environment and proven main-road continuations do not block it.</summary>
     public static bool IsNavigationAction(NavigationManeuver m)=>m.AnnouncementMode==NavigationAnnouncementMode.Normal&&!m.IsMainRoadContinuation;
+    private static string VisitSuffix(double? start)=>start is {} value?":visit:"+value.ToString("R",CultureInfo.InvariantCulture):"";
     private string FrameSuffix()=>frame is null?"":"#"+frame;
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
     private static int ActionIndex(IReadOnlyList<NavigationManeuver> list,int start)

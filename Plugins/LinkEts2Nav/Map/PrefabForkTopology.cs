@@ -109,8 +109,20 @@ public static class PrefabForkTopology
                 var inputs=rows.Select(p=>p.Key.Lane).Distinct().Order().ToArray();
                 bool inherited=inputs.Any(l=>outcomes.Where(p=>p.Key.Lane==l&&p.Value.Contains(0)).Select(p=>p.Key.Exit).Distinct().SequenceEqual(new[]{to})
                     &&rows.Where(p=>p.Key.Lane==l&&p.Value.Contains(0)).Any(p=>!rows.Any(q=>q.Key.Lane!=l&&q.Key.Output==p.Key.Output&&q.Value.Contains(0))));
+                var inputCurve=nodes[from].InputLines.FirstOrDefault(i=>i>=0&&i<count,-1);
+                var outputCurve=nodes[to].OutputLines.FirstOrDefault(i=>i>=0&&i<count,-1);
+                double? turn=null;
+                if(inputCurve>=0&&outputCurve>=0)
+                {
+                    var incoming=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[inputCurve].StartRotation));
+                    var outgoing=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[outputCurve].EndRotation));
+                    if(incoming.X*incoming.X+incoming.Z*incoming.Z>1e-12&&outgoing.X*outgoing.X+outgoing.Z*outgoing.Z>1e-12)
+                        turn=Math.Atan2(incoming.X*outgoing.Z-incoming.Z*outgoing.X,
+                            incoming.X*outgoing.X+incoming.Z*outgoing.Z);
+                }
                 branches.Add(new(prefab.Nodes[to].Uid,signal,inputs,inputs.Where(orders.ContainsKey).Select(l=>orders[l]).Order().ToArray(),
-                    (decisions.GetValueOrDefault(to)??[]).ToArray(),inherited,signal is null?"目标出口的完整原生路线含不同或冲突的灯光":null));
+                    (decisions.GetValueOrDefault(to)??[]).ToArray(),inherited,signal is null?"目标出口的完整原生路线含不同或冲突的灯光":null)
+                    {ExitTurnRadians=turn});
             }
             result[prefab.Nodes[from].Uid]=new(prefab.Nodes[from].Uid,orders.Count,branches,
                 inputValid?null:"原生入口车道索引或顺序数据不完整");

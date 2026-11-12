@@ -3,13 +3,17 @@ namespace LinkEts2Nav.Core;
 public enum ForkSignal { None, Left, Right }
 public sealed record NativeForkDecision(int EntryLane,int FromCurve,int ToCurve);
 public sealed record RoadForkBranch(ulong ExitNode,ForkSignal? Signal,IReadOnlyList<int> EntryLanes,
-    IReadOnlyList<int> EntryOrders,IReadOnlyList<NativeForkDecision> Decisions,bool HasInheritedLane,string? Failure=null);
+    IReadOnlyList<int> EntryOrders,IReadOnlyList<NativeForkDecision> Decisions,bool HasInheritedLane,string? Failure=null)
+{
+    /// <summary>Signed horizontal turn of the native outlet tangent relative to the entrance; right is positive.</summary>
+    public double? ExitTurnRadians { get; init; }
+}
 public sealed record RoadForkInfo(ulong EntryNode,int EntryLaneCount,IReadOnlyList<RoadForkBranch> Branches,string? Failure=null);
 public sealed record RoadForkInstruction(ManeuverKind Kind,bool Silent,string? Text,IReadOnlyList<int> EntryOrders,
     IReadOnlyList<int> DedicatedOrders,string? Failure=null);
 public sealed record RoadForkDiagnostic(string Prefab,ulong EntryNode,ulong ExitNode,string Reason);
 
-/// <summary>Ordinary road splits use native branch lamps and lane reachability, never exit angles.</summary>
+/// <summary>Branch lamps and lane reachability select the action. Outlet order only clarifies lane-selection wording.</summary>
 public static class RoadForkRules
 {
     public static RoadForkInstruction Decide(RoadForkInfo info,ulong exit)
@@ -37,7 +41,24 @@ public static class RoadForkRules
         if(unlit.Any(b=>!b.HasInheritedLane))return Unknown("无灯分支缺少可独立验证的继承入口车道");
         var text=LaneSelectionText(info.EntryLaneCount,branch.EntryOrders);
         if(text is null)return Unknown("所有入口车道均可达目标无灯分支，无法用选道区别出口");
-        return new(ManeuverKind.ChooseLanes,false,text,branch.EntryOrders,dedicated);
+        return new(ManeuverKind.ChooseLanes,false,ForkSelectionText(info,branch,text),branch.EntryOrders,dedicated);
+    }
+
+    private static string ForkSelectionText(RoadForkInfo info,RoadForkBranch branch,string lanes)
+    {
+        if(info.Branches.Count>=3)return "有多个相近出口，请"+lanes;
+        var other=info.Branches.Single(b=>b.ExitNode!=branch.ExitNode);
+        int order=0;
+        if(branch.ExitTurnRadians is double selected&&other.ExitTurnRadians is double alternative
+            &&double.IsFinite(selected)&&double.IsFinite(alternative))
+            order=selected.CompareTo(alternative);
+        // Equal/absent headings still have an unambiguous order if their inherited lane groups do not overlap.
+        if(order==0&&branch.EntryOrders.Count>0&&other.EntryOrders.Count>0)
+        {
+            if(branch.EntryOrders.Max()<other.EntryOrders.Min())order=-1;
+            else if(branch.EntryOrders.Min()>other.EntryOrders.Max())order=1;
+        }
+        return order==0?"分岔口，请"+lanes:"分岔口靠"+(order<0?"左":"右")+"，"+lanes;
     }
 
     public static string? LaneSelectionText(int count,IReadOnlyList<int> selected)

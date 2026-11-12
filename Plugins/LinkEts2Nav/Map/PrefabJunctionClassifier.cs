@@ -22,7 +22,7 @@ public static class PrefabJunctionClassifier
                 .Concat(n.OutputLines.Where(Valid).Select(i=>descriptor.NavCurves[i].EndPosition)).ToArray();
             double width=0;
             for(int a=0;a<points.Length;a++)for(int b=a+1;b<points.Length;b++)
-                width=Math.Max(width,Vector3.Distance(points[a],points[b]));
+                width=Math.Max(width,Vector2.Distance(new(points[a].X,points[a].Z),new(points[b].X,points[b].Z)));
             return width;
         }).ToArray();
         PrefabJunctionInfo Result(int crossings)=>new(entrances,exits,crossings)

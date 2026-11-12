@@ -60,6 +60,21 @@ public sealed class JunctionStructureTests
         Assert.Equal(150,straight.EndDistanceMeters);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SingleCurvedContinuationIsStructuralStraightRegardlessOfEndpointTangents(bool nativeTangents)
+    {
+        DirectedRoad approach=new("road",1,10,[Vector3.Zero,new(0,0,100)]);
+        DirectedRoad main=new("prefab:1:0:1",10,20,[new(0,0,100),new(0,0,120),new(20,0,140),new(50,0,150)])
+        {Junction=new(2,1,0){InterfaceCount=3},
+            NativeEntryTangent=nativeTangents?Vector3.UnitZ:null,
+            NativeExitTangent=nativeTangents?Vector3.UnitX:null};
+        var straight=Assert.Single(new NavigationManeuverDetector().FindSequence([approach,main],0,[approach,main]));
+        Assert.Equal(ManeuverKind.Straight,straight.Kind);
+        Assert.Equal(NavigationJunctionKind.Ramp,straight.JunctionKind);
+    }
+
     [Fact]
     public void DefaultManeuverRemainsOrdinaryAndNotMinor()
     {

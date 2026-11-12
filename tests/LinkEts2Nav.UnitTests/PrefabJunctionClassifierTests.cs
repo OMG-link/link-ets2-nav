@@ -77,4 +77,12 @@ public sealed class PrefabJunctionClassifierTests
         d.NavCurves[1].EndPosition=new(1.49f,0,0);
         Assert.False(PrefabJunctionClassifier.Analyze(d).IsMinorPassage(0,1));
     }
+
+    [Fact]
+    public void ElevationDifferenceDoesNotWidenAnInterface()
+    {
+        var d=new PrefabDescriptor{NavCurves=[new(){StartPosition=Vector3.Zero},new(){StartPosition=new(0,20,1.5f)}],
+            Nodes=[new(){InputLines=[0,1],OutputLines=[]}]};
+        Assert.Equal(1.5,Assert.Single(PrefabJunctionClassifier.Analyze(d).InterfaceWidths));
+    }
 }

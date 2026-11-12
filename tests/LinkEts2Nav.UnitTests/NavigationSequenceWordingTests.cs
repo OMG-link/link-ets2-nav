@@ -20,12 +20,14 @@ public sealed class NavigationSequenceWordingTests
         Assert.Equal("右转。",Assert.Single(policy.UpdateSequence([M("second",ManeuverKind.TurnRight,20)],"s",Now,Now,true)));
     }
     [Fact]
-    public void UnreadyCompoundCannotDelayCachedExecutionCue()
+    public void UnreadyCompoundWaitsForItsOwnPreparedAudio()
     {
         var p=new NavigationInstructionPolicy();
         NavigationManeuver[] actions=[M("first",ManeuverKind.TurnLeft,20),M("second",ManeuverKind.TurnRight,80)];
-        Assert.Contains("左转。",p.PlanSequence(actions,"s",Now,Now,true));
-        Assert.Equal("左转。",Assert.Single(p.UpdateSequence(actions,"s",Now,Now,true,text=>text=="左转。")));
+        const string compound="左转，然后六十米右转。";
+        Assert.Contains(compound,p.PlanSequence(actions,"s",Now,Now,true));
+        Assert.Empty(p.UpdateSequence(actions,"s",Now,Now,true,text=>text=="左转。"));
+        Assert.Equal(compound,Assert.Single(p.UpdateSequence(actions,"s",Now,Now,true)));
     }
 
     [Fact]
@@ -37,33 +39,10 @@ public sealed class NavigationSequenceWordingTests
         var q=new NavigationInstructionPolicy();
         Assert.Equal("左转。",Assert.Single(q.UpdateSequence([first,M("second",ManeuverKind.MergeLeft,70) with{AnnouncementMode=NavigationAnnouncementMode.Silent}],"s",Now,Now,true)));
     }
-    [Fact]
-    public void OrdinalOnlyAppearsAtTwoHundredOrFirstCloseBriefing()
-    {
-        var p=new NavigationInstructionPolicy();
-        NavigationManeuver[] Sequence(double turn,double straight)=>[M("straight",ManeuverKind.Straight,straight),M("turn",ManeuverKind.TurnLeft,turn)];
-        Assert.Equal("五百米后，左转。",Assert.Single(p.UpdateSequence(Sequence(500,250),"s",Now,Now,true)));
-        Assert.Equal("两百米后，在第二个路口左转。",Assert.Single(p.UpdateSequence(Sequence(200,50),"s",Now,Now,true)));
-        var q=new NavigationInstructionPolicy();
-        Assert.Equal("一百五十米后，在第二个路口左转。",Assert.Single(q.UpdateSequence(Sequence(175,50),"s",Now,Now,true)));
-    }
-    [Fact]
-    public void SkippingDistanceStageDoesNotSkipFirstCloseOrdinal()
-    {
-        var p=new NavigationInstructionPolicy();
-        Assert.Equal("两百五十米后，左转。",Assert.Single(p.UpdateSequence(
-            [M("straight",ManeuverKind.Straight,100),M("turn",ManeuverKind.TurnLeft,275)],"s",Now,Now,true)));
-        Assert.Contains("两百米后，在第二个路口左转。",p.PlanSequence(
-            [M("straight",ManeuverKind.Straight,90),M("turn",ManeuverKind.TurnLeft,265)],"s",Now,Now,true));
-        Assert.Equal("两百米后，在第二个路口左转。",Assert.Single(p.UpdateSequence(
-            [M("straight",ManeuverKind.Straight,25),M("turn",ManeuverKind.TurnLeft,200)],"s",Now,Now,true)));
-    }
-
-    [Fact]
-    public void PassedStraightJunctionIsNotMentionedInTwoHundredMeterCue()
-    {
-        var p=new NavigationInstructionPolicy();
-        p.UpdateSequence([M("straight",ManeuverKind.Straight,250),M("turn",ManeuverKind.TurnLeft,500)],"s",Now,Now,true);
-        Assert.Equal("两百米后，左转。",Assert.Single(p.UpdateSequence([M("turn",ManeuverKind.TurnLeft,200)],"s",Now,Now,true)));
-    }
+    [Theory]
+    [InlineData(500,2,"五百米后，左转。")]
+    [InlineData(200,2,"两百米后，在第二个路口左转。")]
+    [InlineData(100,0,"一百米后，左转。")]
+    public void SharedPromptHonorsOnlyTheOrdinalProvidedByThePlannedPoint(int distance,int ordinal,string expected)
+        =>Assert.Equal(expected,NavigationPrompts.AtDistance(ManeuverKind.TurnLeft,distance,ordinal));
 }

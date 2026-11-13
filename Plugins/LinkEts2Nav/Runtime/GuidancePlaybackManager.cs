@@ -12,6 +12,7 @@ public sealed record QueuedGuidanceSpeech(string Source,string EventId,string Tr
     double SequenceOrder,int Priority,string Text)
 {
     public string? SpeechSequenceId { get; init; }
+    public bool IsNotification { get; init; }
     public string SequenceId => SpeechSequenceId ?? EventId;
 }
 
@@ -65,6 +66,16 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
             }
             active=isActive;updateHeld=false;
         }
+        PreparePending();Wake();
+    }
+    /// <summary>One-shot notifications have no fabricated route end or trigger point.</summary>
+    public void Notify(string source,GuidanceNotification notification)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        ArgumentException.ThrowIfNullOrWhiteSpace(notification.Id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(notification.Text);
+        string id="notification:"+notification.Id;
+        lock(gate)EnqueueLocked(new(source,id,id,0,notification.Priority,notification.Text){IsNotification=true});
         PreparePending();Wake();
     }
     private void EnqueueLocked(QueuedGuidanceSpeech speech)
@@ -125,8 +136,8 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                     (QueuedGuidanceSpeech Speech,long Generation,string File)? next=null;
                     lock(gate)
                     {
-                        if(!active||updateHeld)break;
-                        foreach(var item in pending.Values.OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order))
+                        if(!active)break;
+                        foreach(var item in pending.Values.Where(p=>!updateHeld||p.Speech.IsNotification).OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order))
                         {
                             string? file=null;
                             if(cache?.TryGetAudio(item.Speech.Text,out var ready)==true)file=ready;

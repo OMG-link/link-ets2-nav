@@ -28,6 +28,7 @@ public sealed class GuidanceCoordinator
     private string? replacementRevision;
     private readonly HashSet<string> replacementApplied=new(StringComparer.Ordinal);
     private readonly Dictionary<string,string> lastQueued=new(StringComparer.Ordinal);
+    private readonly HashSet<(string Source,string Id)> notifications=[];
     public GuidanceTimeline Timeline { get; }=new();
     public SpeechTriggerScheduler Scheduler { get; }=new();
     public event Action<QueuedGuidanceSpeech>? Queued;
@@ -45,6 +46,21 @@ public sealed class GuidanceCoordinator
         .OrderBy(p=>p.RemainingMeters).Take(64).ToArray(),SequenceEnds=Timeline.Sources.SelectMany(p=>p.Sequences
             .Select(s=>new GuidanceSequenceEndDiagnostic(p.Source,s.Id,s.EndAlongMeters-p.PlayerAlongMeters,s.Ended))).ToArray()};}}
     public bool WillReplaceSource(string source,string revision)=>replacementRevision==revision&&!replacementApplied.Contains(source);
+    public void Notify(string source,string sessionId,GuidanceNotification notification)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        ArgumentException.ThrowIfNullOrWhiteSpace(notification.Id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(notification.Text);
+        EnsureSession(sessionId);
+        if(!notifications.Add((source,notification.Id)))return;
+        lastQueued[source]=notification.Text;
+        string id="notification:"+notification.Id;
+        log("即时语音入队："+notification.Text+" 事件="+id);
+        playback?.Notify(source,notification);
+        Queued?.Invoke(new(source,id,id,0,notification.Priority,notification.Text){IsNotification=true});
+    }
+    public void WithdrawNotifications(string source)
+        =>playback?.Withdraw(source,playback.Pending.Where(p=>p.Source==source&&p.IsNotification).Select(p=>p.EventId));
     public void Publish(GuidanceSourcePlan plan)
     {
         EnsureSession(plan.SessionId);playback?.BeginUpdate();
@@ -128,25 +144,13 @@ public sealed class GuidanceCoordinator
         EnsureSession(data.SessionId);playback?.BeginUpdate();
         if(observedRoute is not null&&observedRoute.Revision!=data.Route.Revision)
         {
-            replacementRevision=IsForwardExtension(observedRoute,data.Route)?null:data.Route.Revision;
+            replacementRevision=RouteContinuity.IsForwardExtension(observedRoute,data.Route)?null:data.Route.Revision;
             replacementApplied.Clear();
         }
         observedRoute=data.Route;
         // Playback is released only after the whole trigger batch has been applied.
         playback?.SetActive(data.IsVehicleUsable&&data.Vehicle is {Paused:false,SdkActive:true,IsFinite:true,SpeedMetersPerSecond:>=-.1} v
             &&now>=v.ReceivedAt&&now-v.ReceivedAt<=TimeSpan.FromSeconds(2));
-    }
-    private static bool IsForwardExtension(RouteSnapshot oldRoute,RouteSnapshot newRoute)
-    {
-        var old=oldRoute.Nodes.Select(n=>n.Uid).ToArray();var current=newRoute.Nodes.Select(n=>n.Uid).ToArray();
-        if(old.Length==0||current.Length==0)return old.Length==current.Length;
-        for(int offset=0;offset<old.Length;offset++)
-        {
-            if(old[offset]!=current[0])continue;
-            int count=Math.Min(old.Length-offset,current.Length);
-            if(Enumerable.Range(0,count).All(i=>old[offset+i]==current[i]))return true;
-        }
-        return false;
     }
     public void Tick(GameDataSnapshot data,DateTimeOffset now)
     {
@@ -178,6 +182,6 @@ public sealed class GuidanceCoordinator
     public void Reset()
     {
         Timeline.Reset();Scheduler.Reset();playback?.Reset();cache?.ClearPlan("guidance-preparation");
-        latest=[];lastQueued.Clear();environment.Reset();environmentFrame=null;session=null;observedRoute=null;replacementRevision=null;replacementApplied.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}
+        latest=[];lastQueued.Clear();notifications.Clear();environment.Reset();environmentFrame=null;session=null;observedRoute=null;replacementRevision=null;replacementApplied.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}
     }
 }

@@ -4,6 +4,22 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class GuidancePlaybackManagerTests
 {
     [Fact]
+    public async Task NotificationWaitsForPauseButDoesNotWaitForMapPlanningOrNeedAnEndPoint()
+    {
+        var player=new Player();await using var manager=new GuidancePlaybackManager(null,player,()=>"notice.wav");
+        manager.SetActive(false);manager.BeginUpdate();
+        manager.Notify("journey",new("start","导航开始。"));
+        manager.Notify("journey",new("start","导航开始。"));
+        Assert.True(Assert.Single(manager.Pending).IsNotification);
+        Assert.False(player.Started.Reader.TryRead(out _));
+        manager.SetActive(true);
+        var audio=await player.Started.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
+        Assert.Equal("notice.wav",audio.File);audio.Done.SetResult();
+        manager.Notify("journey",new("start","导航开始。"));
+        Assert.Empty(manager.Pending);
+    }
+
+    [Fact]
     public void SynthesisFallbackUsesNeutralToneInsteadOfFixedCustomRecording()
     {
         string directory=Path.Combine(Path.GetTempPath(),"guidance-fallback-"+Guid.NewGuid());

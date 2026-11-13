@@ -1,4 +1,4 @@
-﻿using LinkEts2Nav.Core;
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 using LinkEts2Nav.Runtime;
 using LinkEts2Nav.Map;
@@ -6,6 +6,17 @@ using System.Numerics;
 namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceCoordinatorTests
 {
+    [Fact]
+    public void NotificationsUseSessionScopedIdentityWithoutPublishingASpatialSeries()
+    {
+        var coordinator=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();coordinator.Queued+=queued.Add;
+        coordinator.Notify("journey","s",new("start","导航开始。"));
+        coordinator.Notify("journey","s",new("start","导航开始。"));
+        Assert.True(Assert.Single(queued).IsNotification);Assert.Empty(coordinator.Timeline.Sources);
+        coordinator.Notify("journey","next-session",new("start","导航开始。"));
+        Assert.Equal(2,queued.Count);
+    }
+
     [Fact]
     public async Task DisappearanceDoesNotPreventTheLaterEndFromClearingPendingSpeech()
     {

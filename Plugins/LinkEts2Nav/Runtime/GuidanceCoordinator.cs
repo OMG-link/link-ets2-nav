@@ -20,6 +20,7 @@ public sealed class GuidanceCoordinator
     private readonly Action<string> log;
     private readonly object gate=new();
     private readonly EnvironmentPreviewPlanner environment=new();
+    private readonly NavigationJourneyTracker journey=new();
     private string? environmentFrame;
     private string? session,lastPlayed;
     private readonly Dictionary<string,string> playedBySource=new(StringComparer.Ordinal);
@@ -138,8 +139,13 @@ public sealed class GuidanceCoordinator
     // they cannot be predecessors of calibrated road-camera events or each other.
     private static string CameraChain(CameraWarningKind kind,string cameraId)
         =>kind==CameraWarningKind.Calibrated?"camera":"uncalibrated-proximity:"+cameraId;
+    public void ClearSource(string source)
+    {
+        var ids=Timeline.Sources.FirstOrDefault(p=>p.Source==source)?.Events.Select(e=>e.Id).ToArray()??[];
+        playback?.Withdraw(source,ids);Scheduler.ForgetEvents(source,ids);Timeline.Clear(source);
+    }
     public void Suspend(string source)=>Timeline.Suspend(source);
-    public void Observe(GameDataSnapshot data,DateTimeOffset now)
+    public void Observe(GameDataSnapshot data,DateTimeOffset now,bool processJourney=true)
     {
         EnsureSession(data.SessionId);playback?.BeginUpdate();
         if(observedRoute is not null&&observedRoute.Revision!=data.Route.Revision)
@@ -151,6 +157,11 @@ public sealed class GuidanceCoordinator
         // Playback is released only after the whole trigger batch has been applied.
         playback?.SetActive(data.IsVehicleUsable&&data.Vehicle is {Paused:false,SdkActive:true,IsFinite:true,SpeedMetersPerSecond:>=-.1} v
             &&now>=v.ReceivedAt&&now-v.ReceivedAt<=TimeSpan.FromSeconds(2));
+        if(!processJourney)return;
+        var lifecycle=journey.Update(data,now);
+        if(lifecycle.WithdrawNotices)WithdrawNotifications(NavigationJourneyTracker.Source);
+        if(lifecycle.Ended){ClearSource("navigation");ClearSource("city-entry");}
+        foreach(var notice in lifecycle.Notifications)Notify(NavigationJourneyTracker.Source,data.SessionId,notice);
     }
     public void Tick(GameDataSnapshot data,DateTimeOffset now)
     {
@@ -181,7 +192,7 @@ public sealed class GuidanceCoordinator
     {if(session!=value){Reset();session=value;}}
     public void Reset()
     {
-        Timeline.Reset();Scheduler.Reset();playback?.Reset();cache?.ClearPlan("guidance-preparation");
+        Timeline.Reset();Scheduler.Reset();journey.Reset();playback?.Reset();cache?.ClearPlan("guidance-preparation");
         latest=[];lastQueued.Clear();notifications.Clear();environment.Reset();environmentFrame=null;session=null;observedRoute=null;replacementRevision=null;replacementApplied.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}
     }
 }

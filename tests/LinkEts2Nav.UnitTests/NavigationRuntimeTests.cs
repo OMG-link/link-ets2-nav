@@ -32,6 +32,25 @@ public sealed class NavigationRuntimeTests
     });
 
     [Fact]
+    public async Task CityEntryRunsOnItsOwnEnvironmentChainAndClearsAfterCrossingTheRealBoundary()
+    {
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(0,0,1000),default);
+        var route=RouteSnapshot.Parse([new(road.Node.Uid,1000,50),new(road.ForwardNode.Uid,100,5)],Now);
+        var urban=new LimitRegion("city",[new(-20,0,600),new(20,0,600),new(20,0,900),new(-20,0,900)],0,true);
+        var scene=new NearbyMapSnapshot(map,[],[],[]){SpeedLimits=SpeedLimitData.Empty with{Regions=[urban]}};
+        await using var playback=new GuidancePlaybackManager(null,new CallbackPlayer(_=>{}),()=>null);
+        var coordinator=new GuidanceCoordinator(playback:playback);var queued=new List<QueuedGuidanceSpeech>();coordinator.Queued+=queued.Add;
+        var runtime=new NavigationRuntime(guidance:coordinator);
+        void Step(float z){var data=Data(route,z);runtime.Process(data,scene,Now);coordinator.Tick(data,Now);}
+        Step(0);Assert.DoesNotContain(queued,q=>q.Source==CityEntryEventBuilder.Kind);
+        Step(100);Assert.Equal("五百米后，进入城区，请注意减速慢行。",Assert.Single(queued,q=>q.Source==CityEntryEventBuilder.Kind).Text);
+        Step(400);Assert.Equal("两百米后，进入城区，请注意减速慢行。",queued.Last(q=>q.Source==CityEntryEventBuilder.Kind).Text);
+        Assert.Single(playback.Pending,p=>p.Source==CityEntryEventBuilder.Kind);
+        Step(601);Assert.DoesNotContain(playback.Pending,p=>p.Source==CityEntryEventBuilder.Kind);
+        Assert.Equal(2,queued.Count(q=>q.Source==CityEntryEventBuilder.Kind));
+    }
+
+    [Fact]
     public void SharedCoordinatorReceivesEventsBeforeAnyPlaybackAndOwnsTriggerConsumption()
     {
         var scene=Scene();var guidance=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();guidance.Queued+=queued.Add;
@@ -264,13 +283,15 @@ public sealed class NavigationRuntimeTests
         var played = new List<string>();
         int beeps = 0;
         string file = Path.GetTempFileName();
+        string startFile = Path.GetTempFileName();
         try
         {
             await using var queue = new SpeechAnnouncementQueue(synth, played.Add,
-                message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.TrySetResult(); });
+                message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.TrySetResult(); },
+                preGenerated:new Dictionary<string,string>{{NavigationJourneyTracker.StartText,startFile}});
             var completed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             await using var playback=new GuidancePlaybackManager(queue,new CallbackPlayer(path=>
-                {if(path=="beep.wav")beeps++;else played.Add(path);completed.TrySetResult();}),()=>"beep.wav");
+                {if(path==startFile)return;if(path=="beep.wav")beeps++;else played.Add(path);completed.TrySetResult();}),()=>"beep.wav");
             var guidance=new GuidanceCoordinator(queue,playback);
             var runtime = new NavigationRuntime(queue,guidance:guidance);
             void Step(float z){var data=Data(scene.Route,z);guidance.Observe(data,Now);runtime.Process(data,scene.Map,Now);guidance.Tick(data,Now);}
@@ -286,7 +307,7 @@ public sealed class NavigationRuntimeTests
             Assert.Single(played);
             Assert.Equal(0, beeps);
         }
-        finally { File.Delete(file); }
+        finally { File.Delete(file);File.Delete(startFile); }
     }
     [Fact]
     public async Task StandaloneAnalysisNeverPlaysEvenWhenItsSpeechIsAlreadyCached()

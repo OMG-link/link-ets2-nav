@@ -7,6 +7,26 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceCoordinatorTests
 {
     [Fact]
+    public async Task ConfirmedArrivalClearsOldSpatialSpeechAndKeepsItsOneShotAnnouncement()
+    {
+        await using var manager=new GuidancePlaybackManager(null,new NoPlayer(),()=>null);
+        var c=new GuidanceCoordinator(playback:manager);
+        GameDataSnapshot Step(double seconds,double remaining,RouteAvailability availability)
+        {
+            var time=Now.AddSeconds(seconds);var route=RouteSnapshot.Parse([new RouteNode(1,100,10),new RouteNode(2,0,0)],time);
+            return new(new(0,0,0,0,10,remaining,true,false,(ulong)(seconds*10+1),time),route,availability,"s",true);
+        }
+        var start=Step(0,100,RouteAvailability.Available);c.Observe(start,Now);
+        c.Publish(new("navigation","s",start.Route.Revision,0,true,Now,[GuidanceTestSeries.Route("turn",100,
+            [new("turn",50,"left")],[new("left","turn",SpeechTriggerKind.Execution,0,"left")])]));
+        c.Tick(start,Now);Assert.Equal(2,manager.Pending.Count);
+        foreach(double seconds in new[]{1d,1.5,2})c.Observe(Step(seconds,0,RouteAvailability.None),Now.AddSeconds(seconds));
+        Assert.DoesNotContain(c.Timeline.Sources,p=>p.Source=="navigation");
+        Assert.Equal(NavigationJourneyTracker.ArrivedText,Assert.Single(manager.Pending).Text);
+        Assert.True(Assert.Single(manager.Pending).IsNotification);
+    }
+
+    [Fact]
     public void NotificationsUseSessionScopedIdentityWithoutPublishingASpatialSeries()
     {
         var coordinator=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();coordinator.Queued+=queued.Add;
@@ -103,10 +123,10 @@ public sealed class GuidanceCoordinatorTests
                     [new(id+":cue",id,SpeechTriggerKind.Advance,0,id)])).ToArray()));
             c.Tick(data,Now);
         }
-        Publish(Route(1,2,3),"a","b");Assert.Equal(2,manager.Pending.Count);
-        Publish(Route(2,3),"b");Assert.Equal(2,manager.Pending.Count);
-        Publish(Route(2,9));Assert.Equal("a",Assert.Single(manager.Pending).EventId);
-        Publish(Route(2,3),"b");Assert.Equal(2,manager.Pending.Count);
+        Publish(Route(1,2,3),"a","b");Assert.Equal(2,manager.Pending.Count(p=>!p.IsNotification));
+        Publish(Route(2,3),"b");Assert.Equal(2,manager.Pending.Count(p=>!p.IsNotification));
+        Publish(Route(2,9));Assert.Equal("a",Assert.Single(manager.Pending,p=>!p.IsNotification).EventId);
+        Publish(Route(2,3),"b");Assert.Equal(2,manager.Pending.Count(p=>!p.IsNotification));
     }
 
     [Fact]

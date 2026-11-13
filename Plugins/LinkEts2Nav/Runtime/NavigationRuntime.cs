@@ -27,6 +27,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private readonly NavigationInstructionPolicy policy = new();
     private readonly NavigationEventPlanner eventPlanner=new();
     private readonly RouteProgressTracker progress=new();
+    private readonly EnvironmentPreviewPlanner cityPlanner=new();
+    private string? cityFrame;
     private readonly DirectedPathMatcher matcher = new();
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
@@ -155,6 +157,13 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 playerAlong,upcoming,true,false,confirmedContinuation,guidance.Scheduler,progress.Frame,
                 componentEnd is {} boundary?playerAlong-along.Value+boundary:null,
                 guidance.WillReplaceSource("navigation",data.Route.Revision),playerAlong+confirmedAhead));
+            if(cityFrame!=progress.Frame){guidance.ClearSource(CityEntryEventBuilder.Kind);cityPlanner.Reset();cityFrame=progress.Frame;}
+            var entries=CityEntryEventBuilder.Build(route,playerAlong,nearby.SpeedLimits.Regions,playerAlong-along.Value)
+                .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
+            if(guidance.WillReplaceSource(CityEntryEventBuilder.Kind,data.Route.Revision))
+                cityPlanner.Reconcile(entries.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,guidance.Scheduler,CityEntryEventBuilder.Kind);
+            var city=cityPlanner.Build(CityEntryEventBuilder.Kind,playerAlong,entries,guidance.Scheduler,true);
+            guidance.Publish(new(CityEntryEventBuilder.Kind,data.SessionId,data.Route.Revision,playerAlong,true,vehicle.ReceivedAt,city.Sequences){CoordinateFrame=progress.Frame});
             lastSpoken=guidance.LastPlayed("navigation");
         }
         else
@@ -231,7 +240,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
 
     public NavigationDiagnostic Suspend(string state, DateTimeOffset now)
     {
-        speech?.ClearPlan("navigation");guidance?.Suspend("navigation");
+        speech?.ClearPlan("navigation");guidance?.Suspend("navigation");guidance?.Suspend(CityEntryEventBuilder.Kind);
         Report(state, null, now);
         return new(state, null, lastSpoken);
     }
@@ -248,7 +257,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
 
     public void Reset()
     {
-        policy.Reset();eventPlanner.Reset();progress.Reset();guidance?.Suspend("navigation");
+        policy.Reset();eventPlanner.Reset();progress.Reset();cityPlanner.Reset();cityFrame=null;guidance?.Suspend("navigation");guidance?.Suspend(CityEntryEventBuilder.Kind);
         mergeDetector.Reset(); exitApproach.Reset();acceleration.Reset();
         mergeSignature=forkSignature=connectionFailureSignature=null;
         speech?.ClearPlan("navigation");

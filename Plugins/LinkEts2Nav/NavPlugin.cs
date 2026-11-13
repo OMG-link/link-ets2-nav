@@ -152,7 +152,7 @@ public sealed class NavPlugin : Plugin
                 token.ThrowIfCancellationRequested();
                 var data = source.Capture();
                 var now = DateTimeOffset.UtcNow;
-                guidance.Observe(data,now);
+                guidance.Observe(data,now,processJourney:false);
                 if (!data.IsVehicleUsable) speech?.ClearPlan();
                 logOutput.ReportFines(source.Store.DrainFines(), data.DroppedFineCount, now);
                 logOutput.ReportCurrentLimit(data, now);
@@ -232,6 +232,8 @@ public sealed class NavPlugin : Plugin
                         mapScanner.Invalidate();
                         pipeline.Reset(); navigation.Reset(); guidance.Reset();
                     }
+                    // Announce after startup/session resets, before waiting for the nearby map scan.
+                    guidance.Observe(data,now);
                     logOutput.Change("scan-coverage", data.RouteAvailability == RouteAvailability.Available
                         ? "地图扫描范围：附近 1100 m，并沿游戏导航路线预读前方 5 km；后台优先准备附近地图。"
                         : "地图扫描范围：附近 1100 m（无有效导航路线）。", now);

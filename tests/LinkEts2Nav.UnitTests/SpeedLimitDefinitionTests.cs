@@ -37,6 +37,23 @@ public sealed class SpeedLimitDefinitionTests
     }
 
     [Theory]
+    [InlineData("traffic_rule.urban_start",false,true)]
+    [InlineData("traffic_rule.urban_end",false,false)]
+    [InlineData("traffic_rule.limit_60",true,null)]
+    public void EditableCityNameDoesNotInvalidateAFixedModelUrbanRule(string rule,bool uncertain,bool? urban)
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/sign.test.sii"]="SiiNunit { sign_model : sign.test { traffic_rule: "+rule+" } }";
+        var map=new TruckLib.ScsMap.Map();
+        var sign=TruckLib.ScsMap.Sign.Add(map,new(50,0,-2),"test");
+        sign.SignTemplate="sign_templ.editable_city_name";
+        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        var parsed=Assert.Single(data.Signs);
+        Assert.Equal(uncertain,parsed.TemplateOverride);Assert.Equal(urban,parsed.Action.Urban);
+        Assert.False(parsed.Action.Unsupported);
+    }
+
+    [Theory]
     [InlineData(true,true,true)]
     [InlineData(true,false,false)]
     [InlineData(false,false,false)]

@@ -117,8 +117,15 @@ public sealed class SpeedLimitDefinitionReader
         var placedSigns=new List<LimitSign>();
         foreach(var sign in map.MapItems.Values.OfType<Sign>().Where(s=>s.Node is Node))
             if(signs.TryGetValue(sign.Model.ToString(),out var action)&&action.Relevant)
+            {
+                bool hasTemplate=!string.IsNullOrEmpty(sign.SignTemplate)||sign.SignOverrides?.Count>0;
+                // A fixed urban transition belongs to the sign model's traffic_rule.
+                // Its editable template supplies the city name/layout, not the urban state.
+                // Keep the conservative template check for numeric or unresolved rules.
+                bool fixedUrban=action.Urban.HasValue&&action.SetKph is null&&!action.Unsupported;
                 placedSigns.Add(new(sign.Uid.ToString("X16"),sign.Node.Position,Vector3.Transform(-Vector3.UnitZ,sign.Node.Rotation),
-                    sign.FollowRoadDir,action,!string.IsNullOrEmpty(sign.SignTemplate)||sign.SignOverrides?.Count>0));
+                    sign.FollowRoadDir,action,hasTemplate&&!fixedUrban));
+            }
         var regions=regionsOverride??ReadRegions(map);
         PrepareHost(hostMap, cancellationToken);
         var countryIndex=RoadCountryIndex.Build(map,countryNames,cancellationToken);

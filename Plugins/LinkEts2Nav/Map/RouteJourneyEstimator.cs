@@ -85,7 +85,7 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
             if(!approximatePrefab&&Vector3.Distance(position,span.Start.Position)>800&&Vector3.Distance(position,span.End.Position)>800)continue;
             if(matches.Any(m=>spans[m.Index].Item.Uid==span.Item.Uid
                 &&spans[m.Index].Start.Uid==span.Start.Uid&&spans[m.Index].End.Uid==span.End.Uid))continue;
-            var projection=Project(span,position,heading,approximatePrefab);
+            var projection=Project(span,position,heading,sdkRemainingMeters.HasValue);
             if(projection is {} p)matches.Add((i,p.Fraction,p.Error));
         }
         var ordered=matches.OrderBy(p=>p.Error).ToArray();
@@ -136,9 +136,9 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
     private static bool Joins(Road road,ulong a,ulong b)
         =>road.Node.Uid==a&&road.ForwardNode.Uid==b||road.Node.Uid==b&&road.ForwardNode.Uid==a;
     private static bool Finite(Vector3 point)=>float.IsFinite(point.X)&&float.IsFinite(point.Y)&&float.IsFinite(point.Z);
-    private static (double Fraction,double Error)? Project(Span span,Vector3 position,Vector3 heading,bool approximatePrefab)
+    private static (double Fraction,double Error)? Project(Span span,Vector3 position,Vector3 heading,bool knownSdkSpan)
     {
-        if(approximatePrefab)
+        if(knownSdkSpan&&span.Item is Prefab)
         {
             var chord=span.End.Position-span.Start.Position;
             double fraction=chord.LengthSquared()>0?Math.Clamp(Vector3.Dot(position-span.Start.Position,chord)/chord.LengthSquared(),0,1):0;
@@ -154,10 +154,10 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
             var delta=points[i]-points[i-1];double length=delta.Length();
             if(length<=0)continue;
             var direction=new Vector2(delta.X,delta.Z);var forward=new Vector2(heading.X,heading.Z);
-            if(direction.LengthSquared()<=0||forward.LengthSquared()<=0){offset+=length;continue;}
+            if(direction.LengthSquared()<=0||!knownSdkSpan&&forward.LengthSquared()<=0){offset+=length;continue;}
             double t=Math.Clamp(Vector3.Dot(position-points[i-1],delta)/delta.LengthSquared(),0,1);
             var nearest=points[i-1]+delta*(float)t;double error=Vector3.DistanceSquared(position,nearest);
-            if(Vector2.Dot(Vector2.Normalize(direction),Vector2.Normalize(forward))>=.25f
+            if((knownSdkSpan||Vector2.Dot(Vector2.Normalize(direction),Vector2.Normalize(forward))>=.25f)
                 &&Math.Abs(position.Y-nearest.Y)<=6&&error<=400&&error<best)
             {best=error;along=offset+length*t;}
             offset+=length;

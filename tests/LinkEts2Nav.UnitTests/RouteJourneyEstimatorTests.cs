@@ -86,6 +86,19 @@ public sealed class RouteJourneyEstimatorTests
     }
 
     [Fact]
+    public void SdkConfirmedCurrentRoadCanBeEstimatedWhileParkedFacingAgainstTheRoute()
+    {
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(1000,0,0),default);
+        var route=Route(road.Node.Uid,road.ForwardNode.Uid);var estimator=new RouteJourneyEstimator(map,Eighty);
+        Assert.False(estimator.Estimate(route,new(250,0,0),-Vector3.UnitX).Ready);
+        var estimate=estimator.Estimate(route,new(250,0,0),-Vector3.UnitX,7500);
+        Assert.True(estimate.Ready,estimate.Failure);
+        Assert.Equal(750,estimate.WorldMeters!.Value,2);
+        Assert.Equal(750/(80*.8/3.6),estimate.RealSeconds!.Value,2);
+        Assert.False(estimator.Estimate(route,new(250,20,0),-Vector3.UnitX,7500).Ready);
+    }
+
+    [Fact]
     public void SdkConfirmedPrefabOriginMayBeFarFromItsChordAndFaceTheOtherWay()
     {
         var s=SplitScene();var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,s.After.Node.Uid,s.After.ForwardNode.Uid);

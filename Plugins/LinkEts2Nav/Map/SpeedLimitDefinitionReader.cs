@@ -196,21 +196,33 @@ public sealed class SpeedLimitDefinitionReader
     {
         if(!roadLooks.TryGetValue(road.RoadType.ToString(),out var look))return null;
         var side=left?road.Left:road.Right;
-        if(side.VariantOverrides.Count>0)return null;
         string key=left?"lanes_left":"lanes_right";
         string selected=side.TrafficRule.ToString();
         string defaultVariant=Text(look,"lane_variant_default");
         if(string.IsNullOrEmpty(selected))selected=defaultVariant;
         var references=Values(look,"lane_variants").Select(Link).ToArray();
         if(references.Any(id=>!roadUnits.ContainsKey(id)))return null;
-        var variants=references.Select(id=>roadUnits[id])
-            .Where(u=>Text(u,"lane_variant")==selected)
-            .Select(u=>(Unit:u,Models:Values(u,"model_variants").Select(Link).ToArray()))
-            .Where(p=>p.Models.Length==0||p.Models.Contains(side.Variant.ToString(),StringComparer.Ordinal)).ToArray();
-        if(variants.Any(p=>p.Models.Length>0))variants=variants.Where(p=>p.Models.Length>0).ToArray();
-        if(variants.Length==0)
-            return selected==defaultVariant?[Values(look,key).ToArray()]:null;
-        return variants.Select(p=>Values(p.Unit.Attributes.ContainsKey(key)?p.Unit:look,key).ToArray()).ToArray();
+        // Model overrides may change lane rules, but are not intrinsically unknown.
+        // Publish every applicable configuration; callers require agreement on
+        // the requested property (speed class or presence of drivable lanes).
+        var configurations=new List<object[]>();
+        var models=side.VariantOverrides.Where(o=>o.Length>0).Select(o=>o.Variant.ToString())
+            .Prepend(side.Variant.ToString()).Distinct(StringComparer.Ordinal);
+        foreach(string model in models)
+        {
+            var variants=references.Select(id=>roadUnits[id])
+                .Where(u=>Text(u,"lane_variant")==selected)
+                .Select(u=>(Unit:u,Models:Values(u,"model_variants").Select(Link).ToArray()))
+                .Where(p=>p.Models.Length==0||p.Models.Contains(model,StringComparer.Ordinal)).ToArray();
+            if(variants.Any(p=>p.Models.Length>0))variants=variants.Where(p=>p.Models.Length>0).ToArray();
+            if(variants.Length==0)
+            {
+                if(selected!=defaultVariant)return null;
+                configurations.Add(Values(look,key).ToArray());
+            }
+            else configurations.AddRange(variants.Select(p=>Values(p.Unit.Attributes.ContainsKey(key)?p.Unit:look,key).ToArray()));
+        }
+        return configurations.ToArray();
     }
 
     private string? LaneClass(IEnumerable<object> values)

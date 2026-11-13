@@ -60,7 +60,12 @@ public sealed class NavigationJourneyTrackerTests
     [InlineData(false,2100,61,"准备出发，全程二点一公里，大约需要两分钟。")]
     [InlineData(true,2000,120,"重新规划路线，全程两公里，大约需要两分钟。")]
     [InlineData(false,1200,30,"准备出发，全程一点二公里，大约需要一分钟。")]
-    [InlineData(false,20,1,"准备出发，全程零点一公里，大约需要一分钟。")]
+    [InlineData(false,20,1,"准备出发，全程二十米，大约需要一分钟。")]
+    [InlineData(true,303,12,"重新规划路线，全程三百米，大约需要一分钟。")]
+    [InlineData(false,316,20,"准备出发，全程三百二十米，大约需要一分钟。")]
+    [InlineData(false,995,40,"准备出发，全程一千米，大约需要一分钟。")]
+    [InlineData(false,1000,40,"准备出发，全程一公里，大约需要一分钟。")]
+    [InlineData(false,1,1,"准备出发，全程十米，大约需要一分钟。")]
     public void BriefingsUseWorldKilometersAndRoundUpRealMinutes(bool replan,double meters,double seconds,string text)
         =>Assert.Equal(text,NavigationJourneyPrompts.Format(replan?NavigationJourneyNoticeKind.Replanned:NavigationJourneyNoticeKind.Start,meters,seconds));
 }

@@ -36,6 +36,26 @@ public sealed class SpeedLimitDefinitionTests
         return fs;
     }
 
+    [Theory]
+    [InlineData("local_road","broken","warn","local_road")]
+    [InlineData("motorway","","unlisted","motorway")]
+    [InlineData("motorway","","bus",null)]
+    [InlineData("motorway","bus","",null)]
+    [InlineData("motorway","bus","bus","expressway")]
+    public void ModelOverridesRequireAgreementInsteadOfRejectingAllOverrides(string traffic,string model,string overlay,string? expected)
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var road=Road.Add(map,new(0,0,0),new(200,0,0),default);road.RoadType="un11";
+        road.Right.TrafficRule=traffic;road.Right.Variant=model;
+        road.Right.VariantOverrides.Add(new(overlay,0,5));
+        var data=new SpeedLimitDefinitionReader(VariantDefinitions()).Build(map,TestContext.Current.CancellationToken);
+        Assert.Null(data.Error);
+        var metadata=data.Roads[road.Uid];
+        Assert.Equal(expected,metadata.ClassFor(metadata.Geometry));
+        Assert.Equal("local_road",metadata.ClassFor(metadata.Geometry with {
+            StartNodeUid=metadata.Geometry.EndNodeUid,EndNodeUid=metadata.Geometry.StartNodeUid }));
+    }
+
     [Fact]
     public void PreparedJourneyCategoryLimitUsesCountryRuralMaximumWithoutAreaOrSigns()
     {

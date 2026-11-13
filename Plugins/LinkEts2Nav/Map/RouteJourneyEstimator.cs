@@ -17,12 +17,13 @@ public sealed record RouteJourneyEstimate(double? WorldMeters,double? RealSecond
 /// </summary>
 public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimitResult> categorySpeed,double prefabDistanceFactor=1)
 {
-    private sealed record Span(MapItem Item,INode Start,INode End,double Length,bool Forward);
+    private sealed record Span(MapItem Item,INode Start,INode End,double Length,bool Forward,double StartRemaining,double EndRemaining);
     private static RouteJourneyEstimate Missing(string reason)=>new(null,null,reason);
 
-    public RouteJourneyEstimate Estimate(RouteSnapshot route,Vector3 position,Vector3 heading)
+    public RouteJourneyEstimate Estimate(RouteSnapshot route,Vector3 position,Vector3 heading,double? sdkRemainingMeters=null)
     {
         if(!double.IsFinite(prefabDistanceFactor)||prefabDistanceFactor<=0)return Missing("预制件距离系数无效");
+        if(sdkRemainingMeters is {} remaining&&(!double.IsFinite(remaining)||remaining<0))return Missing("SDK剩余里程无效");
         if(route.Availability!=RouteAvailability.Available||route.MayBeTruncated||route.Nodes.Count<2)
             return Missing("完整导航路线尚未就绪或已截断");
         var nodes=route.Nodes.Where((n,i)=>i==0||n!=route.Nodes[i-1]).ToArray();
@@ -43,7 +44,8 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
                 {
                     if(owners.OfType<Prefab>().Any(p=>p.Nodes.Any(n=>n.Uid==start.Uid)&&p.Nodes.Any(n=>n.Uid==direct.Uid)))
                         return Missing("导航道路和预制件连接归属不唯一");
-                    var road=roads[0];span=new(road,start,direct,road.Length,road.Node.Uid==start.Uid);
+                    var road=roads[0];span=new(road,start,direct,road.Length,road.Node.Uid==start.Uid,
+                        nodes[i].DistanceToEndMeters,nodes[stop].DistanceToEndMeters);
                 }
             }
             if(span is null)
@@ -59,7 +61,8 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
                         if(prefab.Nodes.Any(n=>n.Uid==end.Uid))
                         {
                             if(end.Uid!=start.Uid)candidates.Add((new(prefab,start,end,
-                                Vector3.Distance(start.Position,end.Position)*prefabDistanceFactor,true),j));
+                                Vector3.Distance(start.Position,end.Position)*prefabDistanceFactor,true,
+                                nodes[i].DistanceToEndMeters,nodes[j].DistanceToEndMeters),j));
                             break;
                         }
                         if(Owners(end).Any(o=>o.Uid!=prefab.Uid))break;
@@ -75,10 +78,14 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
         for(int i=0;i<spans.Count;i++)
         {
             var span=spans[i];
-            if(Vector3.Distance(position,span.Start.Position)>800&&Vector3.Distance(position,span.End.Position)>800)continue;
+            // Scaled SDK remaining distance identifies the current route visit,
+            // never a world-distance fraction or a real-time estimate.
+            if(sdkRemainingMeters is {} at&&(at>span.StartRemaining+.01||at<span.EndRemaining-.01))continue;
+            bool approximatePrefab=sdkRemainingMeters.HasValue&&span.Item is Prefab;
+            if(!approximatePrefab&&Vector3.Distance(position,span.Start.Position)>800&&Vector3.Distance(position,span.End.Position)>800)continue;
             if(matches.Any(m=>spans[m.Index].Item.Uid==span.Item.Uid
                 &&spans[m.Index].Start.Uid==span.Start.Uid&&spans[m.Index].End.Uid==span.End.Uid))continue;
-            var projection=Project(span,position,heading);
+            var projection=Project(span,position,heading,approximatePrefab);
             if(projection is {} p)matches.Add((i,p.Fraction,p.Error));
         }
         var ordered=matches.OrderBy(p=>p.Error).ToArray();
@@ -129,8 +136,14 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
     private static bool Joins(Road road,ulong a,ulong b)
         =>road.Node.Uid==a&&road.ForwardNode.Uid==b||road.Node.Uid==b&&road.ForwardNode.Uid==a;
     private static bool Finite(Vector3 point)=>float.IsFinite(point.X)&&float.IsFinite(point.Y)&&float.IsFinite(point.Z);
-    private static (double Fraction,double Error)? Project(Span span,Vector3 position,Vector3 heading)
+    private static (double Fraction,double Error)? Project(Span span,Vector3 position,Vector3 heading,bool approximatePrefab)
     {
+        if(approximatePrefab)
+        {
+            var chord=span.End.Position-span.Start.Position;
+            double fraction=chord.LengthSquared()>0?Math.Clamp(Vector3.Dot(position-span.Start.Position,chord)/chord.LengthSquared(),0,1):0;
+            return(fraction,Vector3.DistanceSquared(position,span.Start.Position+chord*(float)fraction));
+        }
         var points=span.Item is Road road?Enumerable.Range(0,65).Select(i=>road.InterpolateCurve(span.Forward?i/64f:1-i/64f).Position).ToArray()
             :new[]{span.Start.Position,span.End.Position};
         double total=points.Zip(points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));

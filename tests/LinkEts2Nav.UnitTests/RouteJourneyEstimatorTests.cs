@@ -75,6 +75,28 @@ public sealed class RouteJourneyEstimatorTests
     }
 
     [Fact]
+    public void SdkIntervalSelectsTheSecondVisitToTheSameDirectedRoad()
+    {
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(500,0,0),default);
+        var route=Route(road.Node.Uid,road.ForwardNode.Uid,road.Node.Uid,road.ForwardNode.Uid);
+        var estimate=new RouteJourneyEstimator(map,Eighty).Estimate(route,new(250,0,0),Vector3.UnitX,5000);
+        Assert.True(estimate.Ready,estimate.Failure);
+        Assert.Equal(250,estimate.WorldMeters!.Value,2);
+        Assert.Equal(250/(80*.8/3.6),estimate.RealSeconds!.Value,2);
+    }
+
+    [Fact]
+    public void SdkConfirmedPrefabOriginMayBeFarFromItsChordAndFaceTheOtherWay()
+    {
+        var s=SplitScene();var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,s.After.Node.Uid,s.After.ForwardNode.Uid);
+        var estimator=new RouteJourneyEstimator(s.Map,Eighty,1.2);
+        Assert.False(estimator.Estimate(route,new(50,0,150),-Vector3.UnitX).Ready);
+        var estimate=estimator.Estimate(route,new(50,0,150),-Vector3.UnitX,15000);
+        Assert.True(estimate.Ready,estimate.Failure);
+        Assert.Equal(Vector3.Distance(s.Before.ForwardNode.Position,s.After.Node.Position)*.6+s.After.Length,estimate.WorldMeters!.Value,2);
+    }
+
+    [Fact]
     public void MissingConnectionIsNotInventedAsStraightLine()
     {
         var s=SplitScene();s.Before.ForwardNode.ForwardItem=null!;s.After.Node.BackwardItem=null!;

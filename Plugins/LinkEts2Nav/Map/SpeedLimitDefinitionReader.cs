@@ -78,6 +78,21 @@ public sealed class SpeedLimitDefinitionReader
         }
     }
 
+    /// <summary>Prepared host country plus directed road category, excluding signs and traffic/city areas.</summary>
+    public SpeedLimitResult RoadCategoryLimit(Road road,bool forward)
+    {
+        if(error is not null)return new(null,error);
+        if(hostCountries is null)return new(null,"宿主国家索引尚未准备");
+        if(hostCountries.IsUncertain(road.Uid))return new(null,"道路国家归属存在冲突");
+        string? country=hostCountries.GetCountry(road.Uid);
+        if(country is null)return new(null,"道路国家归属未知");
+        string? speedClass=RoadClass(road,forward?road.LeftHandTraffic:!road.LeftHandTraffic);
+        if(speedClass is null)return new(null,"道路类别或变体未知");
+        if(!limits.TryGetValue(country+"/"+speedClass,out var rule)||rule.Rural<=0)
+            return new(null,"缺少国家道路类别货车限速："+country+"/"+speedClass);
+        return new(rule.Maximum>0?Math.Min(rule.Rural,rule.Maximum):rule.Rural,country+"/"+speedClass);
+    }
+
     public SpeedLimitData Build(TruckLib.ScsMap.Map map) => Build(map,CancellationToken.None);
 
     public SpeedLimitData Build(TruckLib.ScsMap.Map map,CancellationToken cancellationToken, TruckLib.ScsMap.Map? hostMap = null, IReadOnlyList<LimitRegion>? regionsOverride = null)

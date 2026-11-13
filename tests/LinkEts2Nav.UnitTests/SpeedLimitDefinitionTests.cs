@@ -36,6 +36,20 @@ public sealed class SpeedLimitDefinitionTests
         return fs;
     }
 
+    [Fact]
+    public void PreparedJourneyCategoryLimitUsesCountryRuralMaximumWithoutAreaOrSigns()
+    {
+        var fs=new Fs();
+        fs.Files["/def/country/norway/speed_limits.sii"]="""SiiNunit { country_speed_limit : .speed_limit.truck { vehicle_speed_class: truck lane_speed_class[]: local_road limit[]: 90 urban_limit[]: 30 max_limit[]: 80 } }""";
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);road.RoadType="un11";
+        road.Node.IsCountryBorder=true;road.Node.ForwardItem=road;road.Node.ForwardCountry=35;
+        var reader=new SpeedLimitDefinitionReader(fs);
+        Assert.Null(reader.RoadCategoryLimit(road,true).Kph);
+        reader.PrepareHost(map);
+        Assert.Equal(80,reader.RoadCategoryLimit(road,true).Kph);
+        Assert.Equal(80,reader.RoadCategoryLimit(road,false).Kph);
+    }
+
     [Theory]
     [InlineData("motorway","","motorway")]
     [InlineData("expressway","","expressway")]

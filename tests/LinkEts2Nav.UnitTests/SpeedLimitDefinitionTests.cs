@@ -45,7 +45,7 @@ public sealed class SpeedLimitDefinitionTests
         road.Node.IsCountryBorder=true;road.Node.ForwardItem=road;road.Node.ForwardCountry=35;
         var reader=new SpeedLimitDefinitionReader(fs);
         Assert.Null(reader.RoadCategoryLimit(road,true).Kph);
-        reader.PrepareHost(map);
+        reader.PrepareHost(map,TestContext.Current.CancellationToken);
         Assert.Equal(80,reader.RoadCategoryLimit(road,true).Kph);
         Assert.Equal(80,reader.RoadCategoryLimit(road,false).Kph);
     }

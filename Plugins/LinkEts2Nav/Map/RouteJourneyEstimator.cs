@@ -76,7 +76,8 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
         {
             var span=spans[i];
             if(Vector3.Distance(position,span.Start.Position)>800&&Vector3.Distance(position,span.End.Position)>800)continue;
-            if(matches.Any(m=>spans[m.Index].Item.Uid==span.Item.Uid&&spans[m.Index].Forward==span.Forward))continue;
+            if(matches.Any(m=>spans[m.Index].Item.Uid==span.Item.Uid
+                &&spans[m.Index].Start.Uid==span.Start.Uid&&spans[m.Index].End.Uid==span.End.Uid))continue;
             var projection=Project(span,position,heading);
             if(projection is {} p)matches.Add((i,p.Fraction,p.Error));
         }

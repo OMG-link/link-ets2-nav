@@ -135,13 +135,7 @@ public sealed class NavPlugin : Plugin
         var calibrationCheck = DateTimeOffset.MinValue;
         string? calibrationError = null;
         var mapScanner = new BackgroundMapScanner(cancellationToken: token);
-        guidance.JourneyEstimateProvider=data=>
-        {
-            var estimator=mapScanner.Capture().JourneyEstimator;
-            return estimator is not null&&data.Vehicle is {} vehicle
-                ?estimator.Estimate(data.Route,new((float)vehicle.X,(float)vehicle.Y,(float)vehicle.Z),vehicle.ForwardDirection,
-                    vehicle.NavigationDistanceRemainingMeters):null;
-        };
+        guidance.JourneyEstimateProvider=data=>mapScanner.Capture().JourneyEstimator?.Estimate(data.Route);
         string[] gameLog = [];
         long resourceVersion = 0;
         long observedScanRevision = 0;

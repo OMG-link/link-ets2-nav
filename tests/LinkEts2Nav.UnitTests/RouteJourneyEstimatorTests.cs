@@ -12,15 +12,14 @@ public sealed class RouteJourneyEstimatorTests
     private static SpeedLimitResult Eighty(Road road,bool forward)=>new(80,"test category");
 
     [Theory]
-    [InlineData(false,750)]
-    [InlineData(true,250)]
-    public void OrdinaryRoadUsesHostLengthAndSubtractsTravelledArcInEitherDirection(bool reverse,double expected)
+    [InlineData(false)] [InlineData(true)]
+    public void OverviewUsesEntireRoadAndDirectedCategoryWithoutVehiclePose(bool reverse)
     {
         var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(1000,0,0),default);
         var route=reverse?Route(road.ForwardNode.Uid,road.Node.Uid):Route(road.Node.Uid,road.ForwardNode.Uid);
-        var estimate=new RouteJourneyEstimator(map,Eighty).Estimate(route,new(250,0,0),reverse?-Vector3.UnitX:Vector3.UnitX);
-        Assert.True(estimate.Ready,estimate.Failure);Assert.Equal(expected,estimate.WorldMeters!.Value,2);
-        Assert.Equal(expected/(80*.8/3.6),estimate.RealSeconds!.Value,2);
+        var estimate=new RouteJourneyEstimator(map,(_,forward)=>new(forward?80:60,"category")).Estimate(route);
+        Assert.True(estimate.Ready,estimate.Failure);Assert.Equal(1000,estimate.WorldMeters!.Value,2);
+        Assert.Equal(1000/((reverse?60:80)*.8/3.6),estimate.RealSeconds!.Value,2);
     }
 
     private static (TruckLib.ScsMap.Map Map,Road Before,Road After,Prefab Prefab) SplitScene()
@@ -33,17 +32,44 @@ public sealed class RouteJourneyEstimatorTests
     }
 
     [Theory]
-    [InlineData(1)]
-    [InlineData(1.3)]
-    public void CompletePrefabSpanCrossesInternalUnknownUidAndAlwaysUsesInterfaceChord(double factor)
+    [InlineData(1)] [InlineData(1.028)]
+    public void CompletePrefabSpanCrossesInternalUnknownUidAndUsesCorrectedChord(double factor)
     {
         var s=SplitScene();var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,999,s.After.Node.Uid,s.After.ForwardNode.Uid);
-        var estimate=new RouteJourneyEstimator(s.Map,(r,_)=>new(r.Uid==s.Before.Uid?80:60,"category"),factor)
-            .Estimate(route,new(50,0,0),Vector3.UnitX);
+        var estimate=new RouteJourneyEstimator(s.Map,(r,_)=>new(r.Uid==s.Before.Uid?80:60,"category"),factor).Estimate(route);
         double prefab=Vector3.Distance(s.Before.ForwardNode.Position,s.After.Node.Position)*factor;
         Assert.True(estimate.Ready,estimate.Failure);
-        Assert.Equal(50+prefab+s.After.Length,estimate.WorldMeters!.Value,2);
-        Assert.Equal(50/(80*.8/3.6)+(prefab+s.After.Length)/(60*.8/3.6),estimate.RealSeconds!.Value,2);
+        Assert.Equal(s.Before.Length+prefab+s.After.Length,estimate.WorldMeters!.Value,2);
+        Assert.Equal(s.Before.Length/(80*.8/3.6)+(prefab+s.After.Length)/(60*.8/3.6),estimate.RealSeconds!.Value,2);
+    }
+
+    [Fact]
+    public void RouteStartingInsideAPrefabNeedsNoPositionProjection()
+    {
+        var s=SplitScene();
+        var route=Route(s.Before.ForwardNode.Uid,999,s.After.Node.Uid,s.After.ForwardNode.Uid);
+        var estimate=new RouteJourneyEstimator(s.Map,Eighty,1.028).Estimate(route);
+        Assert.True(estimate.Ready,estimate.Failure);
+        Assert.Equal(Vector3.Distance(s.Before.ForwardNode.Position,s.After.Node.Position)*1.028+s.After.Length,estimate.WorldMeters!.Value,2);
+    }
+
+    [Fact]
+    public void EveryVisitCountsEvenWhenTheRouteReusesTheSameRoad()
+    {
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(500,0,0),default);
+        var route=Route(road.Node.Uid,road.ForwardNode.Uid,road.Node.Uid,road.ForwardNode.Uid);
+        var estimate=new RouteJourneyEstimator(map,Eighty).Estimate(route);
+        Assert.True(estimate.Ready,estimate.Failure);
+        Assert.Equal(1500,estimate.WorldMeters!.Value,2);
+    }
+
+    [Fact]
+    public void SdkScaledDistancesAndTimesDoNotChangeWorldOverview()
+    {
+        var s=SplitScene();var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,s.After.Node.Uid,s.After.ForwardNode.Uid);
+        var estimator=new RouteJourneyEstimator(s.Map,Eighty,1.028);
+        var scaled=route with{Nodes=route.Nodes.Select(n=>n with{DistanceToEndMeters=n.DistanceToEndMeters*19,TimeToEndSeconds=n.TimeToEndSeconds*60}).ToArray()};
+        Assert.Equal(estimator.Estimate(route),estimator.Estimate(scaled));
     }
 
     [Fact]
@@ -51,62 +77,7 @@ public sealed class RouteJourneyEstimatorTests
     {
         var s=SplitScene();var other=Road.Add(s.Map,new(150,0,0),new(150,0,50),default);
         var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,999,other.Node.Uid,s.After.Node.Uid,s.After.ForwardNode.Uid);
-        Assert.False(new RouteJourneyEstimator(s.Map,Eighty).Estimate(route,new(50,0,0),Vector3.UnitX).Ready);
-    }
-
-    [Fact]
-    public void AlreadyPassedRoadsDoNotRequireSpeedsAndCurrentRoadTravelIsSubtracted()
-    {
-        var s=SplitScene();var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,s.After.Node.Uid,s.After.ForwardNode.Uid);
-        var estimate=new RouteJourneyEstimator(s.Map,(r,_)=>r.Uid==s.Before.Uid?new(null,"past category unavailable"):new(60,"category"))
-            .Estimate(route,new(350,0,100),Vector3.UnitX);
-        Assert.True(estimate.Ready,estimate.Failure);
-        Assert.Equal(150,estimate.WorldMeters!.Value,2);
-        Assert.Equal(150/(60*.8/3.6),estimate.RealSeconds!.Value,2);
-    }
-
-    [Fact]
-    public void OriginOnPrefabUsesOnlyItsRemainingCorrectedChord()
-    {
-        var s=SplitScene();var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,s.After.Node.Uid,s.After.ForwardNode.Uid);
-        var estimate=new RouteJourneyEstimator(s.Map,Eighty,1.2).Estimate(route,new(150,0,50),Vector3.Normalize(new(1,0,1)));
-        Assert.True(estimate.Ready,estimate.Failure);
-        Assert.Equal(Vector3.Distance(s.Before.ForwardNode.Position,s.After.Node.Position)*.6+s.After.Length,estimate.WorldMeters!.Value,2);
-    }
-
-    [Fact]
-    public void SdkIntervalSelectsTheSecondVisitToTheSameDirectedRoad()
-    {
-        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(500,0,0),default);
-        var route=Route(road.Node.Uid,road.ForwardNode.Uid,road.Node.Uid,road.ForwardNode.Uid);
-        var estimate=new RouteJourneyEstimator(map,Eighty).Estimate(route,new(250,0,0),Vector3.UnitX,5000);
-        Assert.True(estimate.Ready,estimate.Failure);
-        Assert.Equal(250,estimate.WorldMeters!.Value,2);
-        Assert.Equal(250/(80*.8/3.6),estimate.RealSeconds!.Value,2);
-    }
-
-    [Fact]
-    public void SdkConfirmedCurrentRoadCanBeEstimatedWhileParkedFacingAgainstTheRoute()
-    {
-        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(1000,0,0),default);
-        var route=Route(road.Node.Uid,road.ForwardNode.Uid);var estimator=new RouteJourneyEstimator(map,Eighty);
-        Assert.False(estimator.Estimate(route,new(250,0,0),-Vector3.UnitX).Ready);
-        var estimate=estimator.Estimate(route,new(250,0,0),-Vector3.UnitX,7500);
-        Assert.True(estimate.Ready,estimate.Failure);
-        Assert.Equal(750,estimate.WorldMeters!.Value,2);
-        Assert.Equal(750/(80*.8/3.6),estimate.RealSeconds!.Value,2);
-        Assert.False(estimator.Estimate(route,new(250,20,0),-Vector3.UnitX,7500).Ready);
-    }
-
-    [Fact]
-    public void SdkConfirmedPrefabOriginMayBeFarFromItsChordAndFaceTheOtherWay()
-    {
-        var s=SplitScene();var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,s.After.Node.Uid,s.After.ForwardNode.Uid);
-        var estimator=new RouteJourneyEstimator(s.Map,Eighty,1.2);
-        Assert.False(estimator.Estimate(route,new(50,0,150),-Vector3.UnitX).Ready);
-        var estimate=estimator.Estimate(route,new(50,0,150),-Vector3.UnitX,15000);
-        Assert.True(estimate.Ready,estimate.Failure);
-        Assert.Equal(Vector3.Distance(s.Before.ForwardNode.Position,s.After.Node.Position)*.6+s.After.Length,estimate.WorldMeters!.Value,2);
+        Assert.False(new RouteJourneyEstimator(s.Map,Eighty).Estimate(route).Ready);
     }
 
     [Fact]
@@ -114,7 +85,7 @@ public sealed class RouteJourneyEstimatorTests
     {
         var s=SplitScene();s.Before.ForwardNode.ForwardItem=null!;s.After.Node.BackwardItem=null!;
         var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,999,s.After.Node.Uid,s.After.ForwardNode.Uid);
-        Assert.Contains("连接缺失",new RouteJourneyEstimator(s.Map,Eighty).Estimate(route,new(50,0,0),Vector3.UnitX).Failure);
+        Assert.Contains("连接缺失",new RouteJourneyEstimator(s.Map,Eighty).Estimate(route).Failure);
     }
 
     [Fact]
@@ -123,8 +94,7 @@ public sealed class RouteJourneyEstimatorTests
         var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(500,0,0),default);
         var prefab=new Prefab{Nodes=[road.Node,road.ForwardNode]};map.MapItems[prefab.Uid]=prefab;
         road.Node.BackwardItem=prefab;road.ForwardNode.ForwardItem=prefab;
-        Assert.Contains("归属不唯一",new RouteJourneyEstimator(map,Eighty)
-            .Estimate(Route(road.Node.Uid,road.ForwardNode.Uid),new(250,0,0),Vector3.UnitX).Failure);
+        Assert.Contains("归属不唯一",new RouteJourneyEstimator(map,Eighty).Estimate(Route(road.Node.Uid,road.ForwardNode.Uid)).Failure);
     }
 
     [Fact]
@@ -132,21 +102,19 @@ public sealed class RouteJourneyEstimatorTests
     {
         var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(500,0,0),default);
         var route=Route(road.Node.Uid,road.ForwardNode.Uid);var estimator=new RouteJourneyEstimator(map,Eighty);
-        Assert.False(estimator.Estimate(route with{MayBeTruncated=true},Vector3.Zero,Vector3.UnitX).Ready);
-        Assert.False(estimator.Estimate(route with{Nodes=[route.Nodes[0],route.Nodes[1] with{DistanceToEndMeters=100}]},Vector3.Zero,Vector3.UnitX).Ready);
-        Assert.False(new RouteJourneyEstimator(map,(_,_)=>new(null,"unknown category")).Estimate(route,Vector3.Zero,Vector3.UnitX).Ready);
+        Assert.False(estimator.Estimate(route with{MayBeTruncated=true}).Ready);
+        Assert.False(estimator.Estimate(route with{Nodes=[route.Nodes[0],route.Nodes[1] with{DistanceToEndMeters=100}]}).Ready);
+        Assert.False(new RouteJourneyEstimator(map,(_,_)=>new(null,"unknown category")).Estimate(route).Ready);
     }
 
     [Fact]
-    public void CurvedOrdinaryRoadUsesLengthRatherThanItsEndpointChord()
+    public void CurvedOrdinaryRoadUsesStoredLengthRatherThanItsEndpointChord()
     {
         var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(100,0,100),default);
         road.Node.Rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,MathF.PI);
         road.ForwardNode.Rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,-MathF.PI/2);
-        // The host supplies the stored arc length independently of the endpoint chord.
         road.Length=180;
-        var estimate=new RouteJourneyEstimator(map,Eighty).Estimate(Route(road.Node.Uid,road.ForwardNode.Uid),road.Node.Position,Vector3.UnitZ);
-        Assert.True(estimate.Ready,estimate.Failure);Assert.Equal(road.Length,estimate.WorldMeters!.Value,2);
-        Assert.True(estimate.WorldMeters>Vector3.Distance(road.Node.Position,road.ForwardNode.Position));
+        var estimate=new RouteJourneyEstimator(map,Eighty).Estimate(Route(road.Node.Uid,road.ForwardNode.Uid));
+        Assert.True(estimate.Ready,estimate.Failure);Assert.Equal(180,estimate.WorldMeters!.Value,2);
     }
 }

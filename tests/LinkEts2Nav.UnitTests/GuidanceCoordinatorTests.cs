@@ -7,6 +7,28 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceCoordinatorTests
 {
     [Fact]
+    public void StartAndReplanQueueImmediatelyEvenWhenVehicleIsFarOutsideTheRoute()
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var road=TruckLib.ScsMap.Road.Add(map,Vector3.Zero,new(300,0,0),default);
+        var estimator=new RouteJourneyEstimator(map,(_,_)=>new(80,"category"));
+        var coordinator=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();coordinator.Queued+=queued.Add;
+        coordinator.JourneyEstimateProvider=data=>estimator.Estimate(data.Route);
+        GameDataSnapshot At(int seconds,bool reversed)
+        {
+            var time=Now.AddSeconds(seconds);
+            ulong a=reversed?road.ForwardNode.Uid:road.Node.Uid,b=reversed?road.Node.Uid:road.ForwardNode.Uid;
+            var route=RouteSnapshot.Parse([new RouteNode(a,9000,600),new RouteNode(b,0,0)],time);
+            return new(new(100000,10000,-100000,.5,0,9000,true,false,(ulong)(seconds+1),time),route,RouteAvailability.Available,"off-route",true);
+        }
+        coordinator.Observe(At(0,false),Now);
+        Assert.Equal("准备出发，全程三百米，大约需要一分钟。",Assert.Single(queued).Text);
+        coordinator.Observe(At(1,true),Now.AddSeconds(1));
+        Assert.Equal(2,queued.Count);
+        Assert.Equal("重新规划路线，全程三百米，大约需要一分钟。",queued[1].Text);
+    }
+
+    [Fact]
     public void JourneyBriefingWaitsForCompleteMetadataAndIsNotRecomputedEveryFrame()
     {
         var coordinator=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();coordinator.Queued+=queued.Add;

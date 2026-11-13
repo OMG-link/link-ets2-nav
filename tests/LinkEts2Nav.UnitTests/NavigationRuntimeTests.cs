@@ -32,6 +32,22 @@ public sealed class NavigationRuntimeTests
     });
 
     [Fact]
+    public void NarrowRoadUsesSharedEnvironmentPipelineBeforeItsEntrance()
+    {
+        var scene=Scene();var right=scene.Map.Map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Position.X==-30);
+        var geometry=new DirectedRoad(right.Uid.ToString("X16"),right.Node.Uid,right.ForwardNode.Uid,[right.Node.Position,right.ForwardNode.Position]);
+        var nearby=scene.Map with{SpeedLimits=new(new Dictionary<ulong,LimitRoad>{{right.Uid,new(geometry,"local_road"){SingleTrack=true}}},[],[],new Dictionary<string,TruckSpeedLimit>(),null)};
+        var guidance=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();guidance.Queued+=queued.Add;
+        var runtime=new NavigationRuntime(guidance:guidance);
+        foreach(float z in new[]{0f,300f,600f})
+        {
+            var data=Data(scene.Route,z);runtime.Process(data,nearby,Now);guidance.Tick(data,Now);
+        }
+        Assert.Equal(new[]{"五百米后，进入窄路，请减速观察。","两百米后，进入窄路，请减速观察。"},
+            queued.Where(q=>q.Source==NarrowRoadEventBuilder.Kind).Select(q=>q.Text));
+    }
+
+    [Fact]
     public async Task CityEntryRunsOnItsOwnEnvironmentChainAndClearsAfterPassingTheUrbanSign()
     {
         var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(0,0,1000),default);

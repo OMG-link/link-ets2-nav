@@ -14,6 +14,7 @@ public sealed record LimitSign(string Id, Vector3 Position, Vector3 Direction, b
 }
 public sealed record LimitRoad(DirectedRoad Geometry, string? SpeedClass)
 {
+    public bool SingleTrack { get; init; }
     public bool ForwardTraffic { get; init; } = true;
     public bool ReverseTraffic { get; init; } = true;
     public DirectionalSpeedClasses? DirectionalClasses { get; init; }

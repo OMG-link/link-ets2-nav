@@ -14,6 +14,7 @@ public sealed class SpeedLimitDefinitionReader
     private readonly Dictionary<string,string> cityCountries=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> roadLooks=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> roadUnits=new(StringComparer.Ordinal);
+    private readonly HashSet<string> singleTrackLanes=new(StringComparer.Ordinal);
     private readonly Dictionary<string,string> laneClasses=new(StringComparer.Ordinal);
     private readonly Dictionary<string,TruckSpeedLimit> limits=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> rules=new(StringComparer.Ordinal);
@@ -33,7 +34,10 @@ public sealed class SpeedLimitDefinitionReader
                 .Order(StringComparer.Ordinal).SelectMany(p=>SiiFile.Open(p,fs).Units);
             foreach(var u in Files("/def/world/","traffic_rules"))rules[u.Name]=u;
             foreach(var u in Files("/def/world/","traffic_lane").Where(u=>u.Class=="traffic_lane_data"))
+            {
                 laneClasses[u.Name]=Text(u,"speed_class");
+                if(Values(u,"traffic_rules").Select(Link).Any(name=>HasSingleTrackRule(name,[])))singleTrackLanes.Add(u.Name);
+            }
             foreach(var u in Files("/def/world/","road_look"))roadUnits[u.Name]=u;
             foreach(var u in roadUnits.Values.Where(u=>u.Class=="road_look"))
                 roadLooks[u.Name.Split('.').Last()]=u;
@@ -106,7 +110,8 @@ public sealed class SpeedLimitDefinitionReader
             var left=RoadClass(road,true);var right=RoadClass(road,false);
             string? cls=left==right?left:left??right;
             roads[road.Uid]=new(new(road.Uid.ToString("X16"),road.Node.Uid,road.ForwardNode.Uid,points),cls)
-            { DirectionalClasses=road.LeftHandTraffic?new(left,right):new(right,left),
+            { SingleTrack=IsSingleTrack(road,true)&&IsSingleTrack(road,false),
+              DirectionalClasses=road.LeftHandTraffic?new(left,right):new(right,left),
               ForwardTraffic=HasLanes(road,road.LeftHandTraffic),ReverseTraffic=HasLanes(road,!road.LeftHandTraffic) };
         }
         var placedSigns=new List<LimitSign>();
@@ -182,6 +187,18 @@ public sealed class SpeedLimitDefinitionReader
             return states.Length==1?states[0]:null;
         }
         return (Known(road.LeftHandTraffic),Known(!road.LeftHandTraffic));
+    }
+
+    private bool HasSingleTrackRule(string name,HashSet<string> seen)
+    {
+        if(!seen.Add(name)||!rules.TryGetValue(name,out var rule))return false;
+        return Text(rule,"rule")=="single_track"||Values(rule,"additional_rules").Select(Link)
+            .Any(child=>HasSingleTrackRule(child,seen));
+    }
+    private bool IsSingleTrack(Road road,bool left)
+    {
+        var configurations=RoadLanes(road,left);
+        return configurations is {Length:>0}&&configurations.All(lanes=>lanes.Length>0&&lanes.All(l=>singleTrackLanes.Contains(Link(l))));
     }
 
     private string? RoadClass(Road road,bool left)

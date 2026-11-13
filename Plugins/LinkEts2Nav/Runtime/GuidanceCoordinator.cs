@@ -166,7 +166,7 @@ public sealed class GuidanceCoordinator
         if(!processJourney)return;
         var lifecycle=journey.Update(data,now);
         if(lifecycle.WithdrawNotices)WithdrawNotifications(NavigationJourneyTracker.Source);
-        if(lifecycle.Ended){pendingJourney=null;ClearSource("navigation");ClearSource("city-entry");}
+        if(lifecycle.Ended){pendingJourney=null;ClearSource("navigation");ClearSource("city-entry");ClearSource("narrow-road");}
         if(lifecycle.Notice is {} request){pendingJourney=request;nextJourneyEstimate=default;journeyEstimateFailure=null;}
         if(pendingJourney is not null&&data.IsVehicleUsable&&data.Vehicle is {SdkActive:true,Paused:false,IsFinite:true,SpeedMetersPerSecond:>=-.1} pose
             &&now>=pose.ReceivedAt&&now-pose.ReceivedAt<=TimeSpan.FromSeconds(2)&&data.RouteAvailability==RouteAvailability.Available&&now>=nextJourneyEstimate)

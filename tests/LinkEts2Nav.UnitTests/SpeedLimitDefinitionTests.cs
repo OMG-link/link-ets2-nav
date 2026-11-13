@@ -37,6 +37,22 @@ public sealed class SpeedLimitDefinitionTests
     }
 
     [Theory]
+    [InlineData(true,true,true)]
+    [InlineData(true,false,false)]
+    [InlineData(false,false,false)]
+    public void SingleTrackIsReadFromActualRulesOnBothDirections(bool left,bool right,bool expected)
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/traffic_rules.sii"]="""SiiNunit { traffic_rule_data : traffic_rule.shared { rule: single_track } }""";
+        fs.Files["/def/world/traffic_lane.sii"]="""SiiNunit { traffic_lane_data : traffic_lane.shared { speed_class: local_road traffic_rules[]: traffic_rule.shared } traffic_lane_data : traffic_lane.normal { speed_class: local_road } }""";
+        fs.Files["/def/world/road_look.sii"]=Format("SiiNunit { road_look : road.un11 { lanes_left[]: traffic_lane."+(left?"shared":"normal")+" lanes_right[]: traffic_lane."+(right?"shared":"normal")+" } }");
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(50,0,0),default);road.RoadType="un11";
+        var metadata=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken).Roads[road.Uid];
+        Assert.Equal(expected,metadata.SingleTrack);
+        Assert.Equal("local_road",metadata.SpeedClass);
+    }
+
+    [Theory]
     [InlineData("local_road","broken","warn","local_road")]
     [InlineData("motorway","","unlisted","motorway")]
     [InlineData("motorway","","bus",null)]

@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace LinkEts2Nav.Core;
 
-public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit, ChooseLanes }
+public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit, ChooseLanes, Destination }
 
 public enum NavigationAnnouncementMode { Normal, Silent, DistancePreview }
 public enum NavigationJunctionKind { Ordinary, Ramp }

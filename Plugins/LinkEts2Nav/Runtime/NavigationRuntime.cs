@@ -127,6 +127,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         }
         upcoming=upcoming.Where(m=>!accelerationActions.Any(a=>m.JunctionId==a.JunctionId))
             .Concat(accelerationActions).OrderBy(m=>m.DistanceMeters).ToArray();
+        if(NavigationDestination.Find(data.Route,instructionRoute,along.Value,confirmedUntil,unresolvedJoin) is {} destination)
+            upcoming=upcoming.Append(destination).OrderBy(m=>m.DistanceMeters).ToArray();
         if(yardApproach)
         {
             string group="prefab:"+route[0].Id.Split(':')[1];

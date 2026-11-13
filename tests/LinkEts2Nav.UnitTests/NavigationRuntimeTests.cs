@@ -113,6 +113,9 @@ public sealed class NavigationRuntimeTests
         if(expected)
         {
             Assert.NotNull(first.Next);Assert.Equal(30,first.Next.DistanceMeters,1);Assert.Equal(0,calls);
+            var prefix=new RoadPathSource(scene.Map.Map,scene.Map.PrefabPaths).GetRoutePrefix(new(0,0,670),route,source[0].Uid);
+            double prefixWorldLength=prefix.Sum(e=>e.Points.Zip(e.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)));
+            Assert.Equal(prefixWorldLength+30,Assert.Single(first.Upcoming,m=>m.Kind==ManeuverKind.Destination).DistanceMeters,1);
             var near=data with{Vehicle=data.Vehicle! with{Z=680}};
             Assert.Equal("右转。",runtime.Process(near,nearby,Now).LastSpoken);Assert.Equal(1,calls);
             runtime.Process(near,nearby,Now);Assert.Equal(1,calls);
@@ -202,7 +205,7 @@ public sealed class NavigationRuntimeTests
     {
         var map = new TruckLib.ScsMap.Map();
         var road = Road.Add(map,new(0,0,0),new(0,0,4000),default);
-        var route = RouteSnapshot.Parse([new(road.Node.Uid,4000,200),new(road.ForwardNode.Uid,0,0)],Now);
+        var route = RouteSnapshot.Parse([new(road.Node.Uid,4000,200),new(road.ForwardNode.Uid,100,5)],Now);
         var nearby = new NearbyMapSnapshot(map,[],[],[]);
         int calls = 0;
         var runtime = ObserveDiagnostics(()=>calls++);
@@ -347,7 +350,7 @@ public sealed class NavigationRuntimeTests
     [Fact]
     public void EveryRuntimePhraseExistsInPreGeneratedPack()
     {
-        Assert.Equal(154,NavigationPrompts.AllTexts().Distinct().Count());
+        Assert.Equal(168,NavigationPrompts.AllTexts().Distinct().Count());
         Assert.Contains(NavigationPrompts.Continue(),LinkEts2Nav.Speech.SpeechPack.DefaultTexts());
         foreach(string text in NavigationPrompts.AllTexts())
             Assert.Contains(text,LinkEts2Nav.Speech.SpeechPack.DefaultTexts());

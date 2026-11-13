@@ -79,7 +79,7 @@ public sealed class NavigationEventPlanner
         var counted=new HashSet<string>(StringComparer.Ordinal);
         // Retained action plans also retain the meaning of their earlier fixed
         // count point after its series ends. No extra "already counted" cache.
-        foreach(var p in ordered.Where(p=>IsNavigationAction(p.Maneuver)&&!p.Maneuver.ExecutionOnly&&p.BriefingAlong is not null))
+        foreach(var p in ordered.Where(p=>IsNavigationAction(p.Maneuver)&&p.Maneuver.Kind!=ManeuverKind.Destination&&!p.Maneuver.ExecutionOnly&&p.BriefingAlong is not null))
             foreach(var site in JunctionSpeechPlanner.CountedStraights(sites,
                 Math.Max(p.BriefingAlong!.Value,p.Along-(p.Maneuver.JunctionKind==NavigationJunctionKind.Ramp?500:200)),
                 p.Along,p.Maneuver.JunctionId??p.Id))counted.Add(site.Id);
@@ -135,7 +135,7 @@ public sealed class NavigationEventPlanner
             double? initial=state.BriefingAlong is {} anchor?Math.Max(0,state.Along-anchor):null;
             int countStage=m.JunctionKind==NavigationJunctionKind.Ramp?500:200;
             double? countAlong=state.BriefingAlong is {} first?Math.Max(first,state.Along-countStage):null;
-            var countedSites=IsNavigationAction(m)&&!m.ExecutionOnly&&countAlong is {} countPoint
+            var countedSites=IsNavigationAction(m)&&m.Kind!=ManeuverKind.Destination&&!m.ExecutionOnly&&countAlong is {} countPoint
                 ?JunctionSpeechPlanner.CountedStraights(sites,countPoint,state.Along,m.JunctionId??state.Id):[];
             foreach(var site in countedSites)counted.Add(site.Id);
             if(countAlong is {} at)auxiliaries.AddRange(JunctionSpeechPlanner.Numbered(state.Id,at,countedSites,active,

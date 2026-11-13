@@ -141,19 +141,20 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                         backend = factory(item.Request);
                         backendResource = item.Request.ResourceId;
                     }
+                    var readyBackend=backend??throw new InvalidOperationException("地图读取后端尚未初始化。");
                     if (!item.Request.PreparationOnly)
                     {
                         bool needsNearby;
                         lock (gate) needsNearby = state.Map is null && item.Request.Route is not null;
                         if (needsNearby)
                         {
-                            var nearby = backend.Read(item.Request with { Route = null }, stop.Token);
+                            var nearby = readyBackend.Read(item.Request with { Route = null }, stop.Token);
                             lock (gate)
                                 if (item.Generation == generation && !stop.IsCancellationRequested)
-                                    state = new(nearby, item.Request.Position, watch.Elapsed, state.Revision + 1, null, true) { IsPrepared = true, JourneyEstimator = backend?.JourneyEstimator };
+                                    state = new(nearby, item.Request.Position, watch.Elapsed, state.Revision + 1, null, true) { IsPrepared = true, JourneyEstimator = readyBackend.JourneyEstimator };
                             watch.Restart();
                         }
-                        completed = backend.Read(item.Request, stop.Token);
+                        completed = readyBackend.Read(item.Request, stop.Token);
                     }
                     stop.Token.ThrowIfCancellationRequested();
                 }

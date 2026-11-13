@@ -11,10 +11,11 @@ public sealed class BackgroundMapScannerTests
         => new(resource, session, "game", [], new(x, 0, 0));
     private static NearbyMapSnapshot Map(string id)
         => new(new TruckLib.ScsMap.Map(), [new CameraObservation(id, default, default, Vector3.UnitX, false, "", "")], [], []);
-    private sealed class Backend(Func<Vector3, CancellationToken, NearbyMapSnapshot> read, Action? dispose = null) : IMapScanBackend
+    private sealed class Backend(Func<Vector3, CancellationToken, NearbyMapSnapshot> read, Action? dispose = null,RouteJourneyEstimator? estimator=null) : IMapScanBackend
     {
         public NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken) => read(position, cancellationToken);
         public void Dispose() => dispose?.Invoke();
+        public RouteJourneyEstimator? JourneyEstimator=>estimator;
     }
     private static async Task WaitFor(Func<bool> predicate)
     {
@@ -57,6 +58,15 @@ public sealed class BackgroundMapScannerTests
         Assert.Equal(2,scanner.Capture().Revision); // nearby + new route; old result was discarded
     }
 
+    [Fact]
+    public async Task PreparedJourneyMetadataIsPublishedBeforeAnyNearbyMapRead()
+    {
+        var estimator=new RouteJourneyEstimator(new TruckLib.ScsMap.Map(),(_,_)=>new(80,"test"));
+        await using var scanner=new BackgroundMapScanner(_=>new Backend((_,_)=>throw new InvalidOperationException("No map scan should run."),estimator:estimator));
+        Assert.True(scanner.Prepare(Request(),DateTimeOffset.UtcNow));
+        await WaitFor(()=>scanner.Capture().IsPrepared);
+        Assert.Null(scanner.Capture().Map);Assert.Same(estimator,scanner.Capture().JourneyEstimator);
+    }
     [Fact]
     public async Task PreparationWithoutPositionCreatesBackendButDoesNotScanAndIsReused()
     {

@@ -6,89 +6,61 @@ public sealed class NavigationJourneyTrackerTests
     private static GameDataSnapshot Data(double seconds,double remaining,ulong[]? nodes=null,
         RouteAvailability availability=RouteAvailability.Available,bool paused=false,string session="s",bool truncated=false)
     {
-        var now=Now.AddSeconds(seconds);nodes??=[1,2,3];
-        var route=RouteSnapshot.Parse(nodes.Select((uid,i)=>new RouteNode(uid,(nodes.Length-i-1)*1000,10)),now) with{MayBeTruncated=truncated};
-        return new(new(0,0,0,0,10,remaining,true,paused,(ulong)(seconds*10+1),now),route,availability,session,!paused);
-    }
-    private static string Text(NavigationJourneyUpdate result)=>Assert.Single(result.Notifications).Text;
-    [Fact]
-    public void FixedLifecyclePhrasesAreAvailableToTheSpeechPack()
-    {
-        var texts=LinkEts2Nav.Speech.SpeechPack.DefaultTexts().ToHashSet();
-        foreach(var phrase in new[]{NavigationJourneyTracker.StartText,NavigationJourneyTracker.DestinationChangedText,
-            NavigationJourneyTracker.ReplannedText,NavigationJourneyTracker.ArrivedText})Assert.Contains(phrase,texts);
+        var time=Now.AddSeconds(seconds);nodes??=[1,2,3];
+        var route=RouteSnapshot.Parse(nodes.Select((uid,i)=>new RouteNode(uid,(nodes.Length-i-1)*1000,10)),time) with{MayBeTruncated=truncated};
+        return new(new(0,0,0,0,10,remaining,true,paused,(ulong)(seconds*10+1),time),route,availability,session,!paused);
     }
     [Fact]
-    public void StartsOnceAndNormalPrefixTrimmingAndTailExtensionStaySilent()
+    public void StartsOnceAndNormalTrimmingAndExtensionAreSilent()
     {
         var tracker=new NavigationJourneyTracker();
-        Assert.Equal(NavigationJourneyTracker.StartText,Text(tracker.Update(Data(0,1000,truncated:true),Now)));
-        Assert.Empty(tracker.Update(Data(.2,990,truncated:true),Now.AddSeconds(.2)).Notifications);
-        Assert.Empty(tracker.Update(Data(1,900,[2,3],truncated:true),Now.AddSeconds(1)).Notifications);
-        Assert.Empty(tracker.Update(Data(2,800,[2,3,4]),Now.AddSeconds(2)).Notifications);
+        Assert.Equal(NavigationJourneyNoticeKind.Start,tracker.Update(Data(0,1000,truncated:true),Now).Notice!.Kind);
+        Assert.Null(tracker.Update(Data(.2,990,truncated:true),Now.AddSeconds(.2)).Notice);
+        Assert.Null(tracker.Update(Data(1,900,[2,3],truncated:true),Now.AddSeconds(1)).Notice);
+        Assert.Null(tracker.Update(Data(2,800,[2,3,4]),Now.AddSeconds(2)).Notice);
     }
-    [Fact]
-    public void SameGoalReplacementUsesNeutralReplanningAndSuppressesBurstUpdates()
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void GoalEditsAndOtherReplacementsUseTheSameReplanningEvent(bool goalChanged)
     {
         var tracker=new NavigationJourneyTracker();tracker.Update(Data(0,1000),Now);
-        Assert.Equal(NavigationJourneyTracker.ReplannedText,Text(tracker.Update(Data(1,950,[1,9,3]),Now.AddSeconds(1))));
-        Assert.Empty(tracker.Update(Data(2,940,[1,8,3]),Now.AddSeconds(2)).Notifications);
-        Assert.Equal(NavigationJourneyTracker.ReplannedText,Text(tracker.Update(Data(7,900,[1,7,3]),Now.AddSeconds(7))));
-    }
-    [Fact]
-    public void ChangingGoalStartsANewJourneyButMissingDestinationDataDoesNotInventAGoal()
-    {
-        var tracker=new NavigationJourneyTracker();tracker.Update(Data(0,1000),Now);
-        Assert.Equal(NavigationJourneyTracker.DestinationChangedText,Text(tracker.Update(Data(1,950,[1,9,4]),Now.AddSeconds(1))));
-        Assert.Equal(NavigationJourneyTracker.ReplannedText,Text(tracker.Update(Data(2,900,[1,8,5],truncated:true),Now.AddSeconds(2))));
-    }
-    [Fact]
-    public void ExtendingACompleteRouteToAnotherGoalIsADestinationChange()
-    {
-        var tracker=new NavigationJourneyTracker();tracker.Update(Data(0,1000),Now);
-        Assert.Equal(NavigationJourneyTracker.DestinationChangedText,Text(tracker.Update(Data(1,1500,[1,2,3,4]),Now.AddSeconds(1))));
+        var result=tracker.Update(Data(1,950,goalChanged?[1,2,3,4]:[1,9,3]),Now.AddSeconds(1));
+        Assert.Equal(NavigationJourneyNoticeKind.Replanned,result.Notice!.Kind);
+        Assert.Null(tracker.Update(Data(2,940,[1,8,5]),Now.AddSeconds(2)).Notice);
+        Assert.Equal(NavigationJourneyNoticeKind.Replanned,tracker.Update(Data(7,900,[1,7,5]),Now.AddSeconds(7)).Notice!.Kind);
     }
     [Theory]
     [InlineData(RouteAvailability.Unknown)] [InlineData(RouteAvailability.Stale)] [InlineData(RouteAvailability.Invalid)]
-    public void TemporaryUnavailableRouteDoesNotEndOrRestartNavigation(RouteAvailability state)
+    public void TemporaryUnavailableRouteDoesNotRestartNavigation(RouteAvailability state)
     {
         var tracker=new NavigationJourneyTracker();tracker.Update(Data(0,1000),Now);
-        Assert.Empty(tracker.Update(Data(1,900,availability:state),Now.AddSeconds(1)).Notifications);
-        Assert.Empty(tracker.Update(Data(2,800),Now.AddSeconds(2)).Notifications);
+        Assert.Null(tracker.Update(Data(1,900,availability:state),Now.AddSeconds(1)).Notice);
+        Assert.Null(tracker.Update(Data(2,800),Now.AddSeconds(2)).Notice);
     }
     [Fact]
-    public void PausedAndStaleTelemetryDoNotStartNavigation()
+    public void PauseStaleTelemetryAndSessionResetDoNotInventArrival()
     {
         var tracker=new NavigationJourneyTracker();
-        Assert.Empty(tracker.Update(Data(0,1000,paused:true),Now).Notifications);
-        Assert.Empty(tracker.Update(Data(0,1000),Now.AddSeconds(3)).Notifications);
-        Assert.Equal(NavigationJourneyTracker.StartText,Text(tracker.Update(Data(4,1000),Now.AddSeconds(4))));
+        Assert.Null(tracker.Update(Data(0,1000,paused:true),Now).Notice);
+        Assert.Null(tracker.Update(Data(0,1000),Now.AddSeconds(3)).Notice);
+        Assert.Equal(NavigationJourneyNoticeKind.Start,tracker.Update(Data(4,1000),Now.AddSeconds(4)).Notice!.Kind);
+        Assert.Null(tracker.Update(Data(5,0,availability:RouteAvailability.None,session:"teleport"),Now.AddSeconds(5)).Notice);
     }
-    [Fact]
-    public void ArrivalRequiresNearGoalThenSustainedZeroAndEndsOnlyOnce()
+    [Theory]
+    [InlineData(100)] [InlineData(5000)]
+    public void NavigationClosureClearsTheJourneyWithoutAnyArrivalNotice(double remaining)
     {
-        var tracker=new NavigationJourneyTracker();tracker.Update(Data(0,100),Now);
-        foreach(double t in new[]{1d,1.5})Assert.Empty(tracker.Update(Data(t,0,availability:RouteAvailability.None),Now.AddSeconds(t)).Notifications);
-        var arrived=tracker.Update(Data(2,0,availability:RouteAvailability.None),Now.AddSeconds(2));
-        Assert.True(arrived.Ended);Assert.Equal(NavigationJourneyTracker.ArrivedText,Text(arrived));
-        Assert.Empty(tracker.Update(Data(3,0,availability:RouteAvailability.None),Now.AddSeconds(3)).Notifications);
-        Assert.Equal(NavigationJourneyTracker.StartText,Text(tracker.Update(Data(4,2000),Now.AddSeconds(4))));
-    }
-    [Fact]
-    public void RepeatedSameTelemetryCannotConfirmArrivalAndCancellationFarAwayIsSilent()
-    {
-        var tracker=new NavigationJourneyTracker();tracker.Update(Data(0,100),Now);
-        var zero=Data(1,0,availability:RouteAvailability.None);
-        tracker.Update(zero,Now.AddSeconds(1));Assert.Empty(tracker.Update(zero,Now.AddSeconds(2)).Notifications);
-        tracker.Reset();tracker.Update(Data(0,5000),Now);
+        var tracker=new NavigationJourneyTracker();tracker.Update(Data(0,remaining),Now);
         var cleared=tracker.Update(Data(1,0,availability:RouteAvailability.None),Now.AddSeconds(1));
-        Assert.True(cleared.Ended);Assert.Empty(cleared.Notifications);
+        Assert.True(cleared.Ended);Assert.True(cleared.WithdrawNotices);Assert.Null(cleared.Notice);
+        Assert.Null(tracker.Update(Data(2,0,availability:RouteAvailability.None),Now.AddSeconds(2)).Notice);
+        Assert.Equal(NavigationJourneyNoticeKind.Start,tracker.Update(Data(3,1000),Now.AddSeconds(3)).Notice!.Kind);
     }
-    [Fact]
-    public void SessionResetStartsFreshWithoutClaimingArrival()
-    {
-        var tracker=new NavigationJourneyTracker();tracker.Update(Data(0,100),Now);
-        Assert.Empty(tracker.Update(Data(1,0,availability:RouteAvailability.None,session:"teleport"),Now.AddSeconds(1)).Notifications);
-        Assert.Equal(NavigationJourneyTracker.StartText,Text(tracker.Update(Data(2,1000,session:"teleport"),Now.AddSeconds(2))));
-    }
+    [Theory]
+    [InlineData(false,2100,61,"准备出发，全程二点一公里，大约需要两分钟。")]
+    [InlineData(true,2000,120,"重新规划路线，全程两公里，大约需要两分钟。")]
+    [InlineData(false,1200,30,"准备出发，全程一点二公里，大约需要一分钟。")]
+    [InlineData(false,20,1,"准备出发，全程零点一公里，大约需要一分钟。")]
+    public void BriefingsUseWorldKilometersAndRoundUpRealMinutes(bool replan,double meters,double seconds,string text)
+        =>Assert.Equal(text,NavigationJourneyPrompts.Format(replan?NavigationJourneyNoticeKind.Replanned:NavigationJourneyNoticeKind.Start,meters,seconds));
 }

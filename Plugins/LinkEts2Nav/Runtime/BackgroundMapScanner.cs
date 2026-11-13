@@ -16,6 +16,7 @@ public sealed record MapScanRequest(string ResourceId, string SessionId, string 
 
 public interface IMapScanBackend : IDisposable
 {
+    RouteJourneyEstimator? JourneyEstimator=>null;
     NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken);
     NearbyMapSnapshot Read(MapScanRequest request, CancellationToken cancellationToken)
         => Read(request.Position, cancellationToken);
@@ -25,6 +26,7 @@ public sealed record MapScanState(NearbyMapSnapshot? Map, Vector3 Position, Time
     long Revision, string? Error, bool IsScanning)
 {
     public bool IsPrepared { get; init; }
+    public RouteJourneyEstimator? JourneyEstimator {get;init;}
 }
 
 /// <summary>
@@ -148,7 +150,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                             var nearby = backend.Read(item.Request with { Route = null }, stop.Token);
                             lock (gate)
                                 if (item.Generation == generation && !stop.IsCancellationRequested)
-                                    state = new(nearby, item.Request.Position, watch.Elapsed, state.Revision + 1, null, true) { IsPrepared = true };
+                                    state = new(nearby, item.Request.Position, watch.Elapsed, state.Revision + 1, null, true) { IsPrepared = true, JourneyEstimator = backend?.JourneyEstimator };
                             watch.Restart();
                         }
                         completed = backend.Read(item.Request, stop.Token);
@@ -162,7 +164,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                     // A load, teleport or mount change invalidates an in-flight result.
                     if (stop.IsCancellationRequested || item.Generation != generation) continue;
                     if (error is null)
-                        state = new(completed, item.Request.Position, watch.Elapsed, state.Revision + 1, null, pending.HasValue) { IsPrepared = true };
+                        state = new(completed, item.Request.Position, watch.Elapsed, state.Revision + 1, null, pending.HasValue) { IsPrepared = true, JourneyEstimator = backend?.JourneyEstimator };
                     else
                     {
                         // Keep an already usable snapshot when a refresh fails. Retry without
@@ -200,6 +202,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
             }
             catch { mount.Dispose(); throw; }
         }
+        public RouteJourneyEstimator? JourneyEstimator=>scanner.JourneyEstimator;
         public NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken)
             => scanner.ReadNearby(position, 1100, cancellationToken);
         public NearbyMapSnapshot Read(MapScanRequest request, CancellationToken cancellationToken)

@@ -12,7 +12,7 @@ public static class NavigationPrompts
         ManeuverKind.EnterRoundabout => "进入环岛", ManeuverKind.ExitRoundabout => "驶出环岛", ManeuverKind.PassRoundaboutExit => "经过出口",
         ManeuverKind.Straight => "直行", ManeuverKind.UTurn => "掉头",
         ManeuverKind.ChooseLanes => "按指定车道行驶",
-        ManeuverKind.Destination => "到达目的地附近",
+        ManeuverKind.Destination => "到达目的地",
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
 
@@ -45,7 +45,7 @@ public static class NavigationPrompts
     }
 
     public static string Execute(ManeuverKind kind, string? instruction = null)
-        =>kind==ManeuverKind.Destination?"目的地就在附近，请留意停车位置。":(instruction ?? Action(kind)) + "。";
+        =>kind==ManeuverKind.Destination?"到达目的地附近，导航结束。":(instruction ?? Action(kind)) + "。";
 
     /// <summary>Announces a second nearby action relative to the action being executed.</summary>
     public static string Then(string first, ManeuverKind next, int meters, string? instruction = null)

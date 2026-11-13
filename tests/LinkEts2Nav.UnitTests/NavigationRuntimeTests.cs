@@ -288,7 +288,7 @@ public sealed class NavigationRuntimeTests
         {
             await using var queue = new SpeechAnnouncementQueue(synth, played.Add,
                 message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.TrySetResult(); },
-                preGenerated:new Dictionary<string,string>{{NavigationJourneyTracker.StartText,startFile}});
+                preGenerated:new Dictionary<string,string>{{NavigationJourneyPrompts.Format(NavigationJourneyNoticeKind.Start,1000,60),startFile}});
             var completed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             await using var playback=new GuidancePlaybackManager(queue,new CallbackPlayer(path=>
                 {if(path==startFile)return;if(path=="beep.wav")beeps++;else played.Add(path);completed.TrySetResult();}),()=>"beep.wav");

@@ -63,10 +63,13 @@ public sealed class NearbyCameraScanner
         this.activeModPaths = activeModPaths ?? [];
     }
 
+    public RouteJourneyEstimator? JourneyEstimator {get;private set;}
+
     public void Prepare(CancellationToken cancellationToken = default)
     {
         LoadDefinitions(cancellationToken);
         speedReader!.PrepareHost(hostMap, cancellationToken);
+        if(hostMap is not null)JourneyEstimator??=new(hostMap,speedReader.RoadCategoryLimit,JourneyEstimationCalibration.PrefabDistanceFactor);
     }
 
     public NearbyMapSnapshot ReadNearby(Vector3 playerPosition, float radiusMeters = 1000,

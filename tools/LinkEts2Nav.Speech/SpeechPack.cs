@@ -30,21 +30,17 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         yield return "前方有测速照相，限速";
         yield return UncalibratedText;
         yield return "在听到下一条语音提示前，请沿当前道路行驶。";
-        yield return "导航开始，请按规划路线行驶。";
-        yield return "目的地已更新，请按新的路线行驶。";
-        yield return "路线已重新规划，请按新的路线行驶。";
-        yield return "您已到达目的地，本次导航结束。";
         foreach(int meters in Enumerable.Range(1,10).Select(n=>n*50))
             yield return NavigationDistance(meters)+"后，进入城区，请注意减速慢行。";
         yield return "即将进入城区，请注意减速慢行。";
 
 
-        foreach (string action in new[] { "左转", "右转", "向左前方行驶", "向右前方行驶", "直行", "掉头", "向左前方进入主路", "向右前方进入主路", "进入环岛", "驶出环岛", "经过出口", "到达目的地附近" })
+        foreach (string action in new[] { "左转", "右转", "向左前方行驶", "向右前方行驶", "直行", "掉头", "向左前方进入主路", "向右前方进入主路", "进入环岛", "驶出环岛", "经过出口", "到达目的地" })
         {
             foreach (int distance in Enumerable.Range(1, 10).Select(n => n * 50).Concat(new[] { 1000, 2000 }))
                 yield return NavigationDistance(distance) + "后，" + action + "。";
             yield return action == "直行" ? "保持直行。" : "即将" + action + "。";
-            yield return action=="到达目的地附近"?"目的地就在附近，请留意停车位置。":action + "。";
+            yield return action=="到达目的地"?"到达目的地附近，导航结束。":action + "。";
         }
     }
 

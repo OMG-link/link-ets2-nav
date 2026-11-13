@@ -21,6 +21,12 @@ public sealed class GuidanceCoordinator
     private readonly object gate=new();
     private readonly EnvironmentPreviewPlanner environment=new();
     private readonly NavigationJourneyTracker journey=new();
+    private NavigationJourneyNotice? pendingJourney;
+    private DateTimeOffset nextJourneyEstimate;
+    private string? journeyEstimateFailure;
+    /// <summary>Host-owned metadata can become ready before nearby map sectors. Null means not prepared yet.</summary>
+    public Func<GameDataSnapshot,RouteJourneyEstimate?>? JourneyEstimateProvider {get;set;}
+
     private string? environmentFrame;
     private string? session,lastPlayed;
     private readonly Dictionary<string,string> playedBySource=new(StringComparer.Ordinal);
@@ -160,8 +166,27 @@ public sealed class GuidanceCoordinator
         if(!processJourney)return;
         var lifecycle=journey.Update(data,now);
         if(lifecycle.WithdrawNotices)WithdrawNotifications(NavigationJourneyTracker.Source);
-        if(lifecycle.Ended){ClearSource("navigation");ClearSource("city-entry");}
-        foreach(var notice in lifecycle.Notifications)Notify(NavigationJourneyTracker.Source,data.SessionId,notice);
+        if(lifecycle.Ended){pendingJourney=null;ClearSource("navigation");ClearSource("city-entry");}
+        if(lifecycle.Notice is {} request){pendingJourney=request;nextJourneyEstimate=default;journeyEstimateFailure=null;}
+        if(pendingJourney is not null&&data.IsVehicleUsable&&data.Vehicle is {SdkActive:true,Paused:false,IsFinite:true,SpeedMetersPerSecond:>=-.1} pose
+            &&now>=pose.ReceivedAt&&now-pose.ReceivedAt<=TimeSpan.FromSeconds(2)&&data.RouteAvailability==RouteAvailability.Available&&now>=nextJourneyEstimate)
+        {
+            var estimate=JourneyEstimateProvider?.Invoke(data);
+            if(estimate is not null)
+            {
+                if(estimate.Ready)
+                {
+                    string text=NavigationJourneyPrompts.Format(pendingJourney.Kind,estimate.WorldMeters!.Value,estimate.RealSeconds!.Value);
+                    Notify(NavigationJourneyTracker.Source,data.SessionId,new(pendingJourney.Id,text));pendingJourney=null;
+                }
+                else
+                {
+                    nextJourneyEstimate=now.AddSeconds(5);
+                    if(journeyEstimateFailure!=estimate.Failure)log("行程估算暂不可用："+estimate.Failure);
+                    journeyEstimateFailure=estimate.Failure;
+                }
+            }
+        }
     }
     public void Tick(GameDataSnapshot data,DateTimeOffset now)
     {
@@ -192,7 +217,7 @@ public sealed class GuidanceCoordinator
     {if(session!=value){Reset();session=value;}}
     public void Reset()
     {
-        Timeline.Reset();Scheduler.Reset();journey.Reset();playback?.Reset();cache?.ClearPlan("guidance-preparation");
+        pendingJourney=null;nextJourneyEstimate=default;journeyEstimateFailure=null;Timeline.Reset();Scheduler.Reset();journey.Reset();playback?.Reset();cache?.ClearPlan("guidance-preparation");
         latest=[];lastQueued.Clear();notifications.Clear();environment.Reset();environmentFrame=null;session=null;observedRoute=null;replacementRevision=null;replacementApplied.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}
     }
 }

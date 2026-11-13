@@ -67,11 +67,11 @@ README 面向用户，保留功能、安装、使用和限制说明。开发指�
 .\scripts\dev.ps1 -Action Test -TestScope Unit -NoRestore -TestFilter 'FullyQualifiedName~JunctionNavigationTests|FullyQualifiedName~NavigationInstructionPolicyTests'
 # 源码未变，仅重跑已有测试产物；不会重新构建，也不会恢复依赖
 .\scripts\dev.ps1 -Action Test -TestScope Unit -NoBuild -TestFilter 'FullyQualifiedName~NavigationInstructionPolicyTests'
-# 提交前的全量验证
+# 变更影响广泛或明确要求时的全量验证
 .\scripts\dev.ps1 -Action Test
 ```
 
-`TestFilter` 使用 `dotnet test --filter` 的语法。改过源码后应保留构建；`NoBuild` 只用于重跑已构建的同配置产物，不能用于验证新代码。首次运行、依赖或 SDK／上游版本变更后不要跳过恢复。单元测试入口不需要 Bun；集成测试涉及 UI 构建时仍需要。算法修改先运行相关单元测试，涉及宿主覆盖时补集成测试，提交前执行全量入口。
+`TestFilter` 使用 `dotnet test --filter` 的语法。改过源码后应保留构建；`NoBuild` 只用于重跑已构建的同配置产物，不能用于验证新代码。首次运行、依赖或 SDK／上游版本变更后不要跳过恢复。单元测试入口不需要 Bun；集成测试涉及 UI 构建时仍需要。算法修改运行相关单元测试，涉及宿主覆盖时补集成测试；只有变更影响广泛、失败证据或明确要求时才扩大到全量入口。
 
 宿主集成测试禁止并行执行，诱饵文件仅创建于测试输出目录并在结束时清理。插件测试产物由 MSBuild 自动复制，不需要手工指定宿主路径。页面测试使用 Blazor HtmlRenderer。
 
@@ -236,11 +236,15 @@ dotnet run --project tools/LinkEts2Nav.Speech -- --model-dir "<model-directory>"
 
 ## 导航生命周期与城区提醒
 
-`GuidanceNotification` 表达开始、目的地更新、路线重算和确认到达等即时事实，不是空间播报系列，因此不要求人为设置结束点。这是空间系列结束点约束的明确例外；普通导航及环境预告仍必须附带真实结束点。通知复用 `GuidancePlaybackManager` 的优先级、缓存、暂停及会话重置，优先级为 5（执行提示为 0，普通预告为 10），不另开音频播放器，也不打断正在播放的片段。通知可在地图规划批次尚未完成时开始播放。
+`GuidanceNotification` 表达导航开始与路线重算等即时事实，不是空间播报系列，因此不要求人为设置结束点。这是空间系列结束点约束的明确例外；普通导航及环境预告仍必须附带真实结束点。通知复用 `GuidancePlaybackManager` 的优先级、缓存、暂停及会话重置，优先级为 5（执行提示为 0，普通预告为 10），不另开音频播放器，也不打断正在播放的片段。宿主元数据准备后即可提供行程估算，通知不必等待附近区块扫描。
 
-`NavigationJourneyTracker` 仅观察新鲜且正在推进的遥测与有效路线。正常 SDK 路线前缀裁剪、尾部扩展复用 `RouteContinuity` 判断；完整终端节点改变表示目的地更新，其余非连续替换用中性的路线重算措辞，同目的地重算连续变动在五秒内仅提示一次。数据无偏航原因标志，不根据地图匹配失败声称偏航。接近时最后一份正 SDK 剩余里程不超过 200、随后至少三份不同模拟时间样本持续归零一秒、且路线状态为 None 才确认到达；这是 SDK 缩放里程的到达佐证，不是世界距离触发点，手动在极近终点取消导航仍可能与到达无法区分。远处取消仅清理导航及城区系列，不播到达。
+`NavigationJourneyTracker` 仅观察新鲜且正在推进的遥测与有效路线。正常 SDK 路线前缀裁剪、尾部扩展复用 `RouteContinuity` 判断；完整终端节点改变与其他非连续替换统一生成重算请求，连续变化在五秒内仅提示一次。数据无偏航原因标志，不根据地图匹配失败声称偏航。开始和重算通知等完整行程估算就绪后才入队，每个请求成功估算一次；失败记录原因，五秒后重试。路线关闭且 SDK 剩余归零时清理导航及城区系列，不另播到达确认。
 
-`NavigationDestination` 只在非截断 SDK 路线的零距离终端 UID 与已确认连续世界路径末端一致时生成终点附近动作，距离采用该路径的世界弧长。终端缺失或处于货场自由行驶区域时不编造距离，仍可由生命周期追踪确认到达。终点沿用普通预告／20 米执行及前驱结束规则，不当作第几个路口。
+`RouteJourneyEstimator` 沿完整 SDK 路线的物理节点引用复用宿主 `Road`／`Prefab`。普通道路取已存储的 `Road.Length`；预制件始终取入口、出口控制节点的三维直线距离并乘 `JourneyEstimationCalibration.PrefabDistanceFactor`，不读取全程 PPD 或重新扫描区块。SDK 中间未识别 UID 只在首尾同属一个预制件且不跨越其他已知道路边界时合并为一次通行；连接或终端不完整则返回未就绪。SDK 剩余里程只与节点区间比较以确定当前通行及重复路段的访问，不转换成世界距离。当前普通道路按采样弧长投影扣除已走部分；当前预制件按接口弦投影粗估，不要求车辆正沿弦线行驶。
+
+估算速度复用已预热 `SpeedLimitDefinitionReader.RoadCategoryLimit` 的国家货车道路类别限速，不加入标牌或区域限速；预制件沿路线借用两侧最近普通道路中较低的类别限速，单侧已知时使用该侧。现实时间为各段 `世界米数 / (类别限速 × 0.8 / 3.6)` 之和。缺少剩余路段的类别限速时不猜测时间，SDK 的缩放距离和剩余游戏时间都不作为替代值。
+
+`NavigationDestination` 只在非截断 SDK 路线的零距离终端 UID 与已确认连续世界路径末端一致时生成终点动作，距离采用该路径的世界弧长。终端缺失或处于货场自由行驶区域时不编造距离。终点沿用普通预告／20 米执行及前驱结束规则，不当作第几个路口；预告“到达目的地”，执行提示“到达目的地附近，导航结束”。
 
 `CityEntryEventBuilder` 只读取快照中已缓存、明确 `Urban=true` 的区域。沿连续导航路径切分多边形边界及高度边界，合并城区占用区间，只为外到内的边界生成 `city-entry` 环境事件。`CityArea` 城市归属不等同于城区交通规则。运行时使用独立 `EnvironmentPreviewPlanner` 和同一全局路线坐标，复用 500／200 米及首次短距离规则，实际入城边界即结束点；不构成导航动作前驱，也不与测速或车道变窄共用同类链。
 

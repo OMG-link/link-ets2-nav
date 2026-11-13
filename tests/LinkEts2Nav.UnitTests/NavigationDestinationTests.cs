@@ -46,9 +46,9 @@ public sealed class NavigationDestinationTests
         var plan=planner.Build("s","r",Now,0,[turn,straight,destination],true,false,false,scheduler);
         var overview=Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("destination@")&&t.Kind==SpeechTriggerKind.Overview);
         Assert.Equal(150,overview.AlongMeters);Assert.True(overview.StrictCrossing);
-        Assert.Equal("一百五十米后，到达目的地附近。",overview.Text);
+        Assert.Equal("一百五十米后，到达目的地。",overview.Text);
         Assert.DoesNotContain(plan.Triggers,t=>t.Id.Contains(":through:"));
-        Assert.Equal("目的地就在附近，请留意停车位置。",Assert.Single(plan.Triggers,
+        Assert.Equal("到达目的地附近，导航结束。",Assert.Single(plan.Triggers,
             t=>t.EventId.StartsWith("destination@")&&t.Kind==SpeechTriggerKind.Execution).Text);
         timeline.Publish(plan);scheduler.Update(timeline,Now,0);
         timeline.Publish(plan with{PlayerAlongMeters=280});
@@ -77,9 +77,9 @@ public sealed class NavigationDestinationTests
         var first=runtime.Process(Data(50),nearby,Now);
         Assert.Equal(150,Assert.Single(first.Upcoming).DistanceMeters,1);
         Assert.Equal(ManeuverKind.Destination,first.Next!.Kind);
-        Assert.Equal("一百五十米后，到达目的地附近。",first.LastSpoken);
-        Assert.Equal("目的地就在附近，请留意停车位置。",runtime.Process(Data(180),nearby,Now).LastSpoken);
-        Assert.Equal("目的地就在附近，请留意停车位置。",runtime.Process(Data(181),nearby,Now).LastSpoken);
-        Assert.Single(spoken,s=>s.StartsWith("导航指令：目的地就在附近",StringComparison.Ordinal));
+        Assert.Equal("一百五十米后，到达目的地。",first.LastSpoken);
+        Assert.Equal("到达目的地附近，导航结束。",runtime.Process(Data(180),nearby,Now).LastSpoken);
+        Assert.Equal("到达目的地附近，导航结束。",runtime.Process(Data(181),nearby,Now).LastSpoken);
+        Assert.Single(spoken,s=>s.StartsWith("导航指令：到达目的地附近，导航结束。",StringComparison.Ordinal));
     }
 }

@@ -7,7 +7,28 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceCoordinatorTests
 {
     [Fact]
-    public async Task ConfirmedArrivalClearsOldSpatialSpeechAndKeepsItsOneShotAnnouncement()
+    public void JourneyBriefingWaitsForCompleteMetadataAndIsNotRecomputedEveryFrame()
+    {
+        var coordinator=new GuidanceCoordinator();var queued=new List<QueuedGuidanceSpeech>();coordinator.Queued+=queued.Add;
+        RouteJourneyEstimate? available=null;int calls=0;
+        coordinator.JourneyEstimateProvider=_=>{calls++;return available;};
+        GameDataSnapshot DataAt(double seconds,ulong[]? nodes=null)
+        {
+            var time=Now.AddSeconds(seconds);nodes??=[1,2,3];
+            var route=RouteSnapshot.Parse(nodes.Select((uid,i)=>new RouteNode(uid,(nodes.Length-i-1)*1000,10)),time);
+            return new(new(0,0,0,0,10,1000,true,false,(ulong)(seconds*10+1),time),route,RouteAvailability.Available,"s",true);
+        }
+        coordinator.Observe(DataAt(0),Now);Assert.Empty(queued);
+        available=new(2100,61,null);coordinator.Observe(DataAt(1),Now.AddSeconds(1));
+        Assert.Equal("准备出发，全程二点一公里，大约需要两分钟。",Assert.Single(queued).Text);
+        coordinator.Observe(DataAt(2),Now.AddSeconds(2));Assert.Equal(2,calls);
+        coordinator.Observe(DataAt(3,[1,4,5]),Now.AddSeconds(3));
+        Assert.Equal("重新规划路线，全程二点一公里，大约需要两分钟。",queued.Last().Text);
+        Assert.Equal(3,calls);
+    }
+
+    [Fact]
+    public async Task EndingNavigationClearsSpatialSpeechWithoutAnArrivalAnnouncement()
     {
         await using var manager=new GuidancePlaybackManager(null,new NoPlayer(),()=>null);
         var c=new GuidanceCoordinator(playback:manager);
@@ -19,11 +40,10 @@ public sealed class GuidanceCoordinatorTests
         var start=Step(0,100,RouteAvailability.Available);c.Observe(start,Now);
         c.Publish(new("navigation","s",start.Route.Revision,0,true,Now,[GuidanceTestSeries.Route("turn",100,
             [new("turn",50,"left")],[new("left","turn",SpeechTriggerKind.Execution,0,"left")])]));
-        c.Tick(start,Now);Assert.Equal(2,manager.Pending.Count);
+        c.Tick(start,Now);Assert.Single(manager.Pending);
         foreach(double seconds in new[]{1d,1.5,2})c.Observe(Step(seconds,0,RouteAvailability.None),Now.AddSeconds(seconds));
         Assert.DoesNotContain(c.Timeline.Sources,p=>p.Source=="navigation");
-        Assert.Equal(NavigationJourneyTracker.ArrivedText,Assert.Single(manager.Pending).Text);
-        Assert.True(Assert.Single(manager.Pending).IsNotification);
+        Assert.Empty(manager.Pending);
     }
 
     [Fact]

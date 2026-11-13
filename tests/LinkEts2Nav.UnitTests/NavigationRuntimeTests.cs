@@ -32,12 +32,14 @@ public sealed class NavigationRuntimeTests
     });
 
     [Fact]
-    public async Task CityEntryRunsOnItsOwnEnvironmentChainAndClearsAfterCrossingTheRealBoundary()
+    public async Task CityEntryRunsOnItsOwnEnvironmentChainAndClearsAfterPassingTheUrbanSign()
     {
         var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(0,0,1000),default);
         var route=RouteSnapshot.Parse([new(road.Node.Uid,1000,50),new(road.ForwardNode.Uid,100,5)],Now);
-        var urban=new LimitRegion("city",[new(-20,0,600),new(20,0,600),new(20,0,900),new(-20,0,900)],0,true);
-        var scene=new NearbyMapSnapshot(map,[],[],[]){SpeedLimits=SpeedLimitData.Empty with{Regions=[urban]}};
+        var geometry=new DirectedRoad(road.Uid.ToString("X16"),road.Node.Uid,road.ForwardNode.Uid,[new(0,0,0),new(0,0,1000)]);
+        var limits=new SpeedLimitData(new Dictionary<ulong,LimitRoad>{{road.Uid,new(geometry,"local_road")}},
+            [new("city-start",new(2,0,600),Vector3.UnitZ,false,new(Urban:true))],[],new Dictionary<string,TruckSpeedLimit>(),null);
+        var scene=new NearbyMapSnapshot(map,[],[],[]){SpeedLimits=ProjectedSignBuilder.Build(limits,[],TestContext.Current.CancellationToken)};
         await using var playback=new GuidancePlaybackManager(null,new CallbackPlayer(_=>{}),()=>null);
         var coordinator=new GuidanceCoordinator(playback:playback);var queued=new List<QueuedGuidanceSpeech>();coordinator.Queued+=queued.Add;
         var runtime=new NavigationRuntime(guidance:coordinator);

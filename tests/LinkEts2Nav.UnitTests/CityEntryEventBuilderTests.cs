@@ -6,90 +6,124 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class CityEntryEventBuilderTests
 {
-    private static DirectedRoad Road(params Vector3[] points)=>new("route",1,2,points);
-    private static LimitRegion Urban(string id,float from,float to,float height=0)
-        =>new(id,[new(from,0,-10),new(to,0,-10),new(to,0,10),new(from,0,10)],height,true);
-    private static IReadOnlyList<EnvironmentPreviewEvent> Events(LimitRegion[] areas,double player=0)
-        =>CityEntryEventBuilder.Build([Road(new(0,0,0),new(1000,0,0))],player,areas);
+    private static readonly DirectedRoad Road=new("000000000000000A",1,2,[new(0,0,0),new(1500,0,0)]);
+    private static LimitSign Sign(string id,float x,bool urban=true,bool reverse=false)
+        =>new(id,new(x,0,-2),reverse?-Vector3.UnitX:Vector3.UnitX,false,new(Urban:urban));
+    private static SpeedLimitData Data(params LimitSign[] signs)=>new(new Dictionary<ulong,LimitRoad>{{10,new(Road,"local_road")}},
+        signs,[],new Dictionary<string,TruckSpeedLimit>(),null);
+    private static IReadOnlyList<EnvironmentPreviewEvent> Events(SpeedLimitData data,double player=0)
+        =>new CityEntryEventBuilder().Build([Road],player,ProjectedSignBuilder.Build(data,[],TestContext.Current.CancellationToken));
 
-    [Fact] public void DetectsDirectedEntryAndUsesExistingFiveHundredTwoHundredPlanner()
+    [Fact] public void SignPositionIsTheEventAndEndWithOrdinaryFiveHundredTwoHundredProfile()
     {
-        var e=Assert.Single(Events([Urban("city",600,800)]));
+        var e=Assert.Single(Events(Data(Sign("entry",600))));
         Assert.Equal(600,e.AlongMeters);Assert.Equal(600,e.EndAlongMeters);Assert.Equal("city-entry",e.Kind);
         var plan=new EnvironmentPreviewPlanner().Build("city",0,[e],new SpeechTriggerScheduler(),true);
         Assert.Equal(new[]{100d,400d},plan.Triggers.Select(t=>t.AlongMeters));
         Assert.Equal(new[]{"五百米后，进入城区，请注意减速慢行。","两百米后，进入城区，请注意减速慢行。"},plan.Triggers.Select(t=>t.Text));
     }
-    [Fact] public void OppositeTravelUsesOppositeBoundaryAndNoExitAnnouncement()
+    [Fact] public void OppositeEntryAndExitDoNotGenerateEntryOnTheWrongDirectedRoad()
     {
-        var forward=Assert.Single(Events([Urban("city",400,700)]));
-        var reverse=Assert.Single(CityEntryEventBuilder.Build([Road(new(1000,0,0),new(0,0,0))],0,[Urban("city",400,700)]));
-        Assert.Equal(400,forward.AlongMeters);Assert.Equal(300,reverse.AlongMeters);Assert.NotEqual(forward.Id,reverse.Id);
+        var data=ProjectedSignBuilder.Build(Data(Sign("entry",600),Sign("exit",600,false,true)),[],TestContext.Current.CancellationToken);
+        Assert.Single(new CityEntryEventBuilder().Build([Road],0,data));
+        var reverse=Road with{StartNodeUid=2,EndNodeUid=1,Points=Road.Points.Reverse().ToArray()};
+        Assert.Empty(new CityEntryEventBuilder().Build([reverse],0,data));
+        Assert.Empty(Events(Data(Sign("exit-only",600,false))));
     }
-    [Fact] public void AlreadyInsideSkipsCurrentCityButStillFindsLaterEntry()
+    [Fact] public void RouteWithoutTheProjectedDirectedEdgeDoesNotSeeTheSign()
     {
-        var e=Assert.Single(Events([Urban("one",400,600),Urban("two",800,900)],500));
-        Assert.Equal(800,e.AlongMeters);
-        var beginsInside=Assert.Single(CityEntryEventBuilder.Build([Road(new(450,0,0),new(1000,0,0))],0,
-            [Urban("one",400,600),Urban("two",800,900)]));
-        Assert.Equal(350,beginsInside.AlongMeters);
+        var data=ProjectedSignBuilder.Build(Data(Sign("entry",600)),[],TestContext.Current.CancellationToken);
+        Assert.Empty(new CityEntryEventBuilder().Build([Road with{Id="other",StartNodeUid=3,EndNodeUid=4}],0,data));
+    }
+    [Fact] public void PolygonMembershipAloneNeverCreatesAnAnnouncement()
+    {
+        var urban=new LimitRegion("city",[new(400,0,-20),new(900,0,-20),new(900,0,20),new(400,0,20)],0,true);
+        Assert.Empty(Events(Data() with{Regions=[urban]}));
+        Assert.Empty(Events(Data() with{Regions=[urban]},500));
+    }
+    [Fact] public void ContinuousEntriesAreDeduplicatedUntilARealExitSign()
+    {
+        var e=Events(Data(Sign("entry",600),Sign("parallel-board",600.005f),Sign("repeat",800),
+            Sign("exit",900,false),Sign("new-entry",1000)));
+        Assert.Equal(new[]{600d,1000d},e.Select(s=>s.AlongMeters));Assert.NotEqual(e[0].Id,e[1].Id);
+    }
+    [Fact] public void ActuallyPassedStateSurvivesSlidingMapWindows()
+    {
+        var builder=new CityEntryEventBuilder();var full=ProjectedSignBuilder.Build(Data(Sign("entry",600),Sign("repeat",900)),[],TestContext.Current.CancellationToken);
+        Assert.Single(builder.Build([Road],0,full));
+        Assert.Empty(builder.Build([Road],650,full));
+        var slide=ProjectedSignBuilder.Build(Data(Sign("repeat",900)),[],TestContext.Current.CancellationToken);
+        Assert.Empty(builder.Build([Road],700,slide));
+        var exit=ProjectedSignBuilder.Build(Data(Sign("exit",800,false),Sign("repeat",900)),[],TestContext.Current.CancellationToken);
+        Assert.Single(builder.Build([Road],700,exit));
+    }
+    [Fact] public void ReplacingAParallelBoardBeforeArrivalKeepsTheSameLandmarkIdentity()
+    {
+        var builder=new CityEntryEventBuilder();
+        var first=Assert.Single(builder.Build([Road],0,Data(Sign("first-board",600))));
+        var second=Assert.Single(builder.Build([Road],100,Data(Sign("parallel-board",600.005f))));
+        Assert.Equal(first.Id,second.Id);
+    }
+    [Fact] public void FutureForecastDoesNotChangeActualUrbanState()
+    {
+        var builder=new CityEntryEventBuilder();
+        Assert.Single(builder.Build([Road],0,Data(Sign("future",600))));
+        Assert.Single(builder.Build([Road],100,Data(Sign("new-future",900))));
+    }
+    [Fact] public void FallbackProjectionRebuildsWhenPrefabGeometryChangesOnTheSameData()
+    {
+        var builder=new CityEntryEventBuilder();var data=Data(Sign("entry",600));
+        IReadOnlyList<DirectedRoad> empty=[];
+        Assert.Single(builder.Build([Road],0,data,0,empty));
+        DirectedRoad[] competing=[new("prefab:ABC:0:1",3,4,[new(0,0,.2f),new(1500,0,.2f)])];
+        Assert.Empty(builder.Build([Road],0,data,0,competing));
+    }
+    [Fact] public void CachedWorldPointIsReprojectedForDifferentRouteSampling()
+    {
+        var coarse=Road with{Points=[new(0,0,0),new(500,0,100),new(1500,0,100)]};
+        var data=new SpeedLimitData(new Dictionary<ulong,LimitRoad>{{10,new(coarse,"local_road")}},
+            [new("entry",new(500,0,102),Vector3.UnitX,false,new(Urban:true))],[],new Dictionary<string,TruckSpeedLimit>(),null);
+        data=ProjectedSignBuilder.Build(data,[],TestContext.Current.CancellationToken);
+        var dense=coarse with{Points=[new(0,0,0),new(250,0,90),new(500,0,100),new(1500,0,100)]};
+        var e=Assert.Single(new CityEntryEventBuilder().Build([dense],0,data));
+        double expected=(double)Vector3.Distance(dense.Points[0],dense.Points[1])+Vector3.Distance(dense.Points[1],dense.Points[2]);
+        Assert.Equal(expected,e.AlongMeters,3);
+        Assert.NotEqual(Assert.Single(data.SignProjections!.On(coarse)).AlongMeters,e.AlongMeters);
+    }
+    [Fact] public void RebasePreservesActualStateButSessionResetClearsIt()
+    {
+        var builder=new CityEntryEventBuilder();builder.Build([Road],650,Data(Sign("passed",600)));
+        builder.Rebase();Assert.Empty(builder.Build([Road],0,Data(Sign("repeat",900))));
+        builder.Reset();Assert.Single(builder.Build([Road],0,Data(Sign("repeat",900))));
+    }
+    [Fact] public void InitialActivationAfterEntryDoesNotReplayIt()
+        =>Assert.Empty(Events(Data(Sign("passed-entry",600),Sign("repeat",900)),650));
+
+    [Fact] public void TrimmedRoutePrefixKeepsTheSameCanonicalLandmark()
+    {
+        var first=new DirectedRoad("000000000000000B",1,2,[new(0,0,0),new(500,0,0)]);
+        var second=new DirectedRoad("000000000000000C",2,3,[new(500,0,0),new(1500,0,0)]);
+        var data=new SpeedLimitData(new Dictionary<ulong,LimitRoad>{{11,new(first,"local_road")},{12,new(second,"local_road")}},
+            [Sign("entry",600)],[],new Dictionary<string,TruckSpeedLimit>(),null);
+        data=ProjectedSignBuilder.Build(data,[],TestContext.Current.CancellationToken);var builder=new CityEntryEventBuilder();
+        var full=Assert.Single(builder.Build([first,second],350,data));
+        var trimmed=Assert.Single(builder.Build([second],550,data,500));
+        Assert.Equal(600,trimmed.AlongMeters);Assert.Equal(full.Id,trimmed.Id);
     }
     [Theory]
-    [InlineData(550)]
-    [InlineData(600)]
-    public void OverlappingOrTouchingUrbanAreasHaveOnlyOneEntry(float secondStart)
-        =>Assert.Equal(400,Assert.Single(Events([Urban("one",400,600),Urban("two",secondStart,800)])).AlongMeters);
-
-    [Fact] public void LaterSameKindCityWaitsForPreviousEntryAndUsesShortFirstProfile()
+    [InlineData(true,false)]
+    [InlineData(false,true)]
+    public void TemplateAndOwnershipUncertaintyAreNotBypassedOrLoggedEveryFrame(bool template,bool ownership)
     {
-        var events=Events([Urban("one",400,500),Urban("two",700,800)]);
-        Assert.Equal(2,events.Count);
-        var plan=new EnvironmentPreviewPlanner().Build("city",0,events,new SpeechTriggerScheduler(),true);
-        var later=Assert.Single(plan.Triggers,t=>t.EventId==events[1].Id);
-        Assert.Equal(400,later.AlongMeters);Assert.True(later.StrictCrossing);
-        Assert.Equal("三百米后，进入城区，请注意减速慢行。",later.Text);
+        var lines=new List<string>();var builder=new CityEntryEventBuilder(lines.Add);
+        var data=ProjectedSignBuilder.Build(Data(Sign("uncertain",600) with{TemplateOverride=template,OwnershipAmbiguous=ownership}),[],TestContext.Current.CancellationToken);
+        Assert.Empty(builder.Build([Road],0,data));Assert.Empty(builder.Build([Road],0,data));
+        Assert.Single(lines);Assert.Contains("未确认",lines[0]);
     }
-    [Fact] public void ReenteringSameAreaProducesDistinctRouteOccurrences()
+    [Fact] public void UncertainExitDoesNotFalselyProveThatUrbanStatePersists()
     {
-        var events=CityEntryEventBuilder.Build([Road(new(0,0,0),new(1000,0,0),new(0,0,0),new(1000,0,0))],0,[Urban("same",400,600)]);
-        Assert.Equal(new[]{400d,1400d,2400d},events.Select(e=>e.AlongMeters));
-        Assert.Equal(3,events.Select(e=>e.Id).Distinct().Count());
-    }
-    [Fact] public void HeightAndExplicitUrbanRuleAreRespected()
-    {
-        Assert.Empty(CityEntryEventBuilder.Build([Road(new(0,20,0),new(1000,20,0))],0,[Urban("below",400,600,10)]));
-        Assert.Empty(Events([Urban("city-area-only",400,600) with{Urban=false,Country="test"}]));
-        Assert.Single(Events([Urban("known-urban-unknown-other-rule",400,600) with{Unsupported=true}]));
-    }
-    [Fact] public void EnteringUrbanHeightVolumeIsClippedAtTheActualBoundary()
-    {
-        var entry=Assert.Single(CityEntryEventBuilder.Build([Road(new(450,20,0),new(550,0,0))],0,[Urban("city",400,600,10)]));
-        Assert.Equal(Math.Sqrt(100*100+20*20)/2,entry.AlongMeters,4);
-        Assert.Equal(entry.AlongMeters,entry.EndAlongMeters);
-    }
-    [Fact] public void TangencyAndTravelAlongPolygonBoundaryAreNotEntry()
-    {
-        Assert.Empty(CityEntryEventBuilder.Build([Road(new(0,0,-20),new(400,0,-10),new(0,0,0))],0,[Urban("city",400,600)]));
-        Assert.Empty(CityEntryEventBuilder.Build([Road(new(0,0,-10),new(1000,0,-10))],0,[Urban("city",400,600)]));
-    }
-    [Fact] public void EntryAtPolylineVertexAndTrimmedPrefixKeepSameCanonicalIdentity()
-    {
-        var full=Assert.Single(Events([Urban("city",400,600)],350));
-        var vertex=Assert.Single(CityEntryEventBuilder.Build([Road(new(0,0,0),new(400,0,0),new(1000,0,0))],350,[Urban("city",400,600)]));
-        var trimmed=Assert.Single(CityEntryEventBuilder.Build([Road(new(300,0,0),new(1000,0,0))],350,[Urban("city",400,600)],300));
-        Assert.Equal(full.Id,vertex.Id);Assert.Equal(full.Id,trimmed.Id);
-    }
-    [Fact] public void ConcaveCityCanBeLeftAndEnteredAgain()
-    {
-        var u=new LimitRegion("concave",[new(400,0,0),new(800,0,0),new(800,0,100),new(700,0,100),
-            new(700,0,20),new(500,0,20),new(500,0,100),new(400,0,100)],0,true);
-        var e=CityEntryEventBuilder.Build([Road(new(0,0,50),new(1000,0,50))],0,[u]);
-        Assert.Equal(new[]{400d,700d},e.Select(x=>x.AlongMeters));
-    }
-    [Fact] public void UnknownRouteGapDoesNotInventBoundaryCrossing()
-    {
-        var e=CityEntryEventBuilder.Build([Road(new(0,0,0),new(300,0,0)),Road(new(500,0,0),new(1000,0,0))],0,[Urban("city",400,600)]);
-        Assert.Empty(e);
+        var e=Events(Data(Sign("entry",600),Sign("uncertain-exit",800,false) with{TemplateOverride=true},Sign("next-entry",1000)));
+        Assert.Equal(new[]{600d,1000d},e.Select(s=>s.AlongMeters));
     }
     [Theory]
     [InlineData(450,"四百五十米后，进入城区，请注意减速慢行。")]
@@ -97,7 +131,7 @@ public sealed class CityEntryEventBuilderTests
     [InlineData(25,"即将进入城区，请注意减速慢行。")]
     public void LateEntryFloorsToFiftyAndDoesNotKeepTwoHundred(double distance,string text)
     {
-        var e=Assert.Single(Events([Urban("city",600,800)],600-distance));
+        var e=Assert.Single(Events(Data(Sign("entry",600)),600-distance));
         var plan=new EnvironmentPreviewPlanner().Build("city",600-distance,[e],new SpeechTriggerScheduler(),true);
         Assert.Equal(text,Assert.Single(plan.Triggers).Text);
     }

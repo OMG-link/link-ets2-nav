@@ -11,6 +11,7 @@ namespace LinkEts2Nav.Map;
 public sealed class SpeedLimitDefinitionReader
 {
     private readonly Dictionary<string,LimitAction> signs=new(StringComparer.Ordinal);
+    private readonly Dictionary<string,string> signRules=new(StringComparer.Ordinal);
     private readonly Dictionary<string,string> cityCountries=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> roadLooks=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> roadUnits=new(StringComparer.Ordinal);
@@ -44,7 +45,10 @@ public sealed class SpeedLimitDefinitionReader
             foreach(var u in roadUnits.Values.Where(u=>u.Class=="road_look"))
                 roadLooks[u.Name.Split('.').Last()]=u;
             foreach(var u in Files("/def/world/","sign").Where(u=>u.Class=="sign_model"))
-                signs[u.Name.Split('.').Last()]=Action(Link(Value(u,"traffic_rule")),[]);
+            {
+                string model=u.Name.Split('.').Last();
+                signRules[model]=Link(Value(u,"traffic_rule"));signs[model]=Action(signRules[model],[]);
+            }
             foreach(var u in Files("/def/","city").Where(u=>u.Class=="city_data"))
                 cityCountries[u.Name.Split('.').Last()]=Link(Value(u,"country")).Split('.').Last();
             var countryUnits=Files("/def/","country").Where(u=>u.Class=="country_data").ToArray();
@@ -117,14 +121,15 @@ public sealed class SpeedLimitDefinitionReader
               ForwardTraffic=HasLanes(road,road.LeftHandTraffic),ReverseTraffic=HasLanes(road,!road.LeftHandTraffic) };
         }
         var placedSigns=new List<LimitSign>();
-        foreach(var sign in map.MapItems.Values.OfType<Sign>().Where(s=>s.Node is Node))
+        foreach(var sign in LoadedMapItems.Enumerate(map.MapItems.Values).OfType<Sign>().Where(s=>s.Node is Node))
             if(signs.TryGetValue(sign.Model.ToString(),out var action)&&action.Relevant)
             {
                 bool hasTemplate=!string.IsNullOrEmpty(sign.SignTemplate)||sign.SignOverrides?.Count>0;
                 // A fixed urban transition belongs to the sign model's traffic_rule.
                 // Its editable template supplies the city name/layout, not the urban state.
                 // Keep the conservative template check for numeric or unresolved rules.
-                bool fixedUrban=action.Urban.HasValue&&action.SetKph is null&&!action.Unsupported;
+                bool fixedUrban=action.Urban.HasValue&&!action.Unsupported&&(action.SetKph is null
+                    ||citySignNames?.TrafficRule(sign)==signRules.GetValueOrDefault(sign.Model.ToString()));
                 placedSigns.Add(new(sign.Uid.ToString("X16"),sign.Node.Position,Vector3.Transform(-Vector3.UnitZ,sign.Node.Rotation),
                     sign.FollowRoadDir,action,hasTemplate&&!fixedUrban){CityName=action.Urban==true?citySignNames?.Read(sign):null});
             }

@@ -102,6 +102,19 @@ public sealed class AuxiliaryLaneDirectionTests
     }
 
     [Fact]
+    public void ResetDiscardsProofWhileOrdinaryPrefixTrimmingPreservesIt()
+    {
+        var scene=Corridor([0,1],[2],[2]);var detector=new LaneExitApproach();
+        Assert.Equal(ManeuverKind.KeepRight,Assert.Single(detector.Apply([scene.Action],scene.Route,scene.Graph,0)).Kind);
+        var trimmed=scene.Route.Skip(1).ToArray();
+        var retained=Assert.Single(detector.Apply([scene.Action],trimmed,scene.Graph,0));
+        Assert.Equal(ManeuverKind.KeepRight,retained.Kind);Assert.NotNull(retained.ApproachInterval);
+        detector.Reset();
+        var fresh=Assert.Single(detector.Apply([scene.Action],trimmed,scene.Graph,0));
+        Assert.Equal(ManeuverKind.ChooseLanes,fresh.Kind);Assert.Null(fresh.ApproachInterval);
+    }
+
+    [Fact]
     public void ChangingOnlyDirectionKeepsExistingTriggerIdentityAndConsumption()
     {
         var scene=Corridor([0,1],[2],[2]);

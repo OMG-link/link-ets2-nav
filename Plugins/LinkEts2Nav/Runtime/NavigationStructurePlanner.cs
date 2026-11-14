@@ -19,6 +19,11 @@ internal sealed class NavigationStructurePlanner
     private readonly LaneMergeDetector mergeDetector=new();
     private readonly AccelerationLaneApproach acceleration=new();
     private readonly LaneExitApproach exitApproach=new();
+    /// <summary>Discard proven approach history only when the owning navigation session/map source resets.</summary>
+    public void Reset()
+    {
+        exitApproach.Reset();acceleration.Reset();mergeDetector.Reset();
+    }
     public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes)
     {
         var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);

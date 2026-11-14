@@ -14,6 +14,7 @@ public static class DedicatedLaneOpening
         double[] offsets,int fork,IReadOnlyList<int> dedicatedOrders,Action<string>? diagnostic=null)
     {
         var selected=route[fork];
+        var native=new NativeLaneGraph(graph);
         var proofs=new List<(double Lead,ForkSignal? Signal,bool? MoveLeft)>();
         var uncertainties=new List<string>();
         foreach(int order in dedicatedOrders.Distinct())
@@ -42,9 +43,7 @@ public static class DedicatedLaneOpening
                 var edge=route[i];
                 if(edge.Roundabout is not null)return null;
                 if(!edge.Id.StartsWith("prefab:",StringComparison.Ordinal))continue;
-                string prefab="prefab:"+edge.Id.Split(':')[1]+":";
-                var alternatives=graph.Where(e=>e.StartNodeUid==edge.StartNodeUid&&e.EndNodeUid!=edge.EndNodeUid
-                    &&e.Id.StartsWith(prefab,StringComparison.Ordinal)).ToArray();
+                var alternatives=native.InPrefab(edge).Where(e=>e.StartNodeUid==edge.StartNodeUid&&e.EndNodeUid!=edge.EndNodeUid).ToArray();
                 var paths=edge.LanePaths.Where(p=>p.ExitOrder==order&&p.ExitLaneCount==count).ToArray();
                 if(paths.Length==0&&i+1<fork&&!route[i+1].Id.StartsWith("prefab:",StringComparison.Ordinal)
                     &&route[i+1].StartNodeUid==edge.EndNodeUid)
@@ -52,7 +51,7 @@ public static class DedicatedLaneOpening
                     // A side entrance can add an independent parallel lane. Once the
                     // shared ordinary-road corridor starts, the lane planner permits
                     // lateral changes within that same directional output group.
-                    var joined=graph.Where(e=>e.EndNodeUid==edge.EndNodeUid&&e.StartNodeUid!=edge.StartNodeUid&&e.Id.StartsWith(prefab,StringComparison.Ordinal))
+                    var joined=native.InPrefab(edge).Where(e=>e.EndNodeUid==edge.EndNodeUid&&e.StartNodeUid!=edge.StartNodeUid)
                         .SelectMany(e=>e.LanePaths).Where(p=>p.ExitLaneCount==count).ToArray();
                     bool ownGroup=edge.LanePaths.Count>0&&edge.LanePaths.All(p=>p.ExitLaneCount==count);
                     bool independentlyAdded=joined.Any(p=>p.ExitOrder==order)

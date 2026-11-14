@@ -16,6 +16,7 @@ public sealed class AccelerationLaneApproach
         IReadOnlyList<DirectedRoad> graph,double vehicleAlong)
     {
         if(route.Zip(route.Skip(1)).Any(p=>p.First.EndNodeUid!=p.Second.StartNodeUid))return [];
+        var native=new NativeLaneGraph(graph);
         double[] offsets=new double[route.Count+1];
         for(int i=0;i<route.Count;i++)offsets[i+1]=offsets[i]+Length(route[i]);
         var current=Enumerable.Range(0,route.Count).FirstOrDefault(i=>offsets[i+1]>=vehicleAlong,-1);
@@ -33,8 +34,7 @@ public sealed class AccelerationLaneApproach
             var decision=RoadJoinClassifier.Classify(edge);
             if(decision.Role!=RoadJoinRole.Entering||decision.MainEntry is not {} mainEntry
                 ||RoadJoinTopology.IndependentEntries(edge.LaneConnections,edge.EndNodeUid).Count==0)continue;
-            string prefab="prefab:"+edge.Id.Split(':')[1]+":";
-            var main=graph.Where(e=>e.Id.StartsWith(prefab,StringComparison.Ordinal)&&e.StartNodeUid==mainEntry&&e.EndNodeUid==edge.EndNodeUid)
+            var main=native.InPrefab(edge).Where(e=>e.StartNodeUid==mainEntry&&e.EndNodeUid==edge.EndNodeUid)
                 .SelectMany(e=>e.LanePaths).Select(p=>p.ExitOrder).ToHashSet();
             var side=edge.LanePaths.Select(p=>p.ExitOrder).ToHashSet();
             if(main.Count==0||side.Count==0||main.Overlaps(side))continue;
@@ -76,9 +76,7 @@ public sealed class AccelerationLaneApproach
                 {
                     // The lane remains physical, but leads to another road. To
                     // satisfy the official exit, leaving this side lane is mandatory.
-                    string prefab="prefab:"+edge.Id.Split(':')[1]+":";
-                    bool leaves=graph.Where(e=>e.Id.StartsWith(prefab,StringComparison.Ordinal)
-                        &&e.StartNodeUid==edge.StartNodeUid&&e.EndNodeUid!=edge.EndNodeUid)
+                            bool leaves=native.InPrefab(edge).Where(e=>e.StartNodeUid==edge.StartNodeUid&&e.EndNodeUid!=edge.EndNodeUid)
                         .SelectMany(e=>e.LanePaths).Any(p=>side.Contains(p.EntryOrder));
                     if(leaves)end=offsets[j];
                 }

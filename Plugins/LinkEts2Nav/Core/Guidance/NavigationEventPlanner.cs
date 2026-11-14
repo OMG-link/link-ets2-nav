@@ -128,6 +128,11 @@ public sealed class NavigationEventPlanner
             // become predecessors; a child does not wait for its own parent to end.
             ActionPlan? predecessor=ordered.Take(i).LastOrDefault(p=>IsNavigationAction(p.Maneuver)&&!p.Maneuver.ExecutionOnly
                 &&(!m.ExecutionOnly||m.JunctionId is null||p.Maneuver.JunctionId!=m.JunctionId));
+            if(state.BriefingAlong is not null&&predecessor?.EndAlong is {} refinedEnd)
+            {
+                state.BriefingAlong=Math.Max(state.DiscoveredAlong,refinedEnd);
+                state.BriefingStrict=state.BriefingAlong==refinedEnd;
+            }
             if(state.BriefingAlong is null)
             {
                 // An unknown previous end is not the previous action's start.

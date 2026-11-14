@@ -84,6 +84,30 @@ public sealed class NavigationStructurePlanTests
     }
 
     [Fact]
+    public void ReadOnlyAnalysisAlsoPlansOnceInsteadOfReenteringTheLegacyPolicyOnEachPosition()
+    {
+        var scene=Scene();var runtime=new NavigationRuntime();
+        for(int i=0;i<25;i++)
+        {
+            var now=Now.AddMilliseconds(i*200);
+            runtime.Process(Data(scene.Route,20+i*10,now),scene.Scene,now);
+        }
+        Assert.Equal(1,runtime.StructureBuildCount);Assert.Equal(1,runtime.EventPlanBuildCount);
+    }
+
+    [Fact]
+    public void ReadOnlyRouteReplacementWithdrawsTheOldFutureTurn()
+    {
+        var scene=Scene();var lines=new List<string>();var runtime=new NavigationRuntime(log:lines.Add);
+        runtime.Process(Data(scene.Route,10,Now),scene.Scene,Now);lines.Clear();
+        var road=scene.Scene.Map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Position.Z==760);
+        var changed=RouteSnapshot.Parse([scene.Route.Nodes[0],scene.Route.Nodes[1],new(road.Node.Uid,500,20),new(road.ForwardNode.Uid,0,0)],Now);
+        runtime.Process(Data(changed,600,Now),scene.Scene,Now);
+        Assert.DoesNotContain(lines,line=>line.StartsWith("导航指令：")&&line.Contains("右转"));
+        Assert.Equal(2,runtime.StructureBuildCount);
+    }
+
+    [Fact]
     public void RoadPathComponentsSurvivePositionAndDistanceRefreshButNotTopologyChanges()
     {
         var scene=Scene();var source=new RoadPathSource(scene.Scene.Map,scene.Scene.PrefabPaths);
@@ -145,5 +169,16 @@ public sealed class NavigationStructurePlanTests
         var second=initial.Events.MaxBy(e=>e.AlongMeters)!;
         var trimmed=planner.Build("session","trimmed",Now,200,[M(300)],true,false,false,scheduler,"frame");
         Assert.Contains(trimmed.Events,e=>e.Id==second.Id&&e.AlongMeters==500);
+    }
+
+    [Fact]
+    public void RefinedPredecessorEndAlsoReanchorsTheFollowingFirstPreview()
+    {
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();
+        NavigationManeuver M(string id,double along)=>new(id,ManeuverKind.TurnLeft,along,"in","out"){EndDistanceMeters=along+40};
+        planner.Build("session","route",Now,0,[M("first",1000),M("second",2000)],true,false,false,scheduler,"frame");
+        var refined=planner.Build("session","route",Now,900,[M("first",40),M("second",1040)],true,false,false,scheduler,"frame");
+        var second=Assert.Single(refined.Triggers,t=>t.Id.StartsWith("second")&&t.Kind==SpeechTriggerKind.Overview);
+        Assert.Equal(980,second.AlongMeters);
     }
 }

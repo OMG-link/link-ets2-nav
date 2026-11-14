@@ -80,4 +80,3 @@ internal sealed class NavigationStructurePlanner
             &&before.InitialTransfer?.FromLane!=after.InitialTransfer?.FromLane;
     }
 }
-

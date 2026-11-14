@@ -99,11 +99,12 @@ public sealed class NavigationEventPlanner
         var auxiliaries=new List<SpeechSequence>();
         var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
         var environmentEvents=new List<EnvironmentPreviewEvent>();
+        var replacedContinuations=new HashSet<string>(StringComparer.Ordinal);
         var sequences=new Dictionary<string,(double? End,bool Ended)>(StringComparer.Ordinal);
         for(int i=0;i<ordered.Length;i++)
         {
             var state=ordered[i];var m=state.Maneuver;
-            string sequence=m.SpeechSequenceId is null?state.Id:m.SpeechSequenceId+(state.SequenceStartAlong is {} visit?VisitSuffix(visit):"@"+state.Generation)+FrameSuffix();
+            string sequence=SequenceId(state);
             if(scheduler.IsConsumed("navigation",SpeechSequence.EndTriggerId(sequence)))continue;
             if(m.AnnouncementMode==NavigationAnnouncementMode.DistancePreview)
             {
@@ -128,6 +129,11 @@ public sealed class NavigationEventPlanner
             // become predecessors; a child does not wait for its own parent to end.
             ActionPlan? predecessor=ordered.Take(i).LastOrDefault(p=>IsNavigationAction(p.Maneuver)&&!p.Maneuver.ExecutionOnly
                 &&(!m.ExecutionOnly||m.JunctionId is null||p.Maneuver.JunctionId!=m.JunctionId));
+            // A newly known decision takes ownership of the same physical stretch.
+            // Keep its normal distance/execution series; withdraw the old unknown
+            // wording rather than letting map-window retention resurrect it.
+            if(!m.ExecutionOnly&&IsNavigationAction(m)&&state.EndAlong is not null)
+                replacedContinuations.Add(ContinuationId(predecessor));
             if(state.BriefingAlong is not null&&predecessor?.EndAlong is {} refinedEnd)
             {
                 state.BriefingAlong=Math.Max(state.DiscoveredAlong,refinedEnd);
@@ -200,8 +206,8 @@ public sealed class NavigationEventPlanner
         if(confirmedContinuation)
         {
             // Plan the final visible straight stretch now, including its future predecessor end.
-            var previous=ordered.LastOrDefault(p=>IsNavigationAction(p.Maneuver));
-            string id="continuation:"+(previous?.Id??"origin"+FrameSuffix());
+            var previous=ordered.LastOrDefault(p=>IsNavigationAction(p.Maneuver)&&!p.Maneuver.ExecutionOnly);
+            string id=ContinuationId(previous);
             double? anchor=previous?.EndAlong??(previous is null?initialBoundaryAlong??origin:null);
             if(anchor is {} start&&confirmedContinuationEndAlong is {} finish&&finish>start)
             {
@@ -238,7 +244,7 @@ public sealed class NavigationEventPlanner
             .Select(g=>new SpeechSequence(g.Key,new RouteSpeechEnd(sequences[g.Key].End!.Value),g.ToArray(),
                 triggers.Where(t=>g.Any(e=>e.Id==t.EventId)).ToArray(),sequences[g.Key].Ended));
         return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,[..complete,..auxiliaries,..environmental.Sequences])
-            {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame};
+            {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame,ReplacedSequenceIds=replacedContinuations.ToArray()};
     }
     /// <summary>Ordinary decisions share one chain; environment and proven main-road continuations do not block it.</summary>
     public static bool IsNavigationAction(NavigationManeuver m)=>m.Kind!=ManeuverKind.Straight&&m.AnnouncementMode==NavigationAnnouncementMode.Normal&&!m.IsMainRoadContinuation;
@@ -248,6 +254,9 @@ public sealed class NavigationEventPlanner
     private static bool UsesJunctionOrdinal(NavigationManeuver m)=>UsesPassageHelpers(m)&&m.Kind is not (ManeuverKind.Destination or ManeuverKind.BoardFerry);
     private static string VisitSuffix(double? start)=>start is {} value?":visit:"+value.ToString("R",CultureInfo.InvariantCulture):"";
     private string FrameSuffix()=>frame is null?"":"#"+frame;
+    private string SequenceId(ActionPlan state)=>state.Maneuver.SpeechSequenceId is not {} shared?state.Id
+        :shared+(state.SequenceStartAlong is {} visit?VisitSuffix(visit):"@"+state.Generation)+FrameSuffix();
+    private string ContinuationId(ActionPlan? previous)=>"continuation:"+(previous is null?"origin"+FrameSuffix():SequenceId(previous));
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
     private static int ActionIndex(IReadOnlyList<NavigationManeuver> list,int start)
     {for(int i=start;i<list.Count;i++)if(IsNavigationAction(list[i]))return i;return -1;}

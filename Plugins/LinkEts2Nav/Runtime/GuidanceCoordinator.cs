@@ -89,7 +89,13 @@ public sealed class GuidanceCoordinator
             // Do not catch up an old turn at a junction whose chosen exit just changed.
             plan=plan with{CoordinateFrame=null};
         }
-        Timeline.Publish(plan);playback?.Refresh(plan.Source,plan.Triggers);
+        Timeline.Publish(plan);
+        if(previous is not null&&plan.ReplacedSequenceIds.Count>0)
+        {
+            var replaced=plan.ReplacedSequenceIds.ToHashSet(StringComparer.Ordinal);
+            playback?.Withdraw(plan.Source,previous.Sequences.Where(s=>replaced.Contains(s.Id)).SelectMany(s=>s.Events).Select(e=>e.Id));
+        }
+        playback?.Refresh(plan.Source,plan.Triggers);
         }
         catch(Exception ex)
         {

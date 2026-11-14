@@ -3,6 +3,22 @@ using LinkEts2Nav.Core.Guidance;
 namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceTimelineTests
 {
+    [Fact]
+    public void ExplicitReplacementRemovesOldSeriesInsteadOfRetainingItToItsEnd()
+    {
+        var timeline=new GuidanceTimeline();var scheduler=new SpeechTriggerScheduler();
+        timeline.Publish(new("navigation","s","r",0,true,Now,[GuidanceTestSeries.Route("unknown",10000,
+            [new("unknown",0,"unknown")],[new("unknown:first","unknown",SpeechTriggerKind.Overview,100,"unknown")])]){CoordinateFrame="f"});
+        var replacement=new GuidanceSourcePlan("navigation","s","r",100,true,Now,[GuidanceTestSeries.Route("known",9400,
+            [new("known",9400,"known")],[new("known:first","known",SpeechTriggerKind.Overview,100,"9.4km")])])
+            {CoordinateFrame="f",ReplacedSequenceIds=["unknown"]};
+        timeline.Publish(replacement);
+        Assert.DoesNotContain(timeline.Sources[0].Sequences,s=>s.Id=="unknown");
+        Assert.Equal("9.4km",Assert.Single(scheduler.Update(timeline,Now,0)).Trigger.Text);
+        timeline.Publish(replacement with{PlayerAlongMeters=200});
+        Assert.DoesNotContain(timeline.Sources[0].Sequences,s=>s.Id=="unknown");
+        Assert.Empty(scheduler.Update(timeline,Now,0));
+    }
     [Theory]
     [InlineData(100)]
     [InlineData(150)]

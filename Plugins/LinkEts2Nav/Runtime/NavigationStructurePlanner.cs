@@ -13,7 +13,7 @@ internal sealed record NavigationStructurePlan(IReadOnlyList<DirectedRoad> Route
 }
 
 /// <summary>Runs only when route topology or loaded map facts change.</summary>
-internal sealed class NavigationStructurePlanner
+internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPlaceNames=null)
 {
     private readonly NavigationManeuverDetector detector=new();
     private readonly LaneMergeDetector mergeDetector=new();
@@ -28,6 +28,22 @@ internal sealed class NavigationStructurePlanner
             .Concat(accelerationActions).OrderBy(m=>m.DistanceMeters).ToArray();
         if(NavigationDestination.Find(sdkRoute,instructionRoute,0,confirmedUntil,unresolvedJoin) is {} destination)
             upcoming=upcoming.Append(destination).OrderBy(m=>m.DistanceMeters).ToArray();
+        foreach(var leg in nearby.Ferries?.OnRoute(sdkRoute)??[])
+        {
+            double offset=0;double? entry=null;
+            foreach(var edge in route)
+            {
+                if(edge.StartNodeUid==leg.EntranceUid){entry=offset;break;}
+                offset+=RouteGeometry.Length(edge);
+                if(edge.EndNodeUid==leg.EntranceUid){entry=offset;break;}
+            }
+            if(entry is not {} at)continue;
+            upcoming=upcoming.Append(new NavigationManeuver(leg.Id,ManeuverKind.BoardFerry,at,route[^1].Id,route[^1].Id)
+            {
+                EndDistanceMeters=at,JunctionId="prefab:"+leg.Source.PrefabUid.ToString("X16"),
+                Instruction="进入码头",NearInstruction=FerryNavigationPrompts.Passage(leg.Source.Name,leg.Target.Name,spokenPlaceNames)
+            }).OrderBy(m=>m.DistanceMeters).ToArray();
+        }
         upcoming=exitApproach.Apply(upcoming,instructionRoute,paths.GetNavigationGraph(),0);
         var plan=new NavigationStructurePlan(route,instructionRoute,upcoming,lanes,[],detector.ForkDiagnostics.ToArray(),confirmedUntil,
             unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming};

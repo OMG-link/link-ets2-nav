@@ -1,4 +1,6 @@
 using LinkEts2Nav.Runtime;
+using LinkEts2Nav.Core;
+using System.Numerics;
 using TruckLib;
 using TruckLib.ScsMap;
 using TruckLib.Sii;
@@ -11,7 +13,7 @@ public sealed class FerryJourneyIndex
     private readonly HashSet<(string From,string To)> connections=[];
     private readonly Dictionary<ulong,FerryPort> activationPorts=[];
     public IReadOnlyList<FerryPort> Ports { get; }
-    public FerryJourneyIndex(TruckLib.ScsMap.Map host,IEnumerable<(string From,string To)> links,IReadOnlyDictionary<string,string>? names=null)
+    public FerryJourneyIndex(TruckLib.ScsMap.Map host,IEnumerable<(string From,string To)> links,IReadOnlyDictionary<string,string>? names=null,Func<Road,double?>? roadHalfWidth=null)
     {
         foreach(var (from,to) in links)
         {
@@ -27,7 +29,8 @@ public sealed class FerryJourneyIndex
             prefab??=host.MapItems.Values.OfType<Prefab>().FirstOrDefault(p=>p.Ferry?.Uid==ferry.Uid);
             string id=ferry.Port.ToString();
             records.Add(new(id,names?.GetValueOrDefault(id)??id,ferry.Uid,ferry.Node.Uid,ferry.Node.Position,
-                prefab?.Uid??0,prefab?.Nodes.Select(n=>n.Uid).ToArray()??[],ferry.TrainTransport));
+                prefab?.Uid??0,prefab?.Nodes.Select(n=>n.Uid).ToArray()??[],ferry.TrainTransport)
+                {UnloadPosition=ferry.Node.Position+ferry.UnloadOffset, Entrances=BuildEntrances(prefab,ferry,host,roadHalfWidth)});
         }
         Ports=records.AsReadOnly();
         foreach(var port in records.GroupBy(p=>p.Id).Where(g=>g.Count()==1).Select(g=>g.Single()))
@@ -51,6 +54,25 @@ public sealed class FerryJourneyIndex
             if(prefab.Ferry is not null&&ferries.TryGetValue(prefab.Ferry.Uid,out var ferry))
                 foreach(var node in prefab.Nodes)Add(node.Uid,ferry.Port.ToString());
     }
+    private static IReadOnlyDictionary<ulong,FerryEntrance> BuildEntrances(Prefab? prefab,Ferry ferry,TruckLib.ScsMap.Map host,Func<Road,double?>? width)
+    {
+        var result=new Dictionary<ulong,FerryEntrance>();
+        foreach(var node in prefab?.Nodes??[])
+        {
+            var roads=host.MapItems.Values.OfType<Road>().Where(r=>r.Node?.Uid==node.Uid||r.ForwardNode?.Uid==node.Uid).ToArray();
+            if(roads.Length!=1||width?.Invoke(roads[0]) is not >0)continue;
+            var road=roads[0];bool forward=road.ForwardNode.Uid==node.Uid;
+            var endpoint=road.InterpolateCurve(forward?1:0);
+            var tangent=Vector3.Transform(-Vector3.UnitZ,endpoint.Rotation);if(!forward)tangent=-tangent;
+            if(Vector3.Dot(tangent,ferry.Node.Position-node.Position)<0)tangent=-tangent;
+            int count=Math.Clamp((int)Math.Ceiling(road.Length/8),16,256);
+            var points=Enumerable.Range(0,count+1).Select(i=>road.InterpolateCurve(forward?(float)i/count:1-(float)i/count).Position).ToArray();
+            var approach=new DirectedRoad(road.Uid.ToString("X16"),forward?road.Node.Uid:road.ForwardNode.Uid,node.Uid,points);
+            result[node.Uid]=new(node.Position,tangent,width(road)!.Value,approach);
+        }
+        return result;
+    }
+
     public bool Connects(ulong from,ulong to)
         =>from!=to&&portsByUid.TryGetValue(from,out var a)&&portsByUid.TryGetValue(to,out var b)
             &&a.Count==1&&b.Count==1&&connections.Contains((a.Single(),b.Single()));
@@ -72,7 +94,7 @@ public sealed class FerryJourneyIndex
     }
 
     public static FerryJourneyIndex Load(TruckLib.ScsMap.Map host,IFileSystem original,
-        IReadOnlyList<string>? mods=null,CancellationToken token=default)
+        IReadOnlyList<string>? mods=null,CancellationToken token=default,Func<Road,double?>? roadHalfWidth=null)
     {
         var fs=SpeedLimitFileSystem.Create(original,mods??[]);
         var links=new List<(string,string)>();
@@ -92,6 +114,6 @@ public sealed class FerryJourneyIndex
             &&Path.GetFileName(p).StartsWith("ferry",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order(StringComparer.Ordinal))
             foreach(var unit in SiiFile.Open(path,fs).Units.Where(u=>u.Class=="ferry_data"))
                 if(unit.Attributes.TryGetValue("ferry_name",out var value))names[unit.Name.Split('.').Last()]=((object)value).ToString()!.Trim('"');
-        return new(host,links,names);
+        return new(host,links,names,roadHalfWidth);
     }
 }

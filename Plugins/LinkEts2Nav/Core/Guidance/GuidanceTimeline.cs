@@ -40,6 +40,17 @@ public sealed class GuidanceTimeline
         if(sources.TryGetValue(source,out var plan)&&plan.SessionId==sessionId)
             sources[source]=plan with{PlayerAlongMeters=along,ObservedAt=observedAt,Active=active,PrepareWhileInactive=active};
     }
+    /// <summary>A known physical boundary was passed even though road projection is no longer available.</summary>
+    public void ObservePassage(string source,string eventPrefix,DateTimeOffset observedAt)
+    {
+        if(!sources.TryGetValue(source,out var plan))return;
+        var nearest=plan.Sequences.Where(s=>!s.Ended&&s.Events.Any(e=>e.Id.StartsWith(eventPrefix,StringComparison.Ordinal)))
+            .OrderBy(s=>s.EndAlongMeters<plan.PlayerAlongMeters?double.PositiveInfinity:s.EndAlongMeters).FirstOrDefault();
+        var ended=nearest is null?new HashSet<SpeechSequence>():[nearest];
+        if(ended.Count==0)return;
+        sources[source]=plan with{ObservedAt=observedAt,Sequences=plan.Sequences.Select(s=>ended.Contains(s)
+            ?new SpeechSequence(s.Id,s.End,s.Events,[],ended:true):s).ToArray()};
+    }
     public void Clear(string source)=>sources.Remove(source);
     public void Reset(){sources.Clear();session=null;}
 }

@@ -234,7 +234,8 @@ public sealed class NavPlugin : Plugin
                         logOutput.ResetTargets("车辆会话变化：已重置目标和预警状态（首次连接、读档或传送等）。", now);
                         session = data.SessionId;
                         mapScanner.Invalidate();
-                        pipeline.Reset(); navigation.Reset(); guidance.Reset();
+                        pipeline.Reset(); navigation.Reset();
+                        if(!guidance.HasVerifiedFerryContinuation(data))guidance.Reset();
                     }
                     // Announce after startup/session resets, before waiting for the nearby map scan.
                     guidance.Observe(data,now);
@@ -280,6 +281,7 @@ public sealed class NavPlugin : Plugin
                     guidance.Observe(latest,DateTimeOffset.UtcNow);
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var navigationDiagnostic=navigation.Process(latest,calibrated,DateTimeOffset.UtcNow);
+                    source.Store.ExpectFerry(navigation.ExpectedFerry);
                     var diagnostic=pipeline.Process(latest,calibrated,DateTimeOffset.UtcNow) with{Navigation=navigationDiagnostic};
                     guidance.Tick(latest,DateTimeOffset.UtcNow);
                     diagnostic=diagnostic with{Guidance=guidance.Diagnostic};

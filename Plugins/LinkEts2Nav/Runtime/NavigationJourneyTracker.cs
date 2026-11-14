@@ -43,5 +43,11 @@ public sealed class NavigationJourneyTracker
     }
     private NavigationJourneyNotice Notice(NavigationJourneyNoticeKind kind)=>new($"journey:{journey}:{++notification}",kind);
     private static ulong? Goal(RouteSnapshot route)=>!route.MayBeTruncated&&route.Nodes.MinBy(n=>n.DistanceToEndMeters) is {DistanceToEndMeters:<=.01f} node?node.Uid:null;
+    /// <summary>A verified transport changes placement, not the driver's navigation journey.</summary>
+    public bool ResumeAfterFerry(string newSession)
+    {
+        if(!navigating)return false;
+        session=newSession;lastReplan=null;return true;
+    }
     public void Reset(){session=null;previous=null;navigating=false;journey=notification=0;lastReplan=null;}
 }

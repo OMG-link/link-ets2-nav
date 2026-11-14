@@ -19,6 +19,7 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     public IReadOnlyList<RoundaboutStructure> Roundabouts { get; init; } = [];
     public IReadOnlyDictionary<ulong, RoundaboutStructure> RoadStructures { get; init; } = new Dictionary<ulong, RoundaboutStructure>();
     public SpeedLimitData SpeedLimits { get; init; } = SpeedLimitData.Empty;
+    public FerryJourneyIndex? Ferries {get;init;}
     public IReadOnlyList<FreeNavigationArea> FreeNavigationAreas { get; init; } = [];
 }
 
@@ -64,13 +65,17 @@ public sealed class NearbyCameraScanner
     }
 
     public RouteJourneyEstimator? JourneyEstimator {get;private set;}
+    public FerryJourneyIndex? Ferries {get;private set;}
 
     public void Prepare(CancellationToken cancellationToken = default)
     {
         LoadDefinitions(cancellationToken);
         speedReader!.PrepareHost(hostMap, cancellationToken);
-        if(hostMap is not null)JourneyEstimator??=new(hostMap,speedReader.RoadCategoryLimit,JourneyEstimationCalibration.PrefabDistanceFactor,
-            FerryJourneyIndex.Load(hostMap,fileSystem,activeModPaths,cancellationToken));
+        if(hostMap is not null)
+        {
+            Ferries??=FerryJourneyIndex.Load(hostMap,fileSystem,activeModPaths,cancellationToken,speedReader!.ReferenceHalfWidth);
+            JourneyEstimator??=new(hostMap,speedReader.RoadCategoryLimit,JourneyEstimationCalibration.PrefabDistanceFactor,Ferries);
+        }
     }
 
     public NearbyMapSnapshot ReadNearby(Vector3 playerPosition, float radiusMeters = 1000,
@@ -210,7 +215,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, FreeNavigationAreas = freeNavigationAreas };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)

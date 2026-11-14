@@ -182,6 +182,16 @@ public sealed class SpeedLimitDefinitionReader
     // TrafficRule selects lane_variant; Variant selects model_variants within that lane variant.
     // Resolve only variants explicitly owned by this road look, never by their name suffix.
     // An unresolved template is not proof that traffic is forbidden. An explicitly empty lane list is.
+    // Use the host's 4.5m lane-width convention to bound a native road interface.
+    // Missing/variant-empty lane declarations do not produce an invented portal.
+    public double? ReferenceHalfWidth(Road road)
+    {
+        var left=RoadLanes(road,true);var right=RoadLanes(road,false);
+        if(left is not {Length:>0}||right is not {Length:>0})return null;
+        int lanes=left.Max(l=>l.Length)+right.Max(l=>l.Length);
+        return lanes>0?lanes*4.5/2:null;
+    }
+
     private bool HasLanes(Road road,bool left)=>RoadLanes(road,left)?.Any(l=>l.Length>0)??true;
 
     /// <summary>Strict evidence for directed traffic; unresolved definitions stay unknown.</summary>

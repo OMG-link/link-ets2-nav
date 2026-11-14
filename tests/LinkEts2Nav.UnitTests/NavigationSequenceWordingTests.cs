@@ -24,9 +24,10 @@ public sealed class NavigationSequenceWordingTests
     [InlineData(0, "左转，然后立即右转。", "左转，然后到达目的地。")]
     [InlineData(10, "左转，然后立即右转。", "左转，然后到达目的地。")]
     [InlineData(20, "左转，然后立即右转。", "左转，然后到达目的地。")]
-    [InlineData(20.1, "左转，然后二十米右转。", "左转，然后二十米到达目的地。")]
-    [InlineData(29.9, "左转，然后二十米右转。", "左转，然后二十米到达目的地。")]
-    public void ThenUsesTheUnroundedGap(double gap,string turn,string destination)
+    [InlineData(20.1, "左转，然后立即右转。", "左转，然后到达目的地。")]
+    [InlineData(29.9, "左转，然后立即右转。", "左转，然后到达目的地。")]
+    [InlineData(30, "左转，然后三十米右转。", "左转，然后三十米到达目的地。")]
+    public void ThenUsesTheRoundedSpokenDistance(double gap,string turn,string destination)
     {
         Assert.Equal(turn,NavigationPrompts.Then("左转。",ManeuverKind.TurnRight,gap));
         Assert.Equal(destination,NavigationPrompts.Then("左转。",ManeuverKind.Destination,gap));
@@ -34,7 +35,9 @@ public sealed class NavigationSequenceWordingTests
     [Theory]
     [InlineData(16, "左转，然后立即右转。", "左转，然后到达目的地。")]
     [InlineData(20, "左转，然后立即右转。", "左转，然后到达目的地。")]
-    [InlineData(20.1, "左转，然后二十米右转。", "左转，然后二十米到达目的地。")]
+    [InlineData(20.1, "左转，然后立即右转。", "左转，然后到达目的地。")]
+    [InlineData(29.9, "左转，然后立即右转。", "左转，然后到达目的地。")]
+    [InlineData(30, "左转，然后三十米右转。", "左转，然后三十米到达目的地。")]
     public void PlannerPreservesTheRealGapUntilWording(double gap,string turn,string destination)
     {
         string Execute(ManeuverKind next)

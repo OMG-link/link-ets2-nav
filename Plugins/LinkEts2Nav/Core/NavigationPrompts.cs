@@ -53,7 +53,7 @@ public static class NavigationPrompts
     {
         if (!double.IsFinite(distanceMeters) || distanceMeters < 0) throw new ArgumentOutOfRangeException(nameof(distanceMeters));
         int meters=(int)(Math.Floor(distanceMeters/10)*10);
-        string prefix=distanceMeters<=20 ? (next==ManeuverKind.Destination ? "" : "立即") : Number(meters)+"米";
+        string prefix=meters<=20 ? (next==ManeuverKind.Destination ? "" : "立即") : Number(meters)+"米";
         return first.TrimEnd('。') + "，然后" + prefix + (instruction ?? Action(next)) + "。";
     }
 

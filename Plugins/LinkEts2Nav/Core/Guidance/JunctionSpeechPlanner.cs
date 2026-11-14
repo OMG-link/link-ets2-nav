@@ -27,7 +27,7 @@ internal static class JunctionSpeechPlanner
         IReadOnlyList<JunctionSpeechSite> sites,bool enabled,bool strict)
     {
         foreach(var site in sites)
-            if(Passage(actionId,site,earliest,"直线通过当前路口。",enabled,strict) is {} speech)yield return speech;
+            if(Passage(actionId,site,earliest,"直行通过当前路口。",enabled,strict) is {} speech)yield return speech;
     }
 
     private static SpeechSequence? Passage(string actionId,JunctionSpeechSite site,double earliest,string text,bool enabled,bool strict)

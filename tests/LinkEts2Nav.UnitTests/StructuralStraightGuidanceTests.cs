@@ -41,7 +41,7 @@ public sealed class StructuralStraightGuidanceTests
         var plan=Plan(S("first",600),S("second",850),A("ramp",1000,NavigationJunctionKind.Ramp));
         Assert.Equal("五百米后，左转。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("ramp@")&&t.Id.EndsWith(":500")).Text);
         Assert.Equal("两百米后，在第二个路口左转。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("ramp@")&&t.Id.EndsWith(":200")).Text);
-        Assert.Equal(new[]{"直线通过当前路口。","直行通过第一个路口。"},Assist(plan).Select(t=>t.Text));
+        Assert.Equal(new[]{"直行通过当前路口。","直行通过第一个路口。"},Assist(plan).Select(t=>t.Text));
     }
     [Theory]
     [InlineData(150,NavigationJunctionKind.Ordinary,"一百五十米后，在第二个路口左转。")]
@@ -57,7 +57,7 @@ public sealed class StructuralStraightGuidanceTests
         var ferry=A("port",1000) with{Kind=ManeuverKind.BoardFerry,Instruction="进入码头",NearInstruction="进入码头，按导航方向乘坐轮渡"};
         var plan=Plan(S("junction",850),ferry);
         Assert.Equal("两百米后，进入码头。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("port@")&&t.Id.EndsWith(":200")).Text);
-        Assert.Equal("直线通过当前路口。",Assert.Single(Assist(plan)).Text);
+        Assert.Equal("直行通过当前路口。",Assert.Single(Assist(plan)).Text);
         Assert.DoesNotContain(plan.Triggers,t=>t.Text.Contains("个路口进入码头"));
     }
     [Fact]
@@ -90,14 +90,14 @@ public sealed class StructuralStraightGuidanceTests
     public void AnAdvancedFiveHundredStageStartsUnnumberedPassagesAtItsActualFirstPoint()
     {
         var plan=Plan(S("early",50),S("late",500),A("target",600));
-        Assert.Equal(new[]{"直线通过当前路口。","直行通过第一个路口。"},Assist(plan).Select(t=>t.Text));
+        Assert.Equal(new[]{"直行通过当前路口。","直行通过第一个路口。"},Assist(plan).Select(t=>t.Text));
     }
     [Fact]
     public void AFirstHundredStageDoesNotInventAnUnannouncedOrdinal()
     {
         var plan=Plan(S("early",50),A("target",120));
         Assert.Equal("一百米后，左转。",Assert.Single(plan.Triggers,t=>t.Kind==SpeechTriggerKind.Overview).Text);
-        Assert.Equal("直线通过当前路口。",Assert.Single(Assist(plan)).Text);
+        Assert.Equal("直行通过当前路口。",Assert.Single(Assist(plan)).Text);
     }
     [Fact]
     public void RoundaboutCountsIntermediateStraightsAndRetainsTheExitNumberAtTheNearStage()
@@ -228,7 +228,7 @@ public sealed class StructuralStraightGuidanceTests
         double site=numbered?850:600;
         var plan=Plan(S("s",site),A("target",1000));
         var helper=Assert.Single(Assist(plan));Assert.NotNull(helper.Window);
-        Assert.Equal(numbered?"直行通过第一个路口。":"直线通过当前路口。",helper.Text);
+        Assert.Equal(numbered?"直行通过第一个路口。":"直行通过当前路口。",helper.Text);
         Assert.Equal(site-20,helper.AlongMeters);
         var series=Assert.Single(plan.Sequences,s=>s.Id.Contains(":through:"));Assert.Equal(site+30,series.EndAlongMeters);
         var timeline=new GuidanceTimeline();var scheduler=new SpeechTriggerScheduler();
@@ -256,7 +256,7 @@ public sealed class StructuralStraightGuidanceTests
     {
         var plan=Plan(S("a",510),S("b",600),S("c",700),S("d",850),A("target",1000));
         Assert.Equal("两百米后，在第二个路口左转。",Assert.Single(plan.Triggers,t=>t.Id.EndsWith(":200")).Text);
-        Assert.Equal(new[]{"直线通过当前路口。","直线通过当前路口。","直线通过当前路口。","直行通过第一个路口。"},Assist(plan).Select(t=>t.Text));
+        Assert.Equal(new[]{"直行通过当前路口。","直行通过当前路口。","直行通过当前路口。","直行通过第一个路口。"},Assist(plan).Select(t=>t.Text));
         Assert.DoesNotContain(plan.Sequences,s=>s.Id.StartsWith("straight-chain:"));
     }
 
@@ -273,7 +273,7 @@ public sealed class StructuralStraightGuidanceTests
     {
         var destination=A("destination",1000) with{Kind=ManeuverKind.Destination,JunctionId=null};
         var plan=Plan(S("early",600),S("near",850),destination);
-        Assert.Equal(new[]{"直线通过当前路口。","直线通过当前路口。"},Assist(plan).Select(t=>t.Text));
+        Assert.Equal(new[]{"直行通过当前路口。","直行通过当前路口。"},Assist(plan).Select(t=>t.Text));
         Assert.DoesNotContain(plan.Triggers,t=>t.Text.Contains("第"));
     }
 
@@ -282,7 +282,7 @@ public sealed class StructuralStraightGuidanceTests
     {
         var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
         var first=planner.Build("s","r",Now,0,[S("s",600),A("target",1000)],true,false,false,scheduler,"frame");
-        var original=Assert.Single(Assist(first));Assert.Equal("直线通过当前路口。",original.Text);
+        var original=Assert.Single(Assist(first));Assert.Equal("直行通过当前路口。",original.Text);
         timeline.Publish(first with{PlayerAlongMeters=580});
         Assert.Contains(scheduler.Update(timeline,Now,0),r=>r.Trigger.Id==original.Id&&r.Disposition==TriggerDisposition.Queued);
         var refined=planner.Build("s","r",Now,580,[S("s",20),A("target",170)],true,false,false,scheduler,"frame");
@@ -295,7 +295,7 @@ public sealed class StructuralStraightGuidanceTests
     public void EarlyBandChoosesTheJunctionButDoesNotDelayItsCueUntilTheBandEntrance()
     {
         var helper=Assert.Single(Assist(Plan(S("s",500),A("target",1000))));
-        Assert.Equal("直线通过当前路口。",helper.Text);
+        Assert.Equal("直行通过当前路口。",helper.Text);
         Assert.Equal(480,helper.AlongMeters);Assert.Equal(0,helper.Window!.StartAlongMeters);
     }
 }

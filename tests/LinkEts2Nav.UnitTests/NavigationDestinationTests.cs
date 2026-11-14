@@ -47,7 +47,7 @@ public sealed class NavigationDestinationTests
         var overview=Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("destination@")&&t.Kind==SpeechTriggerKind.Overview);
         Assert.Equal(150,overview.AlongMeters);Assert.True(overview.StrictCrossing);
         Assert.Equal("一百五十米后，到达目的地。",overview.Text);
-        Assert.Equal("直线通过当前路口。",Assert.Single(plan.Triggers,t=>t.Id.Contains(":through:")).Text);
+        Assert.Equal("直行通过当前路口。",Assert.Single(plan.Triggers,t=>t.Id.Contains(":through:")).Text);
         Assert.DoesNotContain(plan.Triggers,t=>t.Text.Contains("个路口"));
         Assert.Equal("到达目的地附近，导航结束。",Assert.Single(plan.Triggers,
             t=>t.EventId.StartsWith("destination@")&&t.Kind==SpeechTriggerKind.Execution).Text);

@@ -106,24 +106,33 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
 
     private (string Path,bool CacheHit) GenerateCityEntry(string prefix,string name,string text,
         Func<string,(string Path,bool CacheHit)> local)
+        => GenerateNamedParts(text,prefix+"城区，请注意减速慢行。",
+            [(prefix,false),(name,true),("城区，请注意减速慢行。",false)],"city-entry-v1","city",local);
+
+    // The historic CityNames directory stores reusable original-language place
+    // clips. Validate every requested name before invoking the local voice.
+    private (string Path,bool CacheHit) GenerateNamedParts(string text,string fallback,
+        (string Text,bool IsName)[] parts,string identity,string filePrefix,
+        Func<string,(string Path,bool CacheHit)> local)
     {
-        const string suffix="城区，请注意减速慢行。";
         try
         {
-            string cityDirectory=Path.Combine(directory??"","CityNames"),manifest=Path.Combine(cityDirectory,"manifest.json");
-            if(directory is null||!File.Exists(manifest))return local(prefix+suffix);
-            if(new FileInfo(manifest).Length>2097152)throw new InvalidDataException("City-name manifest too large.");
+            string nameDirectory=Path.Combine(directory??"","CityNames"),manifest=Path.Combine(nameDirectory,"manifest.json");
+            if(directory is null||!File.Exists(manifest))return local(fallback);
+            if(new FileInfo(manifest).Length>2097152)throw new InvalidDataException("Place-name manifest too large.");
             var pack=JsonSerializer.Deserialize<PackManifest>(File.ReadAllText(manifest));
             if(pack is not {Schema:1,Entries:not null}||pack.Entries.Length>4096||pack.Entries.Any(e=>e is null))
-                throw new InvalidDataException("Invalid city-name manifest.");
-            var clip=pack.Entries.SingleOrDefault(e=>e.Text==name);
-            if(clip is null)return local(prefix+suffix);
-            // Resolve the foreign name before any local inference. The name is
-            // never sent to the lexicon-only local voice, which may skip it.
-            string cityFile=Resolve(clip,cityDirectory);
-            var samples=new[]{PcmAudio.Read(local(prefix).Path),PcmAudio.Read(cityFile),PcmAudio.Read(local(suffix).Path)};
-            string key=Hash(Encoding.UTF8.GetBytes("city-entry-v1|"+text+"|"+string.Join("|",samples.Select(Hash))));
-            string result=Path.Combine(cacheDirectory,"city-"+key+".wav");
+                throw new InvalidDataException("Invalid place-name manifest.");
+            var names=new Dictionary<string,byte[]>(StringComparer.Ordinal);
+            foreach(string name in parts.Where(p=>p.IsName).Select(p=>p.Text).Distinct(StringComparer.Ordinal))
+            {
+                var clip=pack.Entries.SingleOrDefault(e=>e.Text==name);
+                if(clip is null)return local(fallback);
+                names[name]=PcmAudio.Read(Resolve(clip,nameDirectory));
+            }
+            var samples=parts.Select(p=>p.IsName?names[p.Text]:PcmAudio.Read(local(p.Text).Path)).ToArray();
+            string key=Hash(Encoding.UTF8.GetBytes(identity+"|"+text+"|"+string.Join("|",samples.Select(Hash))));
+            string result=Path.Combine(cacheDirectory,filePrefix+"-"+key+".wav");
             byte[] joined=samples.SelectMany(x=>x).ToArray();
             if(File.Exists(result))
             {
@@ -134,8 +143,8 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         }
         catch(Exception e) when(e is IOException or JsonException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine("City-name fragment unavailable; using generic city-entry audio: "+e.GetType().Name);
-            return local(prefix+suffix);
+            Console.Error.WriteLine("Place-name fragment unavailable; using generic audio: "+e.GetType().Name);
+            return local(fallback);
         }
     }
 

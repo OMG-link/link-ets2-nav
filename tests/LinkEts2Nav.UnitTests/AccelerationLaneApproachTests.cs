@@ -7,6 +7,28 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class AccelerationLaneApproachTests
 {
+    [Theory][InlineData(false)][InlineData(true)]
+    public void NativeMergeLampsAreKeptAndAConflictNeverProducesTheScoredOppositeCommand(bool conflict)
+    {
+        var scene=Scene(true);
+        var graph=scene.Graph.Select(e=>e.Id=="prefab:2:0:1"?e with{LanePaths=e.LanePaths.Select(p=>p with
+            {CurveBlinkers=p.EntryLane==2?[conflict?LaneBlinker.NoBlinker:LaneBlinker.Left,LaneBlinker.NoBlinker]
+                :p.EntryLane==1?[conflict?LaneBlinker.Left:LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]:p.CurveBlinkers}).ToArray()}:e).ToArray();
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(graph),TestContext.Current.CancellationToken);
+        var terminal=Assert.Single(index.Corridors).Terminals.Single(t=>t.Merges);
+        Assert.Equal(conflict,terminal.DirectionConflict);
+        var route=scene.Route.Select(e=>graph.Single(g=>g.Id==e.Id)).ToArray();
+        var actions=AuxiliaryLaneGuidance.Apply([],route,new([],[],true,null),index);
+        if(conflict)
+        {
+            Assert.Empty(actions);Assert.Contains(index.Diagnostics,d=>d.Contains("原生合流转向灯"));
+        }
+        else
+        {
+            Assert.Equal(true,terminal.NativeMoveLeft);Assert.Equal(ManeuverKind.MergeLeft,Assert.Single(actions).Kind);
+        }
+    }
+
     [Fact]
     public void ProvenShortNativeCorridorSupersedesLongGeometricHistoryWithoutDuplicatingEnvironmentSpeech()
     {

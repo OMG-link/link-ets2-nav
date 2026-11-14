@@ -13,6 +13,8 @@ public sealed record AuxiliaryLaneTerminal(DirectedRoad Edge,double EndMeters,bo
 {
     public IReadOnlyList<int> SideOrders {get;init;}=[];
     public IReadOnlyList<int> MainOrders {get;init;}=[];
+    public bool? NativeMoveLeft {get;init;}
+    public bool DirectionConflict {get;init;}
 }
 public sealed record AuxiliaryLaneCorridor(string Id,AuxiliaryBoundaryKind StartKind,AuxiliaryBoundaryKind EndKind,
     DirectedRoad Origin,ulong? MainEntrance,IReadOnlyList<int> OriginSideOrders,
@@ -60,7 +62,7 @@ public sealed class AuxiliaryLaneIndex
         {
             cancellationToken.ThrowIfCancellationRequested();
             var entrances=shared.GroupBy(e=>e.StartNodeUid).ToArray();
-            if(shared.Any(e=>e.Junction?.IsJunction==true))continue;
+            if(shared.Any(e=>e.Junction?.IsJunction==true||e.Roundabout is not null))continue;
             if(entrances.Length<2)continue;
             ulong? priority=entrances.SelectMany(g=>g).Select(e=>RoadJoinClassifier.Classify(e).MainEntry).FirstOrDefault(p=>p is not null);
             foreach(var entrance in entrances)
@@ -75,7 +77,7 @@ public sealed class AuxiliaryLaneIndex
                 Trace(edge,AuxiliaryBoundaryKind.IndependentEntrance,priority,side,others,counts[0],[],0);
             }
         }
-        foreach(var edge in graph.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null&&e.Junction?.IsJunction!=true))
+        foreach(var edge in graph.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null&&e.Junction?.IsJunction!=true&&e.Roundabout is null))
         foreach(var family in edge.LanePaths.GroupBy(p=>p.EntryLane))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -132,8 +134,8 @@ public sealed class AuxiliaryLaneIndex
                         sections.Add(new(road,0,span,length,Read(side),Read(main)));length+=span;previous=road;continue;
                     }
                     if(next.Select(NativeLaneGraph.Prefab).Distinct().Count()!=1){Missing("控制接口对应多个预制件");break;}
-                    if(next.Any(e=>e.Roundabout is not null)){Missing("到达环岛结构");break;}
-                    if(next.Any(e=>e.Junction?.IsJunction==true)){Missing("到达有原生交叉动线的普通路口，不视为辅助匝道分流");break;}
+                    // These are known, ordinary exclusions, not incomplete map data.
+                    if(next.Any(e=>e.Roundabout is not null||e.Junction?.IsJunction==true))break;
                     var sidePaths=next.SelectMany(e=>e.LanePaths).Where(p=>side.Contains(p.EntryOrder)&&p.EntryLaneCount==count).ToArray();
                     var mainPaths=next.SelectMany(e=>e.LanePaths).Where(p=>main.Contains(p.EntryOrder)&&p.EntryLaneCount==count).ToArray();
                     if(sidePaths.Length==0||mainPaths.Length==0){Missing("车道继承缺少原生连接");break;}
@@ -142,15 +144,26 @@ public sealed class AuxiliaryLaneIndex
                     {
                         var sp=sidePaths.Where(p=>p.ExitNodeUid==edge.EndNodeUid).ToArray();var mp=mainPaths.Where(p=>p.ExitNodeUid==edge.EndNodeUid).ToArray();
                         if(sp.Length==0&&mp.Length==0)continue;
-                        var positions=new List<double>();
+                        var positions=new List<double>();var commands=new List<MergeBlinkerDecision>();
                         foreach(var s in sp)foreach(var m in mp.Where(p=>p.ExitLane==s.ExitLane))
                         {
                             int common=0;while(common<Math.Min(s.CurveIndices.Count,m.CurveIndices.Count)&&s.CurveIndices[^(common+1)]==m.CurveIndices[^(common+1)])common++;
                             if(common==0||common>=Math.Min(s.CurveIndices.Count,m.CurveIndices.Count)||s.CurveStartPointIndices.Count!=s.CurveIndices.Count)continue;
                             var at=new LanePolyline(edge.Points).Project(s.Points[s.CurveStartPointIndices[^common]]);
-                            if(at.Error<=15)positions.Add(at.Along);
+                            if(at.Error<=15){positions.Add(at.Along);commands.Add(MergeBlinkerDirection.Classify(s,m,common));}
                         }
-                        if(positions.Count>0){merged=true;terminals.Add(new(edge,positions.Min(),false,false,true){SideOrders=Read(side),MainOrders=Read(main)});}
+                        if(positions.Count>0)
+                        {
+                            merged=true;
+                            var explicitCommands=commands.Where(c=>c.FirstEnds is not null&&c.MoveLeft is not null).ToArray();
+                            var directions=explicitCommands.Select(c=>c.MoveLeft!.Value).Distinct().ToArray();
+                            bool? sideLeft=side.Max()<main.Min()?true:side.Min()>main.Max()?false:null;
+                            bool conflict=explicitCommands.Any(c=>c.FirstEnds==false)||directions.Length>1
+                                ||sideLeft is {} location&&directions.Any(d=>d==location);
+                            if(conflict)diagnostics.Add($"辅助车道合流方向冲突：{id}；原生合流转向灯与入口主路群/侧向不一致，保留区间但不按评分生成并入方向");
+                            terminals.Add(new(edge,positions.Min(),false,false,true){SideOrders=Read(side),MainOrders=Read(main),
+                                NativeMoveLeft=!conflict&&directions.Length==1?directions[0]:null,DirectionConflict=conflict});
+                        }
                         else terminals.Add(new(edge,0,sp.Length>0&&mp.Length==0,mp.Length>0&&sp.Length==0){SideOrders=Read(side),MainOrders=Read(main)});
                     }
                     bool separate=terminals.Any(t=>t.SideOnly)&&terminals.Any(t=>!t.SideOnly);

@@ -6,6 +6,15 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class AuxiliaryLaneDirectionTests
 {
     [Fact]
+    public void ARecognizedRoundaboutIsAQuietExclusionRatherThanMissingMapData()
+    {
+        var scene=Corridor([0,1],[2],[2]);
+        var graph=scene.Graph.Select(e=>e.Id.StartsWith("prefab:2:")?e with{Roundabout=new("known-ring",1)}:e).ToArray();
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(graph),TestContext.Current.CancellationToken);
+        Assert.Empty(index.Corridors);Assert.Empty(index.Diagnostics);
+    }
+
+    [Fact]
     public void AnAuxiliaryLaneMayExitOrContinueNativelyBeforeItsLaterPhysicalMerge()
     {
         var scene=Corridor([0,1],[2],[2]);var exit=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
@@ -116,6 +125,7 @@ public sealed class AuxiliaryLaneDirectionTests
             ?e with{Junction=new(3,3,1)}:e).ToArray();
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(graph),TestContext.Current.CancellationToken);
         Assert.Empty(index.Corridors);
+        Assert.Empty(index.Diagnostics);
         var turn=scene.Action with{Kind=ManeuverKind.TurnRight};
         Assert.Equal(turn,Assert.Single(AuxiliaryLaneGuidance.Apply([turn],scene.Route,new([],[],true,null),index)));
     }

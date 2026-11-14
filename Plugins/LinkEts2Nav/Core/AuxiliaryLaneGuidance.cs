@@ -15,6 +15,7 @@ public static class AuxiliaryLaneGuidance
             var terminal=corridor.Terminals.Select(t=>(Terminal:t,Index:Find(t.Edge)))
                 .Where(t=>t.Index>=0).OrderBy(t=>t.Index).FirstOrDefault();
             if(terminal.Terminal is null)continue;
+            if(terminal.Terminal.DirectionConflict)continue;
             double? start=null;
             int prior=-1;bool incomplete=false;
             foreach(var section in corridor.Sections)
@@ -78,7 +79,7 @@ public static class AuxiliaryLaneGuidance
             {
                 // Navigation requires the main exit: the independently added side lane either merges physically
                 // or leads to a different road. The ordinary corridor permits the necessary planning transfer.
-                bool left=!corridor.SideIsLeft.Value;
+                bool left=terminal.Terminal.NativeMoveLeft??!corridor.SideIsLeft.Value;
                 result.RemoveAll(a=>a.JunctionId==junction&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
                 result.Add(new("auxiliary-merge:"+corridor.Id+":"+terminal.Terminal.Edge.Id,left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,
                     AuxiliaryLaneTiming.ActionPoint(interval),corridor.Origin.Id,terminal.Terminal.Edge.Id)

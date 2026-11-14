@@ -39,14 +39,16 @@ public static class RoundaboutRouteAdapter
                 starts.AddRange(edge.SegmentStarts.Select(n=>n+pointOffset));pointOffset+=edge.Points.Count;
             }
             double length=route.Skip(i).Take(last-i+1).Sum(RouteGeometry.Length);
-            double connector=exitMatches[0].Min(p=>p.DepartureToBoundaryMeters);
-            double departure=Math.Max(0,length-connector);
+            var selectedPort=exitMatches[0].Single();
+            double departure=NativeDeparture(selectedPort,route.Skip(i).Take(last-i+1))
+                ??Project(selectedPort.DepartureCandidates,points,starts,0,length,true);
+            double connector=length-departure;
             var cues=new List<RoundaboutExitCue>();double previous=0;
             for(int n=0;n<ordinal-1;n++)
             {
                 var port=ring.ExitPorts.Where(p=>p.BoundaryNodeUid==ordered[n].Key)
                     .MinBy(p=>Ahead(p))!;
-                double along=Project(port.DeparturePosition,points,starts,previous,departure);
+                double along=Project(port.DepartureCandidates,points,starts,previous,departure);
                 cues.Add(new(n+1,along));previous=along;
             }
             cues.Add(new(ordinal,departure));
@@ -56,8 +58,32 @@ public static class RoundaboutRouteAdapter
         }
         return result;
     }
+    // A target exit must use the actual selected native branch, not another lane
+    // ring's spatially close departure near the entrance. Mileage follows the
+    // selected polyline; metadata records indices, not a second route geometry.
+    private static double? NativeDeparture(RoundaboutExitPort port,IEnumerable<DirectedRoad> route)
+    {
+        double offset=0;double? first=null;
+        foreach(var edge in route)
+        {
+            if(TryOwner(edge,out ulong owner))
+            {
+                foreach(var span in edge.NativeCurveSpans)
+                {
+                    if(!port.DepartureBranches.Any(b=>b.Curve.ItemUid==owner&&b.Curve.CurveIndex==span.CurveIndex))continue;
+                    double along=offset;
+                    for(int p=1;p<=span.PointIndex;p++)
+                        if(!edge.SegmentStarts.Contains(p))along+=Vector3.Distance(edge.Points[p-1],edge.Points[p]);
+                    first=first is {} known?Math.Min(known,along):along;
+                }
+            }
+            offset+=RouteGeometry.Length(edge);
+        }
+        return first;
+    }
     // Locate each physical departure on the actual selected path, preserving exit order.
-    private static double Project(Vector3 point,IReadOnlyList<Vector3> path,IReadOnlyList<int> starts,double minimum,double maximum)
+    private static double Project(IReadOnlyList<Vector3> candidates,IReadOnlyList<Vector3> path,IReadOnlyList<int> starts,
+        double minimum,double maximum,bool preferLater=false)
     {
         double offset=0,bestAlong=minimum,bestDistance=double.PositiveInfinity;
         for(int i=1;i<path.Count;i++)
@@ -67,9 +93,13 @@ public static class RoundaboutRouteAdapter
             if(length>0 && offset+length>=minimum && offset<=maximum)
             {
                 double low=Math.Max(0,(minimum-offset)/length),high=Math.Min(1,(maximum-offset)/length);
-                float t=(float)Math.Clamp(Vector3.Dot(point-a,delta)/(length*length),low,high);
-                double distance=Vector3.DistanceSquared(point,a+t*delta);
-                if(distance<bestDistance){bestDistance=distance;bestAlong=offset+t*length;}
+                foreach(var point in candidates)
+                {
+                    float t=(float)Math.Clamp(Vector3.Dot(point-a,delta)/(length*length),low,high);
+                    double distance=Vector3.DistanceSquared(point,a+t*delta),along=offset+t*length;
+                    if(distance<bestDistance-1e-6||preferLater&&Math.Abs(distance-bestDistance)<=1e-6&&along>bestAlong)
+                    {bestDistance=distance;bestAlong=along;}
+                }
             }
             offset+=length;
         }

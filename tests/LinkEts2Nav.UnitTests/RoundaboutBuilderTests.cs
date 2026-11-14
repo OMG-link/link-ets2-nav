@@ -101,7 +101,7 @@ public sealed class RoundaboutBuilderTests
         var port = Assert.Single(found.ExitPorts);
         Assert.Equal(10UL, port.BoundaryNodeUid);
         // Execution stays at the departure, not the outer boundary or road end.
-        Assert.InRange(port.DepartureToBoundaryMeters, 19, 21);
+        Assert.Contains(branch.Points[0],port.DepartureCandidates);
     }
 
     [Fact]

@@ -37,13 +37,9 @@ public sealed class RoundaboutNavigationTests
     }
     [Theory]
     [InlineData(false)] [InlineData(true)]
-    public void PolarOrderingIgnoresReferenceRingJoinAndDepartureOffsets(bool mirrored)
+    public void PolarOrderingUsesSeparatePhysicalEntryAndExitEndpoints(bool mirrored)
     {
         var ring=Ring(mirrored);
-        var first=ring.ExitPorts.Single(p=>p.BoundaryNodeUid==11);
-        // Reference lane joins after the first departure: polar ordering must still count it.
-        ring=ring with{EntryPorts=ring.EntryPorts.Select(p=>p.NodeUid==10
-            ?p with{RingAlong=first.RingAlong+1}:p).ToArray()};
         var road=new DirectedRoad("prefab:1:0:3",10,13,[Vector3.Zero,new(100,0,0)]);
         var adapted=Assert.Single(RoundaboutRouteAdapter.Apply([road],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
         Assert.Equal(3,adapted.Roundabout!.ExitNumber);
@@ -56,17 +52,33 @@ public sealed class RoundaboutNavigationTests
     public void CompositePassagePreservesActualGeometryAndUsesOnePhysicalDecision()
     {
         var ring=Ring() with{PrefabUids=[1,2]};
-        DirectedRoad[] route=[new("prefab:1:0:1",10,50,[new(0,0,0),new(40,0,0)]),
-            new("prefab:2:0:1",50,12,[new(40,0,0),new(100,0,0)])];
+        DirectedRoad[] route=[new("prefab:1:0:1",10,50,[new(40,0,0),new(20,0,0),new(0,0,-20)]),
+            new("prefab:2:0:1",50,12,[new(0,0,-20),new(-20,0,0),new(-40,0,0)])];
         var adapted=RoundaboutRouteAdapter.Apply(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring},{2,ring}});
         var edge=Assert.Single(adapted);Assert.Equal(2,edge.Roundabout!.ExitNumber);
         Assert.Equal(route.SelectMany(e=>e.Points),edge.Points);
         var detector=new NavigationManeuverDetector();var maneuvers=detector.FindSequence(adapted,0,[]);
         Assert.Equal(new[]{ManeuverKind.EnterRoundabout,ManeuverKind.PassRoundaboutExit,ManeuverKind.ExitRoundabout},maneuvers.Select(m=>m.Kind));
-        Assert.All(maneuvers, m => Assert.Equal(100, m.EndDistanceMeters));
+        double length=route.Sum(RouteGeometry.Length);
+        Assert.All(maneuvers, m => Assert.Equal(length, m.EndDistanceMeters));
         Assert.Equal("进入环岛",maneuvers[0].Instruction);
         Assert.Equal("进入环岛，请从第二出口驶出",maneuvers[0].NearInstruction);
-        Assert.InRange(maneuvers[^1].DistanceMeters,1,99);
+        Assert.Equal(length-20,maneuvers[^1].DistanceMeters,3);
+        Assert.Equal(20,edge.Roundabout.ExitConnectorMeters,3);
+    }
+    [Fact]
+    public void ASpatiallyCloserOtherLaneDepartureCannotMoveTheSelectedExitToTheEntrance()
+    {
+        var ring=Ring();
+        ring=ring with{ExitPorts=ring.ExitPorts.Select(p=>p.BoundaryNodeUid==12?p with
+        {
+            DepartureBranches=[new(new(1,999),Vector3.Zero),new(new(1,7),new(80,0,5))]
+        }:p).ToArray()};
+        var selected=new DirectedRoad("prefab:1:0:2",10,12,[Vector3.Zero,new(40,0,0),new(80,0,0),new(100,0,0)])
+            {NativeCurveSpans=[new(4,0),new(7,2)]};
+        var adapted=Assert.Single(RoundaboutRouteAdapter.Apply([selected],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        Assert.Equal(80,adapted.Roundabout!.Exits[^1].AlongMeters);
+        Assert.Equal(20,adapted.Roundabout.ExitConnectorMeters);
     }
     [Fact]
     public void ExitOnlyHasTwentyMeterExecutionCueAndIsPreparedBeforeItIsNeeded()

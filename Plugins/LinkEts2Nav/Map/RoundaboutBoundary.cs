@@ -15,7 +15,8 @@ internal sealed record RoundaboutBoundary(IReadOnlyList<RoundaboutCurve> Curves,
         var internalNodes=local.SelectMany(c=>new[]{(Node:c.EntryNode,c.Key.ItemUid),(Node:c.ExitNode,c.Key.ItemUid)})
             .Where(p=>p.Node!=0).GroupBy(p=>p.Node)
             .Where(g=>g.Select(p=>p.ItemUid).Distinct().Skip(1).Any()).Select(g=>g.Key).ToHashSet();
-        RoundaboutBoundaryPort[] Ports(bool entry)=>local.Where(c=>(entry?c.EntryNode:c.ExitNode)!=0)
+        RoundaboutBoundaryPort[] Ports(bool entry)=>local.Where(c=>(c.PrefabUid is not null||c.TrafficKnown&&c.ProvenTraffic)
+                &&(entry?c.EntryNode:c.ExitNode)!=0)
             .GroupBy(c=>entry?c.EntryNode:c.ExitNode).Where(g=>!internalNodes.Contains(g.Key))
             .OrderBy(g=>g.Key).Select(g=>
             {

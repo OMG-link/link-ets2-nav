@@ -74,6 +74,7 @@ public static class PrefabPathGeometry
                 {LaneConnections=laneConnections,LanePaths=candidates.ToArray(),Junction=junction,
                     IsMinorStraight=junction.IsMinorPassage((from+prefab.Origin)%count,(to+prefab.Origin)%count),
                     ForkInfo=forks.GetValueOrDefault(prefab.Nodes[from].Uid),
+                    NativeCurveSpans=representative.Zip(Starts(representative),(curve,start)=>new PrefabCurveSpan(curve,start+1)).ToArray(),
                     NativeEntryTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[representative[0]].StartRotation)),
                     NativeExitTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[representative[^1]].EndRotation))});
         }

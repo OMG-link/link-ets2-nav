@@ -48,7 +48,7 @@ dotnet run --project tools/LinkEts2Nav.Speech -- --import-pack --jobs artifacts/
 
 ## 城市名片段
 
-城市名使用独立清单和 `CityNames` 子包。可从自己的游戏安装导出城市定义原名，不需要全图解析：
+城市名使用独立清单和 `CityNames` 子包。这个历史目录名也用于码头等地点的独立名称片段，不限制名称必须属于城市。可从自己的游戏安装导出城市定义原名，不需要全图解析：
 
 ```powershell
 dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<ETS2安装目录>" --export-city-names artifacts/speech/city-names.txt
@@ -63,6 +63,8 @@ dotnet run --project tools/LinkEts2Nav.Speech -- --import-pack --jobs artifacts/
 ```
 
 城市包最多 4096 项，每个名称最多 128 个字符，保留原始 Unicode 拼写。插件启动时校验清单，只将已准备的名称插入入城提示；名称片段与本地中文前后段拼接并缓存。未准备的名称仍播普通“进入城区”，不将外语名称交给可能跳词的本地模型。
+
+近距离码头提示将出发港、目的港片段按航行顺序与中文句段拼接。两个名称都准备好时，可播“进入xxx码头，乘坐前往yyy的轮渡”；片段缺失或损坏时，回退“进入码头，按导航方向乘坐轮渡”，不会把未准备的外语名交给本地模型。远距离预告只报“进入码头”。码头名称可以作为自定义 UTF-8 名称清单导出、生成和导入；城市定义导出命令不包含所有码头。
 
 ## 可选 Qwen 适配器
 

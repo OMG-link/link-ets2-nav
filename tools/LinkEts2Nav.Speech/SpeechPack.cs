@@ -45,6 +45,15 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
 
     public (string Path, bool CacheHit) Generate(string text, Func<string, (string Path, bool CacheHit)> local)
     {
+        var ferry=Regex.Match(text,@"^(?<prefix>(?:[零一二两三四五六七八九十百千0-9点.]+(?:米|公里)后，|即将)?)进入(?<from>[^，。\r\n]+)码头，乘坐前往(?<to>[^，。\r\n]+)的轮渡。$",
+            RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
+        if(ferry.Success)
+        {
+            string prefix=ferry.Groups["prefix"].Value;
+            return GenerateNamedParts(text,prefix+"进入码头，按导航方向乘坐轮渡。",
+                [(prefix+"进入",false),(ferry.Groups["from"].Value,true),("码头，乘坐前往",false),
+                    (ferry.Groups["to"].Value,true),("的轮渡。",false)],"ferry-entry-v1","ferry",local);
+        }
         var city=Regex.Match(text,@"^(?<prefix>(?:[零一二两三四五六七八九十百千0-9]+米后，|即将)进入)(?<name>[^，。\r\n]+)城区，请注意减速慢行。$",
             RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
         if(city.Success)return GenerateCityEntry(city.Groups["prefix"].Value,city.Groups["name"].Value,text,local);

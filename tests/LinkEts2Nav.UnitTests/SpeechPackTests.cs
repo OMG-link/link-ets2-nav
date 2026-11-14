@@ -190,5 +190,57 @@ public sealed class SpeechPackTests : IDisposable
         Assert.Equal("五百米后，进入城区，请注意减速慢行。",Assert.Single(localRequests));
     }
 
+    private void NameClips(params (string Name,byte[] Samples)[] names)
+    {
+        string directory=Path.Combine(Pack,"CityNames");Directory.CreateDirectory(directory);
+        var entries=names.Select(n=>
+        {
+            string file=SpeechPack.FileName(n.Name);PcmAudio.Write(Path.Combine(directory,file),n.Samples);
+            return new PackEntry(n.Name,file,SpeechPack.Hash(File.ReadAllBytes(Path.Combine(directory,file))));
+        }).ToArray();
+        File.WriteAllText(Path.Combine(directory,"manifest.json"),JsonSerializer.Serialize(new PackManifest(1,"external","voice",entries)));
+    }
+
+    [Theory]
+    [InlineData("一百米后，")]
+    [InlineData("")]
+    [InlineData("即将")]
+    [InlineData("一点二公里后，")]
+    public void FerryNamesAreJoinedInSailingOrderWithoutForeignWordsReachingLocalVoice(string prefix)
+    {
+        const string from="Brjánslækur",to="Stykkishólmur";
+        NameClips((from,[1,0]),(to,[2,0]));
+        var pack=new SpeechPack(Pack,Cache);
+        string text=prefix+"进入"+from+"码头，乘坐前往"+to+"的轮渡。";
+        var result=pack.Generate(text,Local);
+        Assert.Equal(new[]{prefix+"进入","码头，乘坐前往","的轮渡。"},localRequests);
+        Assert.Equal(new byte[]{9,0,1,0,9,0,2,0,9,0},PcmAudio.Read(result.Path));
+        Assert.True(pack.Generate(text,Local).CacheHit);
+        Assert.DoesNotContain(localRequests,t=>t.Contains(from)||t.Contains(to));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void EitherMissingFerryNameUsesOneGenericSentence(bool sourcePresent)
+    {
+        NameClips((sourcePresent?"Brjánslækur":"Stykkishólmur",[1,0]));
+        new SpeechPack(Pack,Cache).Generate("一百米后，进入Brjánslækur码头，乘坐前往Stykkishólmur的轮渡。",Local);
+        Assert.Equal("一百米后，进入码头，按导航方向乘坐轮渡。",Assert.Single(localRequests));
+    }
+
+    [Fact]
+    public void UpdatedFerryNameInvalidatesCompositionAndCorruptionFallsBackBeforeLocalPieces()
+    {
+        const string from="Brjánslækur",to="Stykkishólmur",text="进入Brjánslækur码头，乘坐前往Stykkishólmur的轮渡。";
+        NameClips((from,[1,0]),(to,[2,0]));var pack=new SpeechPack(Pack,Cache);
+        string first=pack.Generate(text,Local).Path;
+        NameClips((from,[1,0]),(to,[3,0]));string second=pack.Generate(text,Local).Path;
+        Assert.NotEqual(first,second);Assert.Equal(new byte[]{9,0,1,0,9,0,3,0,9,0},PcmAudio.Read(second));
+        localRequests.Clear();File.WriteAllText(Path.Combine(Pack,"CityNames",SpeechPack.FileName(to)),"broken");
+        pack.Generate(text,Local);
+        Assert.Equal("进入码头，按导航方向乘坐轮渡。",Assert.Single(localRequests));
+    }
+
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
 }

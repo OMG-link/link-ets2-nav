@@ -311,6 +311,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/export-prefab-svg.ps
 
 运行时停止生成、比较和记录当前位置的预估限速；车辆 SDK 实际限速仍作为路径仿真种子与回放原始遥测保存。旧回放的比较诊断字段继续兼容，但不再由预警流程填充。离线验证应选择回放前方目标点、恢复当时导航路径并模拟到该目标，而非重新启用当前位置比较监测。
 
+### 地图名称清单和货场语音
+
+离线导出当前启用官方地图及 DLC 的城镇定义、城镇标牌、所有其他标牌文字候选和货场显示名：
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<ETS2安装目录>" --game-log "<game.log.txt>" --export-map-names artifacts/map-names
+```
+
+此命令逐区块读取全地图，仅用于离线准备，不启动游戏。`inventory.json` 保留名称原文、定义或标牌 UID/区块来源、未分类文字及解析诊断。`names.txt` 是定义及结构化城镇标牌名；`candidates.txt` 还可能含道路编号、设施、距离和不可确认可见性的模板文字，须先审核，不能把它等同于城镇表。静态纹理上没有文本对象的文字无法从本接口读取。完整名和牌面短名分别保存，不自动共用发音。
+
+`names.000.jobs.json`、`company-names.000.jobs.json` 等按每批最多 2000 条导出，与 Speech 工具的 `--import-pack --jobs` 直接兼容。任何语音库按 jobs 中的 `Text` 和 `File` 生成 WAV 后都可导入；也可编辑文本列表，再使用 `--export-jobs --kind city-names --texts <文本文件> --output <jobs.json>` 重新导出。候选词另有 `candidates.NNN.jobs.json`，不要未经审核批量调用付费服务。批次独立导入输出目录，合并名称包前须满足运行时 4096 项及 2 MB 清单限制。
+
+目的地通过终端节点所连接的预制件与唯一 Company 的原生父子关系确认，不使用最近货场猜测。能够确认名称时，仅最终提示或最后转向附带的“然后到达”使用货场名，远距离提示仍称目的地。名称片段放入语音包历史目录 `CityNames`；缺少精确名称片段时保留诊断，音频回退为通用目的地，不把外语货场名交给本地模型。
+
+`NearbyMapSnapshot.RoadNames.Query(itemUid)` 接受道路或预制件 UID，返回 `Found`、`Unnamed` 或 `Unresolved`。当前原生 Road/Prefab 不暴露道路名，旧式牌的 Road token 也不是道路 UID；没有确证绑定时返回 `Unresolved`。接口可接收带来源和可选入口/出口方向的明确绑定；不会把模板名称、附近城市或道路编号误作道路名称，也不会把未解析误报为无名道路。
+
 ### 条件区间触发
 
 `SpeechTrigger.Window` 可指定轮询起点、回调和起点是否必须越过；`SpeechTrigger.AlongMeters` 仍为强制触发终点。`SpeechTriggerScheduler` 仅对新鲜、启用、未消费且已进入区间的触发器调用回调，传入事件、当前沿路位置、速度和时间；到达或越过终点时直接入队。回调不负责合成或播放，音频在规划后提前准备。区间不排斥其他系列，触发后使用共享播放器的优先级及系列覆盖；系列结束仍会取消待播项。回调本身不写入回放，区间边界会随诊断保存。

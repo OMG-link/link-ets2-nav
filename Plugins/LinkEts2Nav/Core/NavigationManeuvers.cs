@@ -25,6 +25,8 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     /// <summary>Optional action-specific wording; distance scheduling remains shared.</summary>
     public string? Instruction { get; init; }
     public string? NearInstruction { get; init; }
+    public string? ExecutionInstruction { get; init; }
+    public string? DestinationCompanyName { get; init; }
     public bool ExecutionOnly { get; init; }
     /// <summary>False when an adjacent prefab, rather than an explicit approach road, precedes this decision.</summary>
     public bool HasSeparateApproachRoad { get; init; } = true;

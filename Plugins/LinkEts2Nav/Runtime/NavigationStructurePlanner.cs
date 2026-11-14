@@ -14,7 +14,7 @@ internal sealed record NavigationStructurePlan(IReadOnlyList<DirectedRoad> Route
 }
 
 /// <summary>Runs only when route topology or loaded map facts change.</summary>
-internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPlaceNames=null)
+internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPlaceNames=null,Action<string>? log=null)
 {
     private readonly NavigationManeuverDetector detector=new();
     private readonly LaneMergeDetector mergeDetector=new();
@@ -29,7 +29,16 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
         var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
         IReadOnlyList<NavigationManeuver> upcoming=detector.FindSequence(instructionRoute,0,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong);
         if(NavigationDestination.Find(sdkRoute,instructionRoute,0,confirmedUntil,unresolvedJoin) is {} destination)
+        {
+            var terminal=sdkRoute.Nodes.MinBy(n=>n.DistanceToEndMeters)!;
+            if(nearby.Companies.AtTerminal(terminal.Uid) is {DisplayName:{} name})
+            {
+                destination=destination with{DestinationCompanyName=name,ExecutionInstruction="到达"+name+"货场附近，本次导航结束"};
+                log?.Invoke("导航终点已按预制件归属确认货场名称："+name+
+                    (spokenPlaceNames?.Contains(name)==true?"；名称音频已准备。":"；缺少该名称的预生成音频，播放时使用通用目的地提示。"));
+            }
             upcoming=upcoming.Append(destination).OrderBy(m=>m.DistanceMeters).ToArray();
+        }
         foreach(var leg in nearby.Ferries?.OnRoute(sdkRoute)??[])
         {
             double offset=0;double? entry=null;

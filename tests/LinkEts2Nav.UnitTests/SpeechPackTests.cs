@@ -184,6 +184,40 @@ public sealed class SpeechPackTests : IDisposable
         Assert.Equal(prefix+suffix,localRequests.Last());Assert.DoesNotContain(localRequests,t=>t.Contains(name));
     }
     [Fact]
+    public void CompanyNameUsesExactValidatedClipAndMissingClipNeverReachesLocalVoice()
+    {
+        const string name="Stórmarkaður",text="到达Stórmarkaður货场附近，本次导航结束。";
+        string names=Path.Combine(Pack,"CityNames");Directory.CreateDirectory(names);
+        string file=SpeechPack.FileName(name);PcmAudio.Write(Path.Combine(names,file),[3,0,4,0]);
+        var entry=new PackEntry(name,file,SpeechPack.Hash(File.ReadAllBytes(Path.Combine(names,file))));
+        File.WriteAllText(Path.Combine(names,"manifest.json"),JsonSerializer.Serialize(new PackManifest(1,"external","voice",[entry])));
+        var result=new SpeechPack(Pack,Cache).Generate(text,Local);
+        Assert.Equal(new[]{"到达","货场附近，本次导航结束。"},localRequests);
+        Assert.Equal(new byte[]{9,0,3,0,4,0,9,0},PcmAudio.Read(result.Path));
+        localRequests.Clear();File.Delete(Path.Combine(names,file));
+        new SpeechPack(Pack,Cache).Generate(text,Local);
+        Assert.Equal("到达目的地附近，导航结束。",Assert.Single(localRequests));
+    }
+
+    [Theory]
+    [InlineData("右转，然后五十米到达")]
+    [InlineData("右转，然后到达")]
+    public void ThenCompanyArrivalUsesNameClipAndRetainsFirstActionOnFallback(string prefix)
+    {
+        const string name="Stórmarkaður";
+        string names=Path.Combine(Pack,"CityNames");Directory.CreateDirectory(names);
+        string file=SpeechPack.FileName(name);PcmAudio.Write(Path.Combine(names,file),[3,0]);
+        var entry=new PackEntry(name,file,SpeechPack.Hash(File.ReadAllBytes(Path.Combine(names,file))));
+        File.WriteAllText(Path.Combine(names,"manifest.json"),JsonSerializer.Serialize(new PackManifest(1,"external","voice",[entry])));
+        var result=new SpeechPack(Pack,Cache).Generate(prefix+name+"货场。",Local);
+        Assert.Equal(new[]{prefix,"货场。"},localRequests);
+        Assert.Equal(new byte[]{9,0,3,0,9,0},PcmAudio.Read(result.Path));
+        localRequests.Clear();File.Delete(Path.Combine(names,file));
+        new SpeechPack(Pack,Cache).Generate(prefix+name+"货场。",Local);
+        Assert.Equal(prefix+"目的地。",Assert.Single(localRequests));
+    }
+
+    [Fact]
     public void MissingNameNeverSendsTheForeignWordToLocalSynthesis()
     {
         new SpeechPack(Pack,Cache).Generate("五百米后，进入Þórshöfn城区，请注意减速慢行。",Local);

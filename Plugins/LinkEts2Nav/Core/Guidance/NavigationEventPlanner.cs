@@ -265,11 +265,13 @@ public sealed class NavigationEventPlanner
 
     private static string Execution(IReadOnlyList<NavigationManeuver> list,int i)
     {
-        var m=list[i];string text=NavigationPrompts.Execute(m.Kind,Instruction(m,0));
+        var m=list[i];string text=NavigationPrompts.Execute(m.Kind,m.ExecutionInstruction??Instruction(m,0));
         if(m.ExecutionOnly||m.Kind==ManeuverKind.EnterRoundabout||m.AnnouncementMode!=NavigationAnnouncementMode.Normal)return text;
         int next=ActionIndex(list,i+1);if(next<0||list[next].ExecutionOnly||list[next].JunctionId==m.JunctionId)return text;
         double gap=list[next].DistanceMeters-m.DistanceMeters;
         if(gap<=0||gap>=100)return text;
-        return NavigationPrompts.Then(text,list[next].Kind,gap,list[next].Instruction);
+        string? nextInstruction=list[next].Kind==ManeuverKind.Destination&&list[next].DestinationCompanyName is {} company
+            ?"到达"+company+"货场":list[next].Instruction;
+        return NavigationPrompts.Then(text,list[next].Kind,gap,nextInstruction);
     }
 }

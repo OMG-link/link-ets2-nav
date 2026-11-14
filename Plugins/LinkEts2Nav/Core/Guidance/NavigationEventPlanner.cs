@@ -261,7 +261,6 @@ public sealed class NavigationEventPlanner
         int next=ActionIndex(list,i+1);if(next<0||list[next].ExecutionOnly||list[next].JunctionId==m.JunctionId)return text;
         double gap=list[next].DistanceMeters-m.DistanceMeters;
         if(gap<=0||gap>=100)return text;
-        int meters=(int)(Math.Floor(gap/10)*10);
-        return NavigationPrompts.Then(text,list[next].Kind,meters,list[next].Instruction);
+        return NavigationPrompts.Then(text,list[next].Kind,gap,list[next].Instruction);
     }
 }

@@ -49,11 +49,12 @@ public static class NavigationPrompts
         =>kind==ManeuverKind.Destination?"到达目的地附近，导航结束。":(instruction ?? Action(kind)) + "。";
 
     /// <summary>Announces a second nearby action relative to the action being executed.</summary>
-    public static string Then(string first, ManeuverKind next, int meters, string? instruction = null)
+    public static string Then(string first, ManeuverKind next, double distanceMeters, string? instruction = null)
     {
-        if (meters < 0) throw new ArgumentOutOfRangeException(nameof(meters));
-        return first.TrimEnd('。') + "，然后" + (meters > 0 ? Number(meters) + "米" : "立即")
-            + (instruction ?? Action(next)) + "。";
+        if (!double.IsFinite(distanceMeters) || distanceMeters < 0) throw new ArgumentOutOfRangeException(nameof(distanceMeters));
+        int meters=(int)(Math.Floor(distanceMeters/10)*10);
+        string prefix=distanceMeters<=20 ? (next==ManeuverKind.Destination ? "" : "立即") : Number(meters)+"米";
+        return first.TrimEnd('。') + "，然后" + prefix + (instruction ?? Action(next)) + "。";
     }
 
     public static string Immediate(ManeuverKind kind, string? instruction = null)

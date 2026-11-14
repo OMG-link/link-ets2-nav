@@ -20,6 +20,32 @@ public sealed class NavigationSequenceWordingTests
         Assert.Equal(text,Assert.Single(policy.UpdateSequence(Sequence(20),"s",Now,Now,true)));
         Assert.Equal("右转。",Assert.Single(policy.UpdateSequence([M("second",ManeuverKind.TurnRight,20)],"s",Now,Now,true)));
     }
+    [Theory]
+    [InlineData(0, "左转，然后立即右转。", "左转，然后到达目的地。")]
+    [InlineData(10, "左转，然后立即右转。", "左转，然后到达目的地。")]
+    [InlineData(20, "左转，然后立即右转。", "左转，然后到达目的地。")]
+    [InlineData(20.1, "左转，然后二十米右转。", "左转，然后二十米到达目的地。")]
+    [InlineData(29.9, "左转，然后二十米右转。", "左转，然后二十米到达目的地。")]
+    public void ThenUsesTheUnroundedGap(double gap,string turn,string destination)
+    {
+        Assert.Equal(turn,NavigationPrompts.Then("左转。",ManeuverKind.TurnRight,gap));
+        Assert.Equal(destination,NavigationPrompts.Then("左转。",ManeuverKind.Destination,gap));
+    }
+    [Theory]
+    [InlineData(16, "左转，然后立即右转。", "左转，然后到达目的地。")]
+    [InlineData(20, "左转，然后立即右转。", "左转，然后到达目的地。")]
+    [InlineData(20.1, "左转，然后二十米右转。", "左转，然后二十米到达目的地。")]
+    public void PlannerPreservesTheRealGapUntilWording(double gap,string turn,string destination)
+    {
+        string Execute(ManeuverKind next)
+        {
+            var plan=new LinkEts2Nav.Core.Guidance.NavigationEventPlanner().Build("s","r",Now,0,
+                [M("first",ManeuverKind.TurnLeft,100),M("second",next,100+gap)],true,false,false,new());
+            return Assert.Single(plan.Triggers,t=>t.Id.StartsWith("first@")&&t.Kind==LinkEts2Nav.Core.Guidance.SpeechTriggerKind.Execution).Text;
+        }
+        Assert.Equal(turn,Execute(ManeuverKind.TurnRight));
+        Assert.Equal(destination,Execute(ManeuverKind.Destination));
+    }
     [Fact]
     public void UnreadyCompoundWaitsForItsOwnPreparedAudio()
     {

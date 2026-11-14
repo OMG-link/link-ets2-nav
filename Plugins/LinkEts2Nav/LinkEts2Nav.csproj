@@ -15,4 +15,5 @@
     <ProjectReference Include="../../ETS2LA/ETS2LA.Audio/ETS2LA.Audio.csproj" Private="false" />
     <ProjectReference Include="../../ETS2LA/ETS2LA.State/ETS2LA.State.csproj" Private="false" />
   </ItemGroup>
+  <ItemGroup><InternalsVisibleTo Include="LinkEts2Nav.UnitTests" /></ItemGroup>
 </Project>

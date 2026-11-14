@@ -331,6 +331,16 @@ dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<ETS2安装目录>"
 
 `NearbyMapSnapshot.RoadNames.Query(itemUid)` 接受道路或预制件 UID，返回 `Found`、`Unnamed` 或 `Unresolved`。当前原生 Road/Prefab 不暴露道路名，旧式牌的 Road token 也不是道路 UID；没有确证绑定时返回 `Unresolved`。接口可接收带来源和可选入口/出口方向的明确绑定；不会把模板名称、附近城市或道路编号误作道路名称，也不会把未解析误报为无名道路。
 
+里程目标定义可单独补导出，无需再次扫描地图区块：
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<ETS2安装目录>" --game-log "<game.log.txt>" --export-mileage-targets artifacts/mileage-names
+```
+
+`mileage-targets.json` 保留 `mileage_target` 的默认名称、短名/语言变体、目标节点 UID 或目标坐标及搜索半径；目标节点表示牌面指向的远处地点，不代表该标牌所属的本地道路/出口。`mileage-names.txt` 和分页 jobs 可补充既有名称语音包。SCS UTF-8 十六进制转义会解码，已知排版标签会从播读文本中移除，原文字面量另行保留；未知转义/标签记录诊断，不擅自转成发音。里程目标也可能是设施等地点，不应把全部目标称为城镇。
+
+完整 `--export-map-names` 同样包含这些定义，并额外采集 `sign_template_mileage` 对象的实际文字覆盖；运行时城区名称提取仍保持原有规则，未因离线扩大采集而改变。
+
 ### 条件区间触发
 
 `SpeechTrigger.Window` 可指定轮询起点、回调和起点是否必须越过；`SpeechTrigger.AlongMeters` 仍为强制触发终点。`SpeechTriggerScheduler` 仅对新鲜、启用、未消费且已进入区间的触发器调用回调，传入事件、当前沿路位置、速度和时间；到达或越过终点时直接入队。回调不负责合成或播放，音频在规划后提前准备。区间不排斥其他系列，触发后使用共享播放器的优先级及系列覆盖；系列结束仍会取消待播项。回调本身不写入回放，区间边界会随诊断保存。

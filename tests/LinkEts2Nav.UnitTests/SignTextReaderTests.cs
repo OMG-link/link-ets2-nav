@@ -14,6 +14,8 @@ public sealed class SignTextReaderTests
         var reader=new SignTextReader(fs);
         Assert.Equal(new[]{"München","Salzburg"},reader.ReadTexts(sign));
         Assert.Contains("Name",reader.ReadRawTexts(sign));Assert.Empty(reader.Diagnostics);
+        Assert.DoesNotContain("Ulm",reader.ReadTexts(sign));
+        Assert.Contains("Ulm",reader.ReadInventoryTexts(sign));
         sign.SignTemplate="sign_templ.missing";
         Assert.Empty(reader.ReadTexts(sign));Assert.Equal("TemplateNotIndexed",Assert.Single(reader.Diagnostics).Reason);
     }
@@ -24,7 +26,7 @@ public sealed class SignTextReaderTests
             ["/def/sign/templates.sii"]="SiiNunit {\n sign_template_def : sign_templ.test {\n path: \"/def/sign/test.sii\"\n }\n}",
             ["/def/sign/boards.sii"]="SiiNunit {\n sign_board_def : sign_board.test {\n path: \"/def/sign/board.sii\"\n }\n}",
             ["/def/sign/test.sii"]="SiiNunit {\n sign_template_board_binding : .binding {\n area_name: area\n linked_board: sign_board.test\n }\n}",
-            ["/def/sign/board.sii"]="SiiNunit {\n sign_template_text : .one {\n id: 1\n text: \"München\"\n }\n sign_template_text : .two {\n id: 2\n text: \"Salzburg\"\n }\n sign_template_text : .default {\n id: 3\n text: \"Name\"\n }\n}"
+            ["/def/sign/board.sii"]="SiiNunit {\n sign_template_text : .one {\n id: 1\n text: \"München\"\n }\n sign_template_text : .two {\n id: 2\n text: \"Salzburg\"\n }\n sign_template_text : .default {\n id: 3\n text: \"Name\"\n }\n sign_template_mileage : .mileage {\n id: 4\n target: \"\"\n display: name\n text: \"Ulm\"\n }\n}"
         };
         public char DirectorySeparator=>'/';
         public bool FileExists(string p)=>files.ContainsKey(p);

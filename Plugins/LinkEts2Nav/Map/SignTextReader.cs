@@ -16,7 +16,9 @@ public sealed class SignTextReader(GameDataManager data)
     private IReadOnlyDictionary<string,string>? templates,boards;
     public IReadOnlyList<string> ReadTexts(Sign sign)=>Read(sign,false);
     public IReadOnlyList<string> ReadRawTexts(Sign sign)=>Read(sign,true);
-    private IReadOnlyList<string> Read(Sign sign,bool raw)
+    /// <summary>Offline inventory also records literal text in mileage objects; it does not resolve targets or change city naming.</summary>
+    public IReadOnlyList<string> ReadInventoryTexts(Sign sign)=>Read(sign,true,true);
+    private IReadOnlyList<string> Read(Sign sign,bool raw,bool mileage=false)
     {
         diagnostics.Clear();
         if(string.IsNullOrWhiteSpace(sign.SignTemplate)){diagnostics.Add(new("NoTextTemplate",sign.Model.ToString()));return [];}
@@ -31,7 +33,7 @@ public sealed class SignTextReader(GameDataManager data)
                 var replacement=sign.BoardOverrides?.LastOrDefault(o=>o.AreaName.ToString()==area&&!string.IsNullOrEmpty(o.Board.ToString()));
                 if(replacement is not null)board="sign_board."+replacement.Board;
                 if(!boards.TryGetValue(board,out var boardPath)){diagnostics.Add(new("BoardNotIndexed",board,area));continue;}
-                foreach(var text in data.GetSii(boardPath).OfClass("sign_template_text"))
+                foreach(var text in data.GetSii(boardPath).Units.Where(u=>u.Class=="sign_template_text"||mileage&&u.Class=="sign_template_mileage"))
                 {
                     if(!uint.TryParse(Text(text,"id"),out uint id))continue;
                     string value=Text(text,"text");

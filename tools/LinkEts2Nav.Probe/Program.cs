@@ -11,6 +11,7 @@ if (args.Length == 0 || args.Contains("--help"))
     Console.WriteLine("City names: --game-path <ETS2 directory> --export-city-names <UTF8 file> [--country iceland] [--game-log <game.log.txt>].");
     Console.WriteLine("Map place-name inventory: --game-path <directory> --export-map-names <output directory> [--game-log <game.log.txt>].");
     Console.WriteLine("Company definitions only: --game-path <directory> --export-company-names <output directory> [--game-log <game.log.txt>].");
+    Console.WriteLine("Mileage target definitions only: --game-path <directory> --export-mileage-targets <output directory> [--game-log <game.log.txt>].");
     Console.WriteLine("SVG: --game-path <ETS2 directory> --prefab-svg <virtual .ppd path> --output <file.svg> [--game-log <game.log.txt>]");
     Console.WriteLine("Reads local game archives only; does not start ETS2 or ETS2LA. Default mounts installed official archives, not the active profile. Explicit --archive order is highest priority first.");
     return 0;
@@ -25,7 +26,7 @@ try
     {
         if (i + 1 >= args.Length) throw new ArgumentException($"Missing value after {args[i]}");
         if (args[i] == "--archive") archives.Add(args[i + 1]);
-        else if (args[i] is "--game-path" or "--x" or "--z" or "--radius" or "--game-log" or "--inspect-model" or "--prefab-svg" or "--output" or "--export-city-names" or "--country" or "--export-map-names" or "--export-company-names")
+        else if (args[i] is "--game-path" or "--x" or "--z" or "--radius" or "--game-log" or "--inspect-model" or "--prefab-svg" or "--output" or "--export-city-names" or "--country" or "--export-map-names" or "--export-company-names" or "--export-mileage-targets")
         {
             if (!options.TryAdd(args[i], args[i + 1])) throw new ArgumentException($"Repeated option {args[i]}");
         }
@@ -35,11 +36,11 @@ try
     float Number(string text) => float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value)
         && float.IsFinite(value) ? value : throw new ArgumentException($"Invalid coordinate/distance: {text}");
     string root = Path.GetFullPath(Required("--game-path"));
-    bool inventoryMode = options.ContainsKey("--export-map-names")||options.ContainsKey("--export-company-names");
+    bool inventoryMode = options.ContainsKey("--export-map-names")||options.ContainsKey("--export-company-names")||options.ContainsKey("--export-mileage-targets");
     bool cityMode = options.TryGetValue("--export-city-names", out string? cityOutput);
     bool svgMode = options.TryGetValue("--prefab-svg", out string? prefabSvg);
     bool inspectModel = options.TryGetValue("--inspect-model", out string? modelPath);
-    if(new[]{cityMode,svgMode,inspectModel,options.ContainsKey("--export-map-names"),options.ContainsKey("--export-company-names")}.Count(v=>v)>1)
+    if(new[]{cityMode,svgMode,inspectModel,options.ContainsKey("--export-map-names"),options.ContainsKey("--export-company-names"),options.ContainsKey("--export-mileage-targets")}.Count(v=>v)>1)
         throw new ArgumentException("Choose one geometry, model or name-export mode.");
     if(options.ContainsKey("--country")&&!cityMode)throw new ArgumentException("--country is only for city-name export.");
     float x = Number(inspectModel || svgMode || cityMode || inventoryMode ? options.GetValueOrDefault("--x", "0") : Required("--x"));
@@ -61,6 +62,7 @@ try
         mounted = new OfficialArchiveMount(archives);
     }
     var fs = mounted.FileSystem;
+    if(options.TryGetValue("--export-mileage-targets",out var mileageOutput)){MapNameExporter.ExportMileageTargets(fs,mileageOutput);return 0;}
     if(options.TryGetValue("--export-company-names",out var companyOutput)){MapNameExporter.ExportCompanies(fs,companyOutput);return 0;}
     if(inventoryMode) { MapNameExporter.Export(fs,options["--export-map-names"]); return 0; }
     if (cityMode)

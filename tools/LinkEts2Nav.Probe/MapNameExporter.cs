@@ -18,6 +18,7 @@ internal static class MapNameExporter
     {
         Directory.CreateDirectory(output);
         var names=new List<Name>();var candidates=new List<Name>();var diagnostics=new List<object>();var legacyLabels=new List<LegacyLabel>();
+        var mileageTargets=ReadMileage(fs,names,diagnostics);
         var companyReader=new CompanyPlaceReader(fs);
         var companyNames=companyReader.ReadNames().Where(p=>p.Value is not null)
             .Select(p=>new Name(p.Value!,"company-definition","company.permanent."+p.Key)).ToList();
@@ -55,8 +56,10 @@ internal static class MapNameExporter
                 var ruleSigns=rules.Build(map).Signs.ToDictionary(s=>s.Id,StringComparer.Ordinal);
                 foreach(var sign in LoadedMapItems.Enumerate(map.MapItems.Values).OfType<Sign>().Where(s=>seen.Add(s.Uid)))
                 {
-                    signs++;string uid=sign.Uid.ToString("X16");var texts=reader.ReadTexts(sign);
-                    foreach(var raw in reader.ReadRawTexts(sign))rawLabels.Add(new(raw,"raw-sign-text",file,uid,sign.SignTemplate));
+                    signs++;string uid=sign.Uid.ToString("X16");var rawTexts=reader.ReadInventoryTexts(sign);
+                    IReadOnlyList<string> texts=rawTexts.Where(t=>Valid(t)&&t is not ("Name" or "City" or "Text")&&!t.StartsWith("@@",StringComparison.Ordinal)
+                        &&!t.Any(c=>c is '<' or '>' or '[' or ']' or '{' or '}')).ToArray();
+                    foreach(var raw in rawTexts)rawLabels.Add(new(raw,"raw-sign-text",file,uid,sign.SignTemplate));
                     diagnostics.AddRange(reader.Diagnostics.Select(d=>(object)new{resource=file,itemUid=uid,reason=d.Reason,source=d.Resource,detail=d.Detail}));
                     bool city=ruleSigns.TryGetValue(uid,out var rule)&&rule.Action.Urban is not null&&!rule.Action.Unsupported&&!rule.TemplateOverride;
                     foreach(var text in texts) (city?names:candidates).Add(new(text,city?"town-sign":"sign-text-candidate",file,uid,sign.SignTemplate));
@@ -80,6 +83,7 @@ internal static class MapNameExporter
         names.AddRange(candidates.Where(n=>known.Contains(n.Text)).Select(n=>n with{Source="direction-sign-known-name"}));
         candidates=candidates.Where(n=>!known.Contains(n.Text)).ToList();
         Write(output,"names",names);Write(output,"candidates",candidates);Write(output,"company-names",companyNames);
+        WriteTargets(output,mileageTargets);
         File.WriteAllText(Path.Combine(output,"legacy-sign-labels.json"),JsonSerializer.Serialize(legacyLabels,new JsonSerializerOptions{WriteIndented=true}),new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(output,"inventory.json"),JsonSerializer.Serialize(new{Schema=1,sectors=sectors.Length,signs,unreadable,legacyRoads,Names=names,CompanyNames=companyNames,Candidates=candidates,RawSignTexts=rawLabels,Diagnostics=diagnostics,
             Limitations=new[]{"Free board text may denote towns, roads, facilities, distances or other labels; candidates need review.","Model texture lettering without text objects cannot be recovered by this parser.","Unconfirmed visibility overrides are not interpreted; candidate text may be hidden."}},new JsonSerializerOptions{WriteIndented=true}),new UTF8Encoding(false));
@@ -93,6 +97,27 @@ internal static class MapNameExporter
         File.WriteAllText(Path.Combine(output,"company-inventory.json"),JsonSerializer.Serialize(new{Names=names,Diagnostics=reader.Diagnostics},new JsonSerializerOptions{WriteIndented=true}),new UTF8Encoding(false));
         Console.WriteLine($"Company names exported: {names.Count} definitions, {reader.Diagnostics.Count} diagnostics.");
     }
+    public static void ExportMileageTargets(IFileSystem fs,string output)
+    {
+        Directory.CreateDirectory(output);var names=new List<Name>();var diagnostics=new List<object>();
+        var targets=ReadMileage(fs,names,diagnostics);Write(output,"mileage-names",names);WriteTargets(output,targets);
+        File.WriteAllText(Path.Combine(output,"mileage-name-inventory.json"),JsonSerializer.Serialize(new{Names=names,Diagnostics=diagnostics},new JsonSerializerOptions{WriteIndented=true}),new UTF8Encoding(false));
+        Console.WriteLine($"Mileage targets exported: {targets.Count} targets, {names.Select(n=>n.Text).Distinct().Count()} names, {diagnostics.Count} diagnostics.");
+    }
+    private static IReadOnlyList<MileageTargetDefinition> ReadMileage(IFileSystem fs,List<Name> names,List<object> diagnostics)
+    {
+        var reader=new MileageTargetDefinitionReader(fs);var targets=reader.Read();
+        foreach(var target in targets)
+        {
+            if(target.DefaultName is {} full&&Valid(full))names.Add(new(full,"mileage-target-name",target.Source,Detail:target.Id+":default_name"));
+            foreach(var variant in target.Variants.Where(v=>v.Text is {} text&&Valid(text)))
+                names.Add(new(variant.Text!,"mileage-target-variant",target.Source,Detail:target.Id+":"+variant.Token));
+        }
+        diagnostics.AddRange(reader.Diagnostics.Select(reason=>(object)new{reason}));return targets;
+    }
+    private static void WriteTargets(string output,IReadOnlyList<MileageTargetDefinition> targets)
+        =>File.WriteAllText(Path.Combine(output,"mileage-targets.json"),JsonSerializer.Serialize(targets,
+            new JsonSerializerOptions{WriteIndented=true,IncludeFields=true}),new UTF8Encoding(false));
     private static void Write(string output,string stem,List<Name> entries)
         {
             string root=Path.GetFullPath(output);

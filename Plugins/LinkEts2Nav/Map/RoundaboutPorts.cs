@@ -19,24 +19,11 @@ public static class RoundaboutPorts
         IReadOnlyDictionary<RoundaboutCurveKey, RoundaboutCurve> graph,
         IReadOnlyList<RoundaboutCurveKey> ring, IReadOnlyList<ulong> members, CancellationToken token = default)
     {
-        var owners = members.ToHashSet(); var ringItems = ring.Select(k => k.ItemUid).ToHashSet();
-        // Include both directions of a road used by the ring. All search state is local
-        // to this construction; roads and prefabs beyond its boundary are irrelevant.
-        var local = graph.Values.Where(c => c.PrefabUid is { } owner
-            ? owners.Contains(owner) : ringItems.Contains(c.Key.ItemUid)).ToArray();
+        var boundary=RoundaboutBoundary.Build(graph,ring,members);
+        var local=boundary.Curves;
         var localGraph = local.ToDictionary(c => c.Key);
-        // A node shared by two component items is internal, including prefab-to-road
-        // links and direct prefab-to-prefab links in a composite roundabout.
-        var internalNodes = local.SelectMany(c => new[] { (Node: c.EntryNode, c.Key.ItemUid), (Node: c.ExitNode, c.Key.ItemUid) })
-            .Where(p => p.Node != 0).GroupBy(p => p.Node)
-            .Where(g => g.Select(p => p.ItemUid).Distinct().Skip(1).Any()).Select(g => g.Key).ToHashSet();
-        bool Boundary(ulong node) => node != 0 && !internalNodes.Contains(node);
-        // Use one native lane endpoint per direction and interface, independently.
-        // Stable curve ordering makes the arbitrary representative reproducible.
-        var entryPositions = local.Where(c => c.EntryNode != 0).GroupBy(c => c.EntryNode)
-            .ToDictionary(g => g.Key, g => g.OrderBy(c => c.Key.ItemUid).ThenBy(c => c.Key.CurveIndex).First().Points[0]);
-        var exitPositions = local.Where(c => c.ExitNode != 0).GroupBy(c => c.ExitNode)
-            .ToDictionary(g => g.Key, g => g.OrderBy(c => c.Key.ItemUid).ThenBy(c => c.Key.CurveIndex).First().Points[^1]);
+        var entryPositions=boundary.Entries.ToDictionary(p=>p.NodeUid,p=>p.Position);
+        var exitPositions=boundary.Exits.ToDictionary(p=>p.NodeUid,p=>p.Position);
         // Length weighting avoids bias from uneven sampling densities.
         double weight = 0, centerX = 0, centerZ = 0, area = 0;
         var origin = graph[ring[0]].Points[0];
@@ -75,7 +62,7 @@ public static class RoundaboutPorts
                 entryBest[previous] = (nextCost, current.Phase); queue.Enqueue((previous, current.Phase), nextCost);
             }
         }
-        var entries = local.Where(c => Boundary(c.EntryNode) && entryBest.ContainsKey(c.Key)).GroupBy(c => c.EntryNode)
+        var entries = local.Where(c => entryPositions.ContainsKey(c.EntryNode) && entryBest.ContainsKey(c.Key)).GroupBy(c => c.EntryNode)
             .Select(g => g.MinBy(c => entryBest[c.Key].Cost)!).Select(c => new RoundaboutEntryPort(c.EntryNode, entryBest[c.Key].Phase) { Bearing = Bearing(entryPositions[c.EntryNode]) }).ToArray();
         var best = new Dictionary<RoundaboutCurveKey, double>();
         var pending = new PriorityQueue<(RoundaboutCurveKey Key, double Phase), double>();
@@ -90,7 +77,7 @@ public static class RoundaboutPorts
             token.ThrowIfCancellationRequested();
             if (cost > best[current.Key]) continue;
             var curve = localGraph[current.Key];
-            if (Boundary(curve.ExitNode))
+            if (exitPositions.ContainsKey(curve.ExitNode))
             {
                 if (!branches.TryGetValue(curve.ExitNode, out var lanes)) branches[curve.ExitNode] = lanes = [];
                 lanes.Add(curve.Key);

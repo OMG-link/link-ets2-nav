@@ -4,7 +4,7 @@ public sealed class NavigationWordingTests
 {
     private static readonly DateTimeOffset Now=DateTimeOffset.UtcNow;
     private static NavigationManeuver Turn(double d)=>new("turn",ManeuverKind.TurnLeft,d,"in","out"){JunctionId="turn",EndDistanceMeters=d+30};
-    private static NavigationManeuver Straight(double d)=>new("straight",ManeuverKind.Straight,d,"in","out"){JunctionId="straight",EndDistanceMeters=d+30};
+    private static NavigationManeuver Straight(double d)=>new("straight",ManeuverKind.Straight,d,"in","out"){JunctionId="straight",EndDistanceMeters=d+30,StraightExitSides=NavigationSide.Left|NavigationSide.Right};
     [Fact]
     public void ImmediateNextIntersectionDoesNotNeedOrdinalPrefix()
     {

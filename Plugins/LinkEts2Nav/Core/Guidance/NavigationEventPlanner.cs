@@ -88,7 +88,7 @@ public sealed class NavigationEventPlanner
         var ordered=actions.Values.OrderBy(p=>p.Along).ThenBy(p=>p.Maneuver.SpeechSequenceOrder).ToArray();
         var sites=ordered.Select(p=>new JunctionSpeechSite(p.Id,p.Maneuver.JunctionId??p.Id,p.Along,p.EndAlong,p.DiscoveredAlong,
             p.Maneuver.Kind==ManeuverKind.Straight,p.Maneuver.IsMinorStraight&&p.Maneuver.JunctionKind==NavigationJunctionKind.Ordinary,
-            IsNavigationAction(p.Maneuver)&&!p.Maneuver.ExecutionOnly)).ToArray();
+            IsNavigationAction(p.Maneuver)&&!p.Maneuver.ExecutionOnly,p.Maneuver.StraightExitSides)).ToArray();
         var counted=new HashSet<string>(StringComparer.Ordinal);
         // Retained action plans also retain the meaning of their earlier fixed
         // count point after its series ends. No extra "already counted" cache.
@@ -169,9 +169,10 @@ public sealed class NavigationEventPlanner
                 ?JunctionSpeechPlanner.CountedStraights(sites,earlyPoint,
                     hasCountStage?countAlong!.Value:state.Along,m.JunctionId??state.Id):[];
             foreach(var site in earlySites)counted.Add(site.Id);
-            if(state.BriefingAlong is {} earliest)auxiliaries.AddRange(JunctionSpeechPlanner.Current(state.Id,earliest,earlySites,active,
+            var targetSide=NavigationManeuverDirections.Side(m);
+            if(state.BriefingAlong is {} earliest)auxiliaries.AddRange(JunctionSpeechPlanner.Current(state.Id,earliest,earlySites,targetSide,active,
                 state.BriefingStrict));
-            if(countAlong is {} at)auxiliaries.AddRange(JunctionSpeechPlanner.Numbered(state.Id,at,countedSites,active,
+            if(countAlong is {} at)auxiliaries.AddRange(JunctionSpeechPlanner.Numbered(state.Id,at,countedSites,targetSide,active,
                 state.BriefingStrict&&at==state.BriefingAlong));
             int ordinal=countedSites.Length==0?0:countedSites.Length+1;
             var wording=ordered.Select(p=>p.Maneuver with{DistanceMeters=p.Along-playerAlong}).ToArray();

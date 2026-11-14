@@ -2,7 +2,7 @@ namespace LinkEts2Nav.Core.Guidance;
 
 /// <summary>Physical junction facts, separate from the chain of driving actions.</summary>
 internal sealed record JunctionSpeechSite(string Id,string PhysicalId,double Along,double? EndAlong,double DiscoveredAlong,
-    bool Straight,bool Minor,bool BreaksStraightChain);
+    bool Straight,bool Minor,bool BreaksStraightChain,NavigationSide ExitSides);
 
 /// <summary>Pure auxiliary planning. No playback history or second action lifecycle is stored here.</summary>
 internal static class JunctionSpeechPlanner
@@ -13,22 +13,26 @@ internal static class JunctionSpeechPlanner
             .DistinctBy(j=>j.PhysicalId).ToArray();
 
     public static IEnumerable<SpeechSequence> Numbered(string actionId,double countAlong,
-        IReadOnlyList<JunctionSpeechSite> sites,bool enabled,bool strict)
+        IReadOnlyList<JunctionSpeechSite> sites,NavigationSide targetSide,bool enabled,bool strict)
     {
         for(int i=0;i<sites.Count;i++)
         {
             var site=sites[i];
+            if(!SameSideExit(site,targetSide))continue;
             string text="直行通过第"+NavigationPrompts.Number(i+1)+"个路口。";
             if(Passage(actionId,site,countAlong,text,enabled,strict) is {} speech)yield return speech;
         }
     }
 
     public static IEnumerable<SpeechSequence> Current(string actionId,double earliest,
-        IReadOnlyList<JunctionSpeechSite> sites,bool enabled,bool strict)
+        IReadOnlyList<JunctionSpeechSite> sites,NavigationSide targetSide,bool enabled,bool strict)
     {
         foreach(var site in sites)
-            if(Passage(actionId,site,earliest,"直行通过当前路口。",enabled,strict) is {} speech)yield return speech;
+            if(SameSideExit(site,targetSide)&&Passage(actionId,site,earliest,"直行通过当前路口。",enabled,strict) is {} speech)yield return speech;
     }
+
+    private static bool SameSideExit(JunctionSpeechSite site,NavigationSide targetSide)
+        =>targetSide!=NavigationSide.None&&(site.ExitSides&targetSide)!=0;
 
     private static SpeechSequence? Passage(string actionId,JunctionSpeechSite site,double earliest,string text,bool enabled,bool strict)
     {

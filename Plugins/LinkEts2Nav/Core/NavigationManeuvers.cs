@@ -7,6 +7,22 @@ public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, U
 public enum NavigationAnnouncementMode { Normal, Silent, DistancePreview }
 public enum NavigationJunctionKind { Ordinary, Ramp }
 
+[Flags]
+public enum NavigationSide { None = 0, Left = 1, Right = 2 }
+
+public static class NavigationManeuverDirections
+{
+    public static NavigationSide Side(NavigationManeuver maneuver)
+        =>maneuver.Kind==ManeuverKind.ChooseLanes?maneuver.ForkInstruction?.Side??NavigationSide.None:Side(maneuver.Kind);
+
+    public static NavigationSide Side(ManeuverKind kind) => kind switch
+    {
+        ManeuverKind.TurnLeft or ManeuverKind.KeepLeft or ManeuverKind.MergeLeft => NavigationSide.Left,
+        ManeuverKind.TurnRight or ManeuverKind.KeepRight or ManeuverKind.MergeRight => NavigationSide.Right,
+        _ => NavigationSide.None
+    };
+}
+
 public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double DistanceMeters,
     string EntryId, string ExitId)
 {
@@ -14,6 +30,8 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     public string? JunctionId { get; init; }
     public NavigationJunctionKind JunctionKind { get; init; }=NavigationJunctionKind.Ordinary;
     public bool IsMinorStraight { get; init; }
+    /// <summary>Other legal outlets reachable from this visit's entrance, relative to the straight continuation.</summary>
+    public NavigationSide StraightExitSides { get; init; }
     /// <summary>Selected route position where this action's physical component ends, relative to the player.</summary>
     public double? EndDistanceMeters { get; init; }
     /// <summary>Optional common playback series; event IDs remain distinct for reconciliation.</summary>
@@ -157,6 +175,7 @@ public sealed class NavigationManeuverDetector
                         {JunctionId="prefab:"+prefab,EndDistanceMeters=instruction.Kind==ManeuverKind.Straight?end-vehicleAlong:offset-vehicleAlong,ForkInstruction=instruction,
                             JunctionKind=NavigationJunctionKind.Ramp,IsMinorStraight=false,
                             IsMainRoadContinuation=instruction.Kind==ManeuverKind.Straight,
+                            StraightExitSides=AlternativeExitSides(current,connections),
                             Instruction=instruction.Text,HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
                     }
                     confirmedUntil=end;offset=end;continue;
@@ -195,7 +214,8 @@ public sealed class NavigationManeuverDetector
                             offset-vehicleAlong,i>0?route[i-1].Id:current.Id,i+1<route.Count?route[i+1].Id:current.Id)
                         {EndDistanceMeters=end-vehicleAlong,JunctionId="prefab:"+prefab,
                             JunctionKind=rampJunction?NavigationJunctionKind.Ramp:NavigationJunctionKind.Ordinary,
-                            IsMinorStraight=current.Junction.IsJunction&&current.IsMinorStraight,IsMainRoadContinuation=true,
+                            IsMinorStraight=current.Junction?.IsJunction==true&&current.IsMinorStraight,IsMainRoadContinuation=true,
+                            StraightExitSides=AlternativeExitSides(current,connections),
                             HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
                 }
                 // All angle-based maneuvers share this junction-only rule.
@@ -247,7 +267,8 @@ public sealed class NavigationManeuverDetector
                             JunctionId = "prefab:" + prefab,
                             HasSeparateApproachRoad = previous is not null && PrefabKey(previous) is null,
                             IsMainRoadContinuation = mainContinuation,
-                            IsMinorStraight=kind==ManeuverKind.Straight&&current.IsMinorStraight
+                            IsMinorStraight=kind==ManeuverKind.Straight&&current.IsMinorStraight,
+                            StraightExitSides=AlternativeExitSides(entry.Value,chosen.Value,current.EndNodeUid,exits.Select(e=>(e.End,e.Direction)))
                         });
                 }
             }
@@ -378,6 +399,42 @@ public sealed class NavigationManeuverDetector
     private static double Angle(Vector2 incoming, Vector2 outgoing)
         => Math.Atan2(incoming.X * outgoing.Y - incoming.Y * outgoing.X,
             Vector2.Dot(incoming, outgoing)) * 180 / Math.PI;
+
+    private static NavigationSide AlternativeExitSides(DirectedRoad selected,DirectedRoad[][] connections)
+    {
+        NavigationSide sides=NavigationSide.None;
+        // Fork branches already contain permitted entrance-to-exit lane paths and
+        // native signals; never count a port that is only an opposing entrance.
+        if(selected.ForkInfo is {} fork)
+        {
+            foreach(var branch in fork.Branches.Where(b=>b.ExitNode!=selected.EndNodeUid&&b.EntryOrders.Count>0
+                &&connections.Any(g=>g[0].EndNodeUid==b.ExitNode&&g.Any(Valid))))
+                sides|=branch.Signal switch{ForkSignal.Left=>NavigationSide.Left,ForkSignal.Right=>NavigationSide.Right,_=>NavigationSide.None};
+            return sides;
+        }
+        if(NativeTangent(selected,true) is not {} entry||NativeTangent(selected,false) is not {} continuation)return sides;
+        var outlets=connections.Where(g=>g[0].EndNodeUid!=selected.EndNodeUid)
+            .SelectMany(g=>g.Where(Valid).Where(NativeGeometrySupported))
+            .Select(e=>(e.EndNodeUid,Direction:NativeTangent(e,false))).Where(e=>e.Direction is not null)
+            .Select(e=>(e.EndNodeUid,e.Direction!.Value));
+        return sides|AlternativeExitSides(entry,continuation,selected.EndNodeUid,outlets);
+    }
+
+    private static NavigationSide AlternativeExitSides(Vector2 entry,Vector2 continuation,ulong selectedExit,
+        IEnumerable<(ulong End,Vector2 Direction)> exits)
+    {
+        NavigationSide sides=NavigationSide.None;
+        foreach(var exit in exits.Where(e=>e.End!=selectedExit))
+        {
+            // Keep the junction rule's existing U-turn exclusion and outlet-order
+            // tolerance. No additional turn classification threshold is introduced.
+            if(Math.Abs(Angle(entry,exit.Direction))>=150)continue;
+            double relative=Angle(continuation,exit.Direction);
+            if(relative < -ExitOrderingToleranceDegrees)sides|=NavigationSide.Left;
+            if(relative > ExitOrderingToleranceDegrees)sides|=NavigationSide.Right;
+        }
+        return sides;
+    }
 
     private static bool NativeGeometrySupported(DirectedRoad edge)
         => edge.Points.Count < 4 || NativeTangent(edge, true).HasValue && NativeTangent(edge, false).HasValue;

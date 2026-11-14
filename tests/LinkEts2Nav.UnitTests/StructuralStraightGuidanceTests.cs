@@ -5,10 +5,10 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class StructuralStraightGuidanceTests
 {
     private static readonly DateTimeOffset Now=DateTimeOffset.Parse("2026-11-13T00:00:00Z");
-    // Synthetic physical junctions occupy a known 30-metre interval.
+    // Synthetic physical junctions occupy a known 30-metre interval and have legal side exits in both directions.
     private static NavigationManeuver S(string id,double distance,bool minor=false,NavigationJunctionKind kind=NavigationJunctionKind.Ordinary)
         =>new(id,ManeuverKind.Straight,distance,"in","out")
-            {JunctionId=id,EndDistanceMeters=distance+30,IsMinorStraight=minor,JunctionKind=kind};
+            {JunctionId=id,EndDistanceMeters=distance+30,IsMinorStraight=minor,JunctionKind=kind,StraightExitSides=NavigationSide.Left|NavigationSide.Right};
     private static NavigationManeuver A(string id,double distance,NavigationJunctionKind kind=NavigationJunctionKind.Ordinary)
         =>new(id,ManeuverKind.TurnLeft,distance,"in","out"){JunctionId=id,EndDistanceMeters=distance+30,JunctionKind=kind};
     private static GuidanceSourcePlan Plan(params NavigationManeuver[] input)
@@ -52,12 +52,12 @@ public sealed class StructuralStraightGuidanceTests
         Assert.Equal(expected,Assert.Single(plan.Triggers,t=>t.Id.StartsWith("target@")&&t.Kind==SpeechTriggerKind.Overview).Text);
     }
     [Fact]
-    public void FerryBoardingIsNotAJunctionOrdinalAndKeepsUnnumberedPassageHelp()
+    public void FerryBoardingIsNotAJunctionOrdinalAndHasNoDirectionalPassageHelp()
     {
         var ferry=A("port",1000) with{Kind=ManeuverKind.BoardFerry,Instruction="进入码头",NearInstruction="进入码头，按导航方向乘坐轮渡"};
         var plan=Plan(S("junction",850),ferry);
         Assert.Equal("两百米后，进入码头。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("port@")&&t.Id.EndsWith(":200")).Text);
-        Assert.Equal("直行通过当前路口。",Assert.Single(Assist(plan)).Text);
+        Assert.Empty(Assist(plan));
         Assert.DoesNotContain(plan.Triggers,t=>t.Text.Contains("个路口进入码头"));
     }
     [Fact]
@@ -106,7 +106,7 @@ public sealed class StructuralStraightGuidanceTests
         var plan=Plan(S("s",400),ring);
         Assert.Equal("两百米后，在第二个路口进入环岛。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("ring@")&&t.Id.EndsWith(":200")).Text);
         Assert.Equal("一百米后，进入环岛，请从第二出口驶出。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("ring@")&&t.Id.EndsWith(":100")).Text);
-        Assert.Single(Assist(plan));
+        Assert.Empty(Assist(plan));
     }
     [Theory]
     [InlineData(3,330)][InlineData(4,430)][InlineData(5,530)]
@@ -273,7 +273,7 @@ public sealed class StructuralStraightGuidanceTests
     {
         var destination=A("destination",1000) with{Kind=ManeuverKind.Destination,JunctionId=null};
         var plan=Plan(S("early",600),S("near",850),destination);
-        Assert.Equal(new[]{"直行通过当前路口。","直行通过当前路口。"},Assist(plan).Select(t=>t.Text));
+        Assert.Empty(Assist(plan));
         Assert.DoesNotContain(plan.Triggers,t=>t.Text.Contains("第"));
     }
 

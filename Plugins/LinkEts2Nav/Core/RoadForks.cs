@@ -10,7 +10,11 @@ public sealed record RoadForkBranch(ulong ExitNode,ForkSignal? Signal,IReadOnlyL
 }
 public sealed record RoadForkInfo(ulong EntryNode,int EntryLaneCount,IReadOnlyList<RoadForkBranch> Branches,string? Failure=null);
 public sealed record RoadForkInstruction(ManeuverKind Kind,bool Silent,string? Text,IReadOnlyList<int> EntryOrders,
-    IReadOnlyList<int> DedicatedOrders,string? Failure=null);
+    IReadOnlyList<int> DedicatedOrders,string? Failure=null)
+{
+    /// <summary>Structured side of a two-outlet lane-selection instruction; multi-outlet wording has no side.</summary>
+    public NavigationSide Side { get; init; }
+}
 public sealed record RoadForkDiagnostic(string Prefab,ulong EntryNode,ulong ExitNode,string Reason);
 
 /// <summary>Branch lamps and lane reachability select the action. Outlet order only clarifies lane-selection wording.</summary>
@@ -41,12 +45,13 @@ public static class RoadForkRules
         if(unlit.Any(b=>!b.HasInheritedLane))return Unknown("无灯分支缺少可独立验证的继承入口车道");
         var text=LaneSelectionText(info.EntryLaneCount,branch.EntryOrders);
         if(text is null)return Unknown("所有入口车道均可达目标无灯分支，无法用选道区别出口");
-        return new(ManeuverKind.ChooseLanes,false,ForkSelectionText(info,branch,text),branch.EntryOrders,dedicated);
+        var selection=ForkSelectionText(info,branch,text);
+        return new(ManeuverKind.ChooseLanes,false,selection.Text,branch.EntryOrders,dedicated){Side=selection.Side};
     }
 
-    private static string ForkSelectionText(RoadForkInfo info,RoadForkBranch branch,string lanes)
+    private static (string Text,NavigationSide Side) ForkSelectionText(RoadForkInfo info,RoadForkBranch branch,string lanes)
     {
-        if(info.Branches.Count>=3)return "有多个相近出口，请"+lanes;
+        if(info.Branches.Count>=3)return ("有多个相近出口，请"+lanes,NavigationSide.None);
         var other=info.Branches.Single(b=>b.ExitNode!=branch.ExitNode);
         int order=0;
         if(branch.ExitTurnRadians is double selected&&other.ExitTurnRadians is double alternative
@@ -58,7 +63,8 @@ public static class RoadForkRules
             if(branch.EntryOrders.Max()<other.EntryOrders.Min())order=-1;
             else if(branch.EntryOrders.Min()>other.EntryOrders.Max())order=1;
         }
-        return order==0?"分岔口，请"+lanes:"分岔口靠"+(order<0?"左":"右")+"，"+lanes;
+        return order==0?("分岔口，请"+lanes,NavigationSide.None)
+            :("分岔口靠"+(order<0?"左":"右")+"，"+lanes,order<0?NavigationSide.Left:NavigationSide.Right);
     }
 
     public static string? LaneSelectionText(int count,IReadOnlyList<int> selected)

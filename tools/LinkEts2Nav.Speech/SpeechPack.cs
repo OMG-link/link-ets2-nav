@@ -72,6 +72,9 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
 
     public (string Path, bool CacheHit) Generate(string text, Func<string, (string Path, bool CacheHit)> local)
     {
+        var city=Regex.Match(text,@"^(?<prefix>(?:[零一二两三四五六七八九十百千0-9]+米后，|即将)进入)(?<name>[^，。\r\n]+)城区，请注意减速慢行。$",
+            RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
+        if(city.Success)return GenerateCityEntry(city.Groups["prefix"].Value,city.Groups["name"].Value,text,local);
         if (directory is null || !File.Exists(Path.Combine(directory, "manifest.json"))) return local(text);
         PackManifest pack;
         try
@@ -128,11 +131,46 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         }
     }
 
-    private string Resolve(PackEntry entry)
+    private (string Path,bool CacheHit) GenerateCityEntry(string prefix,string name,string text,
+        Func<string,(string Path,bool CacheHit)> local)
+    {
+        const string suffix="城区，请注意减速慢行。";
+        try
+        {
+            string cityDirectory=Path.Combine(directory??"","CityNames"),manifest=Path.Combine(cityDirectory,"manifest.json");
+            if(directory is null||!File.Exists(manifest))return local(prefix+suffix);
+            if(new FileInfo(manifest).Length>2097152)throw new InvalidDataException("City-name manifest too large.");
+            var pack=JsonSerializer.Deserialize<PackManifest>(File.ReadAllText(manifest));
+            if(pack is not {Schema:1,Entries:not null}||pack.Entries.Length>4096||pack.Entries.Any(e=>e is null))
+                throw new InvalidDataException("Invalid city-name manifest.");
+            var clip=pack.Entries.SingleOrDefault(e=>e.Text==name);
+            if(clip is null)return local(prefix+suffix);
+            // Resolve the foreign name before any local inference. The name is
+            // never sent to the lexicon-only local voice, which may skip it.
+            string cityFile=Resolve(clip,cityDirectory);
+            var samples=new[]{PcmAudio.Read(local(prefix).Path),PcmAudio.Read(cityFile),PcmAudio.Read(local(suffix).Path)};
+            string key=Hash(Encoding.UTF8.GetBytes("city-entry-v1|"+text+"|"+string.Join("|",samples.Select(Hash))));
+            string result=Path.Combine(cacheDirectory,"city-"+key+".wav");
+            byte[] joined=samples.SelectMany(x=>x).ToArray();
+            if(File.Exists(result))
+            {
+                try{if(PcmAudio.Read(result).AsSpan().SequenceEqual(joined))return(result,true);}
+                catch(Exception e) when(e is IOException or InvalidDataException){}
+            }
+            PcmAudio.Write(result,joined);return(result,false);
+        }
+        catch(Exception e) when(e is IOException or JsonException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine("City-name fragment unavailable; using generic city-entry audio: "+e.GetType().Name);
+            return local(prefix+suffix);
+        }
+    }
+
+    private string Resolve(PackEntry entry,string? packDirectory=null)
     {
         // Flat content-derived filenames prevent manifest path traversal.
         if (entry.File != FileName(entry.Text)) throw new InvalidDataException("Unexpected pack filename.");
-        string path = Path.Combine(directory!, entry.File);
+        string path = Path.Combine(packDirectory??directory!, entry.File);
         if (new FileInfo(path).Length > 64 * 1024 * 1024 || Hash(File.ReadAllBytes(path)) != entry.Sha256)
             throw new InvalidDataException("Speech pack checksum mismatch.");
         PcmAudio.Read(path);

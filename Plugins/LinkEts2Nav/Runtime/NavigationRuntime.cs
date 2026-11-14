@@ -17,7 +17,7 @@ public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next
 
 /// <summary>Collects route events for the shared coordinator. Standalone callers only prepare and inspect due text; they never play audio.</summary>
 public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
-    Action<string>? log = null,GuidanceCoordinator? guidance=null)
+    Action<string>? log = null,GuidanceCoordinator? guidance=null,IReadOnlySet<string>? spokenCityNames=null)
 {
     private readonly LaneMergeDetector mergeDetector = new();
     private readonly LaneExitApproach exitApproach = new();
@@ -29,7 +29,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private readonly RouteProgressTracker progress=new();
     private readonly EnvironmentPreviewPlanner cityPlanner=new();
     private readonly EnvironmentPreviewPlanner narrowPlanner=new();
-    private readonly CityEntryEventBuilder cityEntries=new(log);
+    private readonly CityEntryEventBuilder cityEntries=new(log,spokenCityNames);
     private string? citySession;
     private string? cityFrame;
     private readonly DirectedPathMatcher matcher = new();

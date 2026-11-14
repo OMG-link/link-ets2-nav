@@ -110,6 +110,12 @@ try {
         $packDeployment = Join-Path $hostOutput 'Assets\LinkEts2Nav\SpeechPack'
         New-Item -ItemType Directory -Path $packDeployment -Force | Out-Null
         Get-ChildItem -LiteralPath $speechPack -File | Copy-Item -Destination $packDeployment -Force
+        $cityNamePack = Join-Path $speechPack 'CityNames'
+        if (Test-Path -LiteralPath (Join-Path $cityNamePack 'manifest.json')) {
+            $cityNameDeployment = Join-Path $packDeployment 'CityNames'
+            New-Item -ItemType Directory -Path $cityNameDeployment -Force | Out-Null
+            Get-ChildItem -LiteralPath $cityNamePack -File | Copy-Item -Destination $cityNameDeployment -Force
+        }
         Write-Host "Local speech pack deployed to $packDeployment."
     }
     Write-Host "Plugin deployed to $deployment. Enable it in ETS2LA's plugin manager."

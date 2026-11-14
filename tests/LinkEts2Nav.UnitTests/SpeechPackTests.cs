@@ -162,5 +162,33 @@ public sealed class SpeechPackTests : IDisposable
             foreach (int limit in SpeechPack.CommonLimits)
                 Assert.Contains(prefix + "，限速" + SpeechPack.Number(limit) + "。", texts);
     }
+    [Theory]
+    [InlineData("五百米后，进入")]
+    [InlineData("两百米后，进入")]
+    [InlineData("即将进入")]
+    public void CityNameUsesCloudFragmentBetweenLocalChinesePieces(string prefix)
+    {
+        const string name="Patreksfjörður",suffix="城区，请注意减速慢行。";
+        string names=Path.Combine(Pack,"CityNames");Directory.CreateDirectory(names);
+        string file=SpeechPack.FileName(name);PcmAudio.Write(Path.Combine(names,file),[3,0,4,0]);
+        var entry=new PackEntry(name,file,SpeechPack.Hash(File.ReadAllBytes(Path.Combine(names,file))));
+        File.WriteAllText(Path.Combine(names,"manifest.json"),JsonSerializer.Serialize(new PackManifest(1,"qwen","voice",[entry])));
+        var pack=new SpeechPack(Pack,Cache);string text=prefix+name+suffix;
+        var result=pack.Generate(text,Local);
+        Assert.Equal(new[]{prefix,suffix},localRequests);
+        Assert.Equal(new byte[]{9,0,3,0,4,0,9,0},PcmAudio.Read(result.Path));
+        Assert.True(pack.Generate(text,Local).CacheHit);
+        Assert.DoesNotContain(localRequests,t=>t.Contains(name));
+        File.WriteAllText(Path.Combine(names,file),"corrupt");
+        var fallback=pack.Generate(text,Local);
+        Assert.Equal(prefix+suffix,localRequests.Last());Assert.DoesNotContain(localRequests,t=>t.Contains(name));
+    }
+    [Fact]
+    public void MissingNameNeverSendsTheForeignWordToLocalSynthesis()
+    {
+        new SpeechPack(Pack,Cache).Generate("五百米后，进入Þórshöfn城区，请注意减速慢行。",Local);
+        Assert.Equal("五百米后，进入城区，请注意减速慢行。",Assert.Single(localRequests));
+    }
+
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
 }

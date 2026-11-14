@@ -10,11 +10,11 @@ namespace LinkEts2Nav.Map;
 /// signs update persistent state; future signs are simulated on a local copy.
 /// Polygon membership never creates an entry or supplies an assumed initial state.
 /// </summary>
-public sealed class CityEntryEventBuilder(Action<string>? log=null)
+public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<string>? spokenCityNames=null)
 {
     public const string Kind="city-entry";
     private sealed record Landmark(string SignId,string RoadId,ulong From,ulong To,
-        double Along,Vector3 Position,bool? Urban);
+        double Along,Vector3 Position,bool? Urban,string? CityName);
     private bool? actualUrban;
     private double? actualStateAlong;
     private string? diagnosticSignature;
@@ -61,7 +61,7 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null)
                 bool reliable=!sign.Action.Unsupported&&original?.TemplateOverride!=true&&original?.OwnershipAmbiguous!=true;
                 if(!reliable)warnings.Add("入城标牌未采用："+sign.SignId+"；规则、模板、归属或方向未确认。");
                 landmarks.Add(new(sign.SignId,road.Id,road.StartNodeUid,road.EndNodeUid,
-                    along+at.Value.Along,sign.Position,reliable?sign.Action.Urban:null));
+                    along+at.Value.Along,sign.Position,reliable?sign.Action.Urban:null,original?.CityName));
             }
             along+=length;
         }
@@ -78,7 +78,7 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null)
         foreach(var sign in ordered.Where(s=>s.Along>=playerAlongMeters))
         {
             if(sign.Urban==true&&forecast!=true)
-                result.Add(new(Identity(sign),Kind,sign.Along,sign.Along,Text));
+                result.Add(new(Identity(sign),Kind,sign.Along,sign.Along,meters=>Text(meters,sign.CityName is {} name&&spokenCityNames?.Contains(name)==true?name:null)));
             forecast=sign.Urban;
         }
         return result;
@@ -98,8 +98,11 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null)
         diagnosticSignature=signature;
         foreach(string warning in warnings.Distinct())log?.Invoke(warning);
     }
-    public static string Text(int meters)=>meters<50?"即将进入城区，请注意减速慢行。":
-        NavigationPrompts.AtDistance(ManeuverKind.Straight,meters,0,"进入城区，请注意减速慢行");
+    public static string Text(int meters,string? cityName=null)
+    {
+        string action="进入"+cityName+"城区，请注意减速慢行";
+        return meters<50?"即将"+action+"。":NavigationPrompts.AtDistance(ManeuverKind.Straight,meters,0,action);
+    }
 
     // Parallel boards can describe the same directed cross-section. Physical
     // position, directed edge and canonical occurrence identify the landmark,

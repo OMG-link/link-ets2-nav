@@ -13,7 +13,7 @@ public static class SpeechPackBuilder
         PackManifest? previous = null;
         if (File.Exists(manifestPath))
         {
-            if (new FileInfo(manifestPath).Length > 262144) throw new InvalidDataException("Speech pack manifest too large.");
+            if (new FileInfo(manifestPath).Length > 2097152) throw new InvalidDataException("Speech pack manifest too large.");
             previous = JsonSerializer.Deserialize<PackManifest>(await File.ReadAllTextAsync(manifestPath, cancellationToken));
         }
         string[] planned = texts.Distinct(StringComparer.Ordinal).ToArray();

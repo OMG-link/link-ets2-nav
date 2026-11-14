@@ -81,12 +81,15 @@ public sealed class NavPlugin : Plugin
 
     public override void Shutdown() => OnDisable();
 
-    private static PlannedSpeechAnnouncer? CreateSpeech(IWarningAnnouncer fallback, NavigationLogReporter log, CancellationToken token)
+    private static PlannedSpeechAnnouncer? CreateSpeech(IWarningAnnouncer fallback, NavigationLogReporter log, CancellationToken token,out IReadOnlySet<string> cityNames)
     {
+        cityNames=new HashSet<string>(StringComparer.Ordinal);
         try
         {
             var options = SpeechOptions.Load(AppContext.BaseDirectory);
             if (!options.Enabled) return null;
+            cityNames=PreGeneratedSpeech.Load(Path.Combine(options.PackDirectory,"CityNames"),
+                message=>log.Event(message,DateTimeOffset.UtcNow),4096).Keys.ToHashSet(StringComparer.Ordinal);
             log.Event("TTS 已启用：按预警触发顺序预生成，音色=" + options.Voice + "，文件缓存=" + options.CacheDirectory, DateTimeOffset.UtcNow);
             return new(new KokoroSpeechProcess(options), new Ets2LaWarningAnnouncer(audioFile: () => null, cancellationToken: token), path => AudioHandler.Current.Queue(path),
                 message => log.Event(message, DateTimeOffset.UtcNow), token,
@@ -110,14 +113,14 @@ public sealed class NavPlugin : Plugin
         ReplayCapture.Attach(motionTrace);
         logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
         var fallback = new Ets2LaWarningAnnouncer(cancellationToken: token);
-        await using var speech = CreateSpeech(fallback, logOutput, token);
+        await using var speech = CreateSpeech(fallback, logOutput, token,out var cityNames);
         await using var playback=new GuidancePlaybackManager(speech?.Queue,new Ets2LaGuidanceAudioPlayer(),
             ()=>Ets2LaGuidanceAudioPlayer.FallbackFile(AppContext.BaseDirectory,message=>logOutput.Event(message,DateTimeOffset.UtcNow),allowCustom:speech is null),
             message=>logOutput.Event(message,DateTimeOffset.UtcNow),token);
         var guidance=new GuidanceCoordinator(speech?.Queue,playback,message=>logOutput.Event(message,DateTimeOffset.UtcNow));
         var pipeline = new WarningPipeline(speech,guidance);
         var navigation = new NavigationRuntime(speech?.Queue,
-            message => logOutput.Event(message, DateTimeOffset.UtcNow),guidance);
+            message => logOutput.Event(message, DateTimeOffset.UtcNow),guidance,cityNames);
         void Publish(NavDiagnosticSnapshot snapshot, bool isWarning = false)
         {
             if (token.IsCancellationRequested) return;

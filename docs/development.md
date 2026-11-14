@@ -314,3 +314,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/export-prefab-svg.ps
 `SpeechTrigger.Window` 可指定轮询起点、回调和起点是否必须越过；`SpeechTrigger.AlongMeters` 仍为强制触发终点。`SpeechTriggerScheduler` 仅对新鲜、启用、未消费且已进入区间的触发器调用回调，传入事件、当前沿路位置、速度和时间；到达或越过终点时直接入队。回调不负责合成或播放，音频在规划后提前准备。区间不排斥其他系列，触发后使用共享播放器的优先级及系列覆盖；系列结束仍会取消待播项。回调本身不写入回放，区间边界会随诊断保存。
 
 导航最终执行提示使用此机制：区间从该动作最早合法播报位置开始，以原20米触发点为终点；回调判断剩余沿路距离是否不超过当前速度对应的两秒车程。因此低速最迟20米触发，高速按两秒车程提前入队，且不会越过上一动作结束边界提前触发。触发后同系列较早的预告被消费，减速不会使已触发的提示重新等待。该规则决定入队时机，不保证播放器立即开口。
+
+### 城市名独立语音片段
+
+`CitySignNameReader` 从入城标牌模板的板面绑定、文本对象 ID 和实例文本覆盖读取原始 Unicode 城市名，多个不同文本无法确定名称时保留普通城区提示。运行时只启用启动时已校验的 `SpeechPack/CityNames` 名称，避免本地模型跳过词典外地名。
+
+准备 UTF-8 文本文件，每行一个城市原名，再显式调用 Qwen 生成独立名称片段（使用 API 额度）：
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Speech -- --generate-city-names --keys .api-keys --output artifacts/speech/qwen-longanhuan-v3.1/CityNames --texts city-names.txt
+```
+
+工具保留并复用已有校验通过的名称，只生成缺失音频。`dev.ps1` 的部署步骤会复制该目录；下一次 Run 会加载名称清单。运行时将本地生成的距离与“进入”前缀、预生成名称、“城区，请注意减速慢行”后缀统一为 24 kHz 单声道 PCM 后拼接，并缓存完整句子。片段缺失或校验失败时使用普通城区提示，不将外语名称交给本地模型，也不自动发起云端请求。音频与清单属于本地产物，不提交源码仓库。

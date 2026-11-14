@@ -9,6 +9,7 @@ public sealed record LimitAction(int? SetKph = null, bool Reset = false, bool? U
 public sealed record LimitSign(string Id, Vector3 Position, Vector3 Direction, bool FollowRoad,
     LimitAction Action, bool TemplateOverride = false)
 {
+    public string? CityName { get; init; }
     public string? RoadId { get; init; }
     public bool OwnershipAmbiguous { get; init; }
 }

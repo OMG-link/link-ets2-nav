@@ -19,6 +19,7 @@ public sealed class SpeedLimitDefinitionReader
     private readonly Dictionary<string,TruckSpeedLimit> limits=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> rules=new(StringComparer.Ordinal);
     private readonly Dictionary<byte,string> countryNames=new();
+    private CitySignNameReader? citySignNames;
     private string? error;
     private TruckLib.ScsMap.Map? indexedHost;
     private RoadCountryIndex? hostCountries;
@@ -28,6 +29,7 @@ public sealed class SpeedLimitDefinitionReader
         try
         {
             var fs=SpeedLimitFileSystem.Create(original,mods??[]);
+            citySignNames=new(fs);
             IEnumerable<Unit> Files(string directory,string prefix) => fs.GetFiles(directory)
                 .Where(p=>fs.GetParent(p).TrimEnd('/')==directory.TrimEnd('/')
                     && Path.GetFileName(p).StartsWith(prefix,StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal))
@@ -124,7 +126,7 @@ public sealed class SpeedLimitDefinitionReader
                 // Keep the conservative template check for numeric or unresolved rules.
                 bool fixedUrban=action.Urban.HasValue&&action.SetKph is null&&!action.Unsupported;
                 placedSigns.Add(new(sign.Uid.ToString("X16"),sign.Node.Position,Vector3.Transform(-Vector3.UnitZ,sign.Node.Rotation),
-                    sign.FollowRoadDir,action,hasTemplate&&!fixedUrban));
+                    sign.FollowRoadDir,action,hasTemplate&&!fixedUrban){CityName=action.Urban==true?citySignNames?.Read(sign):null});
             }
         var regions=regionsOverride??ReadRegions(map);
         PrepareHost(hostMap, cancellationToken);

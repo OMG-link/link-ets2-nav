@@ -7,19 +7,19 @@ namespace LinkEts2Nav.Runtime;
 /// <summary>Validate small pre-generated packs before planning, so first-frame alerts need no worker round trip.</summary>
 public static class PreGeneratedSpeech
 {
-    public static IReadOnlyDictionary<string, string> Load(string directory, Action<string>? log = null)
+    public static IReadOnlyDictionary<string, string> Load(string directory, Action<string>? log = null,int maximumEntries=256)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         string manifest = Path.Combine(directory, "manifest.json");
         if (!File.Exists(manifest)) return result;
         try
         {
-            if (new FileInfo(manifest).Length > 262144) throw new InvalidDataException("Speech pack manifest too large.");
+            if (new FileInfo(manifest).Length > (maximumEntries>256?2097152:262144)) throw new InvalidDataException("Speech pack manifest too large.");
             using var json = JsonDocument.Parse(File.ReadAllText(manifest));
             var root = json.RootElement;
             if (root.GetProperty("Schema").GetInt32() != 1) throw new InvalidDataException("Unsupported speech pack schema.");
             var entries = root.GetProperty("Entries");
-            if (entries.GetArrayLength() > 256) throw new InvalidDataException("Too many speech pack entries.");
+            if (entries.GetArrayLength() > maximumEntries) throw new InvalidDataException("Too many speech pack entries.");
             foreach (var entry in entries.EnumerateArray())
             {
                 string text = entry.GetProperty("Text").GetString() ?? "";

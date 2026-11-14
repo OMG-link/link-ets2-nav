@@ -37,6 +37,26 @@ public sealed class SpeedLimitDefinitionTests
     }
 
     [Theory]
+    [InlineData("ml1","Patreksfjörður")]
+    [InlineData("other",null)]
+    public void CityNameComesFromTheBoundTextObjectRatherThanArbitraryTemplateAttributes(string area,string? expected)
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/sign.test.sii"]="""SiiNunit { sign_model : sign.test { traffic_rule: traffic_rule.urban_start } }""";
+        fs.Files["/def/sign/templates.sii"]="""SiiNunit { sign_template : sign_templ.city { path: "/def/sign/template/city.sii" } }""";
+        fs.Files["/def/sign/boards.sii"]="""SiiNunit { sign_board : sign_board.city { path: "/def/sign/board/city.sii" } }""";
+        fs.Files["/def/sign/template/city.sii"]="""SiiNunit { sign_template_board_binding : .binding { area_name: ml1 linked_board: sign_board.city } }""";
+        fs.Files["/def/sign/board/city.sii"]="""SiiNunit { sign_template_text : .label { id: 4284350462 text: "Name" } }""";
+        var map=new TruckLib.ScsMap.Map();var sign=TruckLib.ScsMap.Sign.Add(map,new(50,0,-2),"test");
+        sign.SignTemplate="sign_templ.city";
+        sign.SignOverrides=[new SignOverride{Id=4284350462,AreaName=area,Attributes=[
+            new SignOverrideAttribute<string>{Index=0,Value="Patreksfjörður"},
+            new SignOverrideAttribute<float>{Index=8,Value=.005f}]}];
+        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        Assert.Equal(expected,Assert.Single(data.Signs).CityName);
+    }
+
+    [Theory]
     [InlineData("traffic_rule.urban_start",false,true)]
     [InlineData("traffic_rule.urban_end",false,false)]
     [InlineData("traffic_rule.limit_60",true,null)]

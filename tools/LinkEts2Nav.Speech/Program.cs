@@ -12,6 +12,7 @@ if (args.Contains("--help", StringComparer.Ordinal))
     Console.WriteLine("Writes {id,path,cacheHit,error} JSON lines to stdout. error=null indicates success.");
     Console.WriteLine("Kokoro multi-lang v1.1-zh preset: zf_067 = speaker 36, speed 1.0, CPU only.");
     Console.WriteLine("Generate cloud pack: --generate-pack --keys FILE --output DIR (explicit network calls, billed by provider).");
+    Console.WriteLine("Generate city-name fragments: --generate-city-names --keys FILE --output DIR --texts UTF8_FILE.");
     Console.WriteLine("No playback or model downloads. EOF exits 0; startup errors exit 2; request errors keep the worker alive.");
     return 0;
 }
@@ -23,7 +24,7 @@ var json = new JsonSerializerOptions
 };
 try
 {
-    if (args.Length > 0 && args[0] == "--generate-pack") return await QwenPackGenerator.RunAsync(args);
+    if (args.Length > 0 && args[0] is "--generate-pack" or "--generate-city-names") return await QwenPackGenerator.RunAsync(args);
     var options = WorkerOptions.Parse(args);
     var pack = new SpeechPack(options.PackDirectory, options.CacheDirectory);
     using var synthesis = new KokoroSynthesis(options);

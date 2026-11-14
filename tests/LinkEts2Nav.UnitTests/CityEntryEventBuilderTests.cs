@@ -14,6 +14,18 @@ public sealed class CityEntryEventBuilderTests
     private static IReadOnlyList<EnvironmentPreviewEvent> Events(SpeedLimitData data,double player=0)
         =>new CityEntryEventBuilder().Build([Road],player,ProjectedSignBuilder.Build(data,[],TestContext.Current.CancellationToken));
 
+    [Fact]
+    public void UsesVisibleNameOnlyWhenItsAudioWasPreGenerated()
+    {
+        const string name="Patreksfjörður";
+        var data=Data(Sign("entry",600) with{CityName=name});
+        var generic=Assert.Single(new CityEntryEventBuilder().Build([Road],0,data));
+        Assert.Equal("五百米后，进入城区，请注意减速慢行。",generic.Text(500));
+        var named=Assert.Single(new CityEntryEventBuilder(spokenCityNames:new HashSet<string>{name}).Build([Road],0,data));
+        Assert.Equal("五百米后，进入Patreksfjörður城区，请注意减速慢行。",named.Text(500));
+        Assert.Equal("即将进入Patreksfjörður城区，请注意减速慢行。",named.Text(0));
+        Assert.Equal(generic.Id,named.Id);Assert.Equal(generic.EndAlongMeters,named.EndAlongMeters);
+    }
     [Fact] public void SignPositionIsTheEventAndEndWithOrdinaryFiveHundredTwoHundredProfile()
     {
         var e=Assert.Single(Events(Data(Sign("entry",600))));

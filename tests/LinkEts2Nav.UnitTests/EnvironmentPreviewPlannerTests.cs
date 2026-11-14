@@ -1,4 +1,4 @@
-﻿using LinkEts2Nav.Core.Guidance;
+using LinkEts2Nav.Core.Guidance;
 namespace LinkEts2Nav.UnitTests;
 public sealed class EnvironmentPreviewPlannerTests
 {
@@ -43,7 +43,7 @@ public sealed class EnvironmentPreviewPlannerTests
     private static readonly DateTimeOffset Now=DateTimeOffset.Parse("2026-11-12T00:00:00Z");
     private static EnvironmentPreviewEvent E(string id,string kind,double along,double? end=null)=>new(id,kind,along,end,d=>d+":"+id);
     [Theory]
-    [InlineData(450,450,1)] [InlineData(350,350,1)] [InlineData(200,200,1)] [InlineData(150,150,1)]
+    [InlineData(450,450,2)] [InlineData(350,350,2)] [InlineData(349.999,300,1)] [InlineData(200,200,1)] [InlineData(150,150,1)]
     [InlineData(49,0,1)] [InlineData(500,500,2)] [InlineData(700,500,2)]
     public void FirstDistanceDeterminesTheWholeEnvironmentProfile(double distance,int first,int count)
     {
@@ -56,10 +56,11 @@ public sealed class EnvironmentPreviewPlannerTests
     {
         var p=new EnvironmentPreviewPlanner();var s=new SpeechTriggerScheduler();
         var plan=p.Build("e",0,[E("a","camera",300,300),E("b","camera",750,750),E("lane","lane",700,700)],s,true);
-        var camera=Assert.Single(plan.Triggers,t=>t.EventId=="b");Assert.Equal(300,camera.AlongMeters);Assert.Equal("450:b",camera.Text);
+        var camera=Assert.Single(plan.Triggers,t=>t.Id=="b:first");Assert.Equal(300,camera.AlongMeters);Assert.Equal("450:b",camera.Text);
         Assert.Equal(new double[]{200,500},plan.Triggers.Where(t=>t.EventId=="lane").Select(t=>t.AlongMeters));
         var later=p.Build("e",310,[E("b","camera",750,750)],s,true);
-        Assert.Equal(camera,Assert.Single(later.Triggers));
+        Assert.Equal(camera,Assert.Single(later.Triggers,t=>t.Id=="b:first"));
+        Assert.Contains(later.Triggers,t=>t.Id=="b:200");
     }
     [Fact]
     public void UnknownEarlierEndWaitsForAPassageFactInsteadOfInventingABoundary()
@@ -68,7 +69,8 @@ public sealed class EnvironmentPreviewPlannerTests
         var plan=p.Build("e",0,[E("a","camera",100),E("b","camera",450,450)],s,true);
         Assert.DoesNotContain(plan.Triggers,t=>t.EventId=="b");
         var later=p.Build("e",100,[E("a","camera",100) with{Ended=true},E("b","camera",450,450)],s,true);
-        Assert.Equal("350:b",Assert.Single(later.Triggers,t=>t.EventId=="b").Text);
+        Assert.Equal("350:b",Assert.Single(later.Triggers,t=>t.Id=="b:first").Text);
+        Assert.Contains(later.Triggers,t=>t.Id=="b:200");
     }
     [Fact]
     public void APreviousEndAndNextFirstPointAtTheSameCoordinateAreBothConsumed()

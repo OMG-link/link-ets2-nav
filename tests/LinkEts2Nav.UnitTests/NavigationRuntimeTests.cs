@@ -22,8 +22,8 @@ public sealed class NavigationRuntimeTests
         return(new(map,[],[],[]){PrefabPaths=links},route);
     }
     private static GameDataSnapshot Data(RouteSnapshot route,float z,RouteAvailability availability=RouteAvailability.Available,
-        bool paused=false,bool stale=false)=>new(
-        new(0,0,z,.5,20,1000,true,paused,1,stale?Now.AddSeconds(-3):Now),
+        bool paused=false,bool stale=false,double speed=20)=>new(
+        new(0,0,z,.5,speed,1000,true,paused,1,stale?Now.AddSeconds(-3):Now),
         route,availability,"session",!paused);
     private static NavigationRuntime ObserveDiagnostics(Action cue,Action<string>? log=null)=>new(log:line=>
     {
@@ -286,7 +286,7 @@ public sealed class NavigationRuntimeTests
         await using var playback=new GuidancePlaybackManager(queue,new CallbackPlayer(_=>{beeps++;played.TrySetResult();}),()=>"beep.wav");
         var guidance=new GuidanceCoordinator(queue,playback);
         var runtime = new NavigationRuntime(queue,guidance:guidance);
-        void Step(float z){var data=Data(scene.Route,z);guidance.Observe(data,Now);runtime.Process(data,scene.Map,Now);guidance.Tick(data,Now);}
+        void Step(float z){var data=Data(scene.Route,z,speed:10);guidance.Observe(data,Now);runtime.Process(data,scene.Map,Now);guidance.Tick(data,Now);}
         Step(621);
         await failed.Task.WaitAsync(TestContext.Current.CancellationToken);
         await played.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
@@ -320,7 +320,7 @@ public sealed class NavigationRuntimeTests
                 {if(path==startFile)return;if(path=="beep.wav")beeps++;else played.Add(path);completed.TrySetResult();}),()=>"beep.wav");
             var guidance=new GuidanceCoordinator(queue,playback);
             var runtime = new NavigationRuntime(queue,guidance:guidance);
-            void Step(float z){var data=Data(scene.Route,z);guidance.Observe(data,Now);runtime.Process(data,scene.Map,Now);guidance.Tick(data,Now);}
+            void Step(float z){var data=Data(scene.Route,z,speed:10);guidance.Observe(data,Now);runtime.Process(data,scene.Map,Now);guidance.Tick(data,Now);}
             Step(621);
             string text = await synth.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
             Assert.Contains("右转", text);
@@ -346,7 +346,7 @@ public sealed class NavigationRuntimeTests
                 preGenerated:new Dictionary<string,string>{{text,file}});
             Assert.True(queue.IsReady(text));
             var runtime=new NavigationRuntime(queue);
-            Assert.Equal(text,runtime.Process(Data(scene.Route,621),scene.Map,Now).LastSpoken);
+            Assert.Equal(text,runtime.Process(Data(scene.Route,621,speed:10),scene.Map,Now).LastSpoken);
             Assert.Equal(0,directPlayback);
         }
         finally{File.Delete(file);}
@@ -354,17 +354,18 @@ public sealed class NavigationRuntimeTests
     private sealed class CallbackPlayer(Action<string> callback):IGuidanceAudioPlayer
     {public Task PlayAsync(string path,CancellationToken token){callback(path);return Task.CompletedTask;}}
 
-    [Fact]
-    public void FirstDetectionAt79MetersRepeatsOnlyForTwentyMeterExecution()
+    [Theory]
+    [InlineData(10,2)] [InlineData(20,1)]
+    public void FirstDetectionAt79MetersUsesHundredStageSpeedFilteringAndKeepsExecution(double speed,int expected)
     {
         var scene=Scene();var calls=0;var logs=new List<string>();
         var runtime=ObserveDiagnostics(()=>calls++,logs.Add);
-        runtime.Process(Data(scene.Route,621),scene.Map,Now);
-        runtime.Process(Data(scene.Route,651),scene.Map,Now);
-        runtime.Process(Data(scene.Route,680),scene.Map,Now);
-        Assert.Equal(2,calls);
+        runtime.Process(Data(scene.Route,621,speed:speed),scene.Map,Now);
+        runtime.Process(Data(scene.Route,651,speed:speed),scene.Map,Now);
+        runtime.Process(Data(scene.Route,680,speed:speed),scene.Map,Now);
+        Assert.Equal(expected,calls);
         Assert.Contains(logs,l=>l.Contains("导航指令：右转。"));
-        Assert.Contains(logs,l=>l.Contains("导航指令：五十米后，右转。"));
+        Assert.Equal(speed<60/3.6,logs.Any(l=>l.Contains("导航指令：五十米后，右转。")));
     }
     [Fact]
     public void OfficialRouteSkipsHundredAtHighSpeedAndKeepsExecution()

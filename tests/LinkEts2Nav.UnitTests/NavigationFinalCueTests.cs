@@ -10,7 +10,7 @@ public sealed class NavigationFinalCueTests
     [InlineData(55,"五十米后，左转。",false)]
     [InlineData(88,"五十米后，左转。",false)]
     [InlineData(128,"一百米后，左转。",false)]
-    [InlineData(158,"一百五十米后，左转。",false)]
+    [InlineData(158,"一百五十米后，左转。",true)]
     [InlineData(210,"两百米后，左转。",true)]
     [InlineData(388,"三百五十米后，左转。",true)]
     public void InitialBriefingNeverConsumesFinalTwentyMeterExecution(double first,string? initial,bool hundred)

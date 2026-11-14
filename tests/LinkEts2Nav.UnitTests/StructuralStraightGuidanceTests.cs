@@ -68,11 +68,36 @@ public sealed class StructuralStraightGuidanceTests
         var helper=Assert.Single(plan.Sequences,s=>s.Id.Contains(":through:"));Assert.Equal(40,helper.EndAlongMeters);
     }
     [Theory]
-    [InlineData(false)][InlineData(true)]
-    public void CountStageOverridesNearestStageSkippingOnlyWhenThereIsAnIntermediateStraight(bool intermediate)
+    [InlineData(300,"三百米后，在第二个路口左转。",false)]
+    [InlineData(350,"三百五十米后，左转。",true)]
+    [InlineData(400,"四百米后，左转。",true)]
+    public void TheEffectiveFirstStageOwnsJunctionCounting(double distance,string overview,bool futureCount)
     {
-        var plan=intermediate?Plan(S("s",250),A("target",388)):Plan(A("target",388));
-        Assert.Equal(intermediate,plan.Triggers.Any(t=>t.Id.StartsWith("target@")&&t.Id.EndsWith(":200")));
+        var plan=Plan(S("s",distance-50),A("target",distance));
+        Assert.Equal(overview,Assert.Single(plan.Triggers,t=>t.Id.StartsWith("target@")&&t.Kind==SpeechTriggerKind.Overview).Text);
+        Assert.Equal(futureCount,plan.Triggers.Any(t=>t.Id.StartsWith("target@")&&t.Id.EndsWith(":200")));
+        Assert.Equal("直行通过第一个路口。",Assert.Single(Assist(plan)).Text);
+    }
+    [Fact]
+    public void AnAdvancedCountStageNumbersTheWholeIntervalFromItsActualFirstPoint()
+    {
+        var plan=Plan(S("early",50),S("late",200),A("target",300));
+        Assert.Equal("三百米后，在第三个路口左转。",Assert.Single(plan.Triggers,t=>t.Kind==SpeechTriggerKind.Overview).Text);
+        Assert.Equal(new[]{"直行通过第一个路口。","直行通过第二个路口。"},Assist(plan).Select(t=>t.Text));
+        Assert.Equal(2,plan.Sequences.Count(s=>s.Id.Contains(":through:")));
+    }
+    [Fact]
+    public void AnAdvancedFiveHundredStageStartsUnnumberedPassagesAtItsActualFirstPoint()
+    {
+        var plan=Plan(S("early",50),S("late",500),A("target",600));
+        Assert.Equal(new[]{"直线通过当前路口。","直行通过第一个路口。"},Assist(plan).Select(t=>t.Text));
+    }
+    [Fact]
+    public void AFirstHundredStageDoesNotInventAnUnannouncedOrdinal()
+    {
+        var plan=Plan(S("early",50),A("target",120));
+        Assert.Equal("一百米后，左转。",Assert.Single(plan.Triggers,t=>t.Kind==SpeechTriggerKind.Overview).Text);
+        Assert.Equal("直线通过当前路口。",Assert.Single(Assist(plan)).Text);
     }
     [Fact]
     public void RoundaboutCountsIntermediateStraightsAndRetainsTheExitNumberAtTheNearStage()

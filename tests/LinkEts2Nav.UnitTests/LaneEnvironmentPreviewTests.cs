@@ -22,10 +22,10 @@ public sealed class LaneEnvironmentPreviewTests
         Assert.Equal(TriggerDisposition.Ended,Assert.Single(s.Update(t,Now,0)).Disposition);
     }
     [Fact]
-    public void AFirstLaneWarningAtFourHundredFiftyHasNoLaterTwoHundredStage()
+    public void AFirstLaneWarningAtFourHundredFiftyRetainsTheTwoHundredStage()
     {
         var plan=new NavigationEventPlanner().Build("s","r",Now,0,[Lane(450)],true,false,false,new());
-        Assert.Equal("四百五十米后，车道合并，建议提前走左侧车道。",Assert.Single(plan.Triggers).Text);
+        Assert.Equal(new[]{"四百五十米后，车道合并，建议提前走左侧车道。","两百米后，车道合并，建议提前走左侧车道。"},plan.Triggers.Select(t=>t.Text));
     }
     [Fact]
     public void SameKindLaneEventsWaitForTheEarlierMergeAndDoNotChangeTheNavigationBriefing()
@@ -34,7 +34,7 @@ public sealed class LaneEnvironmentPreviewTests
         NavigationManeuver Turn(string id,double start,double end)=>new(id,ManeuverKind.TurnLeft,start,"a","b"){EndDistanceMeters=end};
         var plan=p.Build("s","r",Now,0,[Turn("first",100,150),Lane(300),Turn("next",600,650),Lane(750,"next-lane")],true,false,false,new());
         Assert.Equal(150,Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("next@")&&t.Kind==SpeechTriggerKind.Overview).AlongMeters);
-        var later=Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("next-lane@"));
+        var later=Assert.Single(plan.Triggers,t=>t.EventId.StartsWith("next-lane@")&&t.Id.EndsWith(":first"));
         Assert.Equal(300,later.AlongMeters);Assert.StartsWith("四百五十米后",later.Text);
     }
     [Fact]

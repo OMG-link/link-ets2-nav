@@ -141,10 +141,11 @@ public sealed class CityEntryEventBuilderTests
     [InlineData(450,"四百五十米后，进入城区，请注意减速慢行。")]
     [InlineData(225,"两百米后，进入城区，请注意减速慢行。")]
     [InlineData(25,"即将进入城区，请注意减速慢行。")]
-    public void LateEntryFloorsToFiftyAndDoesNotKeepTwoHundred(double distance,string text)
+    public void LateEntryFloorsToFiftyAndKeepsTheAssignedPreviewProfile(double distance,string text)
     {
         var e=Assert.Single(Events(Data(Sign("entry",600)),600-distance));
         var plan=new EnvironmentPreviewPlanner().Build("city",600-distance,[e],new SpeechTriggerScheduler(),true);
-        Assert.Equal(text,Assert.Single(plan.Triggers).Text);
+        Assert.Equal(text,Assert.Single(plan.Triggers,t=>t.Id.EndsWith(":first")).Text);
+        Assert.Equal(distance>=350,plan.Triggers.Any(t=>t.Id.EndsWith(":200")));
     }
 }

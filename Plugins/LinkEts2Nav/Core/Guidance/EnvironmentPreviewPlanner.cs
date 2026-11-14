@@ -12,6 +12,7 @@ public sealed record EnvironmentPreviewPlan(IReadOnlyList<SpeechSequence> Sequen
 /// <summary>500/200m points on independent same-kind chains. Each landmark remains its own playback series.</summary>
 public sealed class EnvironmentPreviewPlanner
 {
+    private static readonly int[] Stages=[500,200];
     private sealed class State(EnvironmentPreviewEvent value,long order)
     {
         public EnvironmentPreviewEvent Value=value;
@@ -107,7 +108,7 @@ public sealed class EnvironmentPreviewPlanner
                 if(!previousDone)first=Math.Max(first,blocker!.Value);
                 triggers.Add(new(item.Id+":first",item.Id,SpeechTriggerKind.Advance,first,item.Text(meters))
                     {Enabled=active,StrictCrossing=state.FirstStrict||!previousDone&&first==blocker,SequenceOrder=normal?-500:-meters});
-                if(normal&&item.IncludeTwoHundred)
+                if(item.IncludeTwoHundred&&DistancePreviewStages.Includes(distance,200,Stages))
                 {
                     double second=(item.DynamicDistance?directedMinimum:item.AlongMeters)-200;
                     if(!previousDone)second=Math.Max(second,blocker!.Value);

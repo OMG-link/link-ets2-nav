@@ -151,15 +151,17 @@ public sealed class NavigationEventPlanner
                 }
             }
             double? initial=state.BriefingAlong is {} anchor?Math.Max(0,state.Along-anchor):null;
+            int? firstStage=initial is {} initialDistance?DistancePreviewStages.FirstStage(initialDistance,Stages):null;
             const int countStage=200;
-            double? countAlong=state.BriefingAlong is {} first?Math.Max(first,state.Along-countStage):null;
-            var countedSites=UsesJunctionOrdinal(m)&&countAlong is {} countPoint
+            bool hasCountStage=UsesJunctionOrdinal(m)&&(firstStage is null||firstStage>=countStage);
+            double? countAlong=state.BriefingAlong is {} first?firstStage==countStage?first:Math.Max(first,state.Along-countStage):null;
+            var countedSites=hasCountStage&&countAlong is {} countPoint
                 ?JunctionSpeechPlanner.CountedStraights(sites,countPoint,state.Along,m.JunctionId??state.Id):[];
             foreach(var site in countedSites)counted.Add(site.Id);
-            double? earlyAlong=state.BriefingAlong is {} discovered?Math.Max(discovered,state.Along-500):null;
+            double? earlyAlong=state.BriefingAlong is {} discovered?firstStage==500?discovered:Math.Max(discovered,state.Along-500):null;
             var earlySites=UsesPassageHelpers(m)&&earlyAlong is {} earlyPoint
                 ?JunctionSpeechPlanner.CountedStraights(sites,earlyPoint,
-                    UsesJunctionOrdinal(m)?state.Along-countStage:state.Along,m.JunctionId??state.Id):[];
+                    hasCountStage?countAlong!.Value:state.Along,m.JunctionId??state.Id):[];
             foreach(var site in earlySites)counted.Add(site.Id);
             if(state.BriefingAlong is {} earliest)auxiliaries.AddRange(JunctionSpeechPlanner.Current(state.Id,earliest,earlySites,active,
                 state.BriefingStrict));
@@ -172,16 +174,13 @@ public sealed class NavigationEventPlanner
             {
                 int rounded=(int)NavigationPrompts.RoundDistance(initial.Value);
                 string text=initial>2000?NavigationPrompts.Continue(initial.Value)
-                    :NavigationPrompts.AtDistance(m.Kind,rounded,initial<=countStage?ordinal:0,Instruction(m,rounded));
+                    :NavigationPrompts.AtDistance(m.Kind,rounded,firstStage==countStage?ordinal:0,Instruction(m,firstStage??rounded));
                 triggers.Add(new(overviewId,state.Id,SpeechTriggerKind.Overview,state.BriefingAlong!.Value,text)
-                    {Enabled=active,StrictCrossing=state.BriefingStrict,SequenceOrder=-initial.Value,Silent=silent,SkipAtSpeedKph=rounded==100?60:null});
+                    {Enabled=active,StrictCrossing=state.BriefingStrict,SequenceOrder=-initial.Value,Silent=silent,SkipAtSpeedKph=firstStage==100?60:null});
             }
-            int nearest=initial is {} distance?Stages.FirstOrDefault(s=>s<distance):0;
             foreach(int stage in Stages)
             {
-                if(m.ExecutionOnly||initial is null||stage>=initial.Value
-                    ||(initial<=2000&&!Stages.Contains((int)initial.Value)&&stage==nearest
-                        &&!(stage==countStage&&countedSites.Length>0)))continue;
+                if(m.ExecutionOnly||initial is null||!DistancePreviewStages.Includes(initial.Value,stage,Stages))continue;
                 string text=NavigationPrompts.AtDistance(m.Kind,stage,stage==countStage?ordinal:0,Instruction(m,stage));
                 triggers.Add(new(state.Id+":"+stage,state.Id,SpeechTriggerKind.Advance,state.Along-stage,text)
                     {Enabled=active,Silent=silent,SequenceOrder=-stage,SkipAtSpeedKph=stage==100?60:null});

@@ -23,8 +23,13 @@ public sealed class NavigationEventPlannerTests
         Assert.Empty(Step(19));
     }
     [Theory]
-    [InlineData(158,100,false)] [InlineData(210,100,true)] [InlineData(388,200,false)] [InlineData(388,100,true)]
-    public void InitialBriefingOnlySkipsItsImmediateLowerStandard(double initial,double next,bool spoken)
+    [InlineData(149.999,100,false)] [InlineData(150,100,true)] [InlineData(158,100,true)]
+    [InlineData(210,100,true)] [InlineData(349.999,200,false)] [InlineData(350,200,true)]
+    [InlineData(388,200,true)] [InlineData(388,100,true)]
+    [InlineData(749.999,500,false)] [InlineData(750,500,true)]
+    [InlineData(1499.999,1000,false)] [InlineData(1500,1000,true)]
+    [InlineData(2100,2000,true)]
+    public void FirstRawDistanceKeepsTheImmediateLowerStageAtTheIntervalMidpoint(double initial,double next,bool spoken)
     {
         var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
         t.Publish(p.Build("s","r",Now,0,[Turn(initial)],true,false,false,s));s.Update(t,Now,0);
@@ -55,6 +60,21 @@ public sealed class NavigationEventPlannerTests
         Assert.Equal(TriggerDisposition.SpeedSkipped,Assert.Single(s.Update(t,Now,60/3.6)).Disposition);
         t.Publish(p.Build("s","r",Now,180,[Turn(20)],true,false,false,s));
         Assert.Equal("左转。",Assert.Single(s.Update(t,Now,60/3.6)).Trigger.Text);
+    }
+    [Theory]
+    [InlineData(55,"五十米后，近端动作。")] [InlineData(88,"五十米后，近端动作。")]
+    [InlineData(120,"一百米后，近端动作。")]
+    public void TheAssignedHundredStageKeepsNearWordingAndSpeedFiltering(double distance,string text)
+    {
+        var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
+        var action=Turn(distance) with{Instruction="远端动作",NearInstruction="近端动作"};
+        var plan=p.Build("s","r",Now,0,[action],true,false,false,s);t.Publish(plan);
+        var first=Assert.Single(plan.Triggers,x=>x.Kind==SpeechTriggerKind.Overview);
+        Assert.Equal(text,first.Text);Assert.Equal(60,first.SkipAtSpeedKph);
+        Assert.Contains(text,s.Prepare(t,Now));
+        Assert.Equal(TriggerDisposition.SpeedSkipped,Assert.Single(s.Update(t,Now,60/3.6)).Disposition);
+        t.Publish(p.Build("s","r",Now,distance-20,[action with{DistanceMeters=20,EndDistanceMeters=70}],true,false,false,s));
+        Assert.Equal("近端动作。",Assert.Single(s.Update(t,Now,60/3.6),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
     }
     [Theory]
     [InlineData(0,20)] [InlineData(5,20)] [InlineData(60,100d/3)]

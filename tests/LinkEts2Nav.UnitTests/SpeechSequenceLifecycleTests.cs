@@ -47,7 +47,7 @@ public sealed class SpeechSequenceLifecycleTests
         var first=p.Build("s","r",Now,0,input,true,false,false,s);
         var cue=Assert.Single(first.Triggers,x=>x.Id.StartsWith("next@")&&x.Kind==SpeechTriggerKind.Overview);
         Assert.Equal(150,cue.AlongMeters);Assert.Equal("四百五十米后，左转。",cue.Text);Assert.True(cue.Enabled);
-        Assert.DoesNotContain(first.Triggers,x=>x.Id.StartsWith("next@")&&x.Id.EndsWith(":200"));
+        Assert.Contains(first.Triggers,x=>x.Id.StartsWith("next@")&&x.Id.EndsWith(":200"));
         t.Publish(first);s.Update(t,Now,0);
         var later=p.Build("s","r",Now,175,[Turn("next",425,475)],true,false,false,s);
         var stable=Assert.Single(later.Triggers,x=>x.Id==cue.Id);

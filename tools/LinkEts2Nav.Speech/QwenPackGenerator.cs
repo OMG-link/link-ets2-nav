@@ -13,8 +13,8 @@ internal static class QwenPackGenerator
     public static async Task<int> RunAsync(string[] args)
     {
         bool cityNames=args[0]=="--generate-city-names";
-        if (args.Length != (cityNames?7:5) || args[1] != "--keys" || args[3] != "--output"
-            ||cityNames&&args[5]!="--texts")
+        if ((args.Length != 5 && args.Length != 7) || cityNames && args.Length != 7
+            || args[1] != "--keys" || args[3] != "--output" || args.Length == 7 && args[5] != "--texts")
             throw new ArgumentException("Usage: --generate-pack --keys FILE --output DIRECTORY; or --generate-city-names --keys FILE --output DIRECTORY --texts UTF8_FILE");
         string? key = null;
         foreach (string line in await File.ReadAllLinesAsync(args[2]))
@@ -27,9 +27,15 @@ internal static class QwenPackGenerator
         if (string.IsNullOrWhiteSpace(key) || key.Any(char.IsControl)) throw new InvalidDataException("Missing or invalid qwen key.");
         string output = Path.GetFullPath(args[4]);
         IEnumerable<string> texts=SpeechPack.DefaultTexts();
+        if (args.Length == 7)
+        {
+            using var reader = new StreamReader(args[6], Encoding.UTF8, true);
+            texts = SpeechTextCatalog.Read(reader);
+        }
+        if (!cityNames && texts.Count() > 256) throw new InvalidDataException("Fixed speech packs support at most 256 entries.");
         if(cityNames)
         {
-            string[] requested=(await File.ReadAllLinesAsync(args[6])).Select(t=>t.Trim().Normalize()).Where(t=>t.Length>0).Distinct(StringComparer.Ordinal).ToArray();
+            string[] requested=texts.ToArray();
             if(requested.Any(t=>t.Length>128||t.Any(char.IsControl)))throw new InvalidDataException("Invalid city name.");
             string manifest=Path.Combine(output,"manifest.json");
             if(File.Exists(manifest)&&new FileInfo(manifest).Length>2097152)throw new InvalidDataException("City-name manifest too large.");

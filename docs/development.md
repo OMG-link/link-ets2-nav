@@ -167,6 +167,8 @@ Get-Content .\ETS2LA\ETS2LA\bin\Debug\net10.0\ets2la.log -Tail 30 -Wait
 
 ## 远端预生成与本地拼接
 
+提供商无关的文本任务导出、外部音频导入和城市名清单提取见 [自制预生成语音包](speech-packs.md)。Qwen 仅是可选适配器，运行时的 `packDirectory` 不限制来源。
+
 Qwen 音频包只在开发者主动运行生成命令时联网；插件运行时不会读取 API 密钥，也不会调用远端服务。使用 `qwen-audio-3.1-tts-flash`、`longanhuan_v3.1` 和 [Qwen WebSocket 协议](https://help.aliyun.com/en/model-studio/qwen-audio-tts-websocket-api)。生成会产生服务商计费。
 
 在仓库根目录的 `.api-keys` 中写入 `qwen=你的密钥`。该文件被 Git 忽略，不复制到宿主或发布目录。随后执行：

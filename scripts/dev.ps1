@@ -8,7 +8,8 @@ param(
     [string]$TestScope = 'All',
     [string]$TestFilter,
     [switch]$NoRestore,
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [string]$SpeechPackPath
 )
 $ErrorActionPreference = 'Stop'
 if ($Action -ne 'Test' -and ($PSBoundParameters.ContainsKey('TestScope') -or $TestFilter -or $NoRestore -or $NoBuild)) {
@@ -21,6 +22,13 @@ $speechProject = Join-Path $projectRoot 'tools\LinkEts2Nav.Speech\LinkEts2Nav.Sp
 $speechOutput = Join-Path $projectRoot "tools\LinkEts2Nav.Speech\bin\$Configuration\net10.0\win-x64"
 $hostProject = Join-Path $frameworkRoot 'ETS2LA\ETS2LA.csproj'
 $hostOutput = Join-Path $frameworkRoot "ETS2LA\bin\$Configuration\net10.0"
+
+$speechPack = Join-Path $projectRoot 'artifacts\speech\qwen-longanhuan-v3.1'
+if ($SpeechPackPath) {
+    if ($Action -notin @('Deploy', 'Run')) { throw 'SpeechPackPath is only available with -Action Deploy or Run.' }
+    $speechPack = if ([IO.Path]::IsPathRooted($SpeechPackPath)) { [IO.Path]::GetFullPath($SpeechPackPath) } else { [IO.Path]::GetFullPath((Join-Path $projectRoot $SpeechPackPath)) }
+    if (-not ((Test-Path -LiteralPath (Join-Path $speechPack 'manifest.json')) -or (Test-Path -LiteralPath (Join-Path $speechPack 'CityNames\manifest.json')))) { throw 'SpeechPackPath must contain manifest.json or CityNames/manifest.json.' }
+}
 
 function Invoke-Checked {
     param([string]$Executable, [string[]]$Arguments)
@@ -105,10 +113,19 @@ try {
     $speechDeployment = Join-Path $hostOutput 'Tools\LinkEts2Nav.Speech'
     New-Item -ItemType Directory -Path $speechDeployment -Force | Out-Null
     Get-ChildItem -LiteralPath $speechOutput -File | Copy-Item -Destination $speechDeployment -Force
-    $speechPack = Join-Path $projectRoot 'artifacts\speech\qwen-longanhuan-v3.1'
-    if (Test-Path -LiteralPath (Join-Path $speechPack 'manifest.json')) {
+    if ((Test-Path -LiteralPath (Join-Path $speechPack 'manifest.json')) -or (Test-Path -LiteralPath (Join-Path $speechPack 'CityNames\manifest.json'))) {
         $packDeployment = Join-Path $hostOutput 'Assets\LinkEts2Nav\SpeechPack'
         New-Item -ItemType Directory -Path $packDeployment -Force | Out-Null
+        # A selected pack replaces the active manifests. Unreferenced old WAVs are
+        # harmless; never leave a previous provider's manifest active by accident.
+        if (-not (Test-Path -LiteralPath (Join-Path $speechPack 'manifest.json'))) {
+            $oldManifest = Join-Path $packDeployment 'manifest.json'
+            if (Test-Path -LiteralPath $oldManifest) { Remove-Item -LiteralPath $oldManifest -Force }
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $speechPack 'CityNames\manifest.json'))) {
+            $oldManifest = Join-Path $packDeployment 'CityNames\manifest.json'
+            if (Test-Path -LiteralPath $oldManifest) { Remove-Item -LiteralPath $oldManifest -Force }
+        }
         Get-ChildItem -LiteralPath $speechPack -File | Copy-Item -Destination $packDeployment -Force
         $cityNamePack = Join-Path $speechPack 'CityNames'
         if (Test-Path -LiteralPath (Join-Path $cityNamePack 'manifest.json')) {

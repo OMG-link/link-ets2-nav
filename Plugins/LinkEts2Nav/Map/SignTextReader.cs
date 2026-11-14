@@ -9,22 +9,28 @@ namespace LinkEts2Nav.Map;
 /// <summary>Reads fixed rules and visible text from the actual template/board bindings.</summary>
 public sealed class SignTextReader(IFileSystem fs)
 {
+    public sealed record Diagnostic(string Reason,string Resource,string? Detail=null);
+    public IReadOnlyList<Diagnostic> Diagnostics=>diagnostics;
+    private readonly List<Diagnostic> diagnostics=[];
     private Dictionary<string,string>? templates,boards;
     private readonly Dictionary<string,Unit[]> files=new(StringComparer.Ordinal);
-    public IReadOnlyList<string> ReadTexts(Sign sign)
+    public IReadOnlyList<string> ReadTexts(Sign sign)=>Read(sign,false);
+    public IReadOnlyList<string> ReadRawTexts(Sign sign)=>Read(sign,true);
+    private IReadOnlyList<string> Read(Sign sign,bool raw)
     {
-        if(string.IsNullOrWhiteSpace(sign.SignTemplate))return [];
+        diagnostics.Clear();
+        if(string.IsNullOrWhiteSpace(sign.SignTemplate)){diagnostics.Add(new("NoTextTemplate",sign.Model.ToString()));return [];}
         try
         {
             templates??=Index("templates");boards??=Index("boards");
-            if(!templates.TryGetValue(sign.SignTemplate,out var path))return [];
+            if(!templates.TryGetValue(sign.SignTemplate,out var path)){diagnostics.Add(new("TemplateNotIndexed",sign.SignTemplate));return [];}
             var units=Units(path);var names=new HashSet<string>(StringComparer.Ordinal);
             foreach(var binding in units.Where(u=>u.Class=="sign_template_board_binding"))
             {
                 string area=Text(binding,"area_name"),board=Text(binding,"linked_board");
                 var replacement=sign.BoardOverrides?.LastOrDefault(o=>o.AreaName.ToString()==area&&!string.IsNullOrEmpty(o.Board.ToString()));
                 if(replacement is not null)board="sign_board."+replacement.Board;
-                if(!boards.TryGetValue(board,out var boardPath))continue;
+                if(!boards.TryGetValue(board,out var boardPath)){diagnostics.Add(new("BoardNotIndexed",board,area));continue;}
                 foreach(var text in Units(boardPath).Where(u=>u.Class=="sign_template_text"))
                 {
                     if(!uint.TryParse(Text(text,"id"),out uint id))continue;
@@ -34,15 +40,16 @@ public sealed class SignTextReader(IFileSystem fs)
                             foreach(var attribute in over.Attributes.Where(a=>a.Index==0&&a.Type==typeof(string)))
                                 value=(string)attribute.GetValue();
                     value=Regex.Replace(value.Trim(),@"\s+"," ").Normalize();
-                    if(value.Length is <1 or >128||value is "Name" or "City" or "Text"||value.StartsWith("@@",StringComparison.Ordinal)
-                        ||!value.Any(char.IsLetter)||value.Any(c=>char.IsControl(c)||c is '<' or '>' or '[' or ']' or '{' or '}'))continue;
+                    if(!raw&&(value.Length is <1 or >128||value is "Name" or "City" or "Text"||value.StartsWith("@@",StringComparison.Ordinal)
+                        ||!value.Any(char.IsLetter)||value.Any(c=>char.IsControl(c)||c is '<' or '>' or '[' or ']' or '{' or '}')))continue;
                     names.Add(value);
                 }
             }
+            if(names.Count==0)diagnostics.Add(new("NoReadableTextObjects",path));
             return names.Order(StringComparer.Ordinal).ToArray();
         }
         catch(Exception e) when(e is IOException or InvalidDataException or FormatException or ArgumentException)
-        {return [];}
+        {diagnostics.Add(new("TemplateReadFailure",sign.SignTemplate,e.GetType().Name+": "+e.Message));return [];}
     }
     /// <summary>A fixed template rule can corroborate a combined city-end/numeric model rule.</summary>
     public string? TrafficRule(Sign sign)

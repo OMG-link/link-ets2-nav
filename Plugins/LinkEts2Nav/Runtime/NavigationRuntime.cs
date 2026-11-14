@@ -19,7 +19,7 @@ public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next
 public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     Action<string>? log = null,GuidanceCoordinator? guidance=null,IReadOnlySet<string>? spokenCityNames=null)
 {
-    private readonly NavigationStructurePlanner structurePlanner = new(spokenCityNames);
+    private readonly NavigationStructurePlanner structurePlanner = new(spokenCityNames,log);
     private readonly FerryNavigationProgress ferryProgress=new();
     public FerryTravelExpectation? ExpectedFerry=>ferryProgress.Expected;
     private readonly LaneRoutePlanner lanePlanner = new();

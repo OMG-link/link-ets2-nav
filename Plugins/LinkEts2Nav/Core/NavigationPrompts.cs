@@ -46,7 +46,7 @@ public static class NavigationPrompts
     }
 
     public static string Execute(ManeuverKind kind, string? instruction = null)
-        =>kind==ManeuverKind.Destination?"到达目的地附近，导航结束。":(instruction ?? Action(kind)) + "。";
+        =>kind==ManeuverKind.Destination?(instruction??"到达目的地附近，导航结束")+"。":(instruction ?? Action(kind)) + "。";
 
     /// <summary>Announces a second nearby action relative to the action being executed.</summary>
     public static string Then(string first, ManeuverKind next, double distanceMeters, string? instruction = null)

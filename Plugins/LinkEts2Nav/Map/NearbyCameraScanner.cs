@@ -19,6 +19,8 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     public AuxiliaryLaneIndex? AuxiliaryLanes {get;init;}
     public IReadOnlyList<RoundaboutStructure> Roundabouts { get; init; } = [];
     public IReadOnlyDictionary<ulong, RoundaboutStructure> RoadStructures { get; init; } = new Dictionary<ulong, RoundaboutStructure>();
+    public RoadNameIndex? RoadNames {get;init;}
+    public CompanyPlaceIndex Companies {get;init;}=CompanyPlaceIndex.Empty;
     public SpeedLimitData SpeedLimits { get; init; } = SpeedLimitData.Empty;
     public FerryJourneyIndex? Ferries {get;init;}
     public IReadOnlyList<FreeNavigationArea> FreeNavigationAreas { get; init; } = [];
@@ -55,6 +57,8 @@ public sealed class NearbyCameraScanner
     private readonly IReadOnlyList<string> activeModPaths;
     private SpeedLimitDefinitionReader? speedReader;
     private SpeedLimitAreaCache? areaCache;
+    private CompanyPlaceReader? companyReader;
+    private CompanyPlaceIndex companies=CompanyPlaceIndex.Empty;
     private SpeedLimitData speedLimits = SpeedLimitData.Empty;
 
     public NearbyCameraScanner(IFileSystem fileSystem, string mapPath = "/map/europe.mbd", IReadOnlyList<string>? activeModPaths = null, ScsMap? hostMap = null)
@@ -97,6 +101,7 @@ public sealed class NearbyCameraScanner
             var nextMap = new CameraMap(hostMap);
             nextMap.Read(mapPath, fileSystem, sectors);
             hostView?.MergeInto(nextMap, sectors);
+            companies=(companyReader??=new(fileSystem)).Build(nextMap);
             cancellationToken.ThrowIfCancellationRequested();
             var junctions = new List<DirectedRoad>();
             var areas = new List<FreeNavigationArea>();
@@ -148,6 +153,7 @@ public sealed class NearbyCameraScanner
             loadedSectors = sectors;
         }
         var diagnostics = new List<string>(definitionDiagnostics);
+        if(companyReader is not null)diagnostics.AddRange(companyReader.Diagnostics);
         diagnostics.AddRange(junctionDiagnostics);
         diagnostics.AddRange(roundaboutIndex.Diagnostics);
         diagnostics.AddRange(speedLimits.Diagnostics);
@@ -222,7 +228,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)
@@ -344,7 +350,7 @@ public sealed class NearbyCameraScanner
             // Only this newly deserialized container is pruned. Host containers
             // remain untouched; retaining a child must not retain all decorations.
             if(item is Compound compound)return LoadedMapItems.RetainSupplementSigns(compound);
-            return item is ScsModel or Sign or Road or Prefab or CityArea or TrafficArea;
+            return item is ScsModel or Sign or Road or Prefab or Company or CityArea or TrafficArea;
         }
     }
 }

@@ -13,6 +13,7 @@ public sealed record QueuedGuidanceSpeech(string Source,string EventId,string Tr
 {
     public string? SpeechSequenceId { get; init; }
     public bool IsNotification { get; init; }
+    public bool AllowsStalePosition {get;init;}
     public string SequenceId => SpeechSequenceId ?? EventId;
 }
 
@@ -31,6 +32,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
     private readonly Task worker;
     private long order,generation;
     private bool active=true,updateHeld;
+    private bool positionIndependentPlayback;
     public event Action<QueuedGuidanceSpeech>? Played;
     public IReadOnlyList<QueuedGuidanceSpeech> Pending
     {get{lock(gate)return pending.Values.OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order).Select(p=>p.Speech).ToArray();}}
@@ -44,6 +46,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         worker=Task.Run(RunAsync);
     }
     public void SetActive(bool value){lock(gate)active=value;Wake();}
+    public void SetPositionIndependentPlayback(bool value){lock(gate)positionIndependentPlayback=value;Wake();}
     /// <summary>Prevent the playback worker from starting a stale item while a sample is being planned.</summary>
     public void BeginUpdate(){lock(gate)updateHeld=true;}
     public void ApplyBatch(IReadOnlyList<GuidanceTriggerResult> results,bool isActive)
@@ -75,7 +78,8 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(notification.Id);
         ArgumentException.ThrowIfNullOrWhiteSpace(notification.Text);
         string id="notification:"+notification.Id;
-        lock(gate)EnqueueLocked(new(source,id,id,0,notification.Priority,notification.Text){IsNotification=true});
+        lock(gate)EnqueueLocked(new(source,id,id,0,notification.Priority,notification.Text)
+            {IsNotification=true,AllowsStalePosition=notification.AllowsStalePosition});
         PreparePending();Wake();
     }
     private void EnqueueLocked(QueuedGuidanceSpeech speech)
@@ -136,8 +140,9 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                     (QueuedGuidanceSpeech Speech,long Generation,string File)? next=null;
                     lock(gate)
                     {
-                        if(!active)break;
-                        foreach(var item in pending.Values.Where(p=>!updateHeld||p.Speech.IsNotification).OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order))
+                        if(!active&&!positionIndependentPlayback)break;
+                        foreach(var item in pending.Values.Where(p=>(active||positionIndependentPlayback&&p.Speech.IsNotification&&p.Speech.AllowsStalePosition)
+                            &&(!updateHeld||p.Speech.IsNotification)).OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order))
                         {
                             string? file=null;
                             if(cache?.TryGetAudio(item.Speech.Text,out var ready)==true)file=ready;

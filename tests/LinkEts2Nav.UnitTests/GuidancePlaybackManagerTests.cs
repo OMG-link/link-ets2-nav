@@ -4,6 +4,21 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class GuidancePlaybackManagerTests
 {
     [Fact]
+    public async Task ExplicitStatusNotificationCanPlayWithoutPositionWhileOrdinaryGuidanceWaits()
+    {
+        var player=new Player();await using var manager=new GuidancePlaybackManager(null,player,()=>"notice.wav");
+        manager.SetActive(false);manager.BeginUpdate();
+        manager.Notify("journey",new("start","导航开始。"));
+        manager.Notify("signal",new("weak","定位信号弱。") {AllowsStalePosition=true});
+        Assert.False(player.Started.Reader.TryRead(out _));
+        manager.SetPositionIndependentPlayback(true);
+        var audio=await player.Started.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
+        Assert.Equal("journey",Assert.Single(manager.Pending).Source);
+        manager.SetPositionIndependentPlayback(false);audio.Done.SetResult();
+        Assert.False(player.Started.Reader.TryRead(out _));
+    }
+
+    [Fact]
     public async Task NotificationWaitsForPauseButDoesNotWaitForMapPlanningOrNeedAnEndPoint()
     {
         var player=new Player();await using var manager=new GuidancePlaybackManager(null,player,()=>"notice.wav");

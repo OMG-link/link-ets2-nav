@@ -15,34 +15,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
     public static string FileName(string text) => Hash(Encoding.UTF8.GetBytes(text)) + ".wav";
     public static readonly int[] CommonLimits = [30, 40, 50, 60, 70, 80, 90, 100];
     public const string UncalibratedText = "正靠近未校准的探头，无法获取其监测方向，请减速慢行。";
-    public static IEnumerable<string> DefaultTexts()
-    {
-        foreach (string prefix in new[] { "五百米处，有测速照相", "两百米处，有测速照相", "两百米内，有测速照相", "前方有测速照相" })
-        {
-            yield return prefix + "。";
-            foreach (int speed in CommonLimits)
-                yield return prefix + "，限速" + Number(speed) + "。";
-        }
-        yield return "米处，有测速照相。";
-        yield return "米处，有测速照相，限速";
-        yield return "米内，有测速照相。";
-        yield return "米内，有测速照相，限速";
-        yield return "前方有测速照相，限速";
-        yield return UncalibratedText;
-        yield return "在听到下一条语音提示前，请沿当前道路行驶。";
-        foreach(int meters in Enumerable.Range(1,10).Select(n=>n*50))
-            yield return NavigationDistance(meters)+"后，进入城区，请注意减速慢行。";
-        yield return "即将进入城区，请注意减速慢行。";
-
-
-        foreach (string action in new[] { "左转", "右转", "向左前方行驶", "向右前方行驶", "直行", "掉头", "向左前方进入主路", "向右前方进入主路", "进入环岛", "驶出环岛", "经过出口", "到达目的地" })
-        {
-            foreach (int distance in Enumerable.Range(1, 10).Select(n => n * 50).Concat(new[] { 1000, 2000 }))
-                yield return NavigationDistance(distance) + "后，" + action + "。";
-            yield return action == "直行" ? "保持直行。" : "即将" + action + "。";
-            yield return action=="到达目的地"?"到达目的地附近，导航结束。":action + "。";
-        }
-    }
+    public static IEnumerable<string> DefaultTexts() => SpeechTextCatalog.DefaultTexts;
 
     public static string NavigationDistance(int meters)
     {

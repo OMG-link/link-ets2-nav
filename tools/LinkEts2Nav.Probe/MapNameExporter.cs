@@ -73,7 +73,7 @@ internal static class MapNameExporter
                     if(texts.Count==0){unreadable++;diagnostics.Add(new{resource=file,itemUid=uid,reason="NoReadableTemplateText",model=sign.Model.ToString(),template=sign.SignTemplate});}
                 }
             }catch(Exception e){diagnostics.Add(new{resource=file,reason=e.GetType().Name,message=e.Message});}
-            Console.Error.WriteLine($"Place-name scan {Array.IndexOf(sectors,file)+1}/{sectors.Length}: {signs} signs, {names.Count} name sources, {candidates.Count} candidate sources, {diagnostics.Count} diagnostics");
+            Console.WriteLine($"Place-name scan {Array.IndexOf(sectors,file)+1}/{sectors.Length}: {signs} signs, {names.Count} name sources, {candidates.Count} candidate sources, {diagnostics.Count} diagnostics");
         }
         var known=names.Select(n=>n.Text).ToHashSet(StringComparer.Ordinal);
         // A direction-board exact spelling already present in the name catalog is confirmed; retain every source.

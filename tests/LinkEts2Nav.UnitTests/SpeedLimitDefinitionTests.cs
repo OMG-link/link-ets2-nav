@@ -190,6 +190,59 @@ public sealed class SpeedLimitDefinitionTests
         Assert.Null(reader.RoadTrafficDirections(road).Forward);
     }
 
+    [Theory]
+    [InlineData("tram express express","expressway")]
+    [InlineData("tram",null)]
+    [InlineData("tram local express",null)]
+    [InlineData("tram missing express",null)]
+    public void SpeedClassExcludesOnlyLanesThatExplicitlyForbidThePlayer(string layout,string? expected)
+    {
+        var fs=PlayerAccessDefinitions();
+        string lanes=string.Join(" ",layout.Split(' ').Select(l=>"lanes_right[]: traffic_lane."+l));
+        fs.Files["/def/world/road_look.sii"]=Format("SiiNunit { road_look : road.un11 { "+lanes+" } }");
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(100,0,0),default);road.RoadType="un11";
+        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        Assert.Null(data.Error);
+        Assert.Equal(expected,data.Roads[road.Uid].ClassFor(data.Roads[road.Uid].Geometry));
+    }
+
+    [Theory]
+    [InlineData("traffic_rule.wrapper","expressway")]
+    [InlineData("traffic_rule.tram traffic_rules[]: traffic_rule.player_allowed",null)]
+    [InlineData("traffic_rule.tram traffic_rules[]: traffic_rule.missing",null)]
+    [InlineData("traffic_rule.tram traffic_rules[]: traffic_rule.player_unspecified",null)]
+    public void UncertainOrConflictingPlayerFlagsDoNotHideALane(string rules,string? expected)
+    {
+        var fs=PlayerAccessDefinitions();
+        fs.Files["/def/world/traffic_lane.sii"]=fs.Files["/def/world/traffic_lane.sii"].Replace("traffic_rules[]: traffic_rule.tram", "traffic_rules[]: "+rules);
+        fs.Files["/def/world/road_look.sii"]="""SiiNunit { road_look : road.un11 { lanes_right[]: traffic_lane.tram lanes_right[]: traffic_lane.express } }""";
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(100,0,0),default);road.RoadType="un11";
+        var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
+        Assert.Null(data.Error);
+        Assert.Equal(expected,data.Roads[road.Uid].ClassFor(data.Roads[road.Uid].Geometry));
+    }
+
+    private static Fs PlayerAccessDefinitions()
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/traffic_rules.sii"]="""
+            SiiNunit {
+            traffic_rule_data : traffic_rule.tram { rule: actor_access num_params[]: 1 num_params[]: 1 num_params[]: 1 num_params[]: 1 num_params[]: 0 str_params[]: rail_tram }
+            traffic_rule_data : traffic_rule.player_allowed { rule: actor_access num_params[]: 1 num_params[]: 0 num_params[]: 1 num_params[]: 1 num_params[]: 1 }
+            traffic_rule_data : traffic_rule.player_unspecified { rule: actor_access num_params[]: 1 num_params[]: 0 str_params[]: road }
+            traffic_rule_data : traffic_rule.wrapper { additional_rules[]: traffic_rule.tram }
+            }
+            """;
+        fs.Files["/def/world/traffic_lane.sii"]="""
+            SiiNunit {
+            traffic_lane_data : traffic_lane.tram { speed_class: rail_tram traffic_rules[]: traffic_rule.tram }
+            traffic_lane_data : traffic_lane.express { speed_class: expressway }
+            traffic_lane_data : traffic_lane.local { speed_class: local_road }
+            }
+            """;
+        return fs;
+    }
+
     [Fact]
     public void NearbyRoadUsesDistantHostBorderAndRebuildsForNewMap()
     {

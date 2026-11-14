@@ -16,6 +16,7 @@ public sealed class SpeedLimitDefinitionReader
     private readonly Dictionary<string,Unit> roadLooks=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> roadUnits=new(StringComparer.Ordinal);
     private readonly HashSet<string> singleTrackLanes=new(StringComparer.Ordinal);
+    private readonly HashSet<string> playerForbiddenLanes=new(StringComparer.Ordinal);
     private readonly Dictionary<string,string> laneClasses=new(StringComparer.Ordinal);
     private readonly Dictionary<string,TruckSpeedLimit> limits=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> rules=new(StringComparer.Ordinal);
@@ -40,6 +41,9 @@ public sealed class SpeedLimitDefinitionReader
             {
                 laneClasses[u.Name]=Text(u,"speed_class");
                 if(Values(u,"traffic_rules").Select(Link).Any(name=>HasSingleTrackRule(name,[])))singleTrackLanes.Add(u.Name);
+                var playerAccess=new HashSet<bool>();
+                if(Values(u,"traffic_rules").Select(Link).All(name=>ReadPlayerAccess(name,[],playerAccess))
+                    &&playerAccess.SetEquals([false]))playerForbiddenLanes.Add(u.Name);
             }
             foreach(var u in Files("/def/world/","road_look"))roadUnits[u.Name]=u;
             foreach(var u in roadUnits.Values.Where(u=>u.Class=="road_look"))
@@ -268,10 +272,30 @@ public sealed class SpeedLimitDefinitionReader
 
     private string? LaneClass(IEnumerable<object> values)
     {
-        var names=values.Select(Link).ToArray();
+        var names=values.Select(Link).Where(name=>!playerForbiddenLanes.Contains(name)).ToArray();
         if(names.Length==0)return null;
         var classes=names.Select(n=>laneClasses.GetValueOrDefault(n)).ToArray();
         return classes.All(c=>!string.IsNullOrEmpty(c))&&classes.Distinct(StringComparer.Ordinal).Count()==1?classes[0]:null;
+    }
+
+    // Only explicit actor_access player flags are interpreted here. Physical
+    // lane geometry and traffic permissions retain every lane. Unknown or
+    // conflicting access facts must not silently remove a speed-class candidate.
+    private bool ReadPlayerAccess(string name,HashSet<string> seen,HashSet<bool> flags)
+    {
+        if(!seen.Add(name))return true;
+        if(!rules.TryGetValue(name,out var rule))return false;
+        if(Text(rule,"rule")=="actor_access")
+        {
+            var numbers=Values(rule,"num_params").ToArray();
+            if(numbers.Length<5)return false;
+            // actor_access's fifth numeric parameter explicitly enables or
+            // disables player access, independently of vehicle/trailer flags.
+            if(!double.TryParse(Link(numbers[4]),NumberStyles.Float,CultureInfo.InvariantCulture,out double player)
+                ||player is not (0 or 1))return false;
+            flags.Add(player==1);
+        }
+        return Values(rule,"additional_rules").Select(Link).All(child=>ReadPlayerAccess(child,seen,flags));
     }
 
     private LimitAction Action(string name,HashSet<string> seen)

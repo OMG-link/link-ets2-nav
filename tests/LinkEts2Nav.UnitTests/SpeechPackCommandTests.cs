@@ -20,12 +20,12 @@ public sealed class SpeechPackCommandTests : IDisposable
         "--input", Input, "--output", Output, "--model", "my-tts", "--voice", "my-voice"]);
 
     [Fact]
-    public async Task DefaultJobsExportAll222TextsWithContentDerivedFilenames()
+    public async Task DefaultJobsExportAllDefaultTextsWithContentDerivedFilenames()
     {
         await SpeechPackCommands.RunAsync(["--export-jobs", "--output", Jobs]);
         var jobs = JsonSerializer.Deserialize<SpeechJobs>(File.ReadAllText(Jobs))!;
         Assert.Equal("fixed", jobs.Kind);
-        Assert.Equal(222, jobs.Items.Length);
+        Assert.Equal(223, jobs.Items.Length);
         Assert.Equal(SpeechPack.DefaultTexts(), jobs.Items.Select(j => j.Text));
         Assert.All(jobs.Items, j => Assert.Equal(SpeechPack.FileName(j.Text), j.File));
         Assert.Contains(jobs.Items, j => j.Text == SpeechPack.UncalibratedText);

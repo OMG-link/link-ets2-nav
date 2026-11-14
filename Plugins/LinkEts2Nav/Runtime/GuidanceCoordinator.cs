@@ -39,6 +39,7 @@ public sealed class GuidanceCoordinator
     private readonly HashSet<string> replacementApplied=new(StringComparer.Ordinal);
     private readonly Dictionary<string,string> lastQueued=new(StringComparer.Ordinal);
     private readonly HashSet<(string Source,string Id)> notifications=[];
+    private const string SignalSource="position-signal";
     public GuidanceTimeline Timeline { get; }=new();
     public SpeechTriggerScheduler Scheduler { get; }=new();
     public event Action<QueuedGuidanceSpeech>? Queued;
@@ -158,6 +159,14 @@ public sealed class GuidanceCoordinator
     public void Observe(GameDataSnapshot data,DateTimeOffset now,bool processJourney=true)
     {
         EnsureSession(data.SessionId);playback?.BeginUpdate();
+        bool knownRunning=data.Vehicle is {SdkActive:true,Paused:false};
+        playback?.SetPositionIndependentPlayback(knownRunning);
+        // This notice is about missing placement data, so it must not require a usable placement.
+        if(data.PositionSignal.IsWeak&&knownRunning)
+            Notify(SignalSource,data.SessionId,new("weak:"+data.PositionSignal.Episode,PositionSignalTracker.Text)
+                {AllowsStalePosition=true});
+        else if(!data.PositionSignal.IsWeak)WithdrawNotifications(SignalSource);
+        if(knownRunning)cache?.UpdatePlan(SignalSource,[PositionSignalTracker.Text],-5);
         if(observedRoute is not null&&observedRoute.Revision!=data.Route.Revision)
         {
             replacementRevision=RouteContinuity.IsForwardExtension(observedRoute,data.Route)?null:data.Route.Revision;

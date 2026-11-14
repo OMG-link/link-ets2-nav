@@ -65,6 +65,7 @@ public sealed record GameDataSnapshot(VehicleSnapshot? Vehicle, RouteSnapshot Ro
     RouteAvailability RouteAvailability, string SessionId, bool IsVehicleUsable, FineObservation? LatestFine = null,
     FineObservation? LatestCameraFine = null, IReadOnlyList<FineObservation>? FineHistory = null, long DroppedFineCount = 0)
 {
+    public PositionSignalStatus PositionSignal {get;init;}=PositionSignalStatus.None;
     /// <summary>Paused fresh placement can warm read-only map data, but never authorizes a warning.</summary>
     public bool CanPrepareMap(DateTimeOffset now) => Vehicle is { SdkActive: true, IsFinite: true } pose
         && now >= pose.ReceivedAt && now - pose.ReceivedAt <= TimeSpan.FromSeconds(2)
@@ -77,6 +78,7 @@ public sealed class GameSnapshotStore
     private readonly object gate = new();
     private VehicleSnapshot? vehicle;
     private DateTimeOffset lastVehicleProgress;
+    private readonly PositionSignalTracker positionSignal=new();
     private readonly FineObservationTracker fines = new();
     private RouteSnapshot route = new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.Unknown, default);
     private long session;
@@ -98,14 +100,14 @@ public sealed class GameSnapshotStore
                     + Math.Pow(next.Z - previous.Z, 2));
                 bool discontinuity = next.SdkActive != previous.SdkActive
                     || next.SimulationTime < previous.SimulationTime
-                    || distance > Math.Max(200, Math.Abs(previous.SpeedMetersPerSecond) * seconds + 100)
-                    || next.ReceivedAt - previous.ReceivedAt > TimeSpan.FromSeconds(3);
+                    || distance > Math.Max(200, Math.Abs(previous.SpeedMetersPerSecond) * seconds + 100);
                 if (discontinuity)
                 {
                     session++;
                     zeroNavigationSince = null;
                     zeroNavigationSamples = 0;
                     fines.ResetSession();
+                    positionSignal.Reset();
                     route = new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.Unknown, default);
                 }
             }
@@ -115,6 +117,7 @@ public sealed class GameSnapshotStore
                 if (vehicle is null || next.SimulationTime != vehicle.SimulationTime) zeroNavigationSamples++;
             }
             else { zeroNavigationSince = null; zeroNavigationSamples = 0; }
+            positionSignal.Update(vehicle,next);
             vehicle = next;
         }
     }
@@ -159,7 +162,8 @@ public sealed class GameSnapshotStore
                 availability = cleared ? RouteAvailability.None : RouteAvailability.Invalid;
             }
             return new(vehicle, route, availability, $"{instanceId}:{session}", usable,
-                fines.Latest, fines.LatestCamera, fines.GetHistory(), fines.DroppedCount);
+                fines.Latest, fines.LatestCamera, fines.GetHistory(), fines.DroppedCount)
+                {PositionSignal=positionSignal.Capture(now)};
         }
     }
 

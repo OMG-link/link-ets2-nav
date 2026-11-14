@@ -31,6 +31,7 @@ git submodule update --init --recursive --depth 1
 - `ETS2LA/`：固定提交的框架子模块，包含 TruckLib 子模块。
 - `scripts/dev.ps1`：环境检查、恢复依赖、构建部署与运行。
 - `Directory.Build.targets`、`dev-host/prepare-local-host.ps1`、`dev-host/ui/`：本地开发宿主覆盖层。
+- `dev-host/TruckLib.Sii/`：保留 Sprache 框架的 SII／MAT 解析器源码快照，替代宿主的同名 NuGet 依赖；宿主与插件共用同一程序集。来源、许可证及更新方式见该目录的 README。
 - `tests/LinkEts2Nav.UnitTests/`：xUnit 单元测试项目，为导航算法与预警规则预留。
 - `tests/DevHost.IntegrationTests/`：xUnit 宿主集成测试，检查插件白名单、安装限制和页面渲染。
 

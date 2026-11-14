@@ -56,4 +56,9 @@
     <Content Include="$(NavUi)Start.razor" Link="Pages/Start.razor" TargetPath="Pages/Start.razor" />
     <Content Include="$(NavUi)Catalogue.razor" Link="Pages/Plugins/Catalogue.razor" TargetPath="Pages/Plugins/Catalogue.razor" />
   </ItemGroup>
+  <!-- Share the locally optimized Sprache parser between the host and plugin. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'TruckLib'">
+    <PackageReference Remove="TruckLib.Sii" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)dev-host/TruckLib.Sii/TruckLib.Sii.csproj" />
+  </ItemGroup>
 </Project>

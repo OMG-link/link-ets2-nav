@@ -20,6 +20,9 @@
   <Folder Name="/ETS2LA/TruckLib/">
     <Project Path="ETS2LA/TruckLib/TruckLib/TruckLib.csproj" />
   </Folder>
+  <Folder Name="/DevHost/">
+    <Project Path="dev-host/TruckLib.Sii/TruckLib.Sii.csproj" />
+  </Folder>
   <Folder Name="/Plugins/">
     <Project Path="Plugins/LinkEts2Nav/LinkEts2Nav.csproj" />
   </Folder>

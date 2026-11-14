@@ -23,6 +23,13 @@ internal static class JunctionSpeechPlanner
         }
     }
 
+    public static IEnumerable<SpeechSequence> Current(string actionId,double earliest,
+        IReadOnlyList<JunctionSpeechSite> sites,bool enabled,bool strict)
+    {
+        foreach(var site in sites)
+            if(Passage(actionId,site,earliest,"直线通过当前路口。",enabled,strict) is {} speech)yield return speech;
+    }
+
     private static SpeechSequence? Passage(string actionId,JunctionSpeechSite site,double earliest,string text,bool enabled,bool strict)
     {
         if(site.EndAlong is not {} end)return null;
@@ -30,7 +37,9 @@ internal static class JunctionSpeechPlanner
         if(point>end)return null;
         string id=actionId+":through:"+site.Id;
         return new(id,new RouteSpeechEnd(end),[new(id,site.Along,text)],
-            [new(id+":execute",id,SpeechTriggerKind.ActionAssist,point,text){Enabled=enabled,StrictCrossing=strict&&point==earliest}]);
+            [new(id+":execute",id,SpeechTriggerKind.ActionAssist,point,text)
+                {Enabled=enabled,StrictCrossing=strict&&point==earliest,
+                    Window=new(earliest,context=>context.DistanceToEventMeters<=Math.Max(0,context.SpeedMetersPerSecond)*2,strict)}]);
     }
 
     public static IEnumerable<SpeechSequence> Dense(IReadOnlyList<JunctionSpeechSite> route,

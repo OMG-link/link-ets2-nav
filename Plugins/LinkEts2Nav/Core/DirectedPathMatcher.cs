@@ -10,7 +10,9 @@ public sealed record PrefabJunctionInfo(int EntranceCount,int ExitCount,int Cros
     /// <summary>Native control-interface widths, measured between the outermost input/output lane centers.</summary>
     public IReadOnlyList<double> InterfaceWidths { get; init; }=[];
     public bool IsRampJunction => !IsJunction && CrossingCount==0 && InterfaceCount>=3
-        && (EntranceCount>=2 || ExitCount>=2);
+        && ExitCount>=2;
+    /// <summary>Opposite-direction exits do not create a choice for this approach.</summary>
+    public bool IsRampPassage(int reachableExitInterfaces)=>IsRampJunction&&reachableExitInterfaces>=2;
     public bool IsAnyJunction => IsJunction || IsRampJunction;
     public bool IsMinorPassage(int entry,int exit)
         =>entry!=exit&&entry>=0&&exit>=0&&entry<InterfaceWidths.Count&&exit<InterfaceWidths.Count

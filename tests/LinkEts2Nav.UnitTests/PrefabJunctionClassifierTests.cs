@@ -48,14 +48,16 @@ public sealed class PrefabJunctionClassifierTests
     }
 
     [Fact]
-    public void UncrossedForkAndMergeAreRampJunctionsButTwoInterfaceRoadIsNot()
+    public void UncrossedForkIsRampJunctionButSingleExitMergeAndTwoInterfaceRoadAreNot()
     {
         var d=new PrefabDescriptor{NavCurves=[new(),new()],Nodes=[new(){InputLines=[0,1],OutputLines=[]},
             new(){OutputLines=[0],InputLines=[]},new(){OutputLines=[1],InputLines=[]}]};
         var fork=PrefabJunctionClassifier.Analyze(d);
         Assert.False(fork.IsJunction);Assert.True(fork.IsRampJunction);Assert.True(fork.IsAnyJunction);
         d.Nodes=[new(){InputLines=[0],OutputLines=[]},new(){InputLines=[1],OutputLines=[]},new(){OutputLines=[0,1],InputLines=[]}];
-        Assert.True(PrefabJunctionClassifier.Analyze(d).IsRampJunction);
+        var merge=PrefabJunctionClassifier.Analyze(d);
+        Assert.Equal(2,merge.EntranceCount);Assert.Equal(1,merge.ExitCount);
+        Assert.False(merge.IsRampJunction);Assert.False(merge.IsAnyJunction);
         d.Nodes=[new(){InputLines=[0],OutputLines=[1]},new(){InputLines=[1],OutputLines=[0]}];
         Assert.False(PrefabJunctionClassifier.Analyze(d).IsAnyJunction);
     }

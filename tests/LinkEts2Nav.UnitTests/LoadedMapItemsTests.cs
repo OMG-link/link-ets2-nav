@@ -45,5 +45,3 @@ public sealed class LoadedMapItemsTests
         Assert.False(LoadedMapItems.RetainSupplementSigns(compound));Assert.Empty(compound.MapItems);Assert.Empty(compound.Nodes);
     }
 }
-
-

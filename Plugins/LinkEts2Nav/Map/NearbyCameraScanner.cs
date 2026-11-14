@@ -154,7 +154,7 @@ public sealed class NearbyCameraScanner
         if(auxiliaryLanes is not null)diagnostics.AddRange(auxiliaryLanes.Diagnostics);
         if(speedLimits.Error is not null) diagnostics.Add(speedLimits.Error);
         var cameras = new List<CameraObservation>();
-        foreach (var item in map.MapItems.Values)
+        foreach (var item in LoadedMapItems.Enumerate(map.MapItems.Values))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (item is not SingleNodeItem placed || placed.Node is not Node node) continue;
@@ -338,7 +338,13 @@ public sealed class NearbyCameraScanner
 
     private sealed class CameraMap(ScsMap? host) : ScsMap
     {
-        protected override bool PostProcessItem(MapItem item) => (item is ScsModel or Sign or Road or Prefab or CityArea or TrafficArea)
-            && (host is null || !host.MapItems.ContainsKey(item.Uid));
+        protected override bool PostProcessItem(MapItem item)
+        {
+            if(host?.MapItems.ContainsKey(item.Uid)==true)return false;
+            // Only this newly deserialized container is pruned. Host containers
+            // remain untouched; retaining a child must not retain all decorations.
+            if(item is Compound compound)return LoadedMapItems.RetainSupplementSigns(compound);
+            return item is ScsModel or Sign or Road or Prefab or CityArea or TrafficArea;
+        }
     }
 }

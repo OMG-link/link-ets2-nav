@@ -6,7 +6,7 @@ using TruckLib.ScsMap;
 using TruckLib.Sii;
 namespace LinkEts2Nav.Map;
 
-/// <summary>Reads visible text objects from the sign's actual template/board bindings.</summary>
+/// <summary>Reads fixed rules and visible text from the actual template/board bindings.</summary>
 internal sealed class CitySignNameReader(IFileSystem fs)
 {
     private Dictionary<string,string>? templates,boards;
@@ -44,6 +44,22 @@ internal sealed class CitySignNameReader(IFileSystem fs)
         catch(Exception e) when(e is IOException or InvalidDataException or FormatException or ArgumentException)
         {return null;}
     }
+    /// <summary>A fixed template rule can corroborate a combined city-end/numeric model rule.</summary>
+    public string? TrafficRule(Sign sign)
+    {
+        if(string.IsNullOrWhiteSpace(sign.SignTemplate))return null;
+        try
+        {
+            templates??=Index("templates");
+            if(!templates.TryGetValue(sign.SignTemplate,out var path))return null;
+            var root=Units(path).Where(u=>u.Class=="sign_template").ToArray();
+            if(root.Length!=1||Text(root[0],"dynamic_attributes") is not ("" or "0"))return null;
+            return Text(root[0],"traffic_rule");
+        }
+        catch(Exception e) when(e is IOException or InvalidDataException or FormatException or ArgumentException)
+        {return null;}
+    }
+
     private Unit[] Units(string path)
     {
         if(!files.TryGetValue(path,out var units))files[path]=units=SiiFile.Open(path,fs).Units.ToArray();

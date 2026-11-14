@@ -73,6 +73,38 @@ public sealed class SpeedLimitDefinitionTests
         Assert.False(parsed.Action.Unsupported);
     }
 
+    [Theory][InlineData(false)][InlineData(true)]
+    public void CompoundAndFlatUrbanBoardsUseTheSameWorldCoordinatesAndIdentity(bool nested)
+    {
+        var fs=new Fs();fs.Files["/def/world/sign.test.sii"]="""SiiNunit { sign_model : sign.test { traffic_rule: traffic_rule.urban_start } }""";
+        var map=new TruckLib.ScsMap.Map();IItemContainer owner=map;
+        if(nested)owner=Compound.Add(Compound.Add(map,new(10,0,20)),new(50,0,60));
+        var sign=Sign.Add(owner,new(200,5,300),"test");var parent=sign.Node.Parent;
+        if(nested)map.MapItems[sign.Uid]=sign; // A second host view must not duplicate the same child.
+        var parsed=Assert.Single(new SpeedLimitDefinitionReader(fs).Build(map).Signs);
+        Assert.Equal(sign.Uid.ToString("X16"),parsed.Id);Assert.Equal(sign.Node.Position,parsed.Position);
+        Assert.True(parsed.Action.Urban);Assert.Same(parent,sign.Node.Parent);
+    }
+
+    [Theory]
+    [InlineData("traffic_rule.city_end_70",false,0)]
+    [InlineData("traffic_rule.city_end_70",true,1)]
+    [InlineData("traffic_rule.limit_60",true,0)]
+    [InlineData("",true,0)]
+    public void ACombinedCityEndAndSpeedRuleRequiresTheActualMatchingTemplate(string templateRule,bool uncertain,int dynamicAttributes)
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/traffic_rules.sii"]="""SiiNunit { traffic_rule_data : traffic_rule.limit_60 { rule: speed_limit num_params[]: 60 } traffic_rule_data : traffic_rule.limit_70 { rule: speed_limit num_params[]: 70 } traffic_rule_data : traffic_rule.city_end_70 { additional_rules[]: traffic_rule.urban_end additional_rules[]: traffic_rule.limit_70 } }""";
+        fs.Files["/def/world/sign.test.sii"]="""SiiNunit { sign_model : sign.test { traffic_rule: traffic_rule.city_end_70 } }""";
+        fs.Files["/def/sign/templates.sii"]="""SiiNunit { sign_template : sign_templ.city { path: "/def/sign/template/city.sii" } }""";
+        fs.Files["/def/sign/template/city.sii"]="SiiNunit { sign_template : .template { traffic_rule: "+(templateRule.Length>0?templateRule:"null")+" dynamic_attributes: "+dynamicAttributes+" } }";
+        var map=new TruckLib.ScsMap.Map();var compound=Compound.Add(map,new(50,0,0));
+        var sign=Sign.Add(compound,new(50,0,-2),"test");sign.SignTemplate="sign_templ.city";
+        var parsed=Assert.Single(new SpeedLimitDefinitionReader(fs).Build(map).Signs);
+        Assert.False(parsed.Action.Urban);Assert.Equal(70,parsed.Action.SetKph);Assert.True(parsed.Action.Reset);
+        Assert.Equal(uncertain,parsed.TemplateOverride);Assert.False(parsed.Action.Unsupported);
+    }
+
     [Theory]
     [InlineData(true,true,true)]
     [InlineData(true,false,false)]

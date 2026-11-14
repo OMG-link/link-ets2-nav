@@ -191,27 +191,27 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
 
     private sealed class OfficialBackend : IMapScanBackend
     {
-        private readonly OfficialArchiveMount mount;
+        private readonly GameDataManager data;
         private readonly NearbyCameraScanner scanner;
         public OfficialBackend(MapScanRequest request, CancellationToken token)
         {
-            mount = OfficialArchiveMount.FromGameLog(request.GamePath, request.LogLines);
+            data=GameDataManager.Open(request.GamePath,request.LogLines,request.HostMap);
             try
             {
-                scanner = new NearbyCameraScanner(mount.FileSystem, activeModPaths: mount.ActiveModPaths, hostMap: request.HostMap);
+                scanner=new NearbyCameraScanner(data);
                 scanner.Prepare(token);
             }
-            catch { mount.Dispose(); throw; }
+            catch { data.Dispose(); throw; }
         }
         public RouteJourneyEstimator? JourneyEstimator=>scanner.JourneyEstimator;
         public NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken)
             => scanner.ReadNearby(position, 1100, cancellationToken);
         public NearbyMapSnapshot Read(MapScanRequest request, CancellationToken cancellationToken)
         {
-            var coverage = MapScanCoverage.Create(request.Position, 1100, request.HostMap,
+            var coverage = MapScanCoverage.CreateFromData(request.Position, 1100, data.Map,
                 request.Route, request.NavigationRemainingMeters);
             return scanner.ReadNearby(request.Position, 1100, cancellationToken, coverage);
         }
-        public void Dispose() => mount.Dispose();
+        public void Dispose() => data.Dispose();
     }
 }

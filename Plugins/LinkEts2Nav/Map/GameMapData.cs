@@ -13,14 +13,14 @@ public sealed class GameMapData
 {
     private readonly NativeMap? basis;
     private readonly HostMapView? view;
-    private NativeMap? window;
+    private IReadOnlyDictionary<SectorCoordinate,Sector> extraSectors=new Dictionary<SectorCoordinate,Sector>();
     private IReadOnlyDictionary<ulong,MapItem> extraItems=new Dictionary<ulong,MapItem>();
     private IReadOnlyDictionary<ulong,INode> extraNodes=new Dictionary<ulong,INode>();
     private readonly Dictionary<Type,IReadOnlyList<MapItem>> baseTypes=[];
     private readonly Dictionary<Type,object> typed=[];
     private readonly object gate=new();
     internal NativeMap? NativeBase=>basis;
-    public GameMapHeader? Header {get;}
+    public GameMapHeader? Header {get;private set;}
     public IReadOnlyDictionary<ulong,MapItem> Items {get;}
     public IReadOnlyDictionary<ulong,INode> Nodes {get;}
     public IReadOnlyDictionary<SectorCoordinate,Sector> Sectors {get;}
@@ -36,7 +36,7 @@ public sealed class GameMapData
         }
         Items=new OverlayDictionary<ulong,MapItem>(map?.MapItems??[],()=>extraItems);
         Nodes=new OverlayDictionary<ulong,INode>(map is null?new Dictionary<ulong,INode>():new ReadOnlyDictionary<ulong,INode>(map.Nodes),()=>extraNodes);
-        Sectors=new OverlayDictionary<SectorCoordinate,Sector>(map?.Sectors??[],()=>window?.Sectors??[]);
+        Sectors=new OverlayDictionary<SectorCoordinate,Sector>(map?.Sectors??[],()=>extraSectors);
     }
     public T? GetItem<T>(ulong uid) where T:MapItem=>Items.GetValueOrDefault(uid) as T;
     public MapItem? GetItem(ulong uid)=>Items.GetValueOrDefault(uid);
@@ -71,9 +71,17 @@ public sealed class GameMapData
     {
         lock(gate)
         {
-            extraItems=new ReadOnlyDictionary<ulong,MapItem>(map.MapItems.Where(p=>basis?.MapItems.ContainsKey(p.Key)!=true).ToDictionary());
-            extraNodes=new ReadOnlyDictionary<ulong,INode>(map.Nodes.Where(p=>basis?.Nodes.ContainsKey(p.Key)!=true).ToDictionary());
-            window=map;typed.Clear();
+            Header??=new(map.NormalScale,map.CityScale,map.StartPosition,map.StartRotation,map.EuropeMapUiCorrections,map.EditorMapId);
+            var items=extraItems.ToDictionary();
+            foreach(var p in map.MapItems)if(basis?.MapItems.ContainsKey(p.Key)!=true)items[p.Key]=p.Value;
+            var nodes=extraNodes.ToDictionary();
+            foreach(var p in map.Nodes)if(basis?.Nodes.ContainsKey(p.Key)!=true)nodes[p.Key]=p.Value;
+            var sectors=extraSectors.ToDictionary();
+            foreach(var p in map.Sectors)if(basis?.Sectors.ContainsKey(p.Key)!=true)sectors[p.Key]=p.Value;
+            extraItems=new ReadOnlyDictionary<ulong,MapItem>(items);
+            extraNodes=new ReadOnlyDictionary<ulong,INode>(nodes);
+            extraSectors=new ReadOnlyDictionary<SectorCoordinate,Sector>(sectors);
+            typed.Clear();
         }
     }
 }

@@ -4,7 +4,7 @@ using TruckLib;
 namespace LinkEts2Nav.Map;
 
 /// <summary>Read-only definition overlay; geometric resources continue to use the approved official mount.</summary>
-internal sealed class SpeedLimitFileSystem(IFileSystem original, Dictionary<string,byte[]> overrides) : IFileSystem
+internal sealed class GameDefinitionFileSystem(IFileSystem original, Dictionary<string,byte[]> overrides) : IFileSystem
 {
     public char DirectorySeparator => '/';
     private static string Key(string path) => "/" + path.Replace('\\','/').Trim('/');
@@ -65,10 +65,10 @@ internal sealed class SpeedLimitFileSystem(IFileSystem original, Dictionary<stri
                 }
                 catch(InvalidDataException)
                 {
-                    throw new NotSupportedException("限速暂不支持该模组归档的定义覆盖："+Path.GetFileName(mod));
+                    throw new NotSupportedException("暂不支持该模组归档的定义覆盖："+Path.GetFileName(mod));
                 }
             }
         }
-        return new SpeedLimitFileSystem(original,files);
+        return new GameDefinitionFileSystem(original,files);
     }
 }

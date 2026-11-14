@@ -3,9 +3,9 @@ using TruckLib.ScsMap;
 namespace LinkEts2Nav.Map;
 
 /// <summary>City names require a unique readable board text; general inventories retain every text.</summary>
-internal sealed class CitySignNameReader(IFileSystem fs)
+internal sealed class CitySignNameReader(GameDataManager data)
 {
-    private readonly SignTextReader reader=new(fs);
+    private readonly SignTextReader reader=new(data);
     public string? Read(Sign sign)
     {
         var names=reader.ReadTexts(sign);

@@ -27,9 +27,13 @@ public sealed class MapScanCoverage
     }
     public static MapScanCoverage Create(Vector3 position, float radius, TruckLib.ScsMap.Map? host,
         RouteSnapshot? route, double remaining)
+        =>CreateCore(position,radius,host is null?null:new System.Collections.ObjectModel.ReadOnlyDictionary<ulong,INode>(host.Nodes),route,remaining);
+    public static MapScanCoverage CreateFromData(Vector3 position,float radius,GameMapData? map,RouteSnapshot? route,double remaining)
+        =>CreateCore(position,radius,map?.Nodes,route,remaining);
+    private static MapScanCoverage CreateCore(Vector3 position,float radius,IReadOnlyDictionary<ulong,INode>? mapNodes,RouteSnapshot? route,double remaining)
     {
         var segments = new List<(Vector3, Vector3)>();
-        if (host is null || route?.Availability != RouteAvailability.Available || !double.IsFinite(remaining) || remaining <= 0)
+        if (mapNodes is null || route?.Availability != RouteAvailability.Available || !double.IsFinite(remaining) || remaining <= 0)
             return new(position, radius, segments);
         var nodes = route.Nodes.OrderByDescending(n => n.DistanceToEndMeters).ToArray();
         (INode Node, double Remaining)? previous = null;
@@ -37,7 +41,7 @@ public sealed class MapScanCoverage
         bool started = false;
         foreach (var node in nodes)
         {
-            if (!host.Nodes.TryGetValue(node.Uid, out var resolved)) continue;
+            if (!mapNodes.TryGetValue(node.Uid, out var resolved)) continue;
             var point = resolved.Position;
             if (!float.IsFinite(point.X) || !float.IsFinite(point.Y) || !float.IsFinite(point.Z)) continue;
             if (node.DistanceToEndMeters > remaining)

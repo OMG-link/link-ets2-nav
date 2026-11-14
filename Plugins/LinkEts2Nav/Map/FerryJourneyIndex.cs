@@ -15,6 +15,8 @@ public sealed class FerryJourneyIndex
     private readonly Dictionary<ulong,FerryPort> activationPorts=[];
     public IReadOnlyList<FerryPort> Ports { get; }
     public FerryJourneyIndex(TruckLib.ScsMap.Map host,IEnumerable<(string From,string To)> links,IReadOnlyDictionary<string,string>? names=null,Func<Road,double?>? roadHalfWidth=null)
+        :this(new GameMapData(host),links,names,roadHalfWidth) { }
+    public FerryJourneyIndex(GameMapData map,IEnumerable<(string From,string To)> links,IReadOnlyDictionary<string,string>? names=null,Func<Road,double?>? roadHalfWidth=null)
     {
         foreach(var (from,to) in links)
         {
@@ -23,26 +25,23 @@ public sealed class FerryJourneyIndex
         }
         var ferries=new Dictionary<ulong,Ferry>();
         var prefabsByFerry=new Dictionary<ulong,List<Prefab>>();
-        // One host-map pass collects ports and their reverse prefab references.
-        foreach(var item in host.MapItems.Values)
-        {
-            if(item is Ferry ferry)ferries.Add(ferry.Uid,ferry);
-            else if(item is Prefab {Ferry:{} port} prefab)
+        foreach(var ferry in map.GetItems<Ferry>())ferries.Add(ferry.Uid,ferry);
+        foreach(var prefab in map.GetItems<Prefab>())
+            if(prefab.Ferry is {} port)
             {
                 if(!prefabsByFerry.TryGetValue(port.Uid,out var prefabs))prefabsByFerry[port.Uid]=prefabs=[];
                 prefabs.Add(prefab);
             }
-        }
         var records=new List<FerryPort>();
         foreach(var ferry in ferries.Values)
         {
             if(ferry.Node is null)continue;
-            var prefab=ferry.Prefab is not null?host.MapItems.GetValueOrDefault(ferry.Prefab.Uid) as Prefab:null;
+            var prefab=ferry.Prefab is not null?map.GetItem<Prefab>(ferry.Prefab.Uid):null;
             prefab??=prefabsByFerry.GetValueOrDefault(ferry.Uid)?.FirstOrDefault();
             string id=ferry.Port.ToString();
             records.Add(new(id,names?.GetValueOrDefault(id)??id,ferry.Uid,ferry.Node.Uid,ferry.Node.Position,
                 prefab?.Uid??0,prefab?.Nodes.Select(n=>n.Uid).ToArray()??[],ferry.TrainTransport)
-                {UnloadPosition=ferry.Node.Position+ferry.UnloadOffset, Entrances=BuildEntrances(prefab,ferry,host,roadHalfWidth)});
+                {UnloadPosition=ferry.Node.Position+ferry.UnloadOffset, Entrances=BuildEntrances(prefab,ferry,map,roadHalfWidth)});
         }
         Ports=records.AsReadOnly();
         foreach(var port in records.GroupBy(p=>p.Id).Where(g=>g.Count()==1).Select(g=>g.Single()))
@@ -58,7 +57,7 @@ public sealed class FerryJourneyIndex
         {
             Add(ferry.Uid,ferry.Port.ToString(),ferry.Node?.Position);
             if(ferry.Node is not null)Add(ferry.Node.Uid,ferry.Port.ToString(),ferry.Node.Position);
-            if(ferry.Prefab is not null&&host.MapItems.GetValueOrDefault(ferry.Prefab.Uid) is Prefab prefab)
+            if(ferry.Prefab is not null&&map.GetItem<Prefab>(ferry.Prefab.Uid) is Prefab prefab)
                 foreach(var node in prefab.Nodes)Add(node.Uid,ferry.Port.ToString(),node.Position);
         }
         // Prefab links can remain unresolved objects; use their UID without
@@ -68,15 +67,15 @@ public sealed class FerryJourneyIndex
                 foreach(var prefab in prefabs)
                     foreach(var node in prefab.Nodes)Add(node.Uid,ferry.Port.ToString(),node.Position);
     }
-    private static IReadOnlyDictionary<ulong,FerryEntrance> BuildEntrances(Prefab? prefab,Ferry ferry,TruckLib.ScsMap.Map host,Func<Road,double?>? width)
+    private static IReadOnlyDictionary<ulong,FerryEntrance> BuildEntrances(Prefab? prefab,Ferry ferry,GameMapData map,Func<Road,double?>? width)
     {
         var result=new Dictionary<ulong,FerryEntrance>();
         foreach(var reference in prefab?.Nodes??[])
         {
-            var node=(host.Nodes.TryGetValue(reference.Uid,out var resolved)?resolved:reference) as Node;
+            var node=(map.Nodes.TryGetValue(reference.Uid,out var resolved)?resolved:reference) as Node;
             if(node is null)continue;
-            var backward=ConnectedRoad(node.BackwardItem,node.Uid,host);
-            var forwardRoad=ConnectedRoad(node.ForwardItem,node.Uid,host);
+            var backward=ConnectedRoad(node.BackwardItem,node.Uid,map);
+            var forwardRoad=ConnectedRoad(node.ForwardItem,node.Uid,map);
             if(backward is not null&&forwardRoad is not null&&backward.Uid!=forwardRoad.Uid)continue;
             var road=backward??forwardRoad;
             if(road is null||width?.Invoke(road) is not >0)continue;
@@ -92,10 +91,10 @@ public sealed class FerryJourneyIndex
         return result;
     }
 
-    private static Road? ConnectedRoad(IMapObject? reference,ulong nodeUid,TruckLib.ScsMap.Map host)
+    private static Road? ConnectedRoad(IMapObject? reference,ulong nodeUid,GameMapData map)
     {
         // Resolve by UID even when the node still holds an unresolved item reference.
-        if(reference is null||!host.MapItems.TryGetValue(reference.Uid,out var item)||item is not Road road)return null;
+        if(reference is null||map.GetItem<Road>(reference.Uid) is not {} road)return null;
         return road.Node?.Uid==nodeUid||road.ForwardNode?.Uid==nodeUid?road:null;
     }
 
@@ -135,14 +134,19 @@ public sealed class FerryJourneyIndex
     public static FerryJourneyIndex Load(TruckLib.ScsMap.Map host,IFileSystem original,
         IReadOnlyList<string>? mods=null,CancellationToken token=default,Func<Road,double?>? roadHalfWidth=null)
     {
-        var fs=SpeedLimitFileSystem.Create(original,mods??[]);
+        return Read(GameDataManager.From(original,mods),new GameMapData(host),token,roadHalfWidth);
+    }
+    public static FerryJourneyIndex Load(GameDataManager data,CancellationToken token=default,Func<Road,double?>? roadHalfWidth=null)
+        =>Read(data,data.Map,token,roadHalfWidth);
+    private static FerryJourneyIndex Read(GameDataManager fs,GameMapData map,CancellationToken token,Func<Road,double?>? roadHalfWidth)
+    {
         var links=new List<(string,string)>();
         const string directory="/def/ferry/connection/";
         foreach(var path in fs.GetFiles(directory).Where(p=>p.EndsWith(".sii",StringComparison.Ordinal)
             &&fs.GetParent(p).TrimEnd('/')==directory.TrimEnd('/')).Order(StringComparer.Ordinal))
         {
             token.ThrowIfCancellationRequested();
-            foreach(var unit in SiiFile.Open(path,fs).Units.Where(u=>u.Class=="ferry_connection"))
+            foreach(var unit in fs.GetSii(path).OfClass("ferry_connection"))
             {
                 var name=unit.Name.Split('.');
                 if(name.Length==3&&name[0]=="conn")links.Add((name[1],name[2]));
@@ -151,8 +155,8 @@ public sealed class FerryJourneyIndex
         var names=new Dictionary<string,string>(StringComparer.Ordinal);
         foreach(var path in fs.GetFiles("/def/").Where(p=>fs.GetParent(p).TrimEnd('/')=="/def"
             &&Path.GetFileName(p).StartsWith("ferry",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order(StringComparer.Ordinal))
-            foreach(var unit in SiiFile.Open(path,fs).Units.Where(u=>u.Class=="ferry_data"))
+            foreach(var unit in fs.GetSii(path).OfClass("ferry_data"))
                 if(unit.Attributes.TryGetValue("ferry_name",out var value))names[unit.Name.Split('.').Last()]=((object)value).ToString()!.Trim('"');
-        return new(host,links,names,roadHalfWidth);
+        return new(map,links,names,roadHalfWidth);
     }
 }

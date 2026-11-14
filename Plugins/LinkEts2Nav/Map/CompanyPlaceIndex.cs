@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using TruckLib;
 using TruckLib.ScsMap;
 using TruckLib.Sii;
@@ -25,9 +25,10 @@ public sealed class CompanyPlaceIndex
     }
 }
 
-/// <summary>Company definitions are loaded once on the scanner worker, only when a nearby company exists.</summary>
-public sealed class CompanyPlaceReader(IFileSystem fs)
+/// <summary>Company names share the dataset catalogue; placed companies retain explicit prefab ownership.</summary>
+public sealed class CompanyPlaceReader(GameDataManager data)
 {
+    public CompanyPlaceReader(IFileSystem fs):this(GameDataManager.From(fs)) { }
     private Dictionary<string,string?>? names;
     public List<string> Diagnostics {get;}=[];
     public IReadOnlyDictionary<string,string?> ReadNames()=>names??=ReadDefinitions();
@@ -42,10 +43,10 @@ public sealed class CompanyPlaceReader(IFileSystem fs)
     private Dictionary<string,string?> ReadDefinitions()
     {
         var result=new Dictionary<string,string?>(StringComparer.Ordinal);
-        foreach(var path in fs.GetFiles("/def/").Where(p=>fs.GetParent(p).TrimEnd('/')=="/def"&&Path.GetFileName(p).StartsWith("company",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order())
+        foreach(var path in data.GetFiles("/def/").Where(p=>data.GetParent(p).TrimEnd('/')=="/def"&&Path.GetFileName(p).StartsWith("company",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order())
         try
         {
-            foreach(var unit in SiiFile.Open(path,fs).Units.Where(u=>u.Class=="company_permanent"))
+            foreach(var unit in data.GetSii(path).OfClass("company_permanent"))
             {
                 if(!unit.Attributes.TryGetValue("name",out var v)||v is null)continue;
                 object value=v;string name=(Convert.ToString(value.GetType().GetProperty("Value")?.GetValue(value)??value,CultureInfo.InvariantCulture)??"").Trim('"').Trim().Normalize();

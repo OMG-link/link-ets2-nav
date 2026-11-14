@@ -52,7 +52,7 @@ public sealed class GameDataManager:IDisposable
     private GameDataManager(IFileSystem source,IReadOnlyList<string>? activeMods,NativeMap? map,string mapPath,IDisposable? owner)
     {
         mods=activeMods?.ToArray()??[];this.mapPath=mapPath;this.owner=owner;
-        resources=new(this,()=>SpeedLimitFileSystem.Create(source,mods));
+        resources=new(this,()=>GameDefinitionFileSystem.Create(source,mods));
         Map=new(map);world=new(()=>new WorldDefinitionIndex(this),LazyThreadSafetyMode.ExecutionAndPublication);
     }
     public static GameDataManager Open(string gamePath,IEnumerable<string> logLines,NativeMap? map=null)
@@ -97,8 +97,9 @@ public sealed class GameDataManager:IDisposable
     {
         var result=new Dictionary<string,string>(StringComparer.Ordinal);
         foreach(var path in GetFiles("/def/sign/").Where(p=>GetParent(p)=="/def/sign"&&Path.GetFileName(p).StartsWith(prefix,StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order(StringComparer.Ordinal))
-            foreach(var unit in GetSii(path).Units)
-                if(unit.Attributes.ContainsKey("path"))result[unit.Name]=WorldDefinitionIndex.Text(unit,"path");
+            TryDefinitions(path,document=>
+            {foreach(var unit in document.Units)
+                if(unit.Attributes.ContainsKey("path"))result[unit.Name]=WorldDefinitionIndex.Text(unit,"path");});
         return (IReadOnlyDictionary<string,string>)new System.Collections.ObjectModel.ReadOnlyDictionary<string,string>(result);
     });
     public PrefabData? GetPrefab(ulong uid)
@@ -130,21 +131,24 @@ public sealed class GameDataManager:IDisposable
             token.ThrowIfCancellationRequested();
             // Fixed catalogues are prepared before the first position-dependent scan.
             _=World;
-            speedLimits??=new SpeedLimitDefinitionReader(resources);
+            speedLimits??=new SpeedLimitDefinitionReader(this);
             _=SignIndex("templates");_=SignIndex("boards");
-            companies??=new CompanyPlaceReader(resources);_=companies.ReadNames();
+            companies??=new CompanyPlaceReader(this);_=companies.ReadNames();
             speedLimits.PrepareHost(Map.NativeBase,token);
-            if(Map.NativeBase is {} map)
+            if(Map.NativeBase is not null)
             {
-                ferries??=FerryJourneyIndex.Load(map,resources,token:token,roadHalfWidth:speedLimits.ReferenceHalfWidth);
-                estimator??=new(map,speedLimits.RoadCategoryLimit,JourneyEstimationCalibration.PrefabDistanceFactor,ferries);
+                ferries??=FerryJourneyIndex.Load(this,token:token,roadHalfWidth:speedLimits.ReferenceHalfWidth);
+                estimator??=new(Map,speedLimits.RoadCategoryLimit,JourneyEstimationCalibration.PrefabDistanceFactor,ferries);
             }
+            token.ThrowIfCancellationRequested();
             prepared=true;
         }
     }
+    internal SpeedLimitData ReadSpeedLimits(NativeMap window,IReadOnlyList<LimitRegion> regions,CancellationToken token)
+        =>SpeedLimits.Build(window,token,Map.NativeBase,regions);
     internal NativeMap ReadWindow(IEnumerable<SectorCoordinate> requested)
     {
-        var sectors=requested.ToArray();
+        var sectors=requested.Distinct().OrderBy(s=>s.X).ThenBy(s=>s.Z).ToArray();
         if(loadedWindow is not null&&sectors.SequenceEqual(loadedSectors))return loadedWindow;
         var map=new SupplementMap(Map.NativeBase);map.Read(mapPath,resources,sectors);Map.MergeInto(map,sectors);
         loadedWindow=map;loadedSectors=sectors;Map.Publish(map);return map;

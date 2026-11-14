@@ -1,12 +1,9 @@
-using System.Globalization;
 using System.Numerics;
-using PrefabDescriptor = TruckLib.Models.Ppd.PrefabDescriptor;
 using LinkEts2Nav.Core;
 using System.Security.Cryptography;
 using System.Text;
 using TruckLib;
 using TruckLib.ScsMap;
-using TruckLib.Sii;
 using ScsMap = TruckLib.ScsMap.Map;
 using ScsModel = TruckLib.ScsMap.Model;
 
@@ -15,6 +12,7 @@ namespace LinkEts2Nav.Map;
 public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservation> Cameras,
     IReadOnlyList<string> Diagnostics, IReadOnlyList<SectorCoordinate> Sectors)
 {
+    public GameDataManager? Data {get;init;}
     public IReadOnlyList<DirectedRoad> PrefabPaths { get; init; } = [];
     public AuxiliaryLaneIndex? AuxiliaryLanes {get;init;}
     public IReadOnlyList<RoundaboutStructure> Roundabouts { get; init; } = [];
@@ -28,61 +26,31 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
 
 /// <summary>
 /// Own one instance per mounted map. Call on a background worker; instances are not thread-safe.
-/// Only the nearby/route sector window is retained; overlapping prefab geometry and model metadata are reused.
+/// Derived geometry follows the active window; shared map resources and metadata belong to the dataset.
 /// </summary>
 public sealed class NearbyCameraScanner
 {
     private readonly RoundaboutMapIndex roundaboutIndex = new();
-    private readonly IFileSystem fileSystem;
-    private readonly ScsMap? hostMap;
-    private readonly HostMapView? hostView;
-    private readonly string mapPath;
-    private readonly Dictionary<string, string> prefabPaths = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, PrefabDescriptor?> prefabDescriptors = new(StringComparer.Ordinal);
+    private readonly GameDataManager data;
+    public GameDataManager Data=>data;
     private IReadOnlyList<DirectedRoad> junctionGeometry = [];
     private AuxiliaryLaneIndex? auxiliaryLanes;
     private IReadOnlyList<FreeNavigationArea> freeNavigationAreas = [];
     private string[] junctionDiagnostics = [];
     private Dictionary<ulong, (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
-    private readonly Dictionary<string, string> modelPaths = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> signPaths = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, (float MeasurementDistance, bool ReverseDirection)> cameraDefinitions = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, IReadOnlyList<SpeedCameraLocator>> locatorCache = new(StringComparer.Ordinal);
-    private readonly Dictionary<(string, string), (IReadOnlySet<int> Visible, string Fingerprint)> variantCache = new();
-    private readonly List<string> definitionDiagnostics = [];
-    private readonly Dictionary<string, string> locatorFailures = new(StringComparer.Ordinal);
     private ScsMap? map;
     private SectorCoordinate[] loadedSectors = [];
-    private bool definitionsLoaded;
-    private readonly IReadOnlyList<string> activeModPaths;
-    private SpeedLimitDefinitionReader? speedReader;
+    private SpeedLimitDefinitionReader speedReader=>data.SpeedLimits;
     private SpeedLimitAreaCache? areaCache;
-    private CompanyPlaceReader? companyReader;
     private CompanyPlaceIndex companies=CompanyPlaceIndex.Empty;
     private SpeedLimitData speedLimits = SpeedLimitData.Empty;
 
-    public NearbyCameraScanner(IFileSystem fileSystem, string mapPath = "/map/europe.mbd", IReadOnlyList<string>? activeModPaths = null, ScsMap? hostMap = null)
-    {
-        this.fileSystem = fileSystem;
-        this.hostMap = hostMap;
-        hostView = hostMap is null ? null : new HostMapView(hostMap);
-        this.mapPath = mapPath;
-        this.activeModPaths = activeModPaths ?? [];
-    }
-
-    public RouteJourneyEstimator? JourneyEstimator {get;private set;}
-    public FerryJourneyIndex? Ferries {get;private set;}
-
-    public void Prepare(CancellationToken cancellationToken = default)
-    {
-        LoadDefinitions(cancellationToken);
-        speedReader!.PrepareHost(hostMap, cancellationToken);
-        if(hostMap is not null)
-        {
-            Ferries??=FerryJourneyIndex.Load(hostMap,fileSystem,activeModPaths,cancellationToken,speedReader!.ReferenceHalfWidth);
-            JourneyEstimator??=new(hostMap,speedReader.RoadCategoryLimit,JourneyEstimationCalibration.PrefabDistanceFactor,Ferries);
-        }
-    }
+    public NearbyCameraScanner(IFileSystem fileSystem,string mapPath="/map/europe.mbd",IReadOnlyList<string>? activeModPaths=null,ScsMap? hostMap=null)
+        :this(new GameDataManager(fileSystem,activeModPaths,hostMap,mapPath)) { }
+    public NearbyCameraScanner(GameDataManager data)=>this.data=data;
+    public RouteJourneyEstimator? JourneyEstimator=>data.JourneyEstimator;
+    public FerryJourneyIndex? Ferries=>data.Ferries;
+    public void Prepare(CancellationToken cancellationToken=default)=>data.Prepare(cancellationToken);
 
     public NearbyMapSnapshot ReadNearby(Vector3 playerPosition, float radiusMeters = 1000,
         CancellationToken cancellationToken = default, MapScanCoverage? coverage = null)
@@ -98,10 +66,8 @@ public sealed class NearbyCameraScanner
         var sectors = coverage.Sectors.ToArray();
         if (map == null || !sectors.SequenceEqual(loadedSectors))
         {
-            var nextMap = new CameraMap(hostMap);
-            nextMap.Read(mapPath, fileSystem, sectors);
-            hostView?.MergeInto(nextMap, sectors);
-            companies=(companyReader??=new(fileSystem)).Build(nextMap);
+            var nextMap=data.ReadWindow(sectors);
+            companies=data.Companies.Build(nextMap);
             cancellationToken.ThrowIfCancellationRequested();
             var junctions = new List<DirectedRoad>();
             var areas = new List<FreeNavigationArea>();
@@ -110,11 +76,11 @@ public sealed class NearbyCameraScanner
             foreach (var prefab in nextMap.MapItems.Values.OfType<Prefab>())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!prefabPaths.TryGetValue(prefab.Model.ToString(), out string? resource)) continue;
+                if(!data.World.Prefabs.TryGetValue(prefab.Model.ToString(),out var definition))continue;
+                string resource=definition.Descriptor;
                 try
                 {
-                    if (!prefabDescriptors.TryGetValue(resource, out var descriptor))
-                        prefabDescriptors[resource] = descriptor = PrefabDescriptor.Open(resource, fileSystem);
+                    var descriptor=data.GetPrefabDescription(resource);
                     if (descriptor is not null)
                     {
                         roundaboutIndex.AddPrefab(prefab, descriptor, resource);
@@ -127,18 +93,17 @@ public sealed class NearbyCameraScanner
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    prefabDescriptors[resource] = null;
                     issues.Add($"Prefab {resource}: {ex.Message}");
                 }
             }
             foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road,speedReader);
             roundaboutIndex.BuildNewSectors(sectors,cancellationToken);
-            areaCache ??= new(fileSystem,mapPath);
+            areaCache ??= new(data);
             var regionData=areaCache.Update(nextMap,sectors,
                 junctions.SelectMany(e=>e.Points).Concat(nextMap.MapItems.Values.OfType<Road>()
                     .SelectMany(r=>Enumerable.Range(0,Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)+1)
                         .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),speedReader!,cancellationToken);
-            var builtLimits = ProjectedSignBuilder.Build(speedReader!.Build(nextMap,cancellationToken,hostMap,regionData),junctions,cancellationToken);
+            var builtLimits = ProjectedSignBuilder.Build(data.ReadSpeedLimits(nextMap,regionData,cancellationToken),junctions,cancellationToken);
             // One annotated geometry graph per map version, shared with navigation consumers.
             var navigation=new RoadPathSource(nextMap,junctions);
             var builtAuxiliary=AuxiliaryLaneIndex.Build(new NativeLaneGraph(navigation.GetNavigationGraph()),cancellationToken);
@@ -152,8 +117,8 @@ public sealed class NearbyCameraScanner
             map = nextMap;
             loadedSectors = sectors;
         }
-        var diagnostics = new List<string>(definitionDiagnostics);
-        if(companyReader is not null)diagnostics.AddRange(companyReader.Diagnostics);
+        var diagnostics = new List<string>(data.Diagnostics);
+        diagnostics.AddRange(data.Companies.Diagnostics);
         diagnostics.AddRange(junctionDiagnostics);
         diagnostics.AddRange(roundaboutIndex.Diagnostics);
         diagnostics.AddRange(speedLimits.Diagnostics);
@@ -171,13 +136,13 @@ public sealed class NearbyCameraScanner
             if (item is ScsModel modelItem)
             {
                 if (!modelItem.ModelHookups) continue;
-                modelPaths.TryGetValue(modelItem.Name.ToString(), out descriptor);
+                descriptor=data.World.Models.GetValueOrDefault(modelItem.Name.ToString())?.Descriptor;
                 scale = modelItem.Scale;
                 variant = modelItem.Variant.ToString();
             }
             else if (item is Sign signItem)
             {
-                signPaths.TryGetValue(signItem.Model.ToString(), out descriptor);
+                descriptor=data.World.Signs.GetValueOrDefault(signItem.Model.ToString())?.Descriptor;
                 variant = signItem.Variant.ToString();
                 if (signItem.FollowRoadDir)
                 {
@@ -187,17 +152,11 @@ public sealed class NearbyCameraScanner
             }
             if (descriptor == null) continue;
             if (string.IsNullOrEmpty(variant)) variant = "default";
-            string failureKey = descriptor + "|" + variant;
-            if (locatorFailures.TryGetValue(failureKey, out var previousFailure))
-            {
-                diagnostics.Add(previousFailure);
-                continue;
-            }
             try
             {
-                var locators = GetLocators(descriptor);
+                var locators = data.GetModelLocators(descriptor);
                 if (locators.Count == 0) continue;
-                var active = GetActiveParts(descriptor, variant);
+                var active = data.GetModelVariant(descriptor, variant);
                 foreach (var locator in locators)
                 {
                     if (!active.Visible.Contains(locator.PartIndex)) continue;
@@ -224,11 +183,10 @@ public sealed class NearbyCameraScanner
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 string message = $"{descriptor}: {ex.Message}";
-                locatorFailures[failureKey] = message;
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)
@@ -249,28 +207,6 @@ public sealed class NearbyCameraScanner
         return result.ToArray();
     }
 
-    private IReadOnlyList<SpeedCameraLocator> GetLocators(string descriptor)
-    {
-        if (locatorCache.TryGetValue(descriptor, out var cached)) return cached;
-        using var stream = fileSystem.Open(Path.ChangeExtension(descriptor, ".pmg"));
-        var locators = PmgLocatorReader.Read(stream, cameraDefinitions);
-        locatorCache.Add(descriptor, locators);
-        return locators;
-    }
-
-    private (IReadOnlySet<int> Visible, string Fingerprint) GetActiveParts(string descriptor, string variant)
-    {
-        if (variantCache.TryGetValue((descriptor, variant), out var cached)) return cached;
-        using var stream = fileSystem.Open(descriptor);
-        if (!stream.CanSeek || stream.Length > 16 * 1024 * 1024)
-            throw new InvalidDataException("Unsupported PMD metadata stream.");
-        var bytes = new byte[checked((int)stream.Length)];
-        stream.ReadExactly(bytes);
-        var result = (PmdVariantReader.ReadVisibleParts(bytes, variant), Convert.ToHexString(SHA256.HashData(bytes)));
-        variantCache.Add((descriptor, variant), result);
-        return result;
-    }
-
     private static string Fingerprint(string descriptor, string variant, SpeedCameraLocator locator, string pmdHash)
     {
         using var buffer = new MemoryStream();
@@ -285,72 +221,11 @@ public sealed class NearbyCameraScanner
         return Convert.ToHexString(SHA256.HashData(buffer.GetBuffer().AsSpan(0, checked((int)buffer.Length))));
     }
 
-    private void LoadDefinitions(CancellationToken cancellationToken)
-    {
-        if (definitionsLoaded) return;
-        foreach (var path in fileSystem.GetFiles("/unit/hookup/").Where(p => p.EndsWith(".sii", StringComparison.OrdinalIgnoreCase)))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                foreach (var unit in SiiFile.Open(path, fileSystem).Units)
-                {
-                    if (unit.Class != "speed_camera") continue;
-                    unit.Attributes.TryGetValue("measurement_distance", out var value);
-                    unit.Attributes.TryGetValue("reverse_direction", out var reversed);
-                    cameraDefinitions[unit.Name] = ReadDefinitionValues((object?)value, (object?)reversed);
-                }
-            }
-            catch (Exception ex) { definitionDiagnostics.Add($"{path}: {ex.Message}"); }
-        }
-        foreach (var path in fileSystem.GetFiles("/def/world/").Where(p => p.EndsWith(".sii", StringComparison.OrdinalIgnoreCase) &&
-                     (Path.GetFileName(p).StartsWith("model.", StringComparison.Ordinal) || Path.GetFileName(p).StartsWith("sign.", StringComparison.Ordinal) || Path.GetFileName(p).StartsWith("prefab.", StringComparison.Ordinal))))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                foreach (var unit in SiiFile.Open(path, fileSystem).Units)
-                {
-                    if (unit.Class == "prefab_model" && unit.Attributes.TryGetValue("prefab_desc", out var prefabDescriptor))
-                    {
-                        prefabPaths[unit.Name.Split('.').Last()] = Convert.ToString((object)prefabDescriptor, CultureInfo.InvariantCulture)?.Trim('"') ?? "";
-                        continue;
-                    }
-                    if (!unit.Attributes.TryGetValue("model_desc", out var descriptor)) continue;
-                    var token = unit.Name.Split('.').Last();
-                    if (unit.Class == "model_def") modelPaths[token] = Convert.ToString((object)descriptor, CultureInfo.InvariantCulture)?.Trim('"') ?? "";
-                    else if (unit.Class == "sign_model") signPaths[token] = Convert.ToString((object)descriptor, CultureInfo.InvariantCulture)?.Trim('"') ?? "";
-                }
-            }
-            catch (Exception ex) { definitionDiagnostics.Add($"{path}: {ex.Message}"); }
-        }
-        speedReader = new SpeedLimitDefinitionReader(fileSystem, activeModPaths);
-        definitionsLoaded = true;
-    }
-
     /// <summary>SII attributes are parsed dynamic values, not necessarily source strings.</summary>
     public static (float MeasurementDistance, bool ReverseDirection) ReadDefinitionValues(
         object? measurementDistance, object? reverseDirection)
     {
-        float distance = Convert.ToSingle(measurementDistance, CultureInfo.InvariantCulture);
-        bool reverse = Convert.ToBoolean(reverseDirection, CultureInfo.InvariantCulture);
-        if (!float.IsFinite(distance) || distance < 0)
-            throw new InvalidDataException("Speed-camera measurement distance must be finite and nonnegative.");
-        return (distance, reverse);
+        return WorldDefinitionIndex.CameraValues(measurementDistance,reverseDirection);
     }
 
-    private static float HorizontalDistanceSquared(Vector3 a, Vector3 b) =>
-        (a.X - b.X) * (a.X - b.X) + (a.Z - b.Z) * (a.Z - b.Z);
-
-    private sealed class CameraMap(ScsMap? host) : ScsMap
-    {
-        protected override bool PostProcessItem(MapItem item)
-        {
-            if(host?.MapItems.ContainsKey(item.Uid)==true)return false;
-            // Only this newly deserialized container is pruned. Host containers
-            // remain untouched; retaining a child must not retain all decorations.
-            if(item is Compound compound)return LoadedMapItems.RetainSupplementSigns(compound);
-            return item is ScsModel or Sign or Road or Prefab or Company or CityArea or TrafficArea;
-        }
-    }
 }

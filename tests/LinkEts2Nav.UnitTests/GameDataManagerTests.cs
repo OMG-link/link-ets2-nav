@@ -59,6 +59,71 @@ public sealed class GameDataManagerTests
         Assert.Same(GameDataManager.From(source),GameDataManager.From(source));
     }
 
+    [Fact]
+    public void PreparationSharesCatalogueWithWorldAndFeatureReaders()
+    {
+        var fs=new Files();
+        fs.Content["/def/world/sign.sii"]="SiiNunit { sign_model : sign.test { model_desc: \"/model/test.pmd\" traffic_rule: \"\" } }";
+        fs.Content["/def/company.sii"]="SiiNunit { company_permanent : company.permanent.test { name: \"Test Depot\" } }";
+        fs.Content["/def/sign/templates.sii"]="SiiNunit { sign_template_def : template.test { path: \"/sign/test.sii\" } }";
+        fs.Content["/def/sign/boards.sii"]="SiiNunit { sign_board_def : sign_board.test { path: \"/sign/board.sii\" } }";
+        fs.Content["/sign/test.sii"]="SiiNunit { sign_template_board_binding : .binding { area_name: \"main\" linked_board: \"sign_board.test\" } }";
+        fs.Content["/sign/board.sii"]="SiiNunit { sign_template_text : .text { id: 1 text: \"Test City\" } }";
+        var data=new GameDataManager(fs);
+        var definition=data.World.Signs["test"];
+        data.Prepare(TestContext.Current.CancellationToken);
+        long preparedParses=data.Statistics.SiiParses;
+        Assert.Equal("Test Depot",data.Companies.ReadNames()["test"]);
+        var native=new TruckLib.ScsMap.Map();var sign=Sign.Add(native,new(0,0,0),default);
+        sign.SignTemplate="template.test";
+        Assert.Equal(["Test City"],new SignTextReader(data).ReadTexts(sign));
+        Assert.Equal(["Test City"],new SignTextReader(data).ReadTexts(sign));
+        Assert.Equal(preparedParses+2,data.Statistics.SiiParses);
+        Assert.Same(definition.Unit,Assert.Single(data.GetSii(definition.Resource).Named("sign.test")));
+        Assert.All(fs.Reads,p=>Assert.Equal(1,p.Value));
+        data.Prepare(TestContext.Current.CancellationToken);
+        Assert.Equal(preparedParses+2,data.Statistics.SiiParses);
+    }
+
+    [Fact]
+    public void LaterSectorPublicationPreservesPreviouslyQueriedObjectsAndNativeOwnership()
+    {
+        var native=new TruckLib.ScsMap.Map();var road=Road.Add(native,new(0,0,0),new(20,0,0),default);
+        var data=new GameDataManager(new Files(),map:native);
+        var first=new TruckLib.ScsMap.Map();var a=Sign.Add(first,new(4100,0,0),default);
+        data.Map.Publish(first);
+        var old=data.Map.GetItems<Sign>();
+        var second=new TruckLib.ScsMap.Map();var b=Sign.Add(second,new(8100,0,0),default);
+        data.Map.Publish(second);
+        Assert.Same(a,data.Map.GetItem<Sign>(a.Uid));
+        Assert.Same(b,data.Map.GetItem<Sign>(b.Uid));
+        Assert.Same(road,data.Map.GetItem<Road>(road.Uid));
+        Assert.Single(old);Assert.Equal(2,data.Map.GetItems<Sign>().Count);
+        Assert.Single(data.Map.GetSector(new(1,0)).Items);
+        Assert.Single(data.Map.GetSector(new(2,0)).Items);
+        Assert.Single(native.MapItems);
+    }
+
+    [Fact]
+    public void BrokenOptionalSignCatalogueIsDiagnosedWithoutBlockingPreparation()
+    {
+        var fs=new Files();fs.Content["/def/sign/templates.sii"]="not a SII document";
+        var data=new GameDataManager(fs);data.Prepare(TestContext.Current.CancellationToken);
+        Assert.Contains(data.Diagnostics,d=>d.Contains("/def/sign/templates.sii"));
+        Assert.NotNull(data.SpeedLimits);
+        data.Prepare(TestContext.Current.CancellationToken);Assert.Equal(1,fs.Reads["/def/sign/templates.sii"]);
+    }
+
+    [Fact]
+    public void CancelledPreparationCanBeRetried()
+    {
+        var data=new GameDataManager(new Files());
+        using var stop=new CancellationTokenSource();stop.Cancel();
+        Assert.Throws<OperationCanceledException>(()=>data.Prepare(stop.Token));
+        Assert.Equal(0,data.Statistics.ResourceReads);
+        data.Prepare(TestContext.Current.CancellationToken);Assert.NotNull(data.SpeedLimits);
+    }
+
     private sealed class Files:IFileSystem
     {
         public readonly Dictionary<string,string> Content=new(StringComparer.Ordinal);

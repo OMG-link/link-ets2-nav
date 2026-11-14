@@ -27,15 +27,16 @@ public sealed class SpeedLimitDefinitionReader
     private RoadCountryIndex? hostCountries;
 
     public SpeedLimitDefinitionReader(IFileSystem original,IReadOnlyList<string>? mods=null)
+        :this(GameDataManager.From(original,mods)) { }
+    public SpeedLimitDefinitionReader(GameDataManager fs)
     {
         try
         {
-            var fs=SpeedLimitFileSystem.Create(original,mods??[]);
             citySignNames=new(fs);
             IEnumerable<Unit> Files(string directory,string prefix) => fs.GetFiles(directory)
                 .Where(p=>fs.GetParent(p).TrimEnd('/')==directory.TrimEnd('/')
                     && Path.GetFileName(p).StartsWith(prefix,StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal))
-                .Order(StringComparer.Ordinal).SelectMany(p=>SiiFile.Open(p,fs).Units);
+                .Order(StringComparer.Ordinal).SelectMany(p=>fs.GetSii(p).Units);
             foreach(var u in Files("/def/world/","traffic_rules"))rules[u.Name]=u;
             foreach(var u in Files("/def/world/","traffic_lane").Where(u=>u.Class=="traffic_lane_data"))
             {
@@ -70,7 +71,7 @@ public sealed class SpeedLimitDefinitionReader
                 if(!fs.DirectoryExists(directory))continue;
                 foreach(var u in fs.GetFiles(directory).Where(p=>Path.GetFileName(p).StartsWith("speed_limits",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal))
                     .OrderBy(p=>Path.GetFileName(p)=="speed_limits.sii"?0:1).ThenBy(p=>p,StringComparer.Ordinal)
-                    .SelectMany(p=>SiiFile.Open(p,fs).Units).Where(u=>Text(u,"vehicle_speed_class")=="truck"))
+                    .SelectMany(p=>fs.GetSii(p).Units).Where(u=>Text(u,"vehicle_speed_class")=="truck"))
                 {
                     var classes=Values(u,"lane_speed_class").Select(Link).ToArray();
                     var rural=Numbers(u,"limit");var urban=Numbers(u,"urban_limit");var maximum=Numbers(u,"max_limit");

@@ -16,8 +16,10 @@ public sealed record RouteJourneyEstimate(double? WorldMeters,double? RealSecond
 /// afterwards; no route-sector scan, PPD parsing or full-map geometry copy is performed.
 /// Prefabs use interface chords, scaled uniformly by the optional measured factor.
 /// </summary>
-public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimitResult> categorySpeed,double prefabDistanceFactor=1,FerryJourneyIndex? ferries=null)
+public sealed class RouteJourneyEstimator(GameMapData map,Func<Road,bool,SpeedLimitResult> categorySpeed,double prefabDistanceFactor=1,FerryJourneyIndex? ferries=null)
 {
+    public RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimitResult> categorySpeed,double prefabDistanceFactor=1,FerryJourneyIndex? ferries=null)
+        :this(new GameMapData(host),categorySpeed,prefabDistanceFactor,ferries) { }
     private sealed record Span(MapItem? Item,double Length,bool Forward,bool IsTransfer=false);
     private static RouteJourneyEstimate Missing(string reason)=>new(null,null,reason);
 
@@ -116,12 +118,12 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
     {
         node=null!;
         // TruckLib's internal unresolved-node implementation throws on access.
-        if(!host.Nodes.TryGetValue(uid,out var candidate)||candidate is not Node)return false;
+        if(!map.Nodes.TryGetValue(uid,out var candidate)||candidate is not Node)return false;
         node=candidate;return true;
     }
     private IEnumerable<MapItem> Owners(INode node)
         =>new[]{node.ForwardItem,node.BackwardItem}.Where(o=>o is not null).DistinctBy(o=>o.Uid)
-            .Select(o=>host.MapItems.TryGetValue(o.Uid,out var actual)?actual:o as MapItem).OfType<MapItem>()
+            .Select(o=>map.Items.TryGetValue(o.Uid,out var actual)?actual:o as MapItem).OfType<MapItem>()
             .Where(o=>o is Road or Prefab);
     private static bool Joins(Road road,ulong a,ulong b)
         =>road.Node.Uid==a&&road.ForwardNode.Uid==b||road.Node.Uid==b&&road.ForwardNode.Uid==a;

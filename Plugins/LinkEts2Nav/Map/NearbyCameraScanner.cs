@@ -69,7 +69,8 @@ public sealed class NearbyCameraScanner
     {
         LoadDefinitions(cancellationToken);
         speedReader!.PrepareHost(hostMap, cancellationToken);
-        if(hostMap is not null)JourneyEstimator??=new(hostMap,speedReader.RoadCategoryLimit,JourneyEstimationCalibration.PrefabDistanceFactor);
+        if(hostMap is not null)JourneyEstimator??=new(hostMap,speedReader.RoadCategoryLimit,JourneyEstimationCalibration.PrefabDistanceFactor,
+            FerryJourneyIndex.Load(hostMap,fileSystem,activeModPaths,cancellationToken));
     }
 
     public NearbyMapSnapshot ReadNearby(Vector3 playerPosition, float radiusMeters = 1000,

@@ -173,9 +173,10 @@ public sealed class NavigationEventPlanner
                         Window=new(start,ExecutionDue,state.BriefingStrict)});
             }
         }
-        if(!maneuvers.Any(IsNavigationAction)&&confirmedContinuation)
+        if(confirmedContinuation)
         {
-            var previous=ordered.LastOrDefault(p=>IsNavigationAction(p.Maneuver)&&p.Along<=playerAlong);
+            // Plan the final visible straight stretch now, including its future predecessor end.
+            var previous=ordered.LastOrDefault(p=>IsNavigationAction(p.Maneuver));
             string id="continuation:"+(previous?.Id??"origin"+FrameSuffix());
             double? anchor=previous?.EndAlong??(previous is null?initialBoundaryAlong??origin:null);
             if(anchor is {} start&&confirmedContinuationEndAlong is {} finish&&finish>start)

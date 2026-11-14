@@ -17,7 +17,7 @@ public sealed class RouteProgressTracker
         foreach(var e in route)
         {
             sections.Add((new(e.Id,e.StartNodeUid,e.EndNodeUid),along));
-            along+=e.Points.Zip(e.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+            along+=RouteGeometry.Length(e);
         }
         var counts=sections.GroupBy(s=>s.Key).ToDictionary(g=>g.Key,g=>g.Count());
         var common=sections.Where(s=>counts[s.Key]==1&&previous.TryGetValue(s.Key,out var p)&&p.Count==1).ToArray();

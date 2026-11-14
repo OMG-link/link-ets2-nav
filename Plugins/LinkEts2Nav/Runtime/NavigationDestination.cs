@@ -17,7 +17,7 @@ public static class NavigationDestination
         // terminal record. Never substitute them for meters on the world path.
         if(terminal.Uid==0||!float.IsFinite(terminal.DistanceToEndMeters)||terminal.DistanceToEndMeters>.01f
             ||path[^1].EndNodeUid!=terminal.Uid)return null;
-        double length=path.Sum(e=>e.Points.Zip(e.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)));
+        double length=path.Sum(RouteGeometry.Length);
         if(!double.IsFinite(length)||length<vehicleAlong||!double.IsFinite(confirmedUntil)||confirmedUntil<length-.01)
             return null;
         double remaining=length-vehicleAlong;

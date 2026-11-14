@@ -32,7 +32,13 @@ public static class RoundaboutRouteAdapter
             if (ambiguous || ordinal == 0)
             { result.AddRange(route.Skip(i).Take(last - i + 1)); i = last; continue; }
             var points = route.Skip(i).Take(last - i + 1).SelectMany(e => e.Points).ToArray();
-            double length=points.Zip(points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+            var starts=new List<int>();int pointOffset=0;
+            foreach(var edge in route.Skip(i).Take(last-i+1))
+            {
+                if(pointOffset>0)starts.Add(pointOffset);
+                starts.AddRange(edge.SegmentStarts.Select(n=>n+pointOffset));pointOffset+=edge.Points.Count;
+            }
+            double length=route.Skip(i).Take(last-i+1).Sum(RouteGeometry.Length);
             double connector=exitMatches[0].Min(p=>p.DepartureToBoundaryMeters);
             double departure=Math.Max(0,length-connector);
             var cues=new List<RoundaboutExitCue>();double previous=0;
@@ -40,22 +46,23 @@ public static class RoundaboutRouteAdapter
             {
                 var port=ring.ExitPorts.Where(p=>p.BoundaryNodeUid==ordered[n].Key)
                     .MinBy(p=>Ahead(p))!;
-                double along=Project(port.DeparturePosition,points,previous,departure);
+                double along=Project(port.DeparturePosition,points,starts,previous,departure);
                 cues.Add(new(n+1,along));previous=along;
             }
             cues.Add(new(ordinal,departure));
             result.Add(new("roundabout:" + ring.Id, route[i].StartNodeUid, route[last].EndNodeUid, points)
-            { Roundabout = new(ring.Id, ordinal, connector){Exits=cues} });
+            { SegmentStarts=starts, Roundabout = new(ring.Id, ordinal, connector){Exits=cues} });
             i = last;
         }
         return result;
     }
     // Locate each physical departure on the actual selected path, preserving exit order.
-    private static double Project(Vector3 point,IReadOnlyList<Vector3> path,double minimum,double maximum)
+    private static double Project(Vector3 point,IReadOnlyList<Vector3> path,IReadOnlyList<int> starts,double minimum,double maximum)
     {
         double offset=0,bestAlong=minimum,bestDistance=double.PositiveInfinity;
         for(int i=1;i<path.Count;i++)
         {
+            if(starts.Contains(i))continue;
             var a=path[i-1];var delta=path[i]-a;double length=delta.Length();
             if(length>0 && offset+length>=minimum && offset<=maximum)
             {

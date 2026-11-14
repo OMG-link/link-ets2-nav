@@ -119,5 +119,5 @@ public sealed class AccelerationLaneApproach
             return null;
         }
     }
-    private static double Length(DirectedRoad road)=>new LanePolyline(road.Points).Length;
+    private static double Length(DirectedRoad road)=>RouteGeometry.Length(road);
 }

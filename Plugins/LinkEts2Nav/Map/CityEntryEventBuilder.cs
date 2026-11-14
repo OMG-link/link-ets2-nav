@@ -20,11 +20,12 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
     private string? diagnosticSignature;
     private SpeedLimitData? projectionSource,cachedProjection;
     private IReadOnlyList<DirectedRoad>? projectionGeometry;
+    private Landmark[] currentLandmarks=[];
 
     public void Reset()
     {
         actualUrban=null;actualStateAlong=null;diagnosticSignature=null;
-        projectionSource=cachedProjection=null;projectionGeometry=null;
+        projectionSource=cachedProjection=null;projectionGeometry=null;currentLandmarks=[];
     }
     /// <summary>A new route coordinate frame does not change the actual observed urban state.</summary>
     public void Rebase()=>actualStateAlong=null;
@@ -70,10 +71,8 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
             foreach(string issue in projected.Diagnostics.Where(d=>d.Contains(sign.Id,StringComparison.Ordinal)))
                 warnings.Add("入城标牌未采用："+issue);
         Report(warnings);
-        var ordered=landmarks.OrderBy(s=>s.Along).ThenBy(s=>s.SignId,StringComparer.Ordinal).ToArray();
-        var passed=ordered.LastOrDefault(s=>s.Along<playerAlongMeters);
-        if(passed is not null&&(actualStateAlong is null||passed.Along>=actualStateAlong))
-        {actualUrban=passed.Urban;actualStateAlong=passed.Along;}
+        var ordered=currentLandmarks=landmarks.OrderBy(s=>s.Along).ThenBy(s=>s.SignId,StringComparer.Ordinal).ToArray();
+        Advance(playerAlongMeters);
         bool? forecast=actualUrban;var result=new List<EnvironmentPreviewEvent>();
         foreach(var sign in ordered.Where(s=>s.Along>=playerAlongMeters))
         {
@@ -82,6 +81,14 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
             forecast=sign.Urban;
         }
         return result;
+    }
+
+    /// <summary>Passage state uses already projected signs; no map/sign parsing or event planning on position ticks.</summary>
+    public void Advance(double playerAlongMeters)
+    {
+        var passed=currentLandmarks.LastOrDefault(s=>s.Along<playerAlongMeters);
+        if(passed is not null&&(actualStateAlong is null||passed.Along>=actualStateAlong))
+        {actualUrban=passed.Urban;actualStateAlong=passed.Along;}
     }
 
     private SpeedLimitData Projection(SpeedLimitData data,IReadOnlyList<DirectedRoad> geometry)

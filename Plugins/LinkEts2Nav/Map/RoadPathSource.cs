@@ -19,8 +19,9 @@ public sealed class RoadPathSource
     private readonly DirectedPathMatcher matcher = new();
     private readonly Action<string>? diagnosticLog;
     private readonly HashSet<(ulong,ulong)> reportedAmbiguities = new();
-    private RouteSnapshot? cachedRoute;
-    private Vector3 cachedPosition;
+    private ulong[]? cachedNodes;
+    private (bool Truncated,ulong? Terminal) cachedRouteMeaning;
+    public int RouteStructureBuildCount { get; private set; }
     private List<List<DirectedRoad>> cachedChunks = [];
     private IReadOnlyList<DirectedRoad>? navigationGraph;
 
@@ -132,21 +133,17 @@ public sealed class RoadPathSource
         { RouteDistanceLowerBoundMeters = lowerBound };
     }
 
-    private List<List<DirectedRoad>> GetRouteChunks(Vector3 position, RouteSnapshot route)
+    private List<List<DirectedRoad>> GetRouteChunks(Vector3 position, RouteSnapshot route) => GetRouteComponents(route);
+
+    /// <summary>Build topology once per directed UID sequence. Position only selects a cached component.</summary>
+    public List<List<DirectedRoad>> GetRouteComponents(RouteSnapshot route)
     {
-        if (ReferenceEquals(cachedRoute, route) && cachedPosition == position) return cachedChunks;
-        cachedRoute = route;
-        cachedPosition = position;
-        cachedChunks = [];
-        if (route.Nodes.Count < 2) return cachedChunks;
-        // The SDK can repeat an identical boundary record at a junction. Collapse
-        // only adjacent value-identical entries; loops and inconsistent distances remain visible.
-        var nodes = route.Nodes.Where((node,index)=>index==0 || node!=route.Nodes[index-1]).ToArray();
-        if(nodes.Length<2) return cachedChunks;
-        bool decreasing = nodes.Zip(nodes.Skip(1)).All(p => p.First.DistanceToEndMeters > p.Second.DistanceToEndMeters);
-        bool increasing = nodes.Zip(nodes.Skip(1)).All(p => p.First.DistanceToEndMeters < p.Second.DistanceToEndMeters);
-        if (!decreasing && !increasing) return cachedChunks;
-        if (!decreasing) Array.Reverse(nodes);
+        var ids=RouteStructureIdentity.Nodes(route);
+        var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
+        var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
+        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning)return cachedChunks;
+        cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];
+        var nodes=ids.Select(uid=>new RouteNode(uid,0,0)).ToArray();
         List<DirectedRoad>? chunk = null;
         for (int i = 1; i < nodes.Length; i++)
         {

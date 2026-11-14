@@ -19,11 +19,15 @@ public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next
 public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     Action<string>? log = null,GuidanceCoordinator? guidance=null,IReadOnlySet<string>? spokenCityNames=null)
 {
-    private readonly LaneMergeDetector mergeDetector = new();
-    private readonly LaneExitApproach exitApproach = new();
-    private readonly AccelerationLaneApproach acceleration = new();
+    private readonly NavigationStructurePlanner structurePlanner = new();
     private readonly LaneRoutePlanner lanePlanner = new();
-    private readonly NavigationManeuverDetector detector = new();
+    private readonly Dictionary<IReadOnlyList<DirectedRoad>,NavigationStructurePlan> structures = new(ReferenceEqualityComparer.Instance);
+    private NavigationStructurePlan? publishedStructure;
+    private NavigationMapIdentity? mapIdentity;
+    private int routeBuildGeneration;
+    private double routeOrigin;
+    public int StructureBuildCount { get; private set; }
+    public int EventPlanBuildCount { get; private set; }
     private readonly NavigationInstructionPolicy policy = new();
     private readonly NavigationEventPlanner eventPlanner=new();
     private readonly RouteProgressTracker progress=new();
@@ -35,8 +39,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private readonly DirectedPathMatcher matcher = new();
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
-    private string? lastSpoken, signature, mergeSignature;
-    private string? forkSignature, connectionFailureSignature;
+    private string? lastSpoken, signature;
+    private string? connectionFailureSignature;
     private DateTimeOffset reportedAt;
 
     public NavigationDiagnostic Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
@@ -48,10 +52,11 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         if (data.RouteAvailability != RouteAvailability.Available)
             return Suspend(data.RouteAvailability == RouteAvailability.None
                 ? "未设置游戏导航路线，转向提示暂挂。" : "等待有效的游戏导航路线。", now);
-        if (!ReferenceEquals(map, nearby.Map))
+        if (mapIdentity is null || !mapIdentity.Matches(nearby))
         {
-            map = nearby.Map;
-            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths,log);
+            mapIdentity=new(nearby);map=nearby.Map;
+            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log);
+            structures.Clear();publishedStructure=null;routeBuildGeneration=0;
         }
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
         var route = paths!.GetPath(position, vehicle.ForwardDirection, data.Route, data.RouteAvailability);
@@ -70,110 +75,76 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                     exitDistance=new Vector2(delta.X,delta.Z).Length();
                     if(exitDistance>0 && exitDistance<=100 && Math.Abs(delta.Y)<=3
                         && Vector3.Dot(Vector3.Normalize(new(delta.X,0,delta.Z)),vehicle.ForwardDirection)>=.5f)
-                    { route=prefix;along=0;yardApproach=true; }
+                    { route=prefix;along=-exitDistance;yardApproach=true; }
                 }
             }
         }
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
-        var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
-        // Classify the current component from its entrance too. Starting the plugin
-        // inside a transparent straight must not invent a preceding action boundary.
-        double detectionAlong=CurrentComponentStart(instructionRoute,along.Value)??along.Value;
-        var detected=detector.FindSequence(instructionRoute,detectionAlong,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong);
-        double shift=detectionAlong-along.Value;
-        double? initialActionEnd=detected.Where(NavigationEventPlanner.IsNavigationAction)
-            .Where(m=>m.DistanceMeters+shift<0&&m.EndDistanceMeters+shift>0)
-            .Select(m=>m.EndDistanceMeters+shift).FirstOrDefault();
-        IReadOnlyList<NavigationManeuver> upcoming=detected.Select(m=>m with{DistanceMeters=m.DistanceMeters+shift,
-            EndDistanceMeters=m.EndDistanceMeters+shift,SpeechSequenceStartDistanceMeters=m.SpeechSequenceStartDistanceMeters+shift})
-            .Where(m=>m.DistanceMeters>=0).ToArray();
-        ReportConnectionFailure(instructionRoute, confirmedUntil, unresolvedJoin, firstUnresolvedJoinAlong);
-        string forkState=string.Join("|",detector.ForkDiagnostics.Select(f=>$"{f.Prefab}:{f.EntryNode}:{f.ExitNode}:{f.Reason}"));
-        if(forkState!=forkSignature)
+        if(routeBuildGeneration!=paths!.RouteStructureBuildCount)
         {
-            foreach(var issue in detector.ForkDiagnostics)
-                log?.Invoke($"道路分流未定：{issue.Prefab}，入口={issue.EntryNode:X16}，出口={issue.ExitNode:X16}；{issue.Reason}");
-            forkSignature=forkState;
+            structures.Clear();publishedStructure=null;routeBuildGeneration=paths.RouteStructureBuildCount;
         }
         var laneRoute=lanePlanner.Build(route,position,along.Value,paths.GetNavigationGraph());
-        // Recognized roundabouts already own entry/exit guidance; their internal joins are not ramp actions.
-        var merges=mergeDetector.Find(route,paths.GetNavigationGraph(),laneRoute,along.Value)
-            .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
-        var accelerationActions=acceleration.Find(instructionRoute,paths.GetNavigationGraph(),along.Value);
-        NavigationManeuver? ProvenAcceleration(LaneMergeObservation m)=>accelerationActions.FirstOrDefault(a=>
-            a.JunctionId=="prefab:"+m.PrefabUid.ToString("X16")&&m.MoveLeft is {} left
-            &&a.Kind==(left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight)&&a.EndDistanceMeters is {} end&&Math.Abs(end-m.DistanceMeters)<2);
-        merges=merges.Select(m=>ProvenAcceleration(m) is {} proof?m with{Kind=LaneMergeKind.Ramp,
-            ParallelDistanceMeters=proof.ApproachInterval!.LengthMeters,Reason="已沿原生车道继承证明独立入口、并行及最终收口完整区间"}:m).ToArray();
-        string mergeState=string.Join("|",merges.Select(m=>$"{m.Id}:{m.Kind}:{m.ParallelDistanceMeters}:{m.MoveLeft}"));
-        if(mergeState!=mergeSignature)
+        if(!structures.TryGetValue(route,out var structure))
         {
-            foreach(var merge in merges)log?.Invoke(FormattableString.Invariant($"车道合并判定：{merge.Kind}，距汇合点={merge.DistanceMeters:F0} m，平行接近长度={merge.ParallelDistanceMeters?.ToString("F0")??"未知"} m，{(merge.MoveLeft is null?"合并方向未知":"向"+(merge.MoveLeft==true?"左":"右")+"合并")}；{merge.Id}；{merge.Reason}"));
-            mergeSignature=mergeState;
+            structure=structurePlanner.Build(route,data.Route,nearby,paths,laneRoute);
+            structures.Add(route,structure);StructureBuildCount++;
+            ReportConnectionFailure(structure.InstructionRoute,structure.ConfirmedUntil,structure.Unresolved,structure.UnresolvedAlong);
+            foreach(var issue in structure.Forks)
+                log?.Invoke($"道路分流未定：{issue.Prefab}，入口={issue.EntryNode:X16}，出口={issue.ExitNode:X16}；{issue.Reason}");
         }
-        foreach(var merge in merges)
+        else if(NavigationStructurePlanner.SelectionChanged(structure.Lanes,laneRoute))
         {
-            string group=$"prefab:{merge.PrefabUid:X16}";
-            var accelerationProof=ProvenAcceleration(merge);
-            bool replacesNavigation=accelerationProof is not null||merge.Kind==LaneMergeKind.Ramp&&merge.MoveLeft is not null;
-            if(replacesNavigation)
-                upcoming=upcoming.Where(m=>m.JunctionId!=group||m.Kind is ManeuverKind.TurnLeft or ManeuverKind.TurnRight or ManeuverKind.UTurn or ManeuverKind.EnterRoundabout or ManeuverKind.ExitRoundabout or ManeuverKind.PassRoundaboutExit).ToArray();
-            if(accelerationProof is not null)continue;
-            if(merge.MoveLeft is null)continue;
-            string side=merge.MoveLeft==true?"左":"右";
-            string lanes=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
-            double anchor=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} length?new LaneActionInterval(merge.DistanceMeters-length,merge.DistanceMeters).AtFraction(.1):merge.DistanceMeters;
-            var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,anchor,"lane","lane")
-            { EndDistanceMeters=merge.EndDistanceMeters,JunctionKind=NavigationJunctionKind.Ramp,JunctionId="prefab:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
-                AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.DistancePreview:merge.Kind==LaneMergeKind.Ramp?NavigationAnnouncementMode.Normal:NavigationAnnouncementMode.Silent,
-                ApproachInterval=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} span?new(merge.DistanceMeters-span,merge.DistanceMeters):null,
-                Instruction=merge.Kind==LaneMergeKind.LaneReduction?$"车道合并，建议提前走{side}侧{lanes}":null };
-            upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
+            structure=structurePlanner.SelectLanes(structure,laneRoute,nearby,paths);structures[route]=structure;
         }
-        upcoming=upcoming.Where(m=>!accelerationActions.Any(a=>m.JunctionId==a.JunctionId))
-            .Concat(accelerationActions).OrderBy(m=>m.DistanceMeters).ToArray();
-        if(NavigationDestination.Find(data.Route,instructionRoute,along.Value,confirmedUntil,unresolvedJoin) is {} destination)
-            upcoming=upcoming.Append(destination).OrderBy(m=>m.DistanceMeters).ToArray();
-        if(yardApproach)
-        {
-            string group="prefab:"+route[0].Id.Split(':')[1];
-            if(!upcoming.Any(m=>m.JunctionId==group && m.Kind!=ManeuverKind.Straight && m.DistanceMeters==0))
-                return Suspend("货场出口路径已找到，但出口操作尚无法确认。",now);
-            upcoming=upcoming.Select(m=>m with{DistanceMeters=m.DistanceMeters+exitDistance,EndDistanceMeters=m.EndDistanceMeters+exitDistance,
-                SpeechSequenceStartDistanceMeters=m.SpeechSequenceStartDistanceMeters+exitDistance}).ToArray();
-        }
-        // A distant unresolved join limits the safe stretch; it does not invalidate
-        // an already verified long road before that join.
-        upcoming = exitApproach.Apply(upcoming, instructionRoute, paths.GetNavigationGraph(), along.Value);
-        double confirmedAhead = Math.Max(0, Math.Min(confirmedUntil, firstUnresolvedJoinAlong) - along.Value);
-        bool confirmedContinuation = !yardApproach && !upcoming.Any(NavigationEventPlanner.IsNavigationAction);
-        var next = upcoming.FirstOrDefault(NavigationEventPlanner.IsNavigationAction);
-        string? currentJunction=yardApproach ? null : CurrentJunction(instructionRoute,along.Value);
-        // This is a diagnostic only. Both execution paths use the planner's
-        // same physical-end boundary instead of a separate turn/straight gate.
-        bool defer=initialActionEnd is not null&&currentJunction is not null&&next is not null&&currentJunction!=next.JunctionId;
-        double? componentEnd=initialActionEnd is {} remaining?along.Value+remaining:null;
+        bool structuralUpdate=!ReferenceEquals(publishedStructure,structure)||citySession!=data.SessionId;
+        if(structuralUpdate)routeOrigin=progress.Update(data.SessionId,route,0);
+        double playerAlong=routeOrigin+along.Value;
+        var instructionRoute=structure.InstructionRoute;
+        var upcoming=structure.Actions.Select(m=>Relative(m,along.Value)).Where(m=>m.DistanceMeters>=0).ToArray();
+        var merges=structure.Merges.Select(m=>m with{DistanceMeters=m.DistanceMeters-along.Value,
+            EndDistanceMeters=m.EndDistanceMeters-along.Value}).Where(m=>m.DistanceMeters>=0).ToArray();
+        bool confirmedContinuation=!yardApproach&&!upcoming.Any(NavigationEventPlanner.IsNavigationAction);
+        double confirmedAhead=Math.Max(0,Math.Min(structure.ConfirmedUntil,structure.UnresolvedAlong)-along.Value);
+        var next=upcoming.FirstOrDefault(NavigationEventPlanner.IsNavigationAction);
+        var currentJunction=yardApproach?null:CurrentJunction(instructionRoute,along.Value);
+        double? componentEnd=structure.Actions.Where(NavigationEventPlanner.IsNavigationAction)
+            .Where(m=>m.DistanceMeters<along&&m.EndDistanceMeters>along).Select(m=>m.EndDistanceMeters).FirstOrDefault();
+        bool defer=componentEnd is not null&&currentJunction is not null&&next is not null&&currentJunction!=next.JunctionId;
         if(guidance is not null)
         {
-            double playerAlong=progress.Update(data.SessionId,route,along.Value);
-            guidance.Publish(eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
-                playerAlong,upcoming,true,false,confirmedContinuation,guidance.Scheduler,progress.Frame,
-                componentEnd is {} boundary?playerAlong-along.Value+boundary:null,
-                guidance.WillReplaceSource("navigation",data.Route.Revision),playerAlong+confirmedAhead));
             if(citySession!=data.SessionId){cityEntries.Reset();citySession=data.SessionId;}
-            if(cityFrame!=progress.Frame){guidance.ClearSource(CityEntryEventBuilder.Kind);cityPlanner.Reset();guidance.ClearSource(NarrowRoadEventBuilder.Kind);narrowPlanner.Reset();cityEntries.Rebase();cityFrame=progress.Frame;}
-            var entries=cityEntries.Build(route,playerAlong,nearby.SpeedLimits,playerAlong-along.Value,nearby.PrefabPaths)
-                .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
-            if(guidance.WillReplaceSource(CityEntryEventBuilder.Kind,data.Route.Revision))
-                cityPlanner.Reconcile(entries.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,guidance.Scheduler,CityEntryEventBuilder.Kind);
-            var city=cityPlanner.Build(CityEntryEventBuilder.Kind,playerAlong,entries,guidance.Scheduler,true);
-            guidance.Publish(new(CityEntryEventBuilder.Kind,data.SessionId,data.Route.Revision,playerAlong,true,vehicle.ReceivedAt,city.Sequences){CoordinateFrame=progress.Frame});
-            var narrow=NarrowRoadEventBuilder.Build(route,nearby.SpeedLimits,playerAlong-along.Value)
-                .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
-            if(guidance.WillReplaceSource(NarrowRoadEventBuilder.Kind,data.Route.Revision))
-                narrowPlanner.Reconcile(narrow.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,guidance.Scheduler,NarrowRoadEventBuilder.Kind);
-            var narrowPlan=narrowPlanner.Build(NarrowRoadEventBuilder.Kind,playerAlong,narrow,guidance.Scheduler,true);
-            guidance.Publish(new(NarrowRoadEventBuilder.Kind,data.SessionId,data.Route.Revision,playerAlong,true,vehicle.ReceivedAt,narrowPlan.Sequences){CoordinateFrame=progress.Frame});
+            if(cityFrame!=progress.Frame)
+            {
+                guidance.ClearSource(CityEntryEventBuilder.Kind);cityPlanner.Reset();guidance.ClearSource(NarrowRoadEventBuilder.Kind);
+                narrowPlanner.Reset();cityEntries.Rebase();cityFrame=progress.Frame;
+            }
+            if(structuralUpdate)
+            {
+                // Only newly discovered structure can create/re-anchor speech points.
+                // Ordinary progress never calls any event planner or geometry recognizer.
+                double? initialEnd=componentEnd is {} end?routeOrigin+end:null;
+                bool tail=!yardApproach&&(structure.Actions.LastOrDefault(NavigationEventPlanner.IsNavigationAction)?.EndDistanceMeters??0)<Math.Min(structure.ConfirmedUntil,structure.UnresolvedAlong);
+                guidance.Publish(eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
+                    playerAlong,upcoming,true,false,tail,guidance.Scheduler,progress.Frame,initialEnd,
+                    guidance.WillReplaceSource("navigation",data.Route.Revision),routeOrigin+Math.Min(structure.ConfirmedUntil,structure.UnresolvedAlong)));
+                var entries=cityEntries.Build(route,playerAlong,nearby.SpeedLimits,routeOrigin,nearby.PrefabPaths)
+                    .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
+                if(guidance.WillReplaceSource(CityEntryEventBuilder.Kind,data.Route.Revision))
+                    cityPlanner.Reconcile(entries.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,guidance.Scheduler,CityEntryEventBuilder.Kind);
+                var city=cityPlanner.Build(CityEntryEventBuilder.Kind,playerAlong,entries,guidance.Scheduler,true);
+                guidance.Publish(new(CityEntryEventBuilder.Kind,data.SessionId,data.Route.Revision,playerAlong,true,vehicle.ReceivedAt,city.Sequences){CoordinateFrame=progress.Frame});
+                var narrow=NarrowRoadEventBuilder.Build(route,nearby.SpeedLimits,routeOrigin)
+                    .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
+                if(guidance.WillReplaceSource(NarrowRoadEventBuilder.Kind,data.Route.Revision))
+                    narrowPlanner.Reconcile(narrow.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,guidance.Scheduler,NarrowRoadEventBuilder.Kind);
+                var narrowPlan=narrowPlanner.Build(NarrowRoadEventBuilder.Kind,playerAlong,narrow,guidance.Scheduler,true);
+                guidance.Publish(new(NarrowRoadEventBuilder.Kind,data.SessionId,data.Route.Revision,playerAlong,true,vehicle.ReceivedAt,narrowPlan.Sequences){CoordinateFrame=progress.Frame});
+                publishedStructure=structure;EventPlanBuildCount++;
+            }
+            cityEntries.Advance(playerAlong);
+            foreach(string source in new[]{"navigation",CityEntryEventBuilder.Kind,NarrowRoadEventBuilder.Kind})
+                guidance.UpdateProgress(source,data.SessionId,playerAlong,vehicle.ReceivedAt,true);
             lastSpoken=guidance.LastPlayed("navigation");
         }
         else
@@ -191,15 +162,22 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             : confirmedContinuation ? "当前可见路线没有非直行动作，沿当前道路行驶，等待下一操作提示。"
             : "当前连续路径内没有可确认的普通路口操作。";
         Report(state, next, now);
-        return new(state, next, lastSpoken) { LaneRoute = laneRoute, LaneMerges = merges, RoadForks=detector.ForkDiagnostics, Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
+        return new(state, next, lastSpoken) { LaneRoute = laneRoute, LaneMerges = merges, RoadForks=structure.Forks, Upcoming = upcoming, ConfirmedAheadMeters = confirmedAhead, DeferredUntilJunctionExit = defer };
     }
+
+    private static NavigationManeuver Relative(NavigationManeuver m,double along)=>m with
+    {
+        DistanceMeters=m.DistanceMeters-along,EndDistanceMeters=m.EndDistanceMeters-along,
+        SpeechSequenceStartDistanceMeters=m.SpeechSequenceStartDistanceMeters-along,
+        ApproachInterval=m.ApproachInterval is {} interval?new(interval.StartMeters-along,interval.EndMeters-along):null
+    };
 
     // Missing map tails are normal. A failure inside the already constructed
     // continuous graph is different: retain the physical edge identities for replay diagnosis.
     private void ReportConnectionFailure(IReadOnlyList<DirectedRoad> route,double confirmedUntil,
         bool unresolved,double unresolvedAlong)
     {
-        double total=route.Sum(r=>r.Points.Zip(r.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)));
+        double total=route.Sum(r=>RouteGeometry.Length(r));
         string? failure=null;
         if(unresolved||confirmedUntil<total-.01)
         {
@@ -207,7 +185,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             double offset=0;DirectedRoad? edge=null;
             foreach(var candidate in route)
             {
-                double end=offset+candidate.Points.Zip(candidate.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+                double end=offset+RouteGeometry.Length(candidate);
                 if(end>at+.001){edge=candidate;break;}offset=end;
             }
             failure=$"{edge?.Id}:{edge?.StartNodeUid:X16}:{edge?.EndNodeUid:X16}:{unresolved}";
@@ -222,7 +200,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         double offset=0;
         foreach(var edge in route)
         {
-            double end=offset+edge.Points.Zip(edge.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+            double end=offset+RouteGeometry.Length(edge);
             if(along>=offset&&along<end)
                 return edge.Roundabout is not null||edge.Id.StartsWith("prefab:",StringComparison.Ordinal)?offset:null;
             offset=end;
@@ -235,7 +213,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         double offset=0;
         foreach(var edge in route)
         {
-            double end=offset+edge.Points.Zip(edge.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+            double end=offset+RouteGeometry.Length(edge);
             if(along>offset && along<end)
             {
                 if(edge.Roundabout is {} ring)return "roundabout:"+ring.Id;
@@ -268,8 +246,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     public void Reset()
     {
         policy.Reset();eventPlanner.Reset();progress.Reset();narrowPlanner.Reset();cityPlanner.Reset();cityEntries.Reset();citySession=null;cityFrame=null;guidance?.Suspend("navigation");guidance?.Suspend(CityEntryEventBuilder.Kind);guidance?.Suspend(NarrowRoadEventBuilder.Kind);
-        mergeDetector.Reset(); exitApproach.Reset();acceleration.Reset();
-        mergeSignature=forkSignature=connectionFailureSignature=null;
+        structures.Clear();publishedStructure=null;mapIdentity=null;routeBuildGeneration=0;
+        connectionFailureSignature=null;
         speech?.ClearPlan("navigation");
         map = null;
         paths = null;

@@ -156,6 +156,8 @@ public sealed class GuidanceCoordinator
         playback?.Withdraw(source,ids);Scheduler.ForgetEvents(source,ids);Timeline.Clear(source);
     }
     public void Suspend(string source)=>Timeline.Suspend(source);
+    public void UpdateProgress(string source,string sessionId,double along,DateTimeOffset observedAt,bool active)
+        =>Timeline.UpdateProgress(source,sessionId,along,observedAt,active);
     public void Observe(GameDataSnapshot data,DateTimeOffset now,bool processJourney=true)
     {
         EnsureSession(data.SessionId);playback?.BeginUpdate();

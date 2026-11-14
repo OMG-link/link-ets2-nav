@@ -444,5 +444,5 @@ public sealed class NavigationManeuverDetector
             && Length(road) > .001;
 
     private static double Length(DirectedRoad road)
-        => road.Points.Zip(road.Points.Skip(1)).Sum(p => (double)Vector3.Distance(p.First, p.Second));
+        => RouteGeometry.Length(road);
 }

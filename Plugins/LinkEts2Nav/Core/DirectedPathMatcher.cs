@@ -25,6 +25,8 @@ public sealed record DirectedRoad(
     ulong EndNodeUid,
     IReadOnlyList<Vector3> Points)
 {
+    /// <summary>Indices starting a separate native edge; the preceding gap has no route mileage.</summary>
+    public IReadOnlyList<int> SegmentStarts { get; init; } = [];
     /// <summary>Map road-type token; absent for prefab connections or unavailable metadata.</summary>
     public string? RoadType { get; init; }
     public PrefabJunctionInfo? Junction { get; init; }
@@ -131,6 +133,7 @@ public sealed class DirectedPathMatcher
             var countBeforeRoad = segments.Count;
             for (var i = 1; i < road.Points.Count; i++)
             {
+                if (road.SegmentStarts.Contains(i)) continue;
                 var start = road.Points[i - 1];
                 var end = road.Points[i];
                 var length = Vector3.Distance(start, end);

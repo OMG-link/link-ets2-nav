@@ -55,5 +55,5 @@ public sealed class LaneExitApproach
                 DistanceMeters=new LaneActionInterval(entry-remembered.Lead,entry).AtFraction(.1),EndDistanceMeters=entry,ApproachInterval=new(entry-remembered.Lead,entry)};
         }).Where(a=>a.EndDistanceMeters is null or >=0).OrderBy(a=>a.DistanceMeters).ToArray();
     }
-    private static double Length(DirectedRoad road)=>road.Points.Zip(road.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+    private static double Length(DirectedRoad road)=>RouteGeometry.Length(road);
 }

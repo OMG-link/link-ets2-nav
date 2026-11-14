@@ -33,6 +33,13 @@ public sealed class GuidanceTimeline
     {
         if(sources.TryGetValue(source,out var plan))sources[source]=plan with{Active=false,PrepareWhileInactive=false};
     }
+    /// <summary>Position ticks refresh progress and freshness without publishing or merging any event structure.</summary>
+    public void UpdateProgress(string source,string sessionId,double along,DateTimeOffset observedAt,bool active)
+    {
+        if(!double.IsFinite(along))throw new ArgumentException("Invalid route progress.",nameof(along));
+        if(sources.TryGetValue(source,out var plan)&&plan.SessionId==sessionId)
+            sources[source]=plan with{PlayerAlongMeters=along,ObservedAt=observedAt,Active=active,PrepareWhileInactive=active};
+    }
     public void Clear(string source)=>sources.Remove(source);
     public void Reset(){sources.Clear();session=null;}
 }

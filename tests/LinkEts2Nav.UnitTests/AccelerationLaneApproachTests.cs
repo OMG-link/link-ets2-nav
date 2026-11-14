@@ -1,9 +1,45 @@
 using System.Numerics;
 using LinkEts2Nav.Core;
+using LinkEts2Nav.Map;
+using LinkEts2Nav.Runtime;
+using TruckLib.ScsMap;
 namespace LinkEts2Nav.UnitTests;
 
 public sealed class AccelerationLaneApproachTests
 {
+    [Fact]
+    public void ProvenShortNativeCorridorSupersedesLongGeometricHistoryWithoutDuplicatingEnvironmentSpeech()
+    {
+        var shape=Scene(true);var map=new TruckLib.ScsMap.Map();
+        var mainRoad=Road.Add(map,new(0,0,-1000),new(0,0,60),default);
+        var sideRoad=Road.Add(map,new(-4.5f,0,-1000),new(-4.5f,0,60),default);
+        var body=Road.Add(map,new(0,0,100),new(0,0,300),default);
+        var outgoing=Road.Add(map,new(0,0,340),new(0,0,1000),default);
+        var sideExit=Road.Add(map,new(-20,0,340),new(-100,0,440),default);
+        var nodes=new Dictionary<ulong,ulong>{{1,mainRoad.ForwardNode.Uid},{2,sideRoad.ForwardNode.Uid},
+            {3,body.Node.Uid},{4,body.ForwardNode.Uid},{5,outgoing.Node.Uid},{6,sideExit.Node.Uid}};
+        var prefabs=shape.Graph.Where(e=>e.Id.StartsWith("prefab:")).Select(e=>e with{StartNodeUid=nodes[e.StartNodeUid],EndNodeUid=nodes[e.EndNodeUid],
+            LanePaths=e.LanePaths.Select(p=>p with{EntryNodeUid=nodes[p.EntryNodeUid],ExitNodeUid=nodes[p.ExitNodeUid]}).ToArray(),
+            LaneConnections=e.LaneConnections?.Select(c=>c with{EntryNode=nodes[c.EntryNode],ExitNode=nodes[c.ExitNode]}).ToArray()}).ToArray();
+        var graph=new RoadPathSource(map,prefabs).GetNavigationGraph().Select(e=>e.Id.StartsWith("prefab:1:")
+            ?e with{JoinPriority=new(mainRoad.ForwardNode.Uid,[],[],20,"fixture main entrance")}:e).ToArray();
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(graph),TestContext.Current.CancellationToken);
+        var selected=new[]{graph.Single(e=>e.Id=="prefab:1:2:1"),graph.Single(e=>e.Id==body.Uid.ToString("X16")&&e.StartNodeUid==body.Node.Uid),graph.Single(e=>e.Id=="prefab:2:0:1")};
+        var ending=selected[^1].LanePaths.Single(p=>p.EntryLane==2);
+        var plan=new LaneNavigationPlan([new(selected[^1].Id,ending)],[],true,null);
+        var weak=Assert.Single(new LaneMergeDetector().Find(selected,graph,plan,0));
+        Assert.Equal(LaneMergeKind.LaneReduction,weak.Kind);Assert.True(weak.ParallelDistanceMeters>500);
+        Assert.NotNull(index.NativeMerge(weak));
+        var now=DateTimeOffset.UtcNow;
+        var route=RouteSnapshot.Parse([new(sideRoad.Node.Uid,2000,100),new(sideRoad.ForwardNode.Uid,1600,80),new(body.Node.Uid,1500,70),
+            new(body.ForwardNode.Uid,1300,60),new(outgoing.Node.Uid,1100,50),new(outgoing.ForwardNode.Uid,0,0)],now);
+        var data=new GameDataSnapshot(new(-4.5,0,105,.5,15,1500,true,false,1,now),route,RouteAvailability.Available,"s",true);
+        var result=new NavigationRuntime().Process(data,new(map,[],[],[]){PrefabPaths=prefabs,AuxiliaryLanes=index},now);
+        Assert.Contains(result.LaneMerges,m=>m.Kind==LaneMergeKind.Ramp);
+        Assert.Single(result.Upcoming,a=>a.Kind==ManeuverKind.MergeLeft);
+        Assert.DoesNotContain(result.Upcoming,a=>a.AnnouncementMode==NavigationAnnouncementMode.DistancePreview);
+    }
+
     private static PrefabLanePath Lane(ulong prefab,ulong from,ulong to,int entry,int output,int inputs,int outputs,
         int[] curves,Vector3[] points,LaneBlinker[]? lamps=null)
         =>new(prefab,from,to,entry,output,entry,output,inputs,outputs,curves,points,40)
@@ -54,14 +90,14 @@ public sealed class AccelerationLaneApproachTests
         Assert.Equal(62,action.DistanceMeters);Assert.Equal(260,action.EndDistanceMeters);
     }
     [Fact]
-    public void FuturePlannerLaneChangeCannotEraseStructuralNeedAndTrimmedOriginKeepsInterval()
+    public void MiddleInitializationUsesPhysicalIndexAndExplicitLaneSelectionInsteadOfPriorRouteHistory()
     {
-        var s=Scene(false);var detector=new AccelerationLaneApproach();
-        Assert.Single(detector.Find(s.Route,s.Graph,0));
-        var trimmed=Assert.Single(detector.Find(s.Route.Skip(1).ToArray(),s.Graph,0));
+        var s=Scene(false);var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(s.Graph),TestContext.Current.CancellationToken);
+        var lanes=new LaneNavigationPlan([],[],true,null){InitialTransfer=new("road",s.Route[^1].Id,["road"],2,1,false){AllowedLaneChange=true}};
+        var trimmed=Assert.Single(AuxiliaryLaneGuidance.Apply([],s.Route.Skip(1).ToArray(),lanes,index));
         Assert.Equal(20,trimmed.DistanceMeters);Assert.Equal(200,trimmed.EndDistanceMeters);
-        Assert.Empty(detector.Find(s.Route.Skip(1).ToArray(),s.Graph,201));
-        detector.Reset();Assert.Empty(detector.Find(s.Route.Skip(1).ToArray(),s.Graph,0));
+        var fresh=AuxiliaryLaneIndex.Build(new NativeLaneGraph(s.Graph),TestContext.Current.CancellationToken);
+        Assert.Equal(trimmed,Assert.Single(AuxiliaryLaneGuidance.Apply([],s.Route.Skip(1).ToArray(),lanes,fresh)));
     }
     [Fact]
     public void PermanentLaneAdditionAndDriverOnOriginalMainRoadNeedNoMergeInstruction()
@@ -75,8 +111,8 @@ public sealed class AccelerationLaneApproachTests
     public void MissingMainIdentityAndCrossingJunctionDoNotBecomeRampLaneChanges()
     {
         var s=Scene(false);
-        Assert.Empty(new AccelerationLaneApproach().Find([s.Route[0] with{JoinPriority=null},..s.Route.Skip(1)],s.Graph,0));
-        Assert.Empty(new AccelerationLaneApproach().Find([s.Route[0] with{Junction=new(3,3,1)},..s.Route.Skip(1)],s.Graph,0));
+        Assert.Empty(new AccelerationLaneApproach().Find([s.Route[0] with{JoinPriority=null},..s.Route.Skip(1)],[s.Graph[0] with{JoinPriority=null},..s.Graph.Skip(1)],0));
+        Assert.Empty(new AccelerationLaneApproach().Find([s.Route[0] with{Junction=new(3,3,1)},..s.Route.Skip(1)],[s.Graph[0] with{Junction=new(3,3,1)},..s.Graph.Skip(1)],0));
     }
 
     [Theory]

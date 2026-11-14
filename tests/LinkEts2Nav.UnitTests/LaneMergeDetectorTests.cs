@@ -247,7 +247,8 @@ public sealed class LaneMergeDetectorTests
         // The complete static route now recognizes its real SDK terminal before
         // movement; environment and silent merge structure remain non-actions.
         Assert.Equal(ManeuverKind.Destination,first.Next?.Kind);
-        Assert.Contains(first.Upcoming,m=>m.AnnouncementMode==(shortApproach?NavigationAnnouncementMode.Silent:NavigationAnnouncementMode.DistancePreview));
+        if(shortApproach)Assert.DoesNotContain(first.Upcoming,m=>m.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
+        else Assert.Contains(first.Upcoming,m=>m.AnnouncementMode==NavigationAnnouncementMode.DistancePreview);
         if(shortApproach)Assert.Equal(NavigationPrompts.Continue(first.Next!.DistanceMeters),first.LastSpoken);
         else
         {
@@ -274,7 +275,7 @@ public sealed class LaneMergeDetectorTests
     [Theory]
     [InlineData(1)]
     [InlineData(4)]
-    public void RuntimeNativeMergeFallbackUsesCappedAuxiliaryTiming(int stretch)
+    public void NativeMergeWithoutAProvenPhysicalOriginIsDiagnosticInsteadOfARouteDerivedRamp(int stretch)
     {
         var shape=Scene(shortApproach:true);
         Vector3 Scale(Vector3 p)=>p with{Z=p.Z*stretch};
@@ -293,13 +294,8 @@ public sealed class LaneMergeDetectorTests
         var data=new GameDataSnapshot(new(ending.Points[0].X,0,ending.Points[0].Z+100,0,15,3000,true,false,1,now),route,RouteAvailability.Available,"s",true);
         var diagnostic=new NavigationRuntime().Process(data,new(map,[],[],[]){PrefabPaths=[selected,continuing]},now);
         var merge=Assert.Single(diagnostic.LaneMerges);Assert.Equal(LaneMergeKind.Ramp,merge.Kind);
-        var action=Assert.Single(diagnostic.Upcoming,a=>a.Kind==ManeuverKind.MergeLeft);
-        Assert.Equal(merge.Id,action.Id); // Uses native merge fallback, not AccelerationLaneApproach.
-        Assert.Equal(merge.EndDistanceMeters,action.EndDistanceMeters);
-        Assert.Equal(merge.ParallelDistanceMeters!.Value,action.ApproachInterval!.LengthMeters,6);
-        Assert.Equal(AuxiliaryLaneTiming.ActionPoint(action.ApproachInterval),action.DistanceMeters,6);
-        Assert.InRange(merge.DistanceMeters-action.DistanceMeters,0,200);
-        if(stretch==4)Assert.Equal(200,merge.DistanceMeters-action.DistanceMeters,6);
+        Assert.DoesNotContain(diagnostic.Upcoming,a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
+        Assert.Contains(diagnostic.RoadForks,d=>d.Reason.Contains("\u672a\u8bc1\u660e\u5b8c\u6574\u8f85\u52a9\u533a\u95f4"));
     }
     [Fact]
     public void PassingMergeRemovesItsAction()

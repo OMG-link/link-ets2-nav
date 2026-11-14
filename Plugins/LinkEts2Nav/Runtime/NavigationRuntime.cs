@@ -44,6 +44,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private readonly DirectedPathMatcher matcher = new();
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
+    private AuxiliaryLaneIndex? auxiliaryLanes;
     private string? lastSpoken, signature;
     private string? connectionFailureSignature;
     private DateTimeOffset reportedAt;
@@ -63,7 +64,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         if (mapIdentity is null || !mapIdentity.Matches(nearby))
         {
             mapIdentity=new(nearby);map=nearby.Map;
-            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log);
+            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log,nearby.AuxiliaryLanes?.Graph);
+            auxiliaryLanes=nearby.AuxiliaryLanes??AuxiliaryLaneIndex.Build(new NativeLaneGraph(paths.GetNavigationGraph()));
             structures.Clear();publishedStructure=null;routeBuildGeneration=0;
         }
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
@@ -95,7 +97,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         var laneRoute=lanePlanner.Build(route,position,along.Value,paths.GetNavigationGraph());
         if(!structures.TryGetValue(route,out var structure))
         {
-            structure=structurePlanner.Build(route,data.Route,nearby,paths,laneRoute);
+            structure=structurePlanner.Build(route,data.Route,nearby,paths,laneRoute,auxiliaryLanes!);
             structures.Add(route,structure);StructureBuildCount++;
             ReportConnectionFailure(structure.InstructionRoute,structure.ConfirmedUntil,structure.Unresolved,structure.UnresolvedAlong);
             foreach(var issue in structure.Forks)
@@ -291,7 +293,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         connectionFailureSignature=null;
         speech?.ClearPlan("navigation");
         map = null;
-        paths = null;
+        paths = null;auxiliaryLanes=null;
         lastSpoken = signature = null;
     }
 }

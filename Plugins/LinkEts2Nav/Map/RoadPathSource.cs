@@ -24,10 +24,13 @@ public sealed class RoadPathSource
     public int RouteStructureBuildCount { get; private set; }
     private List<List<DirectedRoad>> cachedChunks = [];
     private IReadOnlyList<DirectedRoad>? navigationGraph;
+    private readonly IReadOnlyDictionary<NativeRoadKey,DirectedRoad>? preparedEdges;
 
-    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null)
+    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null)
     {
         diagnosticLog=log;
+        navigationGraph=native?.Edges;
+        preparedEdges=native?.Edges.ToDictionary(NativeRoadKey.Of);
         roads = map.MapItems.Values.OfType<Road>().ToArray();
         foreach (var road in roads)
         {
@@ -39,7 +42,8 @@ public sealed class RoadPathSource
             boundaryNodes.Add(road.Node.Uid);
             boundaryNodes.Add(road.ForwardNode.Uid);
         }
-        var annotated=new RoadJoinPriorityBuilder(incidentRoads,log).Annotate(junctions??[]);
+        var annotated=native?.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null).ToArray()
+            ??new RoadJoinPriorityBuilder(incidentRoads,log).Annotate(junctions??[]);
         foreach (var group in annotated.GroupBy(p => (p.StartNodeUid, p.EndNodeUid)))
         {
             boundaryNodes.Add(group.Key.StartNodeUid);
@@ -349,6 +353,8 @@ public sealed class RoadPathSource
 
     private DirectedRoad Orient(Road road, ulong start)
     {
+        if(preparedEdges is not null&&preparedEdges.TryGetValue(new(road.Uid.ToString("X16"),start,
+            start==road.Node.Uid?road.ForwardNode.Uid:road.Node.Uid),out var prepared))return prepared;
         if (!samples.TryGetValue(road.Uid, out var sample))
         {
             int count = Math.Clamp((int)Math.Ceiling(road.Length / 8), 16, 256);

@@ -29,7 +29,7 @@ public sealed class WarningPipeline(IWarningPlanner? planner = null,GuidanceCoor
         if (!ReferenceEquals(previousMap, nearby.Map))
         {
             previousMap = nearby.Map;
-            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths);
+            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths,native:nearby.AuxiliaryLanes?.Graph);
             speedLimits = new SpeedLimitResolver(nearby.SpeedLimits, paths);
         }
         bool hasRoute = data.RouteAvailability == RouteAvailability.Available;

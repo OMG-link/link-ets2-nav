@@ -5,6 +5,121 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class AuxiliaryLaneDirectionTests
 {
+    [Fact]
+    public void AnAuxiliaryLaneMayExitOrContinueNativelyBeforeItsLaterPhysicalMerge()
+    {
+        var scene=Corridor([0,1],[2],[2]);var exit=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
+        var sideExit=scene.Route[^1];
+        var continuing=exit with{LanePaths=[..exit.LanePaths.Select(p=>p with{ExitLaneCount=3}),
+            sideExit.LanePaths[0] with{ExitNodeUid=22,ExitLane=2,ExitOrder=2,ExitLaneCount=3,CurveIndices=[29],Points=exit.Points}]};
+        var road=new DirectedRoad("later-road",22,30,[exit.Points[^1],exit.Points[^1]+new Vector3(50,0,0)]);
+        var start=road.Points[^1];Vector3[] middle=[start,start+new Vector3(10,0,0),start+new Vector3(20,0,0)];
+        PrefabLanePath Lane(int input,int output,int[] curves,Vector3[] points)=>new(3,30,31,input,output,input,output,3,2,curves,points,20)
+            {CurveStartPointIndices=[0,1],CurveBlinkers=[input==2?LaneBlinker.Left:LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]};
+        var finish=new DirectedRoad("prefab:3:0:1",30,31,middle){LanePaths=[Lane(0,0,[30,39],middle),Lane(1,1,[31,40],middle),
+            Lane(2,1,[32,40],[start+new Vector3(0,0,4.5f),middle[1],middle[2]])]};
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph([..scene.Graph.Where(e=>e.Id!=exit.Id),continuing,road,finish]),TestContext.Current.CancellationToken);
+        Assert.Equal(2,index.Corridors.Count);
+        var early=index.Corridors.Single(c=>c.EndKind==AuxiliaryBoundaryKind.SeparateExit);
+        Assert.False(early.Terminals.Single(t=>t.Edge.Id==continuing.Id).Merges);
+        var mainInstruction=RoadForkRules.Decide(continuing.ForkInfo!,22);
+        var action=scene.Action with{Kind=mainInstruction.Kind,ForkInstruction=mainInstruction,Instruction=mainInstruction.Text};
+        var fromSide=scene.Graph.Single(e=>e.StartNodeUid==99);
+        var route=new[]{fromSide,scene.Route[1],continuing,road,finish};
+        var guidance=AuxiliaryLaneGuidance.Apply([action],route,new([],[],true,null),index);
+        Assert.Equal(NavigationAnnouncementMode.Silent,guidance.Single(a=>a.Id==action.Id).AnnouncementMode);
+        var merge=Assert.Single(guidance,a=>a.Kind==ManeuverKind.MergeLeft);
+        Assert.Equal("prefab:3",merge.JunctionId);Assert.Equal(route.Take(4).Sum(RouteGeometry.Length)+10,merge.EndDistanceMeters);
+        var ownExit=Assert.Single(AuxiliaryLaneGuidance.Apply([scene.Action],[fromSide,scene.Route[1],sideExit],new([],[],true,null),index));
+        Assert.Equal(ManeuverKind.KeepRight,ownExit.Kind);
+    }
+
+    [Fact]
+    public void CorridorPublicationIsReadOnlyAndMapBuildCanBeCancelled()
+    {
+        var scene=Corridor([0,1],[2],[2]);
+        var graph=new NativeLaneGraph(scene.Graph);
+        var index=AuxiliaryLaneIndex.Build(graph,TestContext.Current.CancellationToken);
+        Assert.Throws<NotSupportedException>(()=>((IList<AuxiliaryLaneCorridor>)index.Corridors).Clear());
+        Assert.Throws<NotSupportedException>(()=>((IList<AuxiliaryLaneSection>)index.Corridors[0].Sections).Clear());
+        using var cancelled=new CancellationTokenSource();cancelled.Cancel();
+        Assert.Throws<OperationCanceledException>(()=>AuxiliaryLaneIndex.Build(graph,cancelled.Token));
+        var longLane=Corridor([0,1],[2],[2],501);
+        var longIndex=AuxiliaryLaneIndex.Build(new NativeLaneGraph(longLane.Graph),TestContext.Current.CancellationToken);
+        Assert.Empty(longIndex.Corridors);Assert.Empty(longIndex.Diagnostics);
+    }
+
+    [Theory][InlineData(false)][InlineData(true)]
+    public void MapCorridorIsSharedByMainEntranceSideEntranceAndMiddleInitialization(bool left)
+    {
+        var scene=left?Corridor([1,2],[0],[0],363.12482f):Corridor([0,1],[2],[2],363.12482f);
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph),TestContext.Current.CancellationToken);
+        var corridor=Assert.Single(index.Corridors);var immutable=index.Corridors;
+        Assert.Equal(AuxiliaryBoundaryKind.IndependentEntrance,corridor.StartKind);
+        Assert.Equal(AuxiliaryBoundaryKind.SeparateExit,corridor.EndKind);
+        Assert.Equal(363.12482,corridor.LengthMeters,4);Assert.Equal(left,corridor.SideIsLeft);
+        var sideBirth=scene.Graph.Single(e=>e.StartNodeUid==99);
+        var mainExit=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
+        var empty=new LaneNavigationPlan([],[],true,null);
+        var fromMain=AuxiliaryLaneGuidance.Apply([scene.Action],scene.Route,empty,index);
+        var fromSide=AuxiliaryLaneGuidance.Apply([scene.Action],[sideBirth,..scene.Route.Skip(1)],empty,index);
+        Assert.Equal(left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight,Assert.Single(fromMain).Kind);
+        Assert.Equal(Assert.Single(fromMain).Kind,Assert.Single(fromSide).Kind);
+        Assert.DoesNotContain(fromSide,a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
+        var inherited=RoadForkRules.Decide(mainExit.ForkInfo!,mainExit.EndNodeUid);
+        var mainAction=scene.Action with{Kind=inherited.Kind,Instruction=inherited.Text,ForkInstruction=inherited};
+        var mainRoute=new[]{scene.Route[0],scene.Route[1],mainExit};
+        var main=Assert.Single(AuxiliaryLaneGuidance.Apply([mainAction],mainRoute,empty,index));
+        Assert.Equal(NavigationAnnouncementMode.Silent,main.AnnouncementMode);
+        var required=Assert.Single(AuxiliaryLaneGuidance.Apply([mainAction],[sideBirth,scene.Route[1],mainExit],empty,index));
+        Assert.Equal(left?ManeuverKind.MergeRight:ManeuverKind.MergeLeft,required.Kind);
+        Assert.Equal(200,required.EndDistanceMeters!.Value-required.DistanceMeters,5);
+        Assert.DoesNotContain(AuxiliaryLaneGuidance.Apply([scene.Action],[sideBirth,..scene.Route.Skip(1)],empty,index),a=>a.Id==required.Id);
+        var middle=new LaneNavigationPlan([],[],true,null){InitialTransfer=new("road",mainExit.Id,[scene.Route[1].Id],left?0:2,1,false){AllowedLaneChange=true}};
+        var midway=Assert.Single(AuxiliaryLaneGuidance.Apply([mainAction],[scene.Route[1],mainExit],middle,index));
+        Assert.Equal(required.Kind,midway.Kind);Assert.Same(immutable,index.Corridors);
+        Assert.Equal(required.ApproachInterval!.LengthMeters,midway.ApproachInterval!.LengthMeters,5);
+        var alreadyMain=new LaneNavigationPlan([new(mainExit.Id,mainExit.LanePaths[0])],[],true,null);
+        Assert.Null(alreadyMain.InitialTransfer);
+        var silentMiddle=Assert.Single(AuxiliaryLaneGuidance.Apply([mainAction],[scene.Route[1],mainExit],alreadyMain,index));
+        Assert.Equal(NavigationAnnouncementMode.Silent,silentMiddle.AnnouncementMode);
+        Assert.All(corridor.Sections,s=>Assert.Same(scene.Graph.Single(e=>e.Id==s.Edge.Id),s.Edge));
+    }
+
+    [Fact]
+    public void MissingAdjacentStructureIsRetriedByTheNextMapVersion()
+    {
+        var scene=Corridor([0,1],[2],[2],168.92394f);
+        var partial=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph.Where(e=>!e.Id.StartsWith("prefab:2:")).ToArray()),TestContext.Current.CancellationToken);
+        Assert.Empty(partial.Corridors);Assert.Contains(partial.Diagnostics,d=>d.Contains("尚未加载"));
+        var complete=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph),TestContext.Current.CancellationToken);
+        Assert.Equal(168.92394,Assert.Single(complete.Corridors).LengthMeters,3);
+        Assert.Empty(partial.Corridors);Assert.NotSame(partial.ByRoad,complete.ByRoad);
+    }
+
+    [Fact]
+    public void UnknownMainPriorityDoesNotErasePhysicalCorridorFacts()
+    {
+        var scene=Corridor([0,1],[2],[2]);
+        var graph=scene.Graph.Select(e=>e with{JoinPriority=null}).ToArray();
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(graph),TestContext.Current.CancellationToken);
+        Assert.NotEmpty(index.Corridors);Assert.All(index.Corridors,c=>Assert.Null(c.MainEntrance));
+        Assert.Contains(index.Diagnostics,d=>d.Contains("主路身份尚未确定"));
+        Assert.Equal(ManeuverKind.ChooseLanes,Assert.Single(AuxiliaryLaneGuidance.Apply([scene.Action],scene.Route,new([],[],true,null),index)).Kind);
+    }
+
+    [Theory][InlineData(false)][InlineData(true)]
+    public void OrdinaryCrossingAndItsDedicatedTurnLaneAreNotAuxiliaryExits(bool crossingAtStart)
+    {
+        var scene=Corridor([0,1],[2],[2]);
+        var graph=scene.Graph.Select(e=>(crossingAtStart?e.Id.StartsWith("prefab:1:"):e.Id.StartsWith("prefab:2:"))
+            ?e with{Junction=new(3,3,1)}:e).ToArray();
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(graph),TestContext.Current.CancellationToken);
+        Assert.Empty(index.Corridors);
+        var turn=scene.Action with{Kind=ManeuverKind.TurnRight};
+        Assert.Equal(turn,Assert.Single(AuxiliaryLaneGuidance.Apply([turn],scene.Route,new([],[],true,null),index)));
+    }
+
     private sealed record Scene(DirectedRoad[] Route,DirectedRoad[] Graph,NavigationManeuver Action,double[] Offsets);
     private static Scene Corridor(int[] mainOrders,int[] addedOrders,int[] exitOrders,float length=200)
     {

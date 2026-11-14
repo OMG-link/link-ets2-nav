@@ -3,6 +3,25 @@ using LinkEts2Nav.Core;
 namespace LinkEts2Nav.UnitTests;
 public sealed class LaneExitApproachTests
 {
+    [Fact]
+    public void NativeSplitSelectionReusesMapFactsWithoutTreatingAllUsersAsSideEntrants()
+    {
+        var scene=Scene();var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph),TestContext.Current.CancellationToken);
+        Assert.Equal(AuxiliaryBoundaryKind.NativeSplit,Assert.Single(index.Corridors).StartKind);
+        var mainExit=scene.Graph[^1];var route=new[]{scene.Route[0],scene.Route[1],mainExit};
+        var action=scene.Action with{Kind=ManeuverKind.ChooseLanes};
+        var retained=scene.Route[0].LanePaths.Single(p=>p.ExitLane==1);
+        var side=scene.Route[0].LanePaths.Single(p=>p.ExitLane==2);
+        var kept=new LaneNavigationPlan([new(scene.Route[0].Id,retained)],[],true,null);
+        var entering=kept with{Sections=[new(scene.Route[0].Id,side)]};
+        var main=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,kept,index));
+        Assert.Equal(ManeuverKind.Straight,main.Kind);Assert.Equal(NavigationAnnouncementMode.Silent,main.AnnouncementMode);
+        var merged=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,entering,index));
+        Assert.Equal(ManeuverKind.MergeLeft,merged.Kind);
+        Assert.Equal(300,merged.EndDistanceMeters);Assert.Equal(100,merged.DistanceMeters);
+        Assert.Same(index.Corridors,index.Corridors);
+    }
+
     private static PrefabLanePath Lane(ulong uid,ulong from,ulong to,int input,int output,int inputs,int outputs,
         int[] curves,Vector3[] points,int[] starts)=>new(uid,from,to,input,output,input,output,inputs,outputs,curves,points,100)
             {CurveStartPointIndices=starts,NativeBranchSignal=outputs>inputs&&output==outputs-1?ForkSignal.Right:ForkSignal.None};
@@ -68,13 +87,13 @@ public sealed class LaneExitApproachTests
         var s=Scene();var detector=new LaneExitApproach();
         var main=s.Graph[^1] with{LanePaths=[s.Route[^1].LanePaths[0] with{ExitNodeUid=22}]};
         Assert.Equal(300,Assert.Single(detector.Apply([s.Action],s.Route,[..s.Route,main],0)).DistanceMeters);
-        Assert.Equal(300,Assert.Single(new LaneExitApproach().Apply([s.Action],s.Route.Select(e=>e with{LanePaths=[]}).ToArray(),s.Graph,0)).DistanceMeters);
+        Assert.Equal(300,Assert.Single(new LaneExitApproach().Apply([s.Action],s.Route.Select(e=>e with{LanePaths=[]}).ToArray(),s.Graph.Select(e=>e with{LanePaths=[]}).ToArray(),0)).DistanceMeters);
     }
     [Fact]
     public void MissingNativeDivergenceAndOtherJunctionBeforeExitDoNotMoveCue()
     {
         var s=Scene();var invalid=s.Route[0] with{LanePaths=s.Route[0].LanePaths.Select(p=>p with{CurveStartPointIndices=[]}).ToArray()};
-        Assert.Equal(300,Assert.Single(new LaneExitApproach().Apply([s.Action],[invalid,..s.Route.Skip(1)],s.Graph,0)).DistanceMeters);
+        Assert.Equal(300,Assert.Single(new LaneExitApproach().Apply([s.Action],[invalid,..s.Route.Skip(1)],[invalid,..s.Graph.Skip(1)],0)).DistanceMeters);
         DirectedRoad side=new("prefab:1:0:2",10,99,[Vector3.Zero,Vector3.UnitZ]);
         Assert.Equal(300,Assert.Single(new LaneExitApproach().Apply([s.Action],s.Route,[..s.Graph,side],0)).DistanceMeters);
     }
@@ -132,7 +151,9 @@ public sealed class LaneExitApproachTests
         var main=s.Graph[^1] with{ForkInfo=info};var side=s.Route[^1] with{ForkInfo=info};
         var action=s.Action with{Id="main",Kind=ManeuverKind.ChooseLanes,Instruction="走左侧两车道",ForkInstruction=RoadForkRules.Decide(info,22)};
         var route=new[]{s.Route[0],s.Route[1],main};
-        var result=Assert.Single(new LaneExitApproach().Apply([action],route,[s.Route[0],s.Route[1],main,side],0));
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph([s.Route[0],s.Route[1],main,side]),TestContext.Current.CancellationToken);
+        var lanes=new LaneNavigationPlan([new(s.Route[0].Id,s.Route[0].LanePaths.Single(p=>p.ExitLane==1))],[],true,null);
+        var result=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,lanes,index));
         Assert.Equal(ManeuverKind.Straight,result.Kind);Assert.True(result.IsMainRoadContinuation);
         Assert.True(result.ForkInstruction!.Silent);Assert.Equal(NavigationAnnouncementMode.Silent,result.AnnouncementMode);
     }
@@ -145,7 +166,7 @@ public sealed class LaneExitApproachTests
         var s=Scene();float shift=length-280;
         var road=s.Route[1] with{Points=[s.Route[1].Points[0],s.Route[1].Points[^1]+new Vector3(shift,0,0)]};
         var route=new[]{s.Route[0],road,s.Route[2]};var action=s.Action with{DistanceMeters=300+shift};
-        var result=Assert.Single(new LaneExitApproach().Apply([action],route,s.Graph,0));
+        var result=Assert.Single(new LaneExitApproach().Apply([action],route,[s.Graph[0],road,..s.Graph.Skip(2)],0));
         Assert.Equal(shortLane,result.ApproachInterval is not null);
         if(shortLane){Assert.Equal(500,result.ApproachInterval!.LengthMeters);Assert.Equal(result.EndDistanceMeters!.Value-200,result.DistanceMeters);}
     }

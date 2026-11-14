@@ -68,4 +68,48 @@ public sealed class FerryJourneyTests
         Assert.True(index.Connects(s.Before.ForwardNode.Uid,s.After.Node.Uid));
         Assert.False(index.Connects(s.A.Node.Uid,s.Before.ForwardNode.Uid));
     }
+
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public void PortInterfacesAndActivationNodesAreEstimatedBeforeAndAfterTheSeaLeg(bool reverse)
+    {
+        var s=Scene();var ids=new[]{s.Before.Node.Uid,s.Before.ForwardNode.Uid,s.A.Node.Uid,
+            s.B.Node.Uid,s.After.Node.Uid,s.After.ForwardNode.Uid};
+        if(reverse)Array.Reverse(ids);
+        var result=new RouteJourneyEstimator(s.Map,(_,_)=>new(80,"category"),1.028,new(s.Map,[("a","b")])).Estimate(Route(ids));
+        double expected=300+2*1.028;
+        Assert.True(result.Ready,result.Failure);Assert.Equal(expected,result.WorldMeters!.Value,4);
+        Assert.Equal(expected/(80*.8/3.6)+60,result.RealSeconds!.Value,4);
+    }
+
+    [Fact]
+    public void ActivationItemAliasesDoNotAddAnotherTransportMinute()
+    {
+        var s=Scene();
+        var result=new RouteJourneyEstimator(s.Map,(_,_)=>new(80,"category"),1,new(s.Map,[("a","b")]))
+            .Estimate(Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,s.A.Node.Uid,s.A.Uid,
+                s.B.Uid,s.B.Node.Uid,s.After.Node.Uid,s.After.ForwardNode.Uid));
+        Assert.True(result.Ready,result.Failure);Assert.Equal(302,result.WorldMeters!.Value,4);
+        Assert.Equal(302/(80*.8/3.6)+60,result.RealSeconds!.Value,4);
+    }
+
+    [Fact]
+    public void SamePortPassageNeedsAnExplicitUniqueActivationAndMembership()
+    {
+        var s=Scene();var index=new FerryJourneyIndex(s.Map,[("a","b")]);
+        Assert.True(index.TryPortPassage(s.Before.ForwardNode.Uid,s.A.Node.Uid,out var distance));
+        Assert.Equal(1,distance);
+        Assert.False(index.TryPortPassage(s.Before.Node.Uid,s.A.Node.Uid,out _));
+        Assert.False(index.TryPortPassage(s.Before.ForwardNode.Uid,s.B.Node.Uid,out _));
+        s.B.Port=s.A.Port;
+        Assert.False(new FerryJourneyIndex(s.Map,[]).TryPortPassage(s.Before.ForwardNode.Uid,s.A.Node.Uid,out _));
+    }
+
+    [Fact]
+    public void MissingActivationPositionDoesNotRemoveAnExistingCrossPortLink()
+    {
+        var s=Scene();s.A.Node=null!;
+        var index=new FerryJourneyIndex(s.Map,[("a","b")]);
+        Assert.True(index.Connects(s.A.Uid,s.B.Uid));
+        Assert.False(index.TryPortPassage(s.Before.ForwardNode.Uid,s.A.Uid,out _));
+    }
 }

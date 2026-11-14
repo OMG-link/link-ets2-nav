@@ -35,6 +35,13 @@ public sealed class RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimit
         for(int i=0;i<nodes.Length-1;i++)
         {
             bool transfer=ferries?.Connects(nodes[i].Uid,nodes[i+1].Uid)==true;
+            // The SDK also emits ferry activation nodes between a port interface
+            // and the actual cross-port edge. They are not PPD interface nodes.
+            if(ferries?.TryPortPassage(nodes[i].Uid,nodes[i+1].Uid,out double portChord)==true)
+            {
+                if(portChord>0)spans.Add(new(null,portChord*prefabDistanceFactor,true));
+                continue;
+            }
             if(!TryNode(nodes[i].Uid,out var start))
             {
                 if(transfer){spans.Add(new(null,0,true,true));continue;}

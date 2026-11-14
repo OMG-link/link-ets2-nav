@@ -10,6 +10,7 @@ namespace LinkEts2Nav.Map;
 public sealed class FerryJourneyIndex
 {
     private readonly Dictionary<ulong,HashSet<string>> portsByUid=[];
+    private readonly Dictionary<ulong,Vector3> portPositions=[];
     private readonly HashSet<(string From,string To)> connections=[];
     private readonly Dictionary<ulong,FerryPort> activationPorts=[];
     public IReadOnlyList<FerryPort> Ports { get; }
@@ -35,24 +36,25 @@ public sealed class FerryJourneyIndex
         Ports=records.AsReadOnly();
         foreach(var port in records.GroupBy(p=>p.Id).Where(g=>g.Count()==1).Select(g=>g.Single()))
         {activationPorts[port.NodeUid]=port;activationPorts[port.ItemUid]=port;}
-        void Add(ulong uid,string port)
+        void Add(ulong uid,string port,Vector3? position=null)
         {
             if(uid==0||string.IsNullOrEmpty(port))return;
             if(!portsByUid.TryGetValue(uid,out var names))portsByUid[uid]=names=new(StringComparer.Ordinal);
             names.Add(port);
+            if(position is {} point)portPositions.TryAdd(uid,point);
         }
         foreach(var ferry in ferries.Values)
         {
-            Add(ferry.Uid,ferry.Port.ToString());
-            if(ferry.Node is not null)Add(ferry.Node.Uid,ferry.Port.ToString());
+            Add(ferry.Uid,ferry.Port.ToString(),ferry.Node?.Position);
+            if(ferry.Node is not null)Add(ferry.Node.Uid,ferry.Port.ToString(),ferry.Node.Position);
             if(ferry.Prefab is not null&&host.MapItems.GetValueOrDefault(ferry.Prefab.Uid) is Prefab prefab)
-                foreach(var node in prefab.Nodes)Add(node.Uid,ferry.Port.ToString());
+                foreach(var node in prefab.Nodes)Add(node.Uid,ferry.Port.ToString(),node.Position);
         }
         // Prefab links can remain unresolved objects; use their UID without
         // relying on the optional reverse Ferry.Prefab reference being populated.
         foreach(var prefab in host.MapItems.Values.OfType<Prefab>())
             if(prefab.Ferry is not null&&ferries.TryGetValue(prefab.Ferry.Uid,out var ferry))
-                foreach(var node in prefab.Nodes)Add(node.Uid,ferry.Port.ToString());
+                foreach(var node in prefab.Nodes)Add(node.Uid,ferry.Port.ToString(),node.Position);
     }
     private static IReadOnlyDictionary<ulong,FerryEntrance> BuildEntrances(Prefab? prefab,Ferry ferry,TruckLib.ScsMap.Map host,Func<Road,double?>? width)
     {
@@ -76,6 +78,19 @@ public sealed class FerryJourneyIndex
     public bool Connects(ulong from,ulong to)
         =>from!=to&&portsByUid.TryGetValue(from,out var a)&&portsByUid.TryGetValue(to,out var b)
             &&a.Count==1&&b.Count==1&&connections.Contains((a.Single(),b.Single()));
+
+    /// <summary>A known port interface and activation/item UID share a physical port, not a sea leg.</summary>
+    public bool TryPortPassage(ulong from,ulong to,out double chordMeters)
+    {
+        chordMeters=0;
+        var port=activationPorts.GetValueOrDefault(from)??activationPorts.GetValueOrDefault(to);
+        if(port is null)return false;
+        if(from==to||!portsByUid.TryGetValue(from,out var a)||!portsByUid.TryGetValue(to,out var b)
+            ||a.Count!=1||b.Count!=1||a.Single()!=port.Id||b.Single()!=port.Id
+            ||!portPositions.TryGetValue(from,out var start)||!portPositions.TryGetValue(to,out var end))return false;
+        chordMeters=Vector3.Distance(start,end);
+        return double.IsFinite(chordMeters);
+    }
 
     public IReadOnlyList<FerryRouteLeg> OnRoute(RouteSnapshot route)
     {

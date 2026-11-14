@@ -58,7 +58,7 @@ public sealed class LaneExitApproachTests
         Assert.Equal(0,trimmed.DistanceMeters);
         Assert.Equal(200,trimmed.EndDistanceMeters);
         detector.Reset();
-        Assert.Equal(200,Assert.Single(detector.Apply([s.Action with{DistanceMeters=200}],s.Route.Skip(1).ToArray(),s.Graph,0)).DistanceMeters);
+        Assert.Equal(0,Assert.Single(detector.Apply([s.Action with{DistanceMeters=200}],s.Route.Skip(1).ToArray(),s.Graph,0)).DistanceMeters);
     }
     [Fact]
     public void DedicatedLaneNeverCreatesAnActionOrReplacesAStraightDecision()

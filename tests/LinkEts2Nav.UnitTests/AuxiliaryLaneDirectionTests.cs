@@ -217,7 +217,7 @@ public sealed class AuxiliaryLaneDirectionTests
     }
 
     [Fact]
-    public void ResetDiscardsProofWhileOrdinaryPrefixTrimmingPreservesIt()
+    public void ResetDoesNotEraseFactsStillPresentInTheLoadedMap()
     {
         var scene=Corridor([0,1],[2],[2]);var detector=new LaneExitApproach();
         Assert.Equal(ManeuverKind.KeepRight,Assert.Single(detector.Apply([scene.Action],scene.Route,scene.Graph,0)).Kind);
@@ -226,7 +226,7 @@ public sealed class AuxiliaryLaneDirectionTests
         Assert.Equal(ManeuverKind.KeepRight,retained.Kind);Assert.NotNull(retained.ApproachInterval);
         detector.Reset();
         var fresh=Assert.Single(detector.Apply([scene.Action],trimmed,scene.Graph,0));
-        Assert.Equal(ManeuverKind.ChooseLanes,fresh.Kind);Assert.Null(fresh.ApproachInterval);
+        Assert.Equal(ManeuverKind.KeepRight,fresh.Kind);Assert.NotNull(fresh.ApproachInterval);
     }
 
     [Fact]

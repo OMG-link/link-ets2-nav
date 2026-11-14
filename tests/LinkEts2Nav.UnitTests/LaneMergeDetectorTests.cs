@@ -270,6 +270,37 @@ public sealed class LaneMergeDetectorTests
         Assert.NotNull(after.LastSpoken);
         Assert.Equal(shortApproach?2:4,sounds); // The now-known destination also reaches its 2km advance point.
     }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    public void RuntimeNativeMergeFallbackUsesCappedAuxiliaryTiming(int stretch)
+    {
+        var shape=Scene(shortApproach:true);
+        Vector3 Scale(Vector3 p)=>p with{Z=p.Z*stretch};
+        var map=new TruckLib.ScsMap.Map();
+        var ending=shape.Edge.LanePaths[1] with{Points=shape.Edge.LanePaths[1].Points.Select(Scale).ToArray(),EntryLane=0,EntryOrder=0,EntryLaneCount=1};
+        var main=shape.Edge.LanePaths[0] with{Points=shape.Edge.LanePaths[0].Points.Select(Scale).ToArray(),EntryLane=0,EntryOrder=0,EntryLaneCount=1};
+        var sideRoad=Road.Add(map,ending.Points[0]+new Vector3(0,0,500),ending.Points[0],default);
+        var mainRoad=Road.Add(map,main.Points[0]+new Vector3(0,0,500),main.Points[0],default);
+        var outgoing=Road.Add(map,main.Points[^1],main.Points[^1]-new Vector3(0,0,2000),default);
+        ending=ending with{EntryNodeUid=sideRoad.ForwardNode.Uid,ExitNodeUid=outgoing.Node.Uid};
+        main=main with{EntryNodeUid=mainRoad.ForwardNode.Uid,ExitNodeUid=outgoing.Node.Uid};
+        var selected=shape.Edge with{StartNodeUid=ending.EntryNodeUid,EndNodeUid=ending.ExitNodeUid,Points=ending.Points,LanePaths=[ending]};
+        var continuing=shape.Edge with{Id="prefab:000000000000002A:2:1",StartNodeUid=main.EntryNodeUid,EndNodeUid=main.ExitNodeUid,Points=main.Points,LanePaths=[main]};
+        var now=DateTimeOffset.UtcNow;
+        var route=RouteSnapshot.Parse([new(sideRoad.Node.Uid,3000,100),new(sideRoad.ForwardNode.Uid,2500,90),new(outgoing.Node.Uid,2000,80),new(outgoing.ForwardNode.Uid,0,0)],now);
+        var data=new GameDataSnapshot(new(ending.Points[0].X,0,ending.Points[0].Z+100,0,15,3000,true,false,1,now),route,RouteAvailability.Available,"s",true);
+        var diagnostic=new NavigationRuntime().Process(data,new(map,[],[],[]){PrefabPaths=[selected,continuing]},now);
+        var merge=Assert.Single(diagnostic.LaneMerges);Assert.Equal(LaneMergeKind.Ramp,merge.Kind);
+        var action=Assert.Single(diagnostic.Upcoming,a=>a.Kind==ManeuverKind.MergeLeft);
+        Assert.Equal(merge.Id,action.Id); // Uses native merge fallback, not AccelerationLaneApproach.
+        Assert.Equal(merge.EndDistanceMeters,action.EndDistanceMeters);
+        Assert.Equal(merge.ParallelDistanceMeters!.Value,action.ApproachInterval!.LengthMeters,6);
+        Assert.Equal(AuxiliaryLaneTiming.ActionPoint(action.ApproachInterval),action.DistanceMeters,6);
+        Assert.InRange(merge.DistanceMeters-action.DistanceMeters,0,200);
+        if(stretch==4)Assert.Equal(200,merge.DistanceMeters-action.DistanceMeters,6);
+    }
     [Fact]
     public void PassingMergeRemovesItsAction()
     {

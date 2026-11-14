@@ -90,7 +90,7 @@ public sealed class AccelerationLaneApproachTests
                 LanePaths=e.LanePaths.Select(p=>p with{Points=p.Points.Select(v=>v+new Vector3(0,0,shift)).ToArray()}).ToArray()}:e;
         var actions=new AccelerationLaneApproach().Find(s.Route.Select(Stretch).ToArray(),s.Graph.Select(Stretch).ToArray(),0);
         Assert.Equal(ramp,actions.Count>0);
-        if(ramp)Assert.Equal(500,Assert.Single(actions).ApproachInterval!.LengthMeters);
+        if(ramp){var action=Assert.Single(actions);Assert.Equal(500,action.ApproachInterval!.LengthMeters);Assert.Equal(action.EndDistanceMeters!.Value-200,action.DistanceMeters);}
     }
     [Fact]
     public void AdjacentPrefabUsingSamePhysicalUidCannotSupplyAnotherPrefabsLaneExit()

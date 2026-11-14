@@ -48,7 +48,7 @@ public sealed class AccelerationLaneApproach
             if(endIndex<0)continue;
             double end=offsets[endIndex]+s.EndOffset-vehicleAlong;
             if(end<0)continue;
-            result.Add(new(s.Id,s.Left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,new LaneActionInterval(end-s.Length,end).AtFraction(.1),s.Origin,s.EndEdge)
+            result.Add(new(s.Id,s.Left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,AuxiliaryLaneTiming.ActionPoint(new(end-s.Length,end)),s.Origin,s.EndEdge)
                 {EndDistanceMeters=end,JunctionKind=NavigationJunctionKind.Ramp,JunctionId=s.Junction,HasSeparateApproachRoad=false,ApproachInterval=new(end-s.Length,end)});
         }
         return result.OrderBy(m=>m.DistanceMeters).ToArray();

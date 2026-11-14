@@ -56,6 +56,45 @@ public sealed class NavigationEventPlannerTests
         t.Publish(p.Build("s","r",Now,180,[Turn(20)],true,false,false,s));
         Assert.Equal("左转。",Assert.Single(s.Update(t,Now,60/3.6)).Trigger.Text);
     }
+    [Theory]
+    [InlineData(0,20)] [InlineData(5,20)] [InlineData(60,100d/3)]
+    [InlineData(90,50)] [InlineData(120,200d/3)] [InlineData(240,400d/3)]
+    public void ExecutionUsesTwoSecondsOrTwentyMetersWhicheverIsEarlier(double kph,double distance)
+    {
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        IReadOnlyList<GuidanceTriggerResult> Step(double remaining)
+        {
+            timeline.Publish(planner.Build("s","r",Now,1000-remaining,[Turn(remaining)],true,false,false,scheduler));
+            return scheduler.Update(timeline,Now,kph/3.6);
+        }
+        Step(500);
+        Assert.Contains("左转。",scheduler.Prepare(timeline,Now));
+        Assert.DoesNotContain(Step(distance+.1),r=>r.Trigger.Kind==SpeechTriggerKind.Execution&&r.Disposition==TriggerDisposition.Queued);
+        Assert.Contains(Step(distance-.001),r=>r.Trigger.Kind==SpeechTriggerKind.Execution&&r.Disposition==TriggerDisposition.Queued);
+        Assert.DoesNotContain(Step(10),r=>r.Disposition==TriggerDisposition.Queued);
+    }
+    [Fact]
+    public void AccelerationCanTriggerWithinTheWindowAndBrakingDoesNotRearmIt()
+    {
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        timeline.Publish(planner.Build("s","r",Now,0,[Turn(500)],true,false,false,scheduler));scheduler.Update(timeline,Now,0);
+        timeline.Publish(planner.Build("s","r",Now,450,[Turn(50)],true,false,false,scheduler));
+        Assert.DoesNotContain(scheduler.Update(timeline,Now,10),r=>r.Trigger.Kind==SpeechTriggerKind.Execution);
+        Assert.Equal("左转。",Assert.Single(scheduler.Update(timeline,Now,30),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
+        Assert.Empty(scheduler.Update(timeline,Now,0));
+    }
+    [Fact]
+    public void HighSpeedDoesNotMoveExecutionBeforeThePreviousActionsEnd()
+    {
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        timeline.Publish(planner.Build("s","r",Now,0,[Turn(100,"first"),Turn(200,"second")],true,false,false,scheduler));
+        scheduler.Update(timeline,Now,100);
+        timeline.Publish(planner.Build("s","r",Now,150,[Turn(50,"second")],true,false,false,scheduler));
+        Assert.DoesNotContain(scheduler.Update(timeline,Now,100),r=>r.Event.Id.StartsWith("second@")&&r.Disposition==TriggerDisposition.Queued);
+        timeline.Publish(planner.Build("s","r",Now,151,[Turn(49,"second")],true,false,false,scheduler));
+        Assert.Contains(scheduler.Update(timeline,Now,100),r=>r.Event.Id.StartsWith("second@")&&r.Trigger.Kind==SpeechTriggerKind.Execution&&r.Disposition==TriggerDisposition.Queued);
+    }
+
     [Fact]
     public void ExecutionIncludesTheNearbyNextActionWithoutAnotherAfterPrefix()
     {

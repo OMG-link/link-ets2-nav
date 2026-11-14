@@ -3,7 +3,10 @@ using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 namespace LinkEts2Nav.Runtime;
 
-public sealed record GuidancePointDiagnostic(string EventId,string TriggerId,string Text,double RemainingMeters,bool Enabled);
+public sealed record GuidancePointDiagnostic(string EventId,string TriggerId,string Text,double RemainingMeters,bool Enabled)
+{
+    public double? WindowStartRemainingMeters {get;init;}
+}
 public sealed record GuidanceSequenceEndDiagnostic(string Source,string SequenceId,double? RemainingMeters,bool ObservedPassage);
 public sealed record GuidanceDiagnostic(int EventCount,int TriggerCount,
     IReadOnlyList<QueuedGuidanceSpeech> Pending,IReadOnlyList<GuidanceTriggerResult> LatestTriggers,string? LastPlayed)
@@ -49,7 +52,8 @@ public sealed class GuidanceCoordinator
     public GuidanceDiagnostic Diagnostic
     {get{lock(gate)return new(Timeline.Sources.Sum(p=>p.Events.Count),Timeline.Sources.Sum(p=>p.Triggers.Count),playback?.Pending??[],latest,lastPlayed){Upcoming=Timeline.Sources.SelectMany(p=>p.Triggers
         .Where(t=>!Scheduler.IsConsumed(p.Source,t.Id)&&!t.Silent)
-        .Select(t=>new GuidancePointDiagnostic(t.EventId,t.Id,t.Text,t.AlongMeters-p.PlayerAlongMeters,t.Enabled)))
+        .Select(t=>new GuidancePointDiagnostic(t.EventId,t.Id,t.Text,t.AlongMeters-p.PlayerAlongMeters,t.Enabled)
+            {WindowStartRemainingMeters=t.Window?.StartAlongMeters-p.PlayerAlongMeters}))
         .OrderBy(p=>p.RemainingMeters).Take(64).ToArray(),SequenceEnds=Timeline.Sources.SelectMany(p=>p.Sequences
             .Select(s=>new GuidanceSequenceEndDiagnostic(p.Source,s.Id,s.EndAlongMeters-p.PlayerAlongMeters,s.Ended))).ToArray()};}}
     public bool WillReplaceSource(string source,string revision)=>replacementRevision==revision&&!replacementApplied.Contains(source);

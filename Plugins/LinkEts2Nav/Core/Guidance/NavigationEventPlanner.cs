@@ -169,7 +169,8 @@ public sealed class NavigationEventPlanner
                 // available. Its normal end still closes the series; do not cue it late.
                 if(state.EndAlong is {} finish&&(executionAlong>finish||executionAlong==finish&&strict))continue;
                 triggers.Add(new(state.Id+":execute",state.Id,SpeechTriggerKind.Execution,executionAlong,Execution(wording,i))
-                    {Enabled=active,StrictCrossing=strict,Silent=silent,Priority=0,SequenceOrder=m.ExecutionOnly?m.SpeechSequenceOrder:0});
+                    {Enabled=active,StrictCrossing=strict,Silent=silent,Priority=0,SequenceOrder=m.ExecutionOnly?m.SpeechSequenceOrder:0,
+                        Window=new(start,ExecutionDue,state.BriefingStrict)});
             }
         }
         if(!maneuvers.Any(IsNavigationAction)&&confirmedContinuation)
@@ -221,6 +222,9 @@ public sealed class NavigationEventPlanner
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
     private static int ActionIndex(IReadOnlyList<NavigationManeuver> list,int start)
     {for(int i=start;i<list.Count;i++)if(IsNavigationAction(list[i]))return i;return -1;}
+    private static bool ExecutionDue(SpeechTriggerContext context)
+        =>context.DistanceToEventMeters<=Math.Max(0,context.SpeedMetersPerSecond)*2;
+
     private static string Execution(IReadOnlyList<NavigationManeuver> list,int i)
     {
         var m=list[i];string text=NavigationPrompts.Execute(m.Kind,Instruction(m,0));

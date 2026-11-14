@@ -149,7 +149,9 @@ public sealed class NavigationRuntimeTests
         var first=runtime.Process(data,nearby,Now);
         if(expected)
         {
-            Assert.NotNull(first.Next);Assert.Equal(30,first.Next.DistanceMeters,1);Assert.Equal(0,calls);
+            Assert.NotNull(first.Next);Assert.Equal(30,first.Next.DistanceMeters,1);
+            // At 20 m/s, the two-second cue is already due 30 m before the exit.
+            Assert.Equal("右转。",first.LastSpoken);Assert.Equal(1,calls);
             var prefix=new RoadPathSource(scene.Map.Map,scene.Map.PrefabPaths).GetRoutePrefix(new(0,0,670),route,source[0].Uid);
             double prefixWorldLength=prefix.Sum(e=>e.Points.Zip(e.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)));
             Assert.Equal(prefixWorldLength+30,Assert.Single(first.Upcoming,m=>m.Kind==ManeuverKind.Destination).DistanceMeters,1);

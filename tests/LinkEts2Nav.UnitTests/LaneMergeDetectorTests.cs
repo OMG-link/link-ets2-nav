@@ -256,11 +256,19 @@ public sealed class LaneMergeDetectorTests
         }
         Assert.Equal(shortApproach?1:2,sounds);
         runtime.Process(Data(1,10,now.AddSeconds(1)),nearby,now.AddSeconds(1));
-        Assert.Equal(shortApproach?1:2,sounds);
+        if(!shortApproach)
+        {
+            // The first 450m announcement consumes the 500m stage; 200m is still due.
+            var previews=spoken.Where(s=>s.StartsWith("\u5bfc\u822a\u6307\u4ee4\uff1a")&&s.Contains("\u8f66\u9053\u5408\u5e76")).ToArray();
+            Assert.Equal(2,previews.Length);
+            Assert.Contains("\u56db\u767e\u4e94\u5341\u7c73\u540e",previews[0]);
+            Assert.Contains("\u4e24\u767e\u7c73\u540e",previews[1]);
+        }
+        Assert.Equal(shortApproach?1:3,sounds);
         var after=runtime.Process(Data(0,-20,now.AddSeconds(2)),nearby,now.AddSeconds(2));
         Assert.DoesNotContain(after.LaneMerges,m=>m.PrefabUid==42);
         Assert.NotNull(after.LastSpoken);
-        Assert.Equal(shortApproach?2:3,sounds); // The now-known destination also reaches its 2km advance point.
+        Assert.Equal(shortApproach?2:4,sounds); // The now-known destination also reaches its 2km advance point.
     }
     [Fact]
     public void PassingMergeRemovesItsAction()

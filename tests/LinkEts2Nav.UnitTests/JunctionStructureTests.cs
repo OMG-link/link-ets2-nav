@@ -49,30 +49,25 @@ public sealed class JunctionStructureTests
     }
 
     [Fact]
-    public void SingleMainContinuationOfMergeIsRetainedWithoutInventingMergeAction()
+    public void SingleExitMainContinuationIsNotCountedAsAJunction()
     {
         DirectedRoad approach=new("road",1,10,[Vector3.Zero,new(0,0,100)]);
         DirectedRoad main=new("prefab:1:0:1",10,20,[new(0,0,100),new(0,0,150)])
         {Junction=new(2,1,0){InterfaceCount=3},NativeEntryTangent=Vector3.UnitZ,NativeExitTangent=Vector3.UnitZ};
-        var straight=Assert.Single(new NavigationManeuverDetector().FindSequence([approach,main],0,[approach,main]));
-        Assert.Equal(ManeuverKind.Straight,straight.Kind);
-        Assert.Equal(NavigationJunctionKind.Ramp,straight.JunctionKind);
-        Assert.Equal(150,straight.EndDistanceMeters);
+        Assert.Empty(new NavigationManeuverDetector().FindSequence([approach,main],0,[approach,main]));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void SingleCurvedContinuationIsStructuralStraightRegardlessOfEndpointTangents(bool nativeTangents)
+    public void SingleExitCurvedContinuationDoesNotInventAJunction(bool nativeTangents)
     {
         DirectedRoad approach=new("road",1,10,[Vector3.Zero,new(0,0,100)]);
         DirectedRoad main=new("prefab:1:0:1",10,20,[new(0,0,100),new(0,0,120),new(20,0,140),new(50,0,150)])
         {Junction=new(2,1,0){InterfaceCount=3},
             NativeEntryTangent=nativeTangents?Vector3.UnitZ:null,
             NativeExitTangent=nativeTangents?Vector3.UnitX:null};
-        var straight=Assert.Single(new NavigationManeuverDetector().FindSequence([approach,main],0,[approach,main]));
-        Assert.Equal(ManeuverKind.Straight,straight.Kind);
-        Assert.Equal(NavigationJunctionKind.Ramp,straight.JunctionKind);
+        Assert.Empty(new NavigationManeuverDetector().FindSequence([approach,main],0,[approach,main]));
     }
 
     [Fact]
@@ -81,5 +76,53 @@ public sealed class JunctionStructureTests
         var action=new NavigationManeuver("test",ManeuverKind.Straight,100,"in","out");
         Assert.Equal(NavigationJunctionKind.Ordinary,action.JunctionKind);
         Assert.False(action.IsMinorStraight);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OppositeDirectionExitDoesNotTurnASingleReachableExitIntoAJunction(bool reverse)
+    {
+        var info=new PrefabJunctionInfo(2,2,0){InterfaceCount=3};
+        DirectedRoad forward=new("prefab:1:0:2",10,20,[new(0,0,100),new(0,0,150)]){Junction=info};
+        DirectedRoad backward=new("prefab:1:1:0",30,10,[new(0,0,150),new(0,0,100)]){Junction=info};
+        var selected=reverse?backward:forward;
+        DirectedRoad approach=new("road",1,selected.StartNodeUid,[new(0,0,0),selected.Points[0]]);
+        var actions=new NavigationManeuverDetector().FindSequence([approach,selected],0,[approach,forward,backward]);
+        Assert.DoesNotContain(actions,a=>a.Kind==ManeuverKind.Straight);
+    }
+
+    [Fact]
+    public void SeveralParallelLanePathsToOneInterfaceAreStillOneExit()
+    {
+        var info=new PrefabJunctionInfo(2,2,0){InterfaceCount=3};
+        DirectedRoad approach=new("road",1,10,[Vector3.Zero,new(0,0,100)]);
+        DirectedRoad first=new("prefab:1:0:1",10,20,[new(0,0,100),new(0,0,150)]){Junction=info};
+        var second=first with{Id="prefab:1:2:3",Points=[new(3,0,100),new(3,0,150)]};
+        Assert.DoesNotContain(new NavigationManeuverDetector().FindSequence([approach,first],0,[approach,first,second]),
+            a=>a.Kind==ManeuverKind.Straight);
+    }
+
+    [Fact]
+    public void OtherApproachOfTheSamePrefabStillCountsWhenItHasTwoReachableExits()
+    {
+        var info=new PrefabJunctionInfo(2,2,0){InterfaceCount=4};
+        DirectedRoad single=new("prefab:1:0:2",10,20,[new(0,0,100),new(0,0,150)]){Junction=info};
+        var fork=new RoadForkInfo(30,1,[new(20,ForkSignal.None,[0],[0],[],true),new(40,ForkSignal.Right,[0],[0],[],true)]);
+        DirectedRoad chosen=new("prefab:1:1:2",30,20,[new(0,0,100),new(0,0,150)]){Junction=info,ForkInfo=fork};
+        DirectedRoad branch=new("prefab:1:1:3",30,40,[new(0,0,100),new(50,0,150)]){Junction=info,ForkInfo=fork};
+        DirectedRoad approach=new("road",1,30,[Vector3.Zero,new(0,0,100)]);
+        var straight=Assert.Single(new NavigationManeuverDetector().FindSequence([approach,chosen],0,[approach,single,chosen,branch]));
+        Assert.Equal(ManeuverKind.Straight,straight.Kind);Assert.Equal(NavigationJunctionKind.Ramp,straight.JunctionKind);
+    }
+
+    [Fact]
+    public void CrossingJunctionIsNotNarrowedByTheRampExitRule()
+    {
+        DirectedRoad approach=new("road",1,10,[Vector3.Zero,new(0,0,100)]);
+        DirectedRoad straight=new("prefab:1:0:1",10,20,[new(0,0,100),new(0,0,150)])
+            {Junction=new(2,2,1){InterfaceCount=3}};
+        var action=Assert.Single(new NavigationManeuverDetector().FindSequence([approach,straight],0,[approach,straight]));
+        Assert.Equal(ManeuverKind.Straight,action.Kind);Assert.Equal(NavigationJunctionKind.Ordinary,action.JunctionKind);
     }
 }

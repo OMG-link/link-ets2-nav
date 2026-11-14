@@ -18,14 +18,28 @@ internal static class JunctionSpeechPlanner
         for(int i=0;i<sites.Count;i++)
         {
             var site=sites[i];
-            if(site.EndAlong is not {} end)continue;
-            double point=Math.Max(countAlong,site.Along-20);
-            if(point>end)continue;
-            string id=actionId+":through:"+site.Id;
             string text="直行通过第"+NavigationPrompts.Number(i+1)+"个路口。";
-            yield return new(id,new RouteSpeechEnd(end),[new(id,site.Along,text)],
-                [new(id+":execute",id,SpeechTriggerKind.ActionAssist,point,text){Enabled=enabled,StrictCrossing=strict&&point==countAlong}]);
+            if(Passage(actionId,site,countAlong,text,enabled,strict) is {} speech)yield return speech;
         }
+    }
+
+    public static IEnumerable<SpeechSequence> Current(string actionId,double earliest,
+        IReadOnlyList<JunctionSpeechSite> sites,bool enabled,bool strict)
+    {
+        foreach(var site in sites)
+            if(Passage(actionId,site,earliest,"直线通过当前路口。",enabled,strict) is {} speech)yield return speech;
+    }
+
+    private static SpeechSequence? Passage(string actionId,JunctionSpeechSite site,double earliest,string text,bool enabled,bool strict)
+    {
+        if(site.EndAlong is not {} end)return null;
+        double point=Math.Max(earliest,site.Along-20);
+        if(point>end)return null;
+        string id=actionId+":through:"+site.Id;
+        return new(id,new RouteSpeechEnd(end),[new(id,site.Along,text)],
+            [new(id+":execute",id,SpeechTriggerKind.ActionAssist,point,text)
+                {Enabled=enabled,StrictCrossing=strict&&point==earliest,
+                    Window=new(earliest,context=>context.DistanceToEventMeters<=Math.Max(0,context.SpeedMetersPerSecond)*2,strict)}]);
     }
 
     public static IEnumerable<SpeechSequence> Dense(IReadOnlyList<JunctionSpeechSite> route,

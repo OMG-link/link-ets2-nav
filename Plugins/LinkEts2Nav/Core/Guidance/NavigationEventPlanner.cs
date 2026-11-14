@@ -92,9 +92,9 @@ public sealed class NavigationEventPlanner
         var counted=new HashSet<string>(StringComparer.Ordinal);
         // Retained action plans also retain the meaning of their earlier fixed
         // count point after its series ends. No extra "already counted" cache.
-        foreach(var p in ordered.Where(p=>IsNavigationAction(p.Maneuver)&&p.Maneuver.Kind!=ManeuverKind.Destination&&!p.Maneuver.ExecutionOnly&&p.BriefingAlong is not null))
+        foreach(var p in ordered.Where(p=>UsesPassageHelpers(p.Maneuver)&&p.BriefingAlong is not null))
             foreach(var site in JunctionSpeechPlanner.CountedStraights(sites,
-                Math.Max(p.BriefingAlong!.Value,p.Along-(p.Maneuver.JunctionKind==NavigationJunctionKind.Ramp?500:200)),
+                Math.Max(p.BriefingAlong!.Value,p.Along-500),
                 p.Along,p.Maneuver.JunctionId??p.Id))counted.Add(site.Id);
         var auxiliaries=new List<SpeechSequence>();
         var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
@@ -151,11 +151,18 @@ public sealed class NavigationEventPlanner
                 }
             }
             double? initial=state.BriefingAlong is {} anchor?Math.Max(0,state.Along-anchor):null;
-            int countStage=m.JunctionKind==NavigationJunctionKind.Ramp?500:200;
+            const int countStage=200;
             double? countAlong=state.BriefingAlong is {} first?Math.Max(first,state.Along-countStage):null;
-            var countedSites=IsNavigationAction(m)&&m.Kind!=ManeuverKind.Destination&&!m.ExecutionOnly&&countAlong is {} countPoint
+            var countedSites=UsesJunctionOrdinal(m)&&countAlong is {} countPoint
                 ?JunctionSpeechPlanner.CountedStraights(sites,countPoint,state.Along,m.JunctionId??state.Id):[];
             foreach(var site in countedSites)counted.Add(site.Id);
+            double? earlyAlong=state.BriefingAlong is {} discovered?Math.Max(discovered,state.Along-500):null;
+            var earlySites=UsesPassageHelpers(m)&&earlyAlong is {} earlyPoint
+                ?JunctionSpeechPlanner.CountedStraights(sites,earlyPoint,
+                    UsesJunctionOrdinal(m)?state.Along-countStage:state.Along,m.JunctionId??state.Id):[];
+            foreach(var site in earlySites)counted.Add(site.Id);
+            if(state.BriefingAlong is {} earliest)auxiliaries.AddRange(JunctionSpeechPlanner.Current(state.Id,earliest,earlySites,active,
+                state.BriefingStrict));
             if(countAlong is {} at)auxiliaries.AddRange(JunctionSpeechPlanner.Numbered(state.Id,at,countedSites,active,
                 state.BriefingStrict&&at==state.BriefingAlong));
             int ordinal=countedSites.Length==0?0:countedSites.Length+1;
@@ -236,6 +243,10 @@ public sealed class NavigationEventPlanner
     }
     /// <summary>Ordinary decisions share one chain; environment and proven main-road continuations do not block it.</summary>
     public static bool IsNavigationAction(NavigationManeuver m)=>m.Kind!=ManeuverKind.Straight&&m.AnnouncementMode==NavigationAnnouncementMode.Normal&&!m.IsMainRoadContinuation;
+    // Actual junction passages remain useful before non-junction destinations;
+    // only a driving decision can itself be numbered as the target junction.
+    private static bool UsesPassageHelpers(NavigationManeuver m)=>IsNavigationAction(m)&&!m.ExecutionOnly;
+    private static bool UsesJunctionOrdinal(NavigationManeuver m)=>UsesPassageHelpers(m)&&m.Kind!=ManeuverKind.Destination;
     private static string VisitSuffix(double? start)=>start is {} value?":visit:"+value.ToString("R",CultureInfo.InvariantCulture):"";
     private string FrameSuffix()=>frame is null?"":"#"+frame;
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;

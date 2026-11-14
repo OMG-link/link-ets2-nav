@@ -133,7 +133,9 @@ public sealed class NavigationManeuverDetector
                 // Unsupported winding geometry remains a barrier while the vehicle
                 // approaches or traverses it. A normal, already entered turn does not.
                 var connections = prefabStarts.GetValueOrDefault((prefab, current.StartNodeUid)) ?? [];
-                bool structuralSingle=connections.Length==1&&current.Junction?.IsAnyJunction==true;
+                bool rampJunction=current.Junction?.IsRampPassage(connections.Length)==true;
+                bool anyJunction=current.Junction?.IsJunction==true||rampJunction;
+                bool structuralSingle=connections.Length==1&&anyJunction;
                 if(!structuralSingle&&current.ForkInfo is null&&ComplexInternalBend(current))return result;
                 // Crossing junction angles retain their own rules. Ordinary road
                 // splits need no crossing, extra entrance or IsJunction marker.
@@ -146,7 +148,7 @@ public sealed class NavigationManeuverDetector
                         forkIssues.Add(new(prefab,current.StartNodeUid,current.EndNodeUid,reason));
                         hasUnresolvedJoin=true;firstUnresolvedJoinAlong=Math.Min(firstUnresolvedJoinAlong,offset);
                     }
-                    else if((!instruction.Silent||instruction.Kind==ManeuverKind.Straight&&current.Junction?.IsRampJunction==true)&&offset>=vehicleAlong)
+                    else if((!instruction.Silent||instruction.Kind==ManeuverKind.Straight&&rampJunction)&&offset>=vehicleAlong)
                     {
                         result.Add(new($"fork:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",instruction.Kind,
                             offset-vehicleAlong,i>0?route[i-1].Id:current.Id,current.Id)
@@ -183,14 +185,14 @@ public sealed class NavigationManeuverDetector
                             mergeKind, offset - vehicleAlong, i > 0 ? route[i - 1].Id : current.Id,
                             i + 1 < route.Count ? route[i + 1].Id : current.Id)
                         { EndDistanceMeters = end - vehicleAlong, JunctionId = "prefab:" + prefab,
-                            JunctionKind=current.Junction?.IsRampJunction==true?NavigationJunctionKind.Ramp:NavigationJunctionKind.Ordinary,
+                            JunctionKind=rampJunction?NavigationJunctionKind.Ramp:NavigationJunctionKind.Ordinary,
                             HasSeparateApproachRoad = i > 0 && PrefabKey(route[i - 1]) is null });
                     }
-                    else if(!merge.Ambiguous&&current.Junction?.IsAnyJunction==true)
+                    else if(!merge.Ambiguous&&anyJunction)
                         result.Add(new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",ManeuverKind.Straight,
                             offset-vehicleAlong,i>0?route[i-1].Id:current.Id,i+1<route.Count?route[i+1].Id:current.Id)
                         {EndDistanceMeters=end-vehicleAlong,JunctionId="prefab:"+prefab,
-                            JunctionKind=current.Junction.IsRampJunction?NavigationJunctionKind.Ramp:NavigationJunctionKind.Ordinary,
+                            JunctionKind=rampJunction?NavigationJunctionKind.Ramp:NavigationJunctionKind.Ordinary,
                             IsMinorStraight=current.Junction.IsJunction&&current.IsMinorStraight,IsMainRoadContinuation=true,
                             HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
                 }

@@ -4,6 +4,13 @@ using System.Text;
 
 namespace LinkEts2Nav.Map;
 
+public sealed record ModelLocator(int Index,ulong NameToken,string? Hookup,Vector3 Position,
+    Quaternion Rotation,float Scale,int PartIndex)
+{
+    public string Name=>new TruckLib.Token(NameToken).ToString();
+}
+
+
 /// <summary>
 /// Reads only PMG v0x15 locator metadata; does not decode meshes or allocate geometry.
 /// Offsets are validated before access. Hookup offsets are relative to the string pool.
@@ -18,6 +25,13 @@ public static class PmgLocatorReader
     /// <summary>Reads metadata ranges from a seekable asset stream without buffering mesh geometry.</summary>
     public static IReadOnlyList<SpeedCameraLocator> Read(Stream stream,
         IReadOnlyDictionary<string, (float MeasurementDistance, bool ReverseDirection)> definitions)
+        =>Read(ReadMetadata(stream),definitions);
+
+    /// <summary>Includes named model anchors and non-camera hooks. Callers still resolve selected-part visibility.</summary>
+    public static IReadOnlyList<ModelLocator> ReadAll(Stream stream)=>ReadLocators(ReadMetadata(stream),null);
+    public static IReadOnlyList<ModelLocator> ReadAll(ReadOnlySpan<byte> bytes)=>ReadLocators(bytes,null);
+
+    private static byte[] ReadMetadata(Stream stream)
     {
         if (!stream.CanRead || !stream.CanSeek)
             throw new InvalidDataException("PMG metadata scanning requires a readable seekable stream.");
@@ -52,13 +66,22 @@ public static class PmgLocatorReader
             BinaryPrimitives.WriteInt32LittleEndian(metadata.AsSpan(76), HeaderSize);
             BinaryPrimitives.WriteInt32LittleEndian(metadata.AsSpan(80), HeaderSize + partBytes);
             BinaryPrimitives.WriteInt32LittleEndian(metadata.AsSpan(88), HeaderSize + partBytes + locatorBytes);
-            return Read(metadata, definitions);
+            return metadata;
         }
         finally { stream.Position = originalPosition; }
     }
 
     public static IReadOnlyList<SpeedCameraLocator> Read(ReadOnlySpan<byte> bytes,
         IReadOnlyDictionary<string, (float MeasurementDistance, bool ReverseDirection)> definitions)
+        =>ReadLocators(bytes,hookup=>hookup is not null&&definitions.ContainsKey(hookup)).Select(locator=>
+        {
+            var definition=definitions[locator.Hookup!];
+            return new SpeedCameraLocator(locator.Index.ToString(System.Globalization.CultureInfo.InvariantCulture),locator.Hookup!,
+                locator.Position,locator.Rotation,definition.MeasurementDistance,definition.ReverseDirection)
+                {PartIndex=locator.PartIndex,Scale=locator.Scale};
+        }).ToArray();
+
+    private static IReadOnlyList<ModelLocator> ReadLocators(ReadOnlySpan<byte> bytes,Func<string?,bool>? include)
     {
         ValidateHeader(bytes);
         int count = ReadInt(bytes, 20);
@@ -84,28 +107,30 @@ public static class PmgLocatorReader
                 partIndices[i] = part;
             }
         }
-        var result = new List<SpeedCameraLocator>();
+        var result = new List<ModelLocator>();
         for (int i = 0; i < count; i++)
         {
             var item = bytes.Slice(locatorOffset + i * LocatorSize, LocatorSize);
             int hookupOffset = ReadInt(item, 40);
-            if (hookupOffset < 0) continue;
-            if (hookupOffset >= stringSize)
-                throw new InvalidDataException("PMG locator hookup points outside the string pool.");
-            var tail = bytes.Slice(stringOffset + hookupOffset, stringSize - hookupOffset);
-            int terminator = tail.IndexOf((byte)0);
-            if (terminator < 0) throw new InvalidDataException("Unterminated PMG hookup name.");
-            string hookup = Encoding.UTF8.GetString(tail[..terminator]);
-            if (!definitions.TryGetValue(hookup, out var definition)) continue;
+            string? hookup=null;
+            if(hookupOffset>=0)
+            {
+                if (hookupOffset >= stringSize)
+                    throw new InvalidDataException("PMG locator hookup points outside the string pool.");
+                var tail = bytes.Slice(stringOffset + hookupOffset, stringSize - hookupOffset);
+                int terminator = tail.IndexOf((byte)0);
+                if (terminator < 0) throw new InvalidDataException("Unterminated PMG hookup name.");
+                hookup = Encoding.UTF8.GetString(tail[..terminator]);
+            }
+            if(include is not null&&!include(hookup))continue;
             float scale = ReadFloat(item, 20);
             if (!float.IsFinite(scale) || scale <= 0) throw new InvalidDataException("PMG locator scale must be finite and positive.");
             var position = new Vector3(ReadFloat(item, 8), ReadFloat(item, 12), ReadFloat(item, 16));
             var rotation = new Quaternion(ReadFloat(item, 28), ReadFloat(item, 32), ReadFloat(item, 36), ReadFloat(item, 24));
             if (!Finite(position) || !float.IsFinite(rotation.LengthSquared()) || rotation.LengthSquared() < 0.001f)
                 throw new InvalidDataException("PMG locator has invalid placement.");
-            // Stable locator index avoids depending on decoding SCS token names.
-            result.Add(new SpeedCameraLocator(i.ToString(System.Globalization.CultureInfo.InvariantCulture), hookup,
-                position, Quaternion.Normalize(rotation), definition.MeasurementDistance, definition.ReverseDirection) { PartIndex = partIndices[i], Scale = scale });
+            result.Add(new(i,BinaryPrimitives.ReadUInt64LittleEndian(item),hookup,position,
+                Quaternion.Normalize(rotation),scale,partIndices[i]));
         }
         return result;
     }

@@ -30,6 +30,30 @@ public sealed class PmgLocatorReaderTests
     {
         Assert.Empty(PmgLocatorReader.Read(Model("flare.vehicle"), Definitions));
     }
+    [Fact]
+    public void GenericMetadataPreservesNativeNameAndHookupWithoutCreatingACamera()
+    {
+        var bytes=Model("sign.city1_0");
+        BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(112),new TruckLib.Token("ml2").Value);
+        var locator=Assert.Single(PmgLocatorReader.ReadAll(bytes));
+        Assert.Equal("ml2",locator.Name);Assert.Equal("sign.city1_0",locator.Hookup);
+        Assert.Equal(new Vector3(8,0,2),locator.Position);Assert.Equal(0,locator.Index);
+        Assert.Empty(PmgLocatorReader.Read(bytes,Definitions));
+    }
+    [Fact]
+    public void GenericMetadataIncludesUnhookedAnchorsButCameraReaderStillIgnoresThem()
+    {
+        var bytes=Model("unused");PutInt(bytes,112+40,-1);
+        Assert.Null(Assert.Single(PmgLocatorReader.ReadAll(bytes)).Hookup);
+        Assert.Empty(PmgLocatorReader.Read(bytes,Definitions));
+    }
+    [Fact]
+    public void MalformedUnrelatedPlacementKeepsExistingCameraFilteringSemantics()
+    {
+        var bytes=Model("flare.vehicle");PutFloat(bytes,112+8,float.NaN);
+        Assert.Empty(PmgLocatorReader.Read(bytes,Definitions));
+        Assert.Throws<InvalidDataException>(()=>PmgLocatorReader.ReadAll(bytes));
+    }
 
     [Fact]
     public void UnsupportedVersionsFailInsteadOfInventingPlacements()

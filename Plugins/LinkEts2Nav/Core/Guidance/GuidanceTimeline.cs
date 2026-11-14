@@ -16,13 +16,16 @@ public sealed class GuidanceTimeline
             ||plan.Events.Select(e=>e.Id).Distinct(StringComparer.Ordinal).Count()!=plan.Events.Count
             ||plan.Triggers.Select(t=>t.Id).Distinct(StringComparer.Ordinal).Count()!=plan.Triggers.Count)
             throw new ArgumentException("Duplicate published series, event or point.",nameof(plan));
+        var replaced=plan.ReplacedSequenceIds.ToHashSet(StringComparer.Ordinal);
+        if(replaced.Any(string.IsNullOrWhiteSpace)||plan.Sequences.Any(s=>replaced.Contains(s.Id)))
+            throw new ArgumentException("A replacement must name a different, valid series.",nameof(plan));
         // A complete series survives a moving map window through its end; no
         // separate queue tombstones or loose event/point reconciliation are needed.
         if(plan.CoordinateFrame is not null&&sources.TryGetValue(plan.Source,out var previous)
             &&previous.CoordinateFrame==plan.CoordinateFrame&&plan.PlayerAlongMeters>=previous.PlayerAlongMeters)
         {
             var current=plan.Sequences.Select(s=>s.Id).ToHashSet(StringComparer.Ordinal);
-            var retained=previous.Sequences.Where(s=>!current.Contains(s.Id)
+            var retained=previous.Sequences.Where(s=>!current.Contains(s.Id)&&!replaced.Contains(s.Id)
                 &&(s.EndAlongMeters is null||s.EndAlongMeters>=previous.PlayerAlongMeters));
             plan=plan with{Sequences=[..plan.Sequences,..retained]};
         }

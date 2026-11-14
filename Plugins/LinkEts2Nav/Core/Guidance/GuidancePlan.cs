@@ -117,6 +117,10 @@ public sealed record GuidanceSourcePlan(string Source,string SessionId,string Ro
     public IReadOnlyList<SpeechTrigger> Triggers=>Sequences.SelectMany(s=>s.Triggers).ToArray();
     public string? CoordinateFrame { get; init; }
     public bool PrepareWhileInactive { get; init; }
+    /// <summary>Explicit replacements are removed rather than retained through a moving map window.</summary>
+    private IReadOnlyList<string> replacedSequenceIds=Array.Empty<string>();
+    public IReadOnlyList<string> ReplacedSequenceIds
+    {get=>replacedSequenceIds;init=>replacedSequenceIds=Array.AsReadOnly(value.ToArray());}
 }
 
 /// <summary>Only the scheduler can create playback requests, from a complete published series.</summary>

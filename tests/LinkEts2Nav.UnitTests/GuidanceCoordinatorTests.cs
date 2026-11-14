@@ -7,6 +7,23 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class GuidanceCoordinatorTests
 {
     [Fact]
+    public async Task ReplacementWithdrawsQueuedUnknownTextBeforeTheKnownDistanceCanBeQueued()
+    {
+        await using var playback=new GuidancePlaybackManager(null,new NoPlayer(),()=>null);
+        var coordinator=new GuidanceCoordinator(playback:playback);
+        coordinator.Publish(new("navigation","s","r",0,true,Now,[GuidanceTestSeries.Route("unknown",10000,
+            [new("unknown",0,"unknown")],[new("unknown:first","unknown",SpeechTriggerKind.Overview,0,"unknown")])]){CoordinateFrame="f"});
+        coordinator.Tick(Data(),Now);Assert.Equal("unknown",Assert.Single(playback.Pending).Text);
+        var replacement=new GuidanceSourcePlan("navigation","s","r",1,true,Now,[GuidanceTestSeries.Route("known",9400,
+            [new("known",9400,"known")],[new("known:first","known",SpeechTriggerKind.Overview,0,"9.4km")])])
+            {CoordinateFrame="f",ReplacedSequenceIds=["unknown"]};
+        coordinator.Publish(replacement);Assert.Empty(playback.Pending);
+        coordinator.Tick(Data(),Now);Assert.Equal("9.4km",Assert.Single(playback.Pending).Text);
+        coordinator.Publish(replacement with{PlayerAlongMeters=2});coordinator.Tick(Data(),Now);
+        Assert.Equal("9.4km",Assert.Single(playback.Pending).Text);
+        Assert.DoesNotContain(coordinator.Timeline.Sources[0].Sequences,s=>s.Id=="unknown");
+    }
+    [Fact]
     public void StartAndReplanQueueImmediatelyEvenWhenVehicleIsFarOutsideTheRoute()
     {
         var map=new TruckLib.ScsMap.Map();

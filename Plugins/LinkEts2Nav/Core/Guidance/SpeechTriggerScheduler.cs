@@ -25,7 +25,7 @@ public sealed class SpeechTriggerScheduler
         return timeline.Sources.Where(p=>(p.Active||p.PrepareWhileInactive)&&now>=p.ObservedAt&&now-p.ObservedAt<=MaximumAge)
             .SelectMany(p=>p.Sequences.Where(s=>!IsConsumed(p.Source,SpeechSequence.EndTriggerId(s.Id))).SelectMany(s=>s.Triggers)
             .Where(t=>!t.Silent&&!IsConsumed(p.Source,t.Id)&&t.Text.Length>0)
-            .Select(t=>(Trigger:t,Distance:t.AlongMeters-p.PlayerAlongMeters)))
+            .Select(t=>(Trigger:t,Distance:(t.Window?.StartAlongMeters??t.AlongMeters)-p.PlayerAlongMeters)))
             .OrderBy(t=>t.Distance).ThenBy(t=>t.Trigger.Priority)
             .Select(t=>t.Trigger.Text).Distinct(StringComparer.Ordinal).ToArray();
     }
@@ -38,8 +38,8 @@ public sealed class SpeechTriggerScheduler
         EnsureSession(sources);
         var due=sources.Where(p=>Fresh(p,now)&&(onlySource is null||p.Source==onlySource))
             .SelectMany(p=>Points(p).Where(point=>point.Trigger.Enabled
-                &&(point.Observed||(point.Trigger.Kind==SpeechTriggerKind.SequenceEnd||point.Trigger.StrictCrossing?point.Trigger.AlongMeters<p.PlayerAlongMeters:point.Trigger.AlongMeters<=p.PlayerAlongMeters))
-                &&!IsConsumed(p.Source,point.Trigger.Id)).Select(point=>(Plan:p,Trigger:point.Trigger)))
+                &&!IsConsumed(p.Source,point.Trigger.Id)
+                &&Due(p,point.Trigger,point.Observed,now,speedMetersPerSecond)).Select(point=>(Plan:p,Trigger:point.Trigger)))
             .OrderBy(p=>p.Trigger.AlongMeters-p.Plan.PlayerAlongMeters)
             .ThenBy(p=>p.Trigger.Kind==SpeechTriggerKind.SequenceEnd?1:0)
             .ThenBy(p=>p.Trigger.SequenceOrder).ToArray();
@@ -57,6 +57,13 @@ public sealed class SpeechTriggerScheduler
             else
             {
                 disposition=TriggerDisposition.Queued;
+            }
+            if(t.Window is not null&&disposition==TriggerDisposition.Queued)
+            {
+                // A conditional final cue can precede an earlier-order fixed
+                // point at high speed. Retire that series prefix immediately.
+                foreach(var older in p.Sequences.First(s=>s.Id==e.SequenceId).Triggers.Where(x=>x.SequenceOrder<t.SequenceOrder))
+                    if(!IsConsumed(p.Source,older.Id))consumed[(p.Source,older.Id)]=(TriggerDisposition.Superseded,older.EventId);
             }
             consumed[(p.Source,t.Id)]=(disposition,t.EventId);
             foreach(var id in t.Supersedes)consumed[(p.Source,id)]=(TriggerDisposition.Superseded,t.EventId);
@@ -81,6 +88,18 @@ public sealed class SpeechTriggerScheduler
         }
         return results;
     }
+    private static bool Due(GuidanceSourcePlan plan,SpeechTrigger trigger,bool observed,DateTimeOffset now,double speed)
+    {
+        if(observed)return true;
+        bool deadlinePassed=trigger.Kind==SpeechTriggerKind.SequenceEnd||trigger.StrictCrossing
+            ?trigger.AlongMeters<plan.PlayerAlongMeters:trigger.AlongMeters<=plan.PlayerAlongMeters;
+        if(deadlinePassed)return true;
+        if(trigger.Window is not {} window||plan.PlayerAlongMeters<window.StartAlongMeters
+            ||window.StrictStart&&plan.PlayerAlongMeters==window.StartAlongMeters)return false;
+        var owner=plan.Events.First(e=>e.Id==trigger.EventId);
+        return window.ShouldTrigger(new(owner,trigger,plan.PlayerAlongMeters,speed,now));
+    }
+
     private IEnumerable<(SpeechTrigger Trigger,bool Observed)> Points(GuidanceSourcePlan plan)
     {
         foreach(var sequence in plan.Sequences)

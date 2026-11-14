@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text.Json.Serialization;
 
 namespace LinkEts2Nav.Core.Guidance;
 
@@ -13,10 +14,32 @@ public sealed record GuidanceEvent(string Id,double AlongMeters,string Descripti
     public WarningDistanceKind DistanceKind { get; init; } = WarningDistanceKind.Road;
 }
 
+/// <summary>Fresh route-relative context. Predicates decide eligibility, never play audio.</summary>
+public readonly record struct SpeechTriggerContext(GuidanceEvent Event,SpeechTrigger Trigger,
+    double PlayerAlongMeters,double SpeedMetersPerSecond,DateTimeOffset Now)
+{
+    public double DistanceToEventMeters=>Event.AlongMeters-PlayerAlongMeters;
+}
+
+/// <summary>Optional polling interval; the owning trigger's AlongMeters is its forced deadline.</summary>
+public sealed record SpeechTriggerWindow
+{
+    public double StartAlongMeters {get;}
+    public bool StrictStart {get;}
+    [JsonIgnore] public Func<SpeechTriggerContext,bool> ShouldTrigger {get;}
+    public SpeechTriggerWindow(double startAlongMeters,Func<SpeechTriggerContext,bool> shouldTrigger,bool strictStart=false)
+    {
+        if(!double.IsFinite(startAlongMeters))throw new ArgumentOutOfRangeException(nameof(startAlongMeters));
+        ArgumentNullException.ThrowIfNull(shouldTrigger);
+        StartAlongMeters=startAlongMeters;ShouldTrigger=shouldTrigger;StrictStart=strictStart;
+    }
+}
+
 /// <summary>A concrete location before an event, independently of its cached audio.</summary>
 public sealed record SpeechTrigger(string Id,string EventId,SpeechTriggerKind Kind,
     double AlongMeters,string Text)
 {
+    public SpeechTriggerWindow? Window { get; init; }
     public int Priority { get; init; } = 10;
     public double SequenceOrder { get; init; }
     public bool Enabled { get; init; } = true;
@@ -65,6 +88,7 @@ public sealed class SpeechSequence
             if(!ids.Contains(t.EventId)||string.IsNullOrWhiteSpace(t.Id)||!points.Add(t.Id)
                 ||t.Kind==SpeechTriggerKind.SequenceEnd||!double.IsFinite(t.AlongMeters)||!double.IsFinite(t.SequenceOrder)
                 ||end is RouteSpeechEnd routeEnd&&t.AlongMeters>routeEnd.AlongMeters
+                ||t.Window is {} window&&window.StartAlongMeters>t.AlongMeters
                 ||t.SkipAtSpeedKph is {} speed&&(!double.IsFinite(speed)||speed<0))
                 throw new ArgumentException("Invalid or unbound series point.",nameof(triggers));
         if(ended&&triggers.Count>0)throw new ArgumentException("An ended series cannot introduce speech points.",nameof(triggers));

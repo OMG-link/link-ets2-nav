@@ -29,7 +29,7 @@ internal sealed class NavigationStructurePlanner
         if(NavigationDestination.Find(sdkRoute,instructionRoute,0,confirmedUntil,unresolvedJoin) is {} destination)
             upcoming=upcoming.Append(destination).OrderBy(m=>m.DistanceMeters).ToArray();
         upcoming=exitApproach.Apply(upcoming,instructionRoute,paths.GetNavigationGraph(),0);
-        var plan=new NavigationStructurePlan(route,instructionRoute,upcoming,lanes,[],detector.ForkDiagnostics.ToArray(),confirmedUntil,
+        var plan=new NavigationStructurePlan(route,instructionRoute,upcoming,lanes,[],detector.ForkDiagnostics.Concat(exitApproach.Diagnostics).ToArray(),confirmedUntil,
             unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming};
         return SelectLanes(plan,lanes,nearby,paths);
     }

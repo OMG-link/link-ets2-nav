@@ -19,7 +19,9 @@ public sealed record NavigationDiagnostic(string State, NavigationManeuver? Next
 public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     Action<string>? log = null,GuidanceCoordinator? guidance=null,IReadOnlySet<string>? spokenCityNames=null)
 {
-    private readonly NavigationStructurePlanner structurePlanner = new();
+    private readonly NavigationStructurePlanner structurePlanner = new(spokenCityNames);
+    private readonly FerryNavigationProgress ferryProgress=new();
+    public FerryTravelExpectation? ExpectedFerry=>ferryProgress.Expected;
     private readonly LaneRoutePlanner lanePlanner = new();
     private readonly Dictionary<IReadOnlyList<DirectedRoad>,NavigationStructurePlan> structures = new(ReferenceEqualityComparer.Instance);
     private NavigationStructurePlan? publishedStructure;
@@ -48,6 +50,9 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
 
     public NavigationDiagnostic Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
     {
+        ferryProgress.Observe(data,nearby,now);
+        if(ferryProgress.TakeEntryPassage() is {} entered)
+            guidance?.ObservePassage("navigation",entered,now);
         var vehicle = data.Vehicle;
         if (!data.IsVehicleUsable || vehicle is not { SdkActive: true, Paused: false, IsFinite: true }
             || vehicle.SpeedMetersPerSecond < -.1 || now < vehicle.ReceivedAt || now - vehicle.ReceivedAt > TimeSpan.FromSeconds(2))
@@ -280,6 +285,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     public void Reset()
     {
         structurePlanner.Reset();
+        ferryProgress.Reset();
         analysisTimeline.Reset();analysisScheduler.Reset();analysisRoute=null;planningSession=null;eventPlanner.Reset();progress.Reset();narrowPlanner.Reset();cityPlanner.Reset();cityEntries.Reset();citySession=null;cityFrame=null;guidance?.Suspend("navigation");guidance?.Suspend(CityEntryEventBuilder.Kind);guidance?.Suspend(NarrowRoadEventBuilder.Kind);
         structures.Clear();publishedStructure=null;mapIdentity=null;routeBuildGeneration=0;
         connectionFailureSignature=null;

@@ -13,6 +13,7 @@ public static class NavigationPrompts
         ManeuverKind.Straight => "直行", ManeuverKind.UTurn => "掉头",
         ManeuverKind.ChooseLanes => "按指定车道行驶",
         ManeuverKind.Destination => "到达目的地",
+        ManeuverKind.BoardFerry => "进入码头",
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
 

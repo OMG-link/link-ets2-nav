@@ -37,7 +37,7 @@ public sealed class Ets2LaGameDataSource : IDisposable
             {
                 CurrentSpeedLimitKph = float.IsFinite(data.truckFloat.speedLimit) && data.truckFloat.speedLimit > 0
                     ? data.truckFloat.speedLimit * 3.6 : null
-            });
+            },new(data.specialBool.ferry,data.gameplayString.ferrySourceId,data.gameplayString.ferryTargetId,data.gameplayLongLong.ferryPayAmount));
             Store.ObserveFine(data.specialBool.fined, data.gameplayString.fineOffence,
                 data.gameplayLongLong.fineAmount, observedAt);
         }

@@ -158,8 +158,16 @@ public sealed class GuidanceCoordinator
     public void Suspend(string source)=>Timeline.Suspend(source);
     public void UpdateProgress(string source,string sessionId,double along,DateTimeOffset observedAt,bool active)
         =>Timeline.UpdateProgress(source,sessionId,along,observedAt,active);
+    public void ObservePassage(string source,string eventPrefix,DateTimeOffset observedAt)
+        =>Timeline.ObservePassage(source,eventPrefix,observedAt);
     public void Observe(GameDataSnapshot data,DateTimeOffset now,bool processJourney=true)
     {
+        if(data.FerryArrival is {} arrival&&arrival.PreviousSessionId==session&&arrival.CurrentSessionId==data.SessionId
+            &&journey.ResumeAfterFerry(data.SessionId))
+        {
+            Reset(preserveJourney:true);session=data.SessionId;resumedFerrySession=data.SessionId;
+            log("已确认轮渡抵达："+arrival.SourceId+" → "+arrival.TargetId+"；空间状态已重置，继续原导航旅程。");
+        }
         EnsureSession(data.SessionId);playback?.BeginUpdate();
         bool knownRunning=data.Vehicle is {SdkActive:true,Paused:false};
         playback?.SetPositionIndependentPlayback(knownRunning);
@@ -209,7 +217,11 @@ public sealed class GuidanceCoordinator
         bool active=data.IsVehicleUsable&&data.Vehicle is {SdkActive:true,Paused:false,IsFinite:true,SpeedMetersPerSecond:>=-.1} v
             &&now>=v.ReceivedAt&&now-v.ReceivedAt<=TimeSpan.FromSeconds(2);
         playback?.SetActive(active);
-        if(!active){cache?.ClearPlan("guidance-preparation");latest=[];playback?.ApplyBatch([],false);return;}
+        if(!active)
+        {
+            cache?.ClearPlan("guidance-preparation");latest=Scheduler.Update(Timeline,now,0,observedEndsOnly:true);
+            playback?.ApplyBatch(latest,false);return;
+        }
         latest=[];
         try
         {
@@ -230,9 +242,13 @@ public sealed class GuidanceCoordinator
     }
     private void EnsureSession(string value)
     {if(session!=value){Reset();session=value;}}
-    public void Reset()
+    private string? resumedFerrySession;
+    public bool HasVerifiedFerryContinuation(GameDataSnapshot data)=>resumedFerrySession==data.SessionId
+        &&data.FerryArrival?.CurrentSessionId==data.SessionId;
+    public void Reset(bool preserveJourney=false)
     {
-        pendingJourney=null;nextJourneyEstimate=default;journeyEstimateFailure=null;Timeline.Reset();Scheduler.Reset();journey.Reset();playback?.Reset();cache?.ClearPlan("guidance-preparation");
+        pendingJourney=null;nextJourneyEstimate=default;journeyEstimateFailure=null;Timeline.Reset();Scheduler.Reset();if(!preserveJourney)journey.Reset();playback?.Reset();cache?.ClearPlan("guidance-preparation");
+        resumedFerrySession=null;
         latest=[];lastQueued.Clear();notifications.Clear();environment.Reset();environmentFrame=null;session=null;observedRoute=null;replacementRevision=null;replacementApplied.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}
     }
 }

@@ -31,13 +31,14 @@ public sealed class SpeechTriggerScheduler
     }
 
     public IReadOnlyList<GuidanceTriggerResult> Update(GuidanceTimeline timeline,DateTimeOffset now,
-        double speedMetersPerSecond,string? onlySource=null)
+        double speedMetersPerSecond,string? onlySource=null,bool observedEndsOnly=false)
     {
         var sources=timeline.Sources;
         if(sources.Count==0)return [];
         EnsureSession(sources);
-        var due=sources.Where(p=>Fresh(p,now)&&(onlySource is null||p.Source==onlySource))
+        var due=sources.Where(p=>now>=p.ObservedAt&&now-p.ObservedAt<=MaximumAge&&(onlySource is null||p.Source==onlySource))
             .SelectMany(p=>Points(p).Where(point=>point.Trigger.Enabled
+                &&(p.Active&&!observedEndsOnly||point.Observed&&point.Trigger.Kind==SpeechTriggerKind.SequenceEnd)
                 &&!IsConsumed(p.Source,point.Trigger.Id)
                 &&Due(p,point.Trigger,point.Observed,now,speedMetersPerSecond)).Select(point=>(Plan:p,Trigger:point.Trigger)))
             .OrderBy(p=>p.Trigger.AlongMeters-p.Plan.PlayerAlongMeters)

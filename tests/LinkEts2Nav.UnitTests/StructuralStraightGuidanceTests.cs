@@ -52,6 +52,15 @@ public sealed class StructuralStraightGuidanceTests
         Assert.Equal(expected,Assert.Single(plan.Triggers,t=>t.Id.StartsWith("target@")&&t.Kind==SpeechTriggerKind.Overview).Text);
     }
     [Fact]
+    public void FerryBoardingIsNotAJunctionOrdinalAndKeepsUnnumberedPassageHelp()
+    {
+        var ferry=A("port",1000) with{Kind=ManeuverKind.BoardFerry,Instruction="进入码头",NearInstruction="进入码头，按导航方向乘坐轮渡"};
+        var plan=Plan(S("junction",850),ferry);
+        Assert.Equal("两百米后，进入码头。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("port@")&&t.Id.EndsWith(":200")).Text);
+        Assert.Equal("直线通过当前路口。",Assert.Single(Assist(plan)).Text);
+        Assert.DoesNotContain(plan.Triggers,t=>t.Text.Contains("个路口进入码头"));
+    }
+    [Fact]
     public void ACountedStraightFirstDiscoveredWithinTwentyMetersGetsAnImmediateHelper()
     {
         var plan=Plan(S("s",10),A("target",150));

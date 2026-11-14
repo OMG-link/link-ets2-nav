@@ -246,7 +246,7 @@ public sealed class NavigationEventPlanner
     // Actual junction passages remain useful before non-junction destinations;
     // only a driving decision can itself be numbered as the target junction.
     private static bool UsesPassageHelpers(NavigationManeuver m)=>IsNavigationAction(m)&&!m.ExecutionOnly;
-    private static bool UsesJunctionOrdinal(NavigationManeuver m)=>UsesPassageHelpers(m)&&m.Kind!=ManeuverKind.Destination;
+    private static bool UsesJunctionOrdinal(NavigationManeuver m)=>UsesPassageHelpers(m)&&m.Kind is not (ManeuverKind.Destination or ManeuverKind.BoardFerry);
     private static string VisitSuffix(double? start)=>start is {} value?":visit:"+value.ToString("R",CultureInfo.InvariantCulture):"";
     private string FrameSuffix()=>frame is null?"":"#"+frame;
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;

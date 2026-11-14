@@ -10,6 +10,7 @@ internal sealed record NavigationStructurePlan(IReadOnlyList<DirectedRoad> Route
     IReadOnlyList<RoadForkDiagnostic> Forks,double ConfirmedUntil,bool Unresolved,double UnresolvedAlong)
 {
     public IReadOnlyList<NavigationManeuver> BaseActions {get;init;}=[];
+    public AuxiliaryLaneIndex? Auxiliaries {get;init;}
 }
 
 /// <summary>Runs only when route topology or loaded map facts change.</summary>
@@ -17,20 +18,16 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
 {
     private readonly NavigationManeuverDetector detector=new();
     private readonly LaneMergeDetector mergeDetector=new();
-    private readonly AccelerationLaneApproach acceleration=new();
-    private readonly LaneExitApproach exitApproach=new();
-    /// <summary>Discard proven approach history only when the owning navigation session/map source resets.</summary>
+
+    /// <summary>Clear transient lane selection state; physical corridor facts belong to the immutable map snapshot.</summary>
     public void Reset()
     {
-        exitApproach.Reset();acceleration.Reset();mergeDetector.Reset();
+        mergeDetector.Reset();
     }
-    public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes)
+    public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes,AuxiliaryLaneIndex auxiliaries)
     {
         var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
         IReadOnlyList<NavigationManeuver> upcoming=detector.FindSequence(instructionRoute,0,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong);
-        var accelerationActions=acceleration.Find(instructionRoute,paths.GetNavigationGraph(),0);
-        upcoming=upcoming.Where(m=>!accelerationActions.Any(a=>m.JunctionId==a.JunctionId))
-            .Concat(accelerationActions).OrderBy(m=>m.DistanceMeters).ToArray();
         if(NavigationDestination.Find(sdkRoute,instructionRoute,0,confirmedUntil,unresolvedJoin) is {} destination)
             upcoming=upcoming.Append(destination).OrderBy(m=>m.DistanceMeters).ToArray();
         foreach(var leg in nearby.Ferries?.OnRoute(sdkRoute)??[])
@@ -49,43 +46,44 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
                 Instruction="进入码头",NearInstruction=FerryNavigationPrompts.Passage(leg.Source.Name,leg.Target.Name,spokenPlaceNames)
             }).OrderBy(m=>m.DistanceMeters).ToArray();
         }
-        upcoming=exitApproach.Apply(upcoming,instructionRoute,paths.GetNavigationGraph(),0);
-        var plan=new NavigationStructurePlan(route,instructionRoute,upcoming,lanes,[],detector.ForkDiagnostics.Concat(exitApproach.Diagnostics).ToArray(),confirmedUntil,
-            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming};
+        var plan=new NavigationStructurePlan(route,instructionRoute,upcoming,lanes,[],detector.ForkDiagnostics.ToArray(),confirmedUntil,
+            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming,Auxiliaries=auxiliaries};
         return SelectLanes(plan,lanes,nearby,paths);
     }
 
     /// <summary>Selection changes reuse all junction/ramp facts; only already indexed lane-merge membership is selected again.</summary>
     public NavigationStructurePlan SelectLanes(NavigationStructurePlan plan,LaneNavigationPlan lanes,NearbyMapSnapshot nearby,RoadPathSource paths)
     {
-        IReadOnlyList<NavigationManeuver> upcoming=plan.BaseActions;
+        IReadOnlyList<NavigationManeuver> upcoming=plan.Auxiliaries is {} auxiliaries
+            ?AuxiliaryLaneGuidance.Apply(plan.BaseActions,plan.InstructionRoute,lanes,auxiliaries):plan.BaseActions;
         var merges=mergeDetector.Find(plan.Route,paths.GetNavigationGraph(),lanes,0)
-            .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
-        NavigationManeuver? ProvenAcceleration(LaneMergeObservation m)=>plan.BaseActions.FirstOrDefault(a=>
-            a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight&&a.JunctionId=="prefab:"+m.PrefabUid.ToString("X16")&&m.MoveLeft is {} left
-            &&a.Kind==(left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight)&&a.EndDistanceMeters is {} end&&Math.Abs(end-m.DistanceMeters)<2);
-        merges=merges.Select(m=>ProvenAcceleration(m) is {} proof?m with{Kind=LaneMergeKind.Ramp,
-            ParallelDistanceMeters=proof.ApproachInterval!.LengthMeters,Reason="已沿原生车道继承证明独立入口、并行及最终收口完整区间"}:m).ToArray();
+            .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid))
+            .Select(m=>plan.Auxiliaries?.NativeMerge(m) is {} native?m with{Kind=LaneMergeKind.Ramp,
+                ParallelDistanceMeters=native.LengthMeters,Reason="已由加载地图中的原生辅助车道走廊证明完整区间"}:m).ToArray();
+        var issues=plan.Forks.ToList();
         foreach(var merge in merges)
         {
             string group=$"prefab:{merge.PrefabUid:X16}";
-            var accelerationProof=ProvenAcceleration(merge);
-            bool replacesNavigation=accelerationProof is not null||merge.Kind==LaneMergeKind.Ramp&&merge.MoveLeft is not null;
-            if(replacesNavigation)
-                upcoming=upcoming.Where(m=>m.JunctionId!=group||m.Kind is ManeuverKind.TurnLeft or ManeuverKind.TurnRight or ManeuverKind.UTurn or ManeuverKind.EnterRoundabout or ManeuverKind.ExitRoundabout or ManeuverKind.PassRoundaboutExit).ToArray();
-            if(accelerationProof is not null)continue;
+            // Ramp actions come exclusively from the immutable auxiliary-corridor index.
+            // The merge detector remains the source of ordinary lane-reduction environment events.
+            if(merge.Kind!=LaneMergeKind.LaneReduction)
+            {
+                if(merge.Kind==LaneMergeKind.Ramp&&plan.Auxiliaries?.NativeMerge(merge) is null
+                    &&!upcoming.Any(a=>a.JunctionId==group&&a.ApproachInterval is not null))
+                    issues.Add(new(group,merge.EndingEntryNode??0,0,"已见原生合流，但加载地图尚未证明完整辅助区间；不再从玩家路线/短距离几何猜测区间起点"));
+                continue;
+            }
             if(merge.MoveLeft is null)continue;
             string side=merge.MoveLeft==true?"左":"右";
             string laneWords=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
-            double anchor=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} length?AuxiliaryLaneTiming.ActionPoint(new(merge.DistanceMeters-length,merge.DistanceMeters)):merge.DistanceMeters;
+            double anchor=merge.DistanceMeters;
             var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,anchor,"lane","lane")
             { EndDistanceMeters=merge.EndDistanceMeters,JunctionKind=NavigationJunctionKind.Ramp,JunctionId="prefab:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
-                AnnouncementMode=merge.Kind==LaneMergeKind.LaneReduction?NavigationAnnouncementMode.DistancePreview:merge.Kind==LaneMergeKind.Ramp?NavigationAnnouncementMode.Normal:NavigationAnnouncementMode.Silent,
-                ApproachInterval=merge.Kind==LaneMergeKind.Ramp&&merge.ParallelDistanceMeters is {} span?new(merge.DistanceMeters-span,merge.DistanceMeters):null,
-                Instruction=merge.Kind==LaneMergeKind.LaneReduction?$"车道合并，建议提前走{side}侧{laneWords}":null };
+                AnnouncementMode=NavigationAnnouncementMode.DistancePreview,
+                Instruction=$"车道合并，建议提前走{side}侧{laneWords}" };
             upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
         }
-        return plan with{Actions=upcoming,Lanes=lanes,Merges=merges};
+        return plan with{Actions=upcoming,Lanes=lanes,Merges=merges,Forks=issues.Distinct().ToArray()};
     }
 
     public static bool SelectionChanged(LaneNavigationPlan before,LaneNavigationPlan after)

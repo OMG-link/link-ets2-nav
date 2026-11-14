@@ -16,6 +16,7 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     IReadOnlyList<string> Diagnostics, IReadOnlyList<SectorCoordinate> Sectors)
 {
     public IReadOnlyList<DirectedRoad> PrefabPaths { get; init; } = [];
+    public AuxiliaryLaneIndex? AuxiliaryLanes {get;init;}
     public IReadOnlyList<RoundaboutStructure> Roundabouts { get; init; } = [];
     public IReadOnlyDictionary<ulong, RoundaboutStructure> RoadStructures { get; init; } = new Dictionary<ulong, RoundaboutStructure>();
     public SpeedLimitData SpeedLimits { get; init; } = SpeedLimitData.Empty;
@@ -37,6 +38,7 @@ public sealed class NearbyCameraScanner
     private readonly Dictionary<string, string> prefabPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PrefabDescriptor?> prefabDescriptors = new(StringComparer.Ordinal);
     private IReadOnlyList<DirectedRoad> junctionGeometry = [];
+    private AuxiliaryLaneIndex? auxiliaryLanes;
     private IReadOnlyList<FreeNavigationArea> freeNavigationAreas = [];
     private string[] junctionDiagnostics = [];
     private Dictionary<ulong, (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
@@ -132,12 +134,16 @@ public sealed class NearbyCameraScanner
                     .SelectMany(r=>Enumerable.Range(0,Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)+1)
                         .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),speedReader!,cancellationToken);
             var builtLimits = ProjectedSignBuilder.Build(speedReader!.Build(nextMap,cancellationToken,hostMap,regionData),junctions,cancellationToken);
+            // One annotated geometry graph per map version, shared with navigation consumers.
+            var navigation=new RoadPathSource(nextMap,junctions);
+            var builtAuxiliary=AuxiliaryLaneIndex.Build(new NativeLaneGraph(navigation.GetNavigationGraph()),cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             geometryCache = nextGeometry;
             junctionGeometry = junctions;
             freeNavigationAreas = areas;
             junctionDiagnostics = issues.Distinct().ToArray();
             speedLimits = builtLimits;
+            auxiliaryLanes=builtAuxiliary;
             map = nextMap;
             loadedSectors = sectors;
         }
@@ -145,6 +151,7 @@ public sealed class NearbyCameraScanner
         diagnostics.AddRange(junctionDiagnostics);
         diagnostics.AddRange(roundaboutIndex.Diagnostics);
         diagnostics.AddRange(speedLimits.Diagnostics);
+        if(auxiliaryLanes is not null)diagnostics.AddRange(auxiliaryLanes.Diagnostics);
         if(speedLimits.Error is not null) diagnostics.Add(speedLimits.Error);
         var cameras = new List<CameraObservation>();
         foreach (var item in map.MapItems.Values)
@@ -215,7 +222,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)

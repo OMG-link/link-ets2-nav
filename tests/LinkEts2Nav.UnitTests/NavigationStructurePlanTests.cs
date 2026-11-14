@@ -32,6 +32,13 @@ public sealed class NavigationStructurePlanTests
     public void MovementAndSdkObjectRefreshOnlyAdvanceExistingPlans()
     {
         var scene=Scene();var coordinator=new GuidanceCoordinator();var runtime=new NavigationRuntime(guidance:coordinator);
+        var native=new NativeLaneGraph(new RoadPathSource(scene.Scene.Map,scene.Scene.PrefabPaths).GetNavigationGraph());
+        var auxiliaries=AuxiliaryLaneIndex.Build(native,TestContext.Current.CancellationToken);
+        scene=(scene.Scene with{AuxiliaryLanes=auxiliaries},scene.Route);
+        var reused=new RoadPathSource(scene.Scene.Map,scene.Scene.PrefabPaths,native:native);
+        Assert.Same(native.Edges,reused.GetNavigationGraph());
+        var routed=reused.GetRouteComponents(scene.Route)[0];
+        Assert.Contains(native.Edges,e=>ReferenceEquals(e,routed[0]));
         runtime.Process(Data(scene.Route,10,Now),scene.Scene,Now);
         var original=coordinator.Timeline.Sources.Single(p=>p.Source=="navigation").Sequences;
         for(int i=1;i<30;i++)

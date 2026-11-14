@@ -244,20 +244,23 @@ public sealed class LaneMergeDetectorTests
         int sounds=0;var spoken=new List<string>();var runtime=new NavigationRuntime(log:line=>{spoken.Add(line);if(line.StartsWith("\u5bfc\u822a\u6307\u4ee4\uff1a",StringComparison.Ordinal))sounds++;});
         var first=runtime.Process(Data(4.5,shortApproach?70:500,now),nearby,now);
         Assert.Contains(first.LaneMerges,m=>m.Kind==(shortApproach?LaneMergeKind.Uncertain:LaneMergeKind.LaneReduction));
-        Assert.Null(first.Next); // Environment and unresolved silent structure are not driving actions.
+        // The complete static route now recognizes its real SDK terminal before
+        // movement; environment and silent merge structure remain non-actions.
+        Assert.Equal(ManeuverKind.Destination,first.Next?.Kind);
         Assert.Contains(first.Upcoming,m=>m.AnnouncementMode==(shortApproach?NavigationAnnouncementMode.Silent:NavigationAnnouncementMode.DistancePreview));
-        if(shortApproach)Assert.Equal(NavigationPrompts.Continue(),first.LastSpoken);
+        if(shortApproach)Assert.Equal(NavigationPrompts.Continue(first.Next!.DistanceMeters),first.LastSpoken);
         else
         {
             Assert.Contains(spoken,s=>s.StartsWith("导航指令：")&&s.Contains("车道合并，建议提前走左侧车道。"));
-            Assert.Equal(NavigationPrompts.Continue(),first.LastSpoken);
+            Assert.Contains(spoken,s=>s.StartsWith("导航指令：")&&s.Contains(NavigationPrompts.Continue(first.Next!.DistanceMeters)));
         }
         Assert.Equal(shortApproach?1:2,sounds);
         runtime.Process(Data(1,10,now.AddSeconds(1)),nearby,now.AddSeconds(1));
         Assert.Equal(shortApproach?1:2,sounds);
         var after=runtime.Process(Data(0,-20,now.AddSeconds(2)),nearby,now.AddSeconds(2));
         Assert.DoesNotContain(after.LaneMerges,m=>m.PrefabUid==42);
-        Assert.NotNull(after.LastSpoken);Assert.Equal(shortApproach?1:2,sounds);
+        Assert.NotNull(after.LastSpoken);
+        Assert.Equal(shortApproach?2:3,sounds); // The now-known destination also reaches its 2km advance point.
     }
     [Fact]
     public void PassingMergeRemovesItsAction()

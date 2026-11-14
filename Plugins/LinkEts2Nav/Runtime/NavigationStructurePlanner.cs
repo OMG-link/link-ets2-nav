@@ -16,7 +16,6 @@ internal sealed record NavigationStructurePlan(IReadOnlyList<DirectedRoad> Route
 internal sealed class NavigationStructurePlanner
 {
     private readonly NavigationManeuverDetector detector=new();
-    private readonly LaneRoutePlanner lanePlanner=new();
     private readonly LaneMergeDetector mergeDetector=new();
     private readonly AccelerationLaneApproach acceleration=new();
     private readonly LaneExitApproach exitApproach=new();

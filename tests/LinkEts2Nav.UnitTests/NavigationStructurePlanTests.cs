@@ -67,6 +67,23 @@ public sealed class NavigationStructurePlanTests
     }
 
     [Fact]
+    public void PassingRoadAndPrefabBoundariesDoesNotRebuildTheGraphOrEventTable()
+    {
+        var scene=Scene();var coordinator=new GuidanceCoordinator();var runtime=new NavigationRuntime(guidance:coordinator);
+        var poses=new[]{(0f,600f,.5),(0f,695f,.5),(-30f,730f,.25),(-100f,730f,.25),(-300f,730f,.25)};
+        IReadOnlyList<SpeechSequence>? sequences=null;
+        for(int i=0;i<poses.Length;i++)
+        {
+            var (x,z,heading)=poses[i];var now=Now.AddMilliseconds(i*200);
+            var data=Data(scene.Route,z,now) with{Vehicle=new(x,0,z,heading,15,1000,true,false,100,now)};
+            runtime.Process(data,scene.Scene,now);coordinator.Tick(data,now);
+            var current=coordinator.Timeline.Sources.Single(p=>p.Source=="navigation").Sequences;
+            sequences??=current;Assert.Same(sequences,current);
+        }
+        Assert.Equal(1,runtime.StructureBuildCount);Assert.Equal(1,runtime.EventPlanBuildCount);
+    }
+
+    [Fact]
     public void RoadPathComponentsSurvivePositionAndDistanceRefreshButNotTopologyChanges()
     {
         var scene=Scene();var source=new RoadPathSource(scene.Scene.Map,scene.Scene.PrefabPaths);
@@ -98,5 +115,35 @@ public sealed class NavigationStructurePlanTests
         DirectedRoad collapsed=new("ring",1,3,[new(0,0,0),new(0,0,10),new(0,0,15),new(0,0,25)]){SegmentStarts=[2]};
         Assert.Equal(20,RouteGeometry.Length(collapsed));
         Assert.Equal(15,new DirectedPathMatcher().ProjectDistance(new(0,0,20),Vector3.UnitZ,[collapsed]));
+    }
+
+    [Fact]
+    public void StructureRefinementReanchorsTheExecutionWindowWithoutRepeatingConsumedPreviews()
+    {
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        NavigationManeuver M(double distance)=>new("turn",ManeuverKind.TurnLeft,distance,"in","out"){EndDistanceMeters=distance+38.879315};
+        timeline.Publish(planner.Build("session","route",Now,0,[M(1000)],true,false,false,scheduler,"frame"));
+        scheduler.Update(timeline,Now,10); // The initial overview is already consumed.
+        const double distance=26.026826753338355,drift=60.58180618286133;
+        double player=1000-drift-distance;
+        var refined=planner.Build("session","route",Now,player,[M(distance)],true,false,false,scheduler,"frame");
+        timeline.Publish(refined);
+        Assert.Equal(player+distance,Assert.Single(refined.Events).AlongMeters,6);
+        Assert.Equal(player+distance+38.879315,Assert.Single(refined.Sequences).EndAlongMeters!.Value,6);
+        var due=scheduler.Update(timeline,Now,13.75);
+        Assert.Contains(due,r=>r.Trigger.Kind==SpeechTriggerKind.Execution&&r.Disposition==TriggerDisposition.Queued);
+        Assert.DoesNotContain(due,r=>r.Trigger.Kind==SpeechTriggerKind.Overview);
+    }
+
+    [Fact]
+    public void RepeatedPhysicalJunctionsRetainIndependentVisitSeriesAcrossPrefixTrimming()
+    {
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();
+        NavigationManeuver M(double distance)=>new("same-junction",ManeuverKind.TurnLeft,distance,"in","out"){EndDistanceMeters=distance+30};
+        var initial=planner.Build("session","route",Now,0,[M(100),M(500)],true,false,false,scheduler,"frame");
+        Assert.Equal(2,initial.Sequences.Count);
+        var second=initial.Events.MaxBy(e=>e.AlongMeters)!;
+        var trimmed=planner.Build("session","trimmed",Now,200,[M(300)],true,false,false,scheduler,"frame");
+        Assert.Contains(trimmed.Events,e=>e.Id==second.Id&&e.AlongMeters==500);
     }
 }

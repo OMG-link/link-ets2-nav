@@ -10,14 +10,13 @@ public sealed class NavigationEventPlanner
     {
         public NavigationManeuver Maneuver = maneuver;
         public readonly string Id = id;
-        public readonly double Along = along;
+        public double Along = along;
         public readonly double DiscoveredAlong = discoveredAlong;
         public double? EndAlong;
         public double? SequenceStartAlong;
         public SpeechSequence? DenseSummary;
         public double? BriefingAlong;
         public bool BriefingStrict;
-        public double Minimum = maneuver.DistanceMeters;
         public int Generation;
     }
     private readonly Dictionary<string,ActionPlan> actions = new(StringComparer.Ordinal);
@@ -47,7 +46,19 @@ public sealed class NavigationEventPlanner
                     .Select(p=>p.SequenceStartAlong).Concat(inputs.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId).Select(p=>p.Start))
                     .FirstOrDefault(p=>p is {} v&&Math.Abs(v-candidate)<=.0001)??candidate;
             }
-            inputs.Add((m,m.Id+VisitSuffix(start),start));
+            string key=m.Id+VisitSuffix(start);
+            if(start is null)
+            {
+                // One route can visit the same physical entrance/exit repeatedly.
+                // Match existing occurrences by their nearest route position when
+                // a prefix is trimmed; never overwrite another visit in this batch.
+                var used=inputs.Select(p=>p.Key).ToHashSet(StringComparer.Ordinal);
+                var existing=actions.Where(p=>p.Value.Maneuver.Id==m.Id&&!used.Contains(p.Key))
+                    .OrderBy(p=>Math.Abs(p.Value.Along-(playerAlong+m.DistanceMeters))).FirstOrDefault();
+                if(existing.Value is not null)key=existing.Key;
+                else if(used.Contains(key))key+=":occurrence:"+inputs.Count(p=>p.Maneuver.Id==m.Id);
+            }
+            inputs.Add((m,key,start));
         }
         var incoming=inputs.Select(p=>p.Key).ToHashSet(StringComparer.Ordinal);
         if(replaceRoute)
@@ -57,17 +68,19 @@ public sealed class NavigationEventPlanner
         {
             if(!actions.TryGetValue(key,out var state))
                 actions[key]=state=new(m,key+"@0"+FrameSuffix(),playerAlong+m.DistanceMeters,playerAlong){SequenceStartAlong=start};
-            else if(start is null&&(state.EndAlong is {} oldEnd&&playerAlong+m.DistanceMeters>oldEnd
-                ||state.EndAlong is null&&state.Minimum<=20&&m.DistanceMeters>550))
+            else if(start is null&&scheduler.IsConsumed("navigation",SpeechSequence.EndTriggerId(state.Id))
+                &&state.EndAlong is {} oldEnd&&playerAlong+m.DistanceMeters>oldEnd)
             {
                 int generation=state.Generation+1;
                 actions[key]=state=new(m,key+"@"+generation+FrameSuffix(),playerAlong+m.DistanceMeters,playerAlong){Generation=generation};
             }
             state.Maneuver=m;
-            state.Minimum=Math.Min(state.Minimum,m.DistanceMeters);
+            // Rebuilds can refine geometry or the route coordinate mapping.
+            // Keep occurrence IDs and the consumed ledger, not stale coordinates.
+            state.Along=playerAlong+m.DistanceMeters;
             if(m.EndDistanceMeters is {} end)
             {
-                if(start is null)state.EndAlong ??= playerAlong+end;
+                if(start is null)state.EndAlong = playerAlong+end;
                 else foreach(var member in actions.Values.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId&&p.SequenceStartAlong==start))
                     member.EndAlong=playerAlong+end;
             }

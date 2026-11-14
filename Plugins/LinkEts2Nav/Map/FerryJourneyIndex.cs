@@ -21,13 +21,24 @@ public sealed class FerryJourneyIndex
             if(string.IsNullOrEmpty(from)||string.IsNullOrEmpty(to)||from==to)continue;
             connections.Add((from,to));connections.Add((to,from));
         }
-        var ferries=host.MapItems.Values.OfType<Ferry>().ToDictionary(f=>f.Uid);
+        var ferries=new Dictionary<ulong,Ferry>();
+        var prefabsByFerry=new Dictionary<ulong,List<Prefab>>();
+        // One host-map pass collects ports and their reverse prefab references.
+        foreach(var item in host.MapItems.Values)
+        {
+            if(item is Ferry ferry)ferries.Add(ferry.Uid,ferry);
+            else if(item is Prefab {Ferry:{} port} prefab)
+            {
+                if(!prefabsByFerry.TryGetValue(port.Uid,out var prefabs))prefabsByFerry[port.Uid]=prefabs=[];
+                prefabs.Add(prefab);
+            }
+        }
         var records=new List<FerryPort>();
         foreach(var ferry in ferries.Values)
         {
             if(ferry.Node is null)continue;
             var prefab=ferry.Prefab is not null?host.MapItems.GetValueOrDefault(ferry.Prefab.Uid) as Prefab:null;
-            prefab??=host.MapItems.Values.OfType<Prefab>().FirstOrDefault(p=>p.Ferry?.Uid==ferry.Uid);
+            prefab??=prefabsByFerry.GetValueOrDefault(ferry.Uid)?.FirstOrDefault();
             string id=ferry.Port.ToString();
             records.Add(new(id,names?.GetValueOrDefault(id)??id,ferry.Uid,ferry.Node.Uid,ferry.Node.Position,
                 prefab?.Uid??0,prefab?.Nodes.Select(n=>n.Uid).ToArray()??[],ferry.TrainTransport)
@@ -52,18 +63,24 @@ public sealed class FerryJourneyIndex
         }
         // Prefab links can remain unresolved objects; use their UID without
         // relying on the optional reverse Ferry.Prefab reference being populated.
-        foreach(var prefab in host.MapItems.Values.OfType<Prefab>())
-            if(prefab.Ferry is not null&&ferries.TryGetValue(prefab.Ferry.Uid,out var ferry))
-                foreach(var node in prefab.Nodes)Add(node.Uid,ferry.Port.ToString(),node.Position);
+        foreach(var (ferryUid,prefabs) in prefabsByFerry)
+            if(ferries.TryGetValue(ferryUid,out var ferry))
+                foreach(var prefab in prefabs)
+                    foreach(var node in prefab.Nodes)Add(node.Uid,ferry.Port.ToString(),node.Position);
     }
     private static IReadOnlyDictionary<ulong,FerryEntrance> BuildEntrances(Prefab? prefab,Ferry ferry,TruckLib.ScsMap.Map host,Func<Road,double?>? width)
     {
         var result=new Dictionary<ulong,FerryEntrance>();
-        foreach(var node in prefab?.Nodes??[])
+        foreach(var reference in prefab?.Nodes??[])
         {
-            var roads=host.MapItems.Values.OfType<Road>().Where(r=>r.Node?.Uid==node.Uid||r.ForwardNode?.Uid==node.Uid).ToArray();
-            if(roads.Length!=1||width?.Invoke(roads[0]) is not >0)continue;
-            var road=roads[0];bool forward=road.ForwardNode.Uid==node.Uid;
+            var node=(host.Nodes.TryGetValue(reference.Uid,out var resolved)?resolved:reference) as Node;
+            if(node is null)continue;
+            var backward=ConnectedRoad(node.BackwardItem,node.Uid,host);
+            var forwardRoad=ConnectedRoad(node.ForwardItem,node.Uid,host);
+            if(backward is not null&&forwardRoad is not null&&backward.Uid!=forwardRoad.Uid)continue;
+            var road=backward??forwardRoad;
+            if(road is null||width?.Invoke(road) is not >0)continue;
+            bool forward=road.ForwardNode.Uid==node.Uid;
             var endpoint=road.InterpolateCurve(forward?1:0);
             var tangent=Vector3.Transform(-Vector3.UnitZ,endpoint.Rotation);if(!forward)tangent=-tangent;
             if(Vector3.Dot(tangent,ferry.Node.Position-node.Position)<0)tangent=-tangent;
@@ -73,6 +90,13 @@ public sealed class FerryJourneyIndex
             result[node.Uid]=new(node.Position,tangent,width(road)!.Value,approach);
         }
         return result;
+    }
+
+    private static Road? ConnectedRoad(IMapObject? reference,ulong nodeUid,TruckLib.ScsMap.Map host)
+    {
+        // Resolve by UID even when the node still holds an unresolved item reference.
+        if(reference is null||!host.MapItems.TryGetValue(reference.Uid,out var item)||item is not Road road)return null;
+        return road.Node?.Uid==nodeUid||road.ForwardNode?.Uid==nodeUid?road:null;
     }
 
     public bool Connects(ulong from,ulong to)

@@ -112,4 +112,37 @@ public sealed class FerryJourneyTests
         Assert.True(index.Connects(s.A.Uid,s.B.Uid));
         Assert.False(index.TryPortPassage(s.Before.ForwardNode.Uid,s.A.Uid,out _));
     }
+
+    [Fact]
+    public void EntranceUsesTheHostNodeAndResolvesItsRoadReferenceByUid()
+    {
+        var s=Scene();var node=s.Before.ForwardNode;
+        ((Prefab)s.A.Prefab).Nodes=[new Node{Uid=node.Uid,Position=new(-5000,0,0)}];
+        node.BackwardItem=new Road{Uid=s.Before.Uid};
+        var index=new FerryJourneyIndex(s.Map,[],roadHalfWidth:_=>4.5);
+        var entrance=Assert.Single(index.Ports.Single(p=>p.ItemUid==s.A.Uid).Entrances).Value;
+        Assert.Equal(node.Position,entrance.Position);
+        Assert.Equal(s.Before.Uid.ToString("X16"),entrance.Approach.Id);
+        Assert.Equal(4.5,entrance.HalfWidth);
+    }
+
+    [Fact]
+    public void TwoDifferentAttachedRoadsDoNotCreateAnAmbiguousEntrance()
+    {
+        var s=Scene();var other=Road.Add(s.Map,new(100,0,0),new(100,0,100),default);
+        other.Node=s.Before.ForwardNode;s.Before.ForwardNode.ForwardItem=other;
+        var index=new FerryJourneyIndex(s.Map,[],roadHalfWidth:_=>4.5);
+        Assert.Empty(index.Ports.Single(p=>p.ItemUid==s.A.Uid).Entrances);
+    }
+
+    [Fact]
+    public void AllReversePrefabInterfacesRemainAssociatedWithThePort()
+    {
+        var s=Scene();var road=Road.Add(s.Map,new(0,0,50),new(100,0,50),default);
+        var second=new Prefab{Nodes=[road.ForwardNode],Ferry=s.A};
+        s.Map.MapItems[second.Uid]=second;s.A.Prefab=null!;
+        var index=new FerryJourneyIndex(s.Map,[("a","b")]);
+        Assert.True(index.Connects(road.ForwardNode.Uid,s.B.Node.Uid));
+        Assert.Equal(s.Before.ForwardNode.Uid,Assert.Single(index.Ports.Single(p=>p.ItemUid==s.A.Uid).Interfaces));
+    }
 }

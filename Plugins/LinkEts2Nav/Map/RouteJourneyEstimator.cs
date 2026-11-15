@@ -14,12 +14,14 @@ public sealed record RouteJourneyEstimate(double? WorldMeters,double? RealSecond
 /// Uses host-owned lightweight roads/nodes only. Estimates the supplied route from its first interface, independently of vehicle pose.
 /// Per-call route spans are released
 /// afterwards; no route-sector scan, PPD parsing or full-map geometry copy is performed.
-/// Prefabs use interface chords, scaled uniformly by the optional measured factor.
+/// Prefabs use corrected interface chords; same-interface returns require native PPD passage lengths.
 /// </summary>
-public sealed class RouteJourneyEstimator(GameMapData map,Func<Road,bool,SpeedLimitResult> categorySpeed,double prefabDistanceFactor=1,FerryJourneyIndex? ferries=null)
+public sealed class RouteJourneyEstimator(GameMapData map,Func<Road,bool,SpeedLimitResult> categorySpeed,double prefabDistanceFactor=1,FerryJourneyIndex? ferries=null,
+    Func<Prefab,ulong,ulong,IReadOnlyList<double>>? prefabLengths=null)
 {
-    public RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimitResult> categorySpeed,double prefabDistanceFactor=1,FerryJourneyIndex? ferries=null)
-        :this(new GameMapData(host),categorySpeed,prefabDistanceFactor,ferries) { }
+    public RouteJourneyEstimator(GameMap host,Func<Road,bool,SpeedLimitResult> categorySpeed,double prefabDistanceFactor=1,FerryJourneyIndex? ferries=null,
+        Func<Prefab,ulong,ulong,IReadOnlyList<double>>? prefabLengths=null)
+        :this(new GameMapData(host),categorySpeed,prefabDistanceFactor,ferries,prefabLengths) { }
     private sealed record Span(MapItem? Item,double Length,bool Forward,bool IsTransfer=false);
     private static RouteJourneyEstimate Missing(string reason)=>new(null,null,reason);
 
@@ -62,6 +64,27 @@ public sealed class RouteJourneyEstimator(GameMapData map,Func<Road,bool,SpeedLi
                 }
             }
             if(span is null&&transfer)span=new(null,0,true,true);
+            if(span is null&&nodes[i].Uid==nodes[stop].Uid)
+            {
+                double sdkMeters=nodes[i].DistanceToEndMeters-nodes[stop].DistanceToEndMeters;
+                if(!double.IsFinite(sdkMeters)||sdkMeters<=0)return Missing($"同接口导航行程没有有效正距离：{start.Uid:X16}");
+                if(prefabLengths is null)return Missing($"同接口预制件行程缺少原生路线查询：{start.Uid:X16}");
+                var loops=owners.OfType<Prefab>().Where(p=>p.Nodes.Any(n=>n.Uid==start.Uid))
+                    .SelectMany(p=>prefabLengths(p,start.Uid,start.Uid).Where(d=>double.IsFinite(d)&&d>0)
+                        .Select(d=>new Span(p,d,true))).ToArray();
+                if(loops.Length==0)return Missing($"同接口预制件没有有效闭环：{start.Uid:X16}");
+                if(loops.Length==1)span=loops[0];
+                else
+                {
+                    // The SDK retains a positive leg for a return to the same interface.
+                    // Scale is only a lane-candidate hint; the chosen distance remains native PPD geometry.
+                    var scales=new[]{map.Header?.NormalScale,map.Header?.CityScale}
+                        .OfType<float>().Where(v=>float.IsFinite(v)&&v>0).Distinct().ToArray();
+                    if(scales.Length==0)return Missing("地图缩放未就绪，无法选择同接口原生路径");
+                    span=loops.OrderBy(p=>scales.Min(scale=>Math.Abs(p.Length*scale-sdkMeters)))
+                        .ThenBy(p=>p.Length).First();
+                }
+            }
             if(span is null)
             {
                 // Unknown internal UID records may be crossed only between two

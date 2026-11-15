@@ -27,8 +27,14 @@ public sealed class NavigationManeuverTests
         var before=R("ramp",4,2,P(20*side,150),P(20*side,100));
         var through=R("main",5,1,P(0,150),P(0,100));
         var after=R("exit",3,6,P(0,0),P(0,-100));
-        LaneConnection[] lanes=[new(1,0,3,0),new(1,1,3,1),new(2,0,3,2),new(2,1,3,2)];
-        main=main with { LaneConnections=lanes }; ramp=ramp with { LaneConnections=lanes };
+        // Both side lanes join the existing main lane 1. The old fixture sent
+        // them into a disjoint new lane 2: that proved an internal side-road
+        // contraction, not a merge into the main road.
+        LaneConnection[] lanes=[new(1,0,3,0),new(1,1,3,1),new(2,0,3,1),new(2,1,3,1)];
+        PrefabLanePath Lane(ulong entry,int input,int output,int[] curves,DirectedRoad edge)
+            =>new(10,entry,3,input,output,input,output,2,2,curves,edge.Points,100);
+        main=main with { LaneConnections=lanes,LanePaths=[Lane(1,0,0,[10,20],main),Lane(1,1,1,[11,21],main)] };
+        ramp=ramp with { LaneConnections=lanes,LanePaths=[Lane(2,0,1,[12,21],ramp),Lane(2,1,1,[13,21],ramp)] };
         DirectedRoad[] graph=[before,through,main,ramp,after];
         Assert.Equal(expected,Assert.Single(Detector.FindSequence([before,ramp,after],0,graph)).Kind);
         Assert.Empty(Detector.FindSequence([through,main,after],0,graph));
@@ -36,6 +42,26 @@ public sealed class NavigationManeuverTests
         Assert.True(inside);
         Detector.FindSequence([before,ramp,after],171,graph,out _,out bool passed);
         Assert.False(passed);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(1)]
+    public void SideRoadInternalContractionIntoADisjointNewLaneIsNotAMainRoadMerge(int side)
+    {
+        var main=R("prefab:SEPARATE:0:1",1,3,P(0,100),P(0,100),P(0,50),P(0,0),P(0,0));
+        var branch=R("prefab:SEPARATE:2:1",2,3,P(20*side,100),P(20*side,100),P(20*side,50),P(20*side,0),P(0,0));
+        LaneConnection[] lanes=[new(1,0,3,0),new(1,1,3,1),new(2,0,3,2),new(2,1,3,2)];
+        main=main with{LaneConnections=lanes};branch=branch with{LaneConnections=lanes};
+        var before=R("branch",4,2,P(20*side,150),P(20*side,100));
+        var after=R("exit",3,6,P(0,0),P(0,-100));
+        var role=RoadJoinClassifier.Classify(branch);
+        Assert.Equal(RoadJoinRole.Ambiguous,role.Role);Assert.Null(role.MainEntry);
+        Assert.NotEmpty(RoadJoinTopology.IndependentEntries(lanes,3));
+        var detector=new NavigationManeuverDetector();
+        var actions=detector.FindSequence([before,branch,after],0,[before,main,branch,after],out _,out bool unresolved);
+        Assert.DoesNotContain(actions,a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
+        Assert.True(unresolved);
     }
 
     [Theory]

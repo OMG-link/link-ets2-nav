@@ -61,4 +61,7 @@ public sealed record SpeedLimitData(
     public static SpeedLimitData Empty { get; } = new(new Dictionary<ulong,LimitRoad>(),[],[],
         new Dictionary<string,TruckSpeedLimit>(),null,"限速资源尚未加载");
 }
-public sealed record SpeedLimitResult(int? Kph, string Reason);
+public sealed record SpeedLimitResult(int? Kph, string Reason)
+{
+    public MapQueryIssue? MapIssue {get;init;}
+}

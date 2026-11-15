@@ -85,6 +85,27 @@ public sealed class RouteSpeedLimitTests
         Assert.Null(Sim(data,[Road],start:P(500),target:P(100)).Kph);
     }
     [Fact]
+    public void MissingProjectionHasTypedFailureInsteadOfGuessingASector()
+    {
+        var result=Sim(Build(Source([])),[Road]);
+        Assert.Null(result.Kph);
+        Assert.Equal(MapQueryFailureKind.DefinitionUnavailable,Assert.IsType<MapQueryFailure>(result.MapIssue).Kind);
+        Assert.Equal(P(900),result.MapIssue!.QueryAnchor);
+    }
+    [Fact]
+    public void ProjectionOwnerEvidenceCanSupplyAnExactScopedRetry()
+    {
+        var required=new TruckLib.ScsMap.SectorCoordinate(8,-3);
+        var reported=new List<MapQueryIssue>();
+        var source=new RoadPathSource(new TruckLib.ScsMap.Map(),reportMapIssue:reported.Add);
+        var resolver=new SpeedLimitResolver(Build(Source([])),source,
+            _=>new MissingMapSectors([required],"known metadata owner") with{QueryAnchor=P(50000)});
+        var result=resolver.ResolveOnPath(P(0),Vector3.UnitX,80,new("camera",P(900),Vector3.UnitX),[Road]);
+        Assert.Equal([required],Assert.IsType<MissingMapSectors>(result.MapIssue).Sectors);
+        Assert.Equal(P(900),result.MapIssue!.QueryAnchor);
+        Assert.Contains(result.MapIssue,reported);
+    }
+    [Fact]
     public void NativePrefabSignsAreReadInTheChosenRouteOrder()
     {
         var a=R(1,10,11,P(0),P(100));var b=R(2,12,13,P(200),P(400));

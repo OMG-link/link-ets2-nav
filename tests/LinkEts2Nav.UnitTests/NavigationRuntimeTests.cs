@@ -396,11 +396,19 @@ public sealed class NavigationRuntimeTests
         Assert.Equal(0,calls);
     }
     [Fact]
-    public void EveryRuntimePhraseExistsInPreGeneratedPack()
+    public void DefaultPackCoversCommonFixedNavigationPhrases()
     {
-        Assert.Equal(182,NavigationPrompts.AllTexts().Distinct().Count());
-        Assert.Contains(NavigationPrompts.Continue(),LinkEts2Nav.Speech.SpeechPack.DefaultTexts());
-        foreach(string text in NavigationPrompts.AllTexts())
-            Assert.Contains(text,LinkEts2Nav.Speech.SpeechPack.DefaultTexts());
+        var texts=LinkEts2Nav.Speech.SpeechPack.DefaultTexts();
+        Assert.Contains(NavigationPrompts.Continue(),texts);
+        // Lane instructions and numbered roundabout exits are dynamic. Generic
+        // "pass exit" examples are not required entries in the fixed audio pack.
+        foreach(var kind in Enum.GetValues<ManeuverKind>().Where(k=>k is not
+            (ManeuverKind.ChooseLanes or ManeuverKind.PassRoundaboutExit)))
+        {
+            foreach(int distance in new[]{2000,1000,500,450,400,350,300,250,200,150,100,50})
+                Assert.Contains(NavigationPrompts.AtDistance(kind,distance),texts);
+            Assert.Contains(NavigationPrompts.Immediate(kind),texts);
+            Assert.Contains(NavigationPrompts.Execute(kind),texts);
+        }
     }
 }

@@ -51,7 +51,7 @@ public sealed class AuxiliaryLaneDirectionTests
         var merge=Assert.Single(guidance,a=>a.Kind==ManeuverKind.MergeLeft);
         Assert.Equal("prefab:3",merge.JunctionId);Assert.Equal(route.Take(4).Sum(RouteGeometry.Length)+10,merge.EndDistanceMeters);
         var ownExit=Assert.Single(Guidance([scene.Action],[fromSide,scene.Route[1],sideExit],new([],[],true,null),index));
-        Assert.Equal(ManeuverKind.ChooseLanes,ownExit.Kind);
+        Assert.Equal(ManeuverKind.KeepRight,ownExit.Kind);
     }
 
     [Fact]
@@ -83,16 +83,16 @@ public sealed class AuxiliaryLaneDirectionTests
         var empty=new LaneNavigationPlan([],[],true,null);
         var fromMain=Guidance([scene.Action],scene.Route,empty,index);
         var fromSide=Guidance([scene.Action],[sideBirth,..scene.Route.Skip(1)],empty,index);
-        Assert.Equal(ManeuverKind.ChooseLanes,Assert.Single(fromMain).Kind);
-        Assert.Equal(scene.Action.Instruction,Assert.Single(fromMain).Instruction);
+        Assert.Equal(left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight,Assert.Single(fromMain).Kind);
+        Assert.Null(Assert.Single(fromMain).Instruction);
         Assert.Equal(Assert.Single(fromMain).Kind,Assert.Single(fromSide).Kind);
         Assert.DoesNotContain(fromSide,a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
         var inherited=RoadForkRules.Decide(mainExit.ForkInfo!,mainExit.EndNodeUid);
         var mainAction=scene.Action with{Kind=inherited.Kind,Instruction=inherited.Text,ForkInstruction=inherited};
         var mainRoute=new[]{scene.Route[0],scene.Route[1],mainExit};
         var main=Assert.Single(Guidance([mainAction],mainRoute,empty,index));
-        Assert.Equal(NavigationAnnouncementMode.Normal,main.AnnouncementMode);
-        Assert.Equal(ManeuverKind.ChooseLanes,main.Kind);
+        Assert.Equal(NavigationAnnouncementMode.Silent,main.AnnouncementMode);
+        Assert.Equal(ManeuverKind.Straight,main.Kind);
         var required=Assert.Single(Guidance([mainAction],[sideBirth,scene.Route[1],mainExit],empty,index));
         Assert.Equal(left?ManeuverKind.MergeRight:ManeuverKind.MergeLeft,required.Kind);
         Assert.Equal(required.AnnouncementMode==NavigationAnnouncementMode.DistancePreview?0:200,required.EndDistanceMeters!.Value-required.DistanceMeters,5);
@@ -104,7 +104,7 @@ public sealed class AuxiliaryLaneDirectionTests
         var alreadyMain=new LaneNavigationPlan([new(mainExit.Id,mainExit.LanePaths[0])],[],true,null);
         Assert.Null(alreadyMain.InitialTransfer);
         var silentMiddle=Assert.Single(Guidance([mainAction],[scene.Route[1],mainExit],alreadyMain,index));
-        Assert.Equal(NavigationAnnouncementMode.Normal,silentMiddle.AnnouncementMode);
+        Assert.Equal(NavigationAnnouncementMode.Silent,silentMiddle.AnnouncementMode);
         Assert.All(corridor.Sections,s=>Assert.Same(scene.Graph.Single(e=>e.Id==s.Edge.Id),s.Edge));
     }
 
@@ -229,8 +229,8 @@ public sealed class AuxiliaryLaneDirectionTests
         var proof=DedicatedLaneOpening.Find(scene.Route,scene.Graph,scene.Offsets,2,scene.Action.ForkInstruction!.DedicatedOrders)!;
         Assert.Null(proof.Signal);Assert.Equal(left,proof.MoveLeft);
         var updated=Assert.Single(new LaneExitApproach().Apply([scene.Action],scene.Route,scene.Graph,0));
-        Assert.Equal(ManeuverKind.ChooseLanes,updated.Kind);
-        Assert.Equal(scene.Action.Instruction,updated.Instruction);Assert.Equal(120,updated.DistanceMeters);Assert.Equal(300,updated.EndDistanceMeters);
+        Assert.Equal(left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight,updated.Kind);
+        Assert.Null(updated.Instruction);Assert.Equal(120,updated.DistanceMeters);Assert.Equal(300,updated.EndDistanceMeters);
         Assert.Equal(new LaneActionInterval(100,300),updated.ApproachInterval);
         Assert.Equal(before,scene.Graph.SelectMany(e=>e.LanePaths).Select(p=>(p.NativeBranchSignal,p.CurveBlinkers)).ToArray());
         Assert.All(scene.Graph.SelectMany(e=>e.LanePaths),p=>Assert.All(p.CurveBlinkers,b=>Assert.Equal(LaneBlinker.NoBlinker,b)));
@@ -241,7 +241,7 @@ public sealed class AuxiliaryLaneDirectionTests
     {
         var scene=left?Corridor([2,3],[0,1],[0,1]):Corridor([0,1],[2,3],[2,3]);
         var updated=Assert.Single(new LaneExitApproach().Apply([scene.Action],scene.Route,scene.Graph,0));
-        Assert.Equal(ManeuverKind.ChooseLanes,updated.Kind);
+        Assert.Equal(left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight,updated.Kind);
     }
 
     [Theory][InlineData(false)][InlineData(true)]
@@ -273,27 +273,27 @@ public sealed class AuxiliaryLaneDirectionTests
     }
 
     [Fact]
-    public void AlongMainRoadTheAuxiliaryIntervalPreservesTheInheritedLaneChoice()
+    public void AlongMainRoadTheProvenNewAuxiliaryLaneKeepsThroughTravelTransparent()
     {
         var scene=Corridor([0,1],[2],[2]);var main=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
         var instruction=RoadForkRules.Decide(main.ForkInfo!,22);
         var action=scene.Action with{ForkInstruction=instruction,Instruction=instruction.Text};
         var updated=Assert.Single(new LaneExitApproach().Apply([action],[..scene.Route.Take(2),main],scene.Graph,0));
-        Assert.Equal(ManeuverKind.ChooseLanes,updated.Kind);Assert.Equal(NavigationAnnouncementMode.Normal,updated.AnnouncementMode);
-        Assert.Equal(instruction.Text,updated.Instruction);
+        Assert.Equal(ManeuverKind.Straight,updated.Kind);Assert.Equal(NavigationAnnouncementMode.Silent,updated.AnnouncementMode);
+        Assert.Null(updated.Instruction);
     }
 
     [Fact]
     public void ResetDoesNotEraseFactsStillPresentInTheLoadedMap()
     {
         var scene=Corridor([0,1],[2],[2]);var detector=new LaneExitApproach();
-        Assert.Equal(ManeuverKind.ChooseLanes,Assert.Single(detector.Apply([scene.Action],scene.Route,scene.Graph,0)).Kind);
+        Assert.Equal(ManeuverKind.KeepRight,Assert.Single(detector.Apply([scene.Action],scene.Route,scene.Graph,0)).Kind);
         var trimmed=scene.Route.Skip(1).ToArray();
         var retained=Assert.Single(detector.Apply([scene.Action],trimmed,scene.Graph,0));
-        Assert.Equal(ManeuverKind.ChooseLanes,retained.Kind);Assert.NotNull(retained.ApproachInterval);
+        Assert.Equal(ManeuverKind.KeepRight,retained.Kind);Assert.NotNull(retained.ApproachInterval);
         detector.Reset();
         var fresh=Assert.Single(detector.Apply([scene.Action],trimmed,scene.Graph,0));
-        Assert.Equal(ManeuverKind.ChooseLanes,fresh.Kind);Assert.NotNull(fresh.ApproachInterval);
+        Assert.Equal(ManeuverKind.KeepRight,fresh.Kind);Assert.NotNull(fresh.ApproachInterval);
     }
 
     [Fact]

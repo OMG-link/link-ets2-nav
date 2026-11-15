@@ -147,7 +147,7 @@ public sealed class LaneExitApproachTests
     }
 
     [Fact]
-    public void ProvenDecelerationLanePreservesTheInheritedMainLaneChoice()
+    public void ProvenDecelerationBirthOutranksTerminalInheritanceForMainTravel()
     {
         var s=Scene();
         var info=new RoadForkInfo(20,3,[new(21,ForkSignal.None,[2],[2],[],true),new(22,ForkSignal.None,[0,1],[0,1],[],true)]);
@@ -157,9 +157,30 @@ public sealed class LaneExitApproachTests
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph([s.Route[0],s.Route[1],main,side]),TestContext.Current.CancellationToken);
         var lanes=new LaneNavigationPlan([new(s.Route[0].Id,s.Route[0].LanePaths.Single(p=>p.ExitLane==1))],[],true,null);
         var result=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,lanes,index));
-        Assert.Equal(ManeuverKind.ChooseLanes,result.Kind);Assert.False(result.IsMainRoadContinuation);
-        Assert.False(result.ForkInstruction!.Silent);Assert.Equal(NavigationAnnouncementMode.Normal,result.AnnouncementMode);
-        Assert.Equal(action.Instruction,result.Instruction);Assert.NotNull(result.ApproachInterval);
+        Assert.Equal(ManeuverKind.Straight,result.Kind);Assert.True(result.IsMainRoadContinuation);
+        Assert.True(result.ForkInstruction!.Silent);Assert.Equal(NavigationAnnouncementMode.Silent,result.AnnouncementMode);
+        Assert.Null(result.Instruction);Assert.Equal(300,result.EndDistanceMeters);
+    }
+
+    [Theory]
+    [InlineData(280,true)]
+    [InlineData(600,false)]
+    public void OnlyProvenShortBirthChangesInheritedSideForkToAuxiliaryExit(float length,bool auxiliary)
+    {
+        var s=Scene();
+        var info=new RoadForkInfo(20,3,[new(21,ForkSignal.Right,[2],[2],[],true),new(22,ForkSignal.None,[0,1],[0,1],[],true)]);
+        float shift=length-280;
+        var road=s.Route[1] with{Points=[s.Route[1].Points[0],s.Route[1].Points[^1]+new Vector3(shift,0,0)]};
+        var side=s.Route[^1] with{ForkInfo=info};var main=s.Graph[^1] with{ForkInfo=info};
+        var route=new[]{s.Route[0],road,side};
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph([s.Route[0],road,side,main]),TestContext.Current.CancellationToken);
+        var action=s.Action with{Kind=ManeuverKind.ChooseLanes,Instruction="分岔口靠右，走最右侧车道",
+            ForkInstruction=RoadForkRules.Decide(info,21),DistanceMeters=300+shift};
+        var lanes=new LaneNavigationPlan([new(s.Route[0].Id,s.Route[0].LanePaths.Single(p=>p.ExitLane==2))],[],true,null);
+        var result=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,lanes,index));
+        Assert.Equal(auxiliary?ManeuverKind.KeepRight:ManeuverKind.ChooseLanes,result.Kind);
+        if(auxiliary){Assert.Null(result.Instruction);Assert.NotNull(result.ApproachInterval);}
+        else Assert.Equal(action.Instruction,result.Instruction);
     }
 
     [Theory]

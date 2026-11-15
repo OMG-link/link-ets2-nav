@@ -64,13 +64,15 @@ public static class AuxiliaryLaneGuidance
                 }
             }
             var existing=result.FirstOrDefault(a=>a.JunctionId==junction&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
-            // A short auxiliary corridor can end in a genuine lane-group fork.
-            // Its history changes where to prepare, not which inherited outlet
-            // the driver must choose. A necessary transfer off the side lane is
-            // still handled by the merge case below.
+            // A locally inherited terminal lane can still have been newly added
+            // at this corridor's origin. Its verified birth outranks terminal-only
+            // inheritance: leaving on that lane is an auxiliary exit, whereas
+            // remaining on the old lanes is transparent through travel.
+            bool addedExit=corridor.LengthMeters<=500&&corridor.EndKind==AuxiliaryBoundaryKind.SeparateExit
+                &&corridor.StartKind is AuxiliaryBoundaryKind.IndependentEntrance or AuxiliaryBoundaryKind.NativeSplit;
             bool inheritedChoice=existing is {Kind:ManeuverKind.ChooseLanes,ForkInstruction.Kind:ManeuverKind.ChooseLanes}
                 &&terminal.Terminal.Edge.ForkInfo?.Branches.Count(b=>b.HasInheritedLane)>1;
-            if(inheritedChoice&&(terminal.Terminal.SideOnly||mainEntry))
+            if(inheritedChoice&&!addedExit&&(terminal.Terminal.SideOnly||mainEntry))
             {
                 result.Remove(existing!);result.Add(existing! with
                 {
@@ -86,7 +88,7 @@ public static class AuxiliaryLaneGuidance
                 var action=existing??new NavigationManeuver("auxiliary-exit:"+corridor.Id+":"+terminal.Terminal.Edge.Id,kind,end,"lane",terminal.Terminal.Edge.Id){JunctionId=junction,JunctionKind=NavigationJunctionKind.Ramp};
                 result.Remove(action);
                 result.Add(action with{Kind=kind,DistanceMeters=AuxiliaryLaneTiming.ActionPoint(interval),EndDistanceMeters=end,
-                    ApproachInterval=interval,Instruction=null,NearInstruction=null,
+                    ApproachInterval=interval,Instruction=null,NearInstruction=null,ExecutionInstruction=null,
                     ForkInstruction=action.ForkInstruction is {} f?f with{Kind=kind,Text=null}:null});
             }
             else if(sideEntry&&(terminal.Terminal.MainOnly||terminal.Terminal.Merges))
@@ -97,7 +99,7 @@ public static class AuxiliaryLaneGuidance
             else if((mainEntry||sideEntry)&&existing is not null)
             {
                 result.Remove(existing);result.Add(existing with{Kind=ManeuverKind.Straight,AnnouncementMode=NavigationAnnouncementMode.Silent,
-                    IsMainRoadContinuation=true,Instruction=null,NearInstruction=null,
+                    IsMainRoadContinuation=true,EndDistanceMeters=end,Instruction=null,NearInstruction=null,ExecutionInstruction=null,
                     ForkInstruction=existing.ForkInstruction is {} f?f with{Kind=ManeuverKind.Straight,Silent=true,Text=null}:null});
             }
         }

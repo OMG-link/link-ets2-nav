@@ -46,6 +46,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private readonly DirectedPathMatcher matcher = new();
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
+    private long mapRequestScope=long.MinValue;
     private AuxiliaryLaneIndex? auxiliaryLanes;
     private string? lastSpoken, signature;
     private string? connectionFailureSignature;
@@ -66,11 +67,15 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         if (mapIdentity is null || !mapIdentity.Matches(nearby))
         {
             mapIdentity=new(nearby);map=nearby.Map;
-            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log,nearby.AuxiliaryLanes?.Graph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null);
+            mapRequestScope=long.MinValue;
+            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log,nearby.AuxiliaryLanes?.Graph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null,
+                missingConnection:nearby.MissingConnection,reportMapIssue:issue=>nearby.Retries?.Report(issue));
             auxiliaryLanes=nearby.AuxiliaryLanes??AuxiliaryLaneIndex.Build(new NativeLaneGraph(paths.GetNavigationGraph()));
             structures.Clear();publishedStructure=null;routeBuildGeneration=0;
         }
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
+        if(nearby.Retries is {} retries&&mapRequestScope!=retries.ScopeRevision)
+        {mapRequestScope=retries.ScopeRevision;paths!.ReconsiderMapIssues();}
         var route = paths!.GetPath(position, vehicle.ForwardDirection, data.Route, data.RouteAvailability);
         var along = matcher.ProjectDistance(position, vehicle.ForwardDirection, route);
         bool yardApproach=false;double exitDistance=0;

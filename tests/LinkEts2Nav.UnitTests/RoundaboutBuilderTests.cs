@@ -174,10 +174,12 @@ public sealed class RoundaboutBuilderTests
         var index = new RoundaboutMapIndex();
         var sectors = new[] { new SectorCoordinate(0, 0), new SectorCoordinate(1, 0) };
         index.AddPrefab(new Prefab { Uid = 1, Nodes = [left, right] }, Half(left, right, MathF.PI, 0));
-        index.BuildNewSectors(sectors, TestContext.Current.CancellationToken);
+        index.BuildNewSectors(sectors, TestContext.Current.CancellationToken,
+            _=>new MissingMapSectors([new SectorCoordinate(1,0)],"missing next owner"){QueryAnchor=new(50000,0,0)});
         Assert.Empty(index.Structures);
         Assert.Equal(2, index.BuiltSectorCount);
         Assert.Contains(20UL, index.UnresolvedBoundaryNodes[sectors[0]]);
+        Assert.Equal(left.Position,Assert.Single(index.MapIssues).QueryAnchor);
         index.AddPrefab(new Prefab { Uid = 2, Nodes = [right, left] }, Half(right, left, 0, MathF.PI));
         Assert.Equal(1, index.BuiltSectorCount);
         // The old search cell need not still belong to the current active window.

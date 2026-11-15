@@ -22,13 +22,14 @@ public sealed class RoadPathSource
     private readonly Action<string>? diagnosticLog;
     private readonly Func<ulong,MapQueryIssue>? missingConnection;
     private readonly Action<MapQueryIssue>? reportMapIssue;
+    private readonly GameMap sourceMap;
     private readonly List<MapQueryIssue> mapIssues=[];
     public IReadOnlyList<MapQueryIssue> MapIssues=>mapIssues;
     public MapQueryIssue DescribeMissingConnection(ulong node)=>missingConnection?.Invoke(node)
         ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"地图接口{node:X16}没有可定位的加载依赖");
     public void ReportMapIssue(MapQueryIssue issue)
     {
-        bool Same(MapQueryIssue existing)=>existing.Reason==issue.Reason&&(existing,issue) switch
+        bool Same(MapQueryIssue existing)=>existing.Reason==issue.Reason&&existing.QueryAnchor==issue.QueryAnchor&&(existing,issue) switch
         {
             (MissingMapSectors a,MissingMapSectors b)=>a.Sectors.SequenceEqual(b.Sectors),
             (MapQueryFailure a,MapQueryFailure b)=>a.Kind==b.Kind,
@@ -36,6 +37,11 @@ public sealed class RoadPathSource
         };
         if(!mapIssues.Any(Same))
         {mapIssues.Add(issue);reportMapIssue?.Invoke(issue);}
+    }
+    /// <summary>Reconsider cached demands in the current local request scope without rebuilding route topology.</summary>
+    public void ReconsiderMapIssues()
+    {
+        foreach(var issue in mapIssues)reportMapIssue?.Invoke(issue);
     }
     private readonly HashSet<(ulong,ulong)> reportedAmbiguities = new();
     private ulong[]? cachedNodes;
@@ -49,6 +55,7 @@ public sealed class RoadPathSource
         Func<ulong,MapQueryIssue>? missingConnection=null,Action<MapQueryIssue>? reportMapIssue=null)
     {
         diagnosticLog=log;
+        sourceMap=map;
         this.missingConnection=missingConnection;this.reportMapIssue=reportMapIssue;
         this.playerAccess=playerAccess;this.roadHalfWidth=roadHalfWidth;
         navigationGraph=native?.Edges;
@@ -205,8 +212,9 @@ public sealed class RoadPathSource
                     $"已加载导航连接冲突：{key.Item1:X16}/{key.Item2:X16}"));
                 else
                 {
-                    ReportMapIssue(DescribeMissingConnection(key.Item1));
-                    if(key.Item2!=key.Item1)ReportMapIssue(DescribeMissingConnection(key.Item2));
+                    Vector3? anchor=sourceMap.Nodes.TryGetValue(key.Item1,out var seed)?seed.Position:null;
+                    ReportMapIssue(DescribeMissingConnection(key.Item1) with{QueryAnchor=anchor});
+                    if(key.Item2!=key.Item1)ReportMapIssue(DescribeMissingConnection(key.Item2) with{QueryAnchor=anchor});
                 }
                 chunk = null; continue;
             }
@@ -332,7 +340,12 @@ public sealed class RoadPathSource
                 var exits = junctionLinks.Values.Where(p => !p.ReturnsToEntry&&p.StartNodeUid == current.EndNodeUid
                     && !ambiguous.Contains((p.StartNodeUid, p.EndNodeUid))
                     && !visitedJunctions.Contains(p.Id.Split(':')[1])).ToArray();
-                if (exits.Length != 1) break;
+                if (exits.Length != 1)
+                {
+                    if(exits.Length==0)ReportMapIssue(DescribeMissingConnection(current.EndNodeUid)
+                        with{QueryAnchor=current.Points[^1]});
+                    break;
+                }
                 var junction = exits[0];
                 if (Vector3.Distance(current.Points[^1], junction.Points[0]) > 2) break;
                 visitedJunctions.Add(junction.Id.Split(':')[1]);

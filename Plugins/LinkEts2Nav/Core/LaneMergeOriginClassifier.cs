@@ -46,6 +46,9 @@ public sealed class LaneMergeOriginClassifier
         Dictionary<int,PrefabLanePath[]>? projection=null;
         IReadOnlyList<int>? applicable=null;
         var steps=new List<LaneMergeSourceStep>();
+        var seedLine=ending.Points.Count>1?new LanePolyline(ending.Points):null;
+        System.Numerics.Vector3? queryAnchor=seedLine is not null&&double.IsFinite(endingPrefix)
+            ?seedLine.At(Math.Clamp(endingPrefix,0,seedLine.Length)):null;
         MapQueryIssue? mapIssue=null;
         var visited=new Dictionary<(ulong,ulong,int,ulong,int,string),(double A,double B)>();
         LaneMergeOriginDecision Decision(LaneMergeKind kind,string reason,ulong? source=null,ulong? fromA=null,ulong? fromB=null)
@@ -54,7 +57,7 @@ public sealed class LaneMergeOriginClassifier
                 ApplicableEntryLanes=applicable??Array.AsReadOnly(orders.Keys.Order().ToArray()),Steps=Array.AsReadOnly(steps.ToArray()),MapIssue=mapIssue};
         LaneMergeOriginDecision Missing(string reason,MapQueryIssue? issue=null)
         {
-            mapIssue=issue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason);
+            mapIssue=(issue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason)) with{QueryAnchor=queryAnchor};
             return Decision(LaneMergeKind.Uncertain,reason);
         }
         LaneMergeOriginDecision Window()=>Decision(LaneMergeKind.LaneReduction,"原生来源累计已覆盖500米，窗口内未发现两线分属不同入口");

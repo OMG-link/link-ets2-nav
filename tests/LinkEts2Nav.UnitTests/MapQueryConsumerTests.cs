@@ -19,11 +19,12 @@ public sealed class MapQueryConsumerTests
         var ending = Lane(1); var main = Lane(0);
         var edge = new DirectedRoad("prefab:42:0:1", 10, 20, ending.Points) { LanePaths = [ending, main] };
         ulong requested = 0;
-        var result = new LaneMergeOriginClassifier(new([edge]), node => { requested = node; return Missing(); })
+        var result = new LaneMergeOriginClassifier(new([edge]), node => { requested = node; return Missing() with{QueryAnchor=new(50000,0,0)}; })
             .Classify(ending, 10, main, 10);
         Assert.Equal(10UL, requested);
         Assert.Equal(LaneMergeKind.Uncertain, result.Kind);
         Assert.Equal([Required], Assert.IsType<MissingMapSectors>(result.MapIssue).Sectors);
+        Assert.Equal(new Vector3(0,0,10),result.MapIssue!.QueryAnchor);
         var unlocated = new LaneMergeOriginClassifier(new([edge])).Classify(ending, 10, main, 10);
         Assert.Equal(MapQueryFailureKind.UnresolvedReference, Assert.IsType<MapQueryFailure>(unlocated.MapIssue).Kind);
     }
@@ -41,6 +42,16 @@ public sealed class MapQueryConsumerTests
             _ => { called = true; return Missing(); }).Sample(10, true);
         Assert.False(called);
         Assert.Equal(MapQueryFailureKind.Ambiguous, Assert.IsType<MapQueryFailure>(split.MapIssue).Kind);
+    }
+
+    [Fact]
+    public void RecursiveSlopeDependencyKeepsItsOriginalSampleInterfaceAnchor()
+    {
+        var lane=new PrefabLanePath(42,10,20,0,0,0,0,1,1,[0],[Vector3.Zero,new(0,0,10)],10);
+        var edge=new DirectedRoad("prefab:42:0:1",10,20,lane.Points){LanePaths=[lane]};
+        var sample=new RoadSlopeWindowSampler(new Dictionary<ulong,List<Road>>(),[edge],
+            _=>Missing() with{QueryAnchor=new(0,0,10)}).Sample(10,false);
+        Assert.Equal(Vector3.Zero,sample.MapIssue!.QueryAnchor);
     }
 
     [Fact]

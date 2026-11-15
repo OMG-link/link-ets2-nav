@@ -23,7 +23,13 @@ public sealed class RoadSlopeWindowSampler(IReadOnlyDictionary<ulong,List<Road>>
     {
         var key=(node,incoming,excludePrefab);
         if(cached.TryGetValue(key,out var found))return found;
-        return cached[key]=Read(node,incoming,excludePrefab,null,0,0,[],[]);
+        var sample=Read(node,incoming,excludePrefab,null,0,0,[],[]);
+        var road=(incidentRoads.GetValueOrDefault(node)??[]).FirstOrDefault();
+        Vector3? anchor=road is not null?(road.Node.Uid==node?road.Node.Position:road.ForwardNode.Position)
+            :(prefabPaths??[]).Where(e=>e.Points.Count>0&&(e.StartNodeUid==node||e.EndNodeUid==node))
+                .Select(e=>(Vector3?)(e.StartNodeUid==node?e.Points[0]:e.Points[^1])).FirstOrDefault();
+        if(sample.MapIssue is {} issue)sample=sample with{MapIssue=issue with{QueryAnchor=anchor??issue.QueryAnchor}};
+        return cached[key]=sample;
     }
 
     private RoadSlopeWindow Read(ulong node,bool incoming,string? excludePrefab,int? lane,

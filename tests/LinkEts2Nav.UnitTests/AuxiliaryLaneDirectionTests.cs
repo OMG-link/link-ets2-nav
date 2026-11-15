@@ -1,6 +1,7 @@
 using System.Numerics;
 using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
+using LinkEts2Nav.Map;
 namespace LinkEts2Nav.UnitTests;
 
 public sealed class AuxiliaryLaneDirectionTests
@@ -115,8 +116,13 @@ public sealed class AuxiliaryLaneDirectionTests
     public void MissingAdjacentStructureIsRetriedByTheNextMapVersion()
     {
         var scene=Corridor([0,1],[2],[2],168.92394f);
-        var partial=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph.Where(e=>!e.Id.StartsWith("prefab:2:")).ToArray()),TestContext.Current.CancellationToken);
+        var required=new TruckLib.ScsMap.SectorCoordinate(8,-3);
+        var partial=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph.Where(e=>!e.Id.StartsWith("prefab:2:")).ToArray()),TestContext.Current.CancellationToken,
+            _=>new MissingMapSectors([required],"native owner") with{QueryAnchor=new(50000,0,0)});
         Assert.Empty(partial.Corridors);Assert.Contains(partial.Diagnostics,d=>d.Contains("尚未加载"));
+        var missing=Assert.Single(partial.MapIssues.OfType<MissingMapSectors>());
+        Assert.Equal([required],missing.Sectors);
+        Assert.Equal(scene.Graph.Single(e=>e.StartNodeUid==99).Points[0],missing.QueryAnchor);
         var complete=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph),TestContext.Current.CancellationToken);
         Assert.Equal(168.92394,Assert.Single(complete.Corridors).LengthMeters,3);
         Assert.Empty(partial.Corridors);Assert.NotSame(partial.ByRoad,complete.ByRoad);

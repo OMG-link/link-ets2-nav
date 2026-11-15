@@ -122,11 +122,13 @@ public sealed class AuxiliaryLaneIndex
             string id=$"auxiliary:{origin.Id}:{string.Join(',',side.Order())}";
             if(!seeds.Add(id))return;
             var initial=Read(side);
+            System.Numerics.Vector3? queryAnchor=origin.Points.Count>1
+                ?new LanePolyline(origin.Points).At(sections.FirstOrDefault()?.StartMeters??0):null;
             var pending=new Stack<WalkState>();pending.Push(new(origin,side,main,count,sections,length,[]));
             void Missing(string reason,MapQueryIssue? issue=null)
             {
                 if(length<=500)diagnostics.Add($"辅助车道结构未完成：{id}；{reason}");
-                mapIssues.Add(issue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason));
+                mapIssues.Add((issue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason)) with{QueryAnchor=queryAnchor});
             }
             while(pending.TryPop(out var state))
             {

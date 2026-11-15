@@ -14,6 +14,7 @@ public sealed class WarningPipeline(IWarningPlanner? planner = null,GuidanceCoor
     private readonly CameraWarningEngine uncalibrated = new(kind: CameraWarningKind.UncalibratedProximity);
     private TruckLib.ScsMap.Map? previousMap;
     private RoadPathSource? paths;
+    private long mapRequestScope=long.MinValue;
     private SpeedLimitResolver? speedLimits;
     private string? lastWarning;
 
@@ -29,9 +30,13 @@ public sealed class WarningPipeline(IWarningPlanner? planner = null,GuidanceCoor
         if (!ReferenceEquals(previousMap, nearby.Map))
         {
             previousMap = nearby.Map;
-            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths,native:nearby.AuxiliaryLanes?.Graph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null);
+            mapRequestScope=long.MinValue;
+            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths,native:nearby.AuxiliaryLanes?.Graph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null,
+                missingConnection:nearby.MissingConnection,reportMapIssue:issue=>nearby.Retries?.Report(issue));
             speedLimits = new SpeedLimitResolver(nearby.SpeedLimits, paths);
         }
+        if(nearby.Retries is {} retries&&mapRequestScope!=retries.ScopeRevision)
+        {mapRequestScope=retries.ScopeRevision;paths!.ReconsiderMapIssues();}
         bool hasRoute = data.RouteAvailability == RouteAvailability.Available;
         bool usableRoute = hasRoute || data.RouteAvailability == RouteAvailability.None;
         var candidates = new List<CameraCandidate>();

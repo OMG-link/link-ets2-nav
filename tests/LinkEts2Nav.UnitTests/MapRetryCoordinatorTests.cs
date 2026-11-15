@@ -172,5 +172,21 @@ public sealed class MapRetryCoordinatorTests
         await Wait(()=>handle.Capture().Result.IsSuccess);
         Assert.Equal(11,handle.Capture().Result.Value);
     }
+    [Fact]
+    public async Task AcceptedSnapshotCannotReportOldIssuesAfterALaterReset()
+    {
+        var requests=new ConcurrentQueue<SectorCoordinate[]>();
+        await using var coordinator=new MapRetryCoordinator(s=>requests.Enqueue(s.ToArray()));
+        long old=coordinator.Generation;
+        Assert.True(coordinator.Publish(Snapshot(),1,old));
+        coordinator.Reset();
+        Assert.True(coordinator.Publish(Snapshot(),2,coordinator.Generation));
+        await Wait(()=>requests.Count>0);int before=requests.Count;
+        coordinator.Report(Missing(A),old);
+        // A fresh request is a barrier after the rejected old report.
+        coordinator.Report(Missing(B),coordinator.Generation);
+        await Wait(()=>requests.Count>before&&requests.Last().Contains(B));
+        Assert.DoesNotContain(A,requests.Last());
+    }
 }
 

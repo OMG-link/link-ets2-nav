@@ -37,11 +37,13 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     private IReadOnlyList<SectorCoordinate> Demands()=>reported.Values.Concat(entries.Values.Select(e=>e.Missing))
         .Where(Local).SelectMany(m=>m.Sectors).Distinct().OrderBy(s=>s.X).ThenBy(s=>s.Z).ToArray();
     public void Report(MapQueryIssue issue)
+        =>Report(issue,Generation);
+    public void Report(MapQueryIssue issue,long expectedGeneration)
     {
         if(issue is not MissingMapSectors missing)return;
         lock(gate)
         {
-            if(disposed||!Local(missing))return;
+            if(disposed||epoch!=expectedGeneration||!Local(missing))return;
             string identity=missing.Reason+"@"+missing.QueryAnchor+":"+string.Join(';',missing.Sectors.Select(s=>$"{s.X},{s.Z}"));
             if(reported.ContainsKey(identity)||Ready(missing))return;
             reported[identity]=missing;

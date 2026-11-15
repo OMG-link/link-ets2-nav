@@ -117,9 +117,11 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         var merges=structure.Merges.Select(m=>m with{DistanceMeters=m.DistanceMeters-along.Value,
             EndDistanceMeters=m.EndDistanceMeters-along.Value}).Where(m=>m.DistanceMeters>=0).ToArray();
         bool confirmedContinuation=!yardApproach&&!upcoming.Any(NavigationEventPlanner.IsNavigationAction);
-        double confirmedAhead=Math.Max(0,Math.Min(structure.ConfirmedUntil,structure.UnresolvedAlong)-along.Value);
+        double confirmedAhead=Math.Max(0,structure.ConfirmationEndAfter(along.Value)-along.Value);
         var next=upcoming.FirstOrDefault(NavigationEventPlanner.IsNavigationAction);
         var currentJunction=yardApproach?null:CurrentJunction(instructionRoute,along.Value);
+        double? lastActionEnd=structure.Actions.LastOrDefault(NavigationEventPlanner.IsNavigationAction)?.EndDistanceMeters;
+        double continuationEnd=structure.ConfirmationEndAfter(lastActionEnd??along.Value);
         double? componentEnd=structure.Actions.Where(NavigationEventPlanner.IsNavigationAction)
             .Where(m=>m.DistanceMeters<along&&m.EndDistanceMeters>along).Select(m=>m.EndDistanceMeters).FirstOrDefault();
         bool defer=componentEnd is not null&&currentJunction is not null&&next is not null&&currentJunction!=next.JunctionId;
@@ -136,10 +138,10 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 // Only newly discovered structure can create/re-anchor speech points.
                 // Ordinary progress never calls any event planner or geometry recognizer.
                 double? initialEnd=componentEnd is {} end?routeOrigin+end:null;
-                bool tail=!yardApproach&&(structure.Actions.LastOrDefault(NavigationEventPlanner.IsNavigationAction)?.EndDistanceMeters??0)<Math.Min(structure.ConfirmedUntil,structure.UnresolvedAlong);
+                bool tail=!yardApproach&&(lastActionEnd??0)<continuationEnd;
                 guidance.Publish(eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
                     playerAlong,upcoming,true,false,tail,guidance.Scheduler,progress.Frame,initialEnd,
-                    guidance.WillReplaceSource("navigation",data.Route.Revision),routeOrigin+Math.Min(structure.ConfirmedUntil,structure.UnresolvedAlong)));
+                    guidance.WillReplaceSource("navigation",data.Route.Revision),routeOrigin+continuationEnd));
                 var entries=cityEntries.Build(route,playerAlong,nearby.SpeedLimits,routeOrigin,nearby.PrefabPaths)
                     .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
                 if(guidance.WillReplaceSource(CityEntryEventBuilder.Kind,data.Route.Revision))
@@ -164,13 +166,13 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             if(structuralUpdate)
             {
                 double? initialEnd=componentEnd is {} end?routeOrigin+end:null;
-                bool tail=!yardApproach&&(structure.Actions.LastOrDefault(NavigationEventPlanner.IsNavigationAction)?.EndDistanceMeters??0)<Math.Min(structure.ConfirmedUntil,structure.UnresolvedAlong);
+                bool tail=!yardApproach&&(lastActionEnd??0)<continuationEnd;
                 bool replaced=analysisRoute is {} previous
                     &&!RouteStructureIdentity.Nodes(previous).SequenceEqual(RouteStructureIdentity.Nodes(data.Route))
                     &&!RouteContinuity.IsForwardExtension(previous,data.Route);
                 var plan=eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
                     playerAlong,upcoming,true,false,tail,analysisScheduler,progress.Frame,initialEnd,
-                    replaceRoute:replaced,confirmedContinuationEndAlong:routeOrigin+Math.Min(structure.ConfirmedUntil,structure.UnresolvedAlong));
+                    replaceRoute:replaced,confirmedContinuationEndAlong:routeOrigin+continuationEnd);
                 if(replaced)
                 {
                     var retained=plan.Events.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal);

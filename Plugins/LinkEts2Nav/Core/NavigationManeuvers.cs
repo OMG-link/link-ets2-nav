@@ -4,6 +4,8 @@ namespace LinkEts2Nav.Core;
 
 public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit, ChooseLanes, Destination, BoardFerry }
 
+public sealed record NavigationUnresolvedSpan(double StartMeters,double EndMeters);
+
 public enum NavigationAnnouncementMode { Normal, Silent, DistancePreview }
 public enum NavigationJunctionKind { Ordinary, Ramp }
 
@@ -63,6 +65,7 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
 public sealed class NavigationManeuverDetector
 {
     public IReadOnlyList<RoadForkDiagnostic> ForkDiagnostics { get; private set; }=[];
+    public IReadOnlyList<NavigationUnresolvedSpan> UnresolvedSpans { get; private set; }=[];
     private const double TurnAngleDegrees = 45;
     private const double ForkAngleDegrees = 55;
     private const double MinimumForkSpreadDegrees = 5;
@@ -102,6 +105,7 @@ public sealed class NavigationManeuverDetector
         confirmedUntil = 0;
         hasUnresolvedJoin = false;
         firstUnresolvedJoinAlong = double.PositiveInfinity;
+        var unresolvedSpans=new List<NavigationUnresolvedSpan>();UnresolvedSpans=unresolvedSpans;
         ArgumentNullException.ThrowIfNull(route);
         ArgumentNullException.ThrowIfNull(graph);
         var result = new List<NavigationManeuver>();
@@ -166,7 +170,7 @@ public sealed class NavigationManeuverDetector
                     if(instruction.Failure is {} reason)
                     {
                         forkIssues.Add(new(prefab,current.StartNodeUid,current.EndNodeUid,reason));
-                        hasUnresolvedJoin=true;firstUnresolvedJoinAlong=Math.Min(firstUnresolvedJoinAlong,offset);
+                        hasUnresolvedJoin=true;firstUnresolvedJoinAlong=Math.Min(firstUnresolvedJoinAlong,offset);unresolvedSpans.Add(new(offset,end));
                     }
                     else if((!instruction.Silent||instruction.Kind==ManeuverKind.Straight&&rampJunction)&&offset>=vehicleAlong)
                     {
@@ -188,7 +192,7 @@ public sealed class NavigationManeuverDetector
                     {
                         var role = RoadJoinClassifier.Classify(current).Role;
                         if (role is RoadJoinRole.Entering or RoadJoinRole.Ambiguous)
-                        { hasUnresolvedJoin = true; firstUnresolvedJoinAlong = Math.Min(firstUnresolvedJoinAlong, offset); }
+                        { hasUnresolvedJoin = true; firstUnresolvedJoinAlong = Math.Min(firstUnresolvedJoinAlong, offset); unresolvedSpans.Add(new(offset,end)); }
                     }
                     confirmedUntil = end; offset = end; continue;
                 }
@@ -198,7 +202,7 @@ public sealed class NavigationManeuverDetector
                 {
                     var merge = MergeDecision(current, prefab);
                     if (merge.Ambiguous)
-                    { hasUnresolvedJoin = true; firstUnresolvedJoinAlong = Math.Min(firstUnresolvedJoinAlong, offset); }
+                    { hasUnresolvedJoin = true; firstUnresolvedJoinAlong = Math.Min(firstUnresolvedJoinAlong, offset); unresolvedSpans.Add(new(offset,end)); }
                     if (merge.Kind is { } mergeKind)
                     {
                         if(ComplexInternalBend(current)||!NativeGeometrySupported(current))return result;

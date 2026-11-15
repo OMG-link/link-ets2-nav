@@ -11,6 +11,10 @@ internal sealed record NavigationStructurePlan(IReadOnlyList<DirectedRoad> Route
 {
     public IReadOnlyList<NavigationManeuver> BaseActions {get;init;}=[];
     public AuxiliaryLaneIndex? Auxiliaries {get;init;}
+    public IReadOnlyList<NavigationUnresolvedSpan> UnresolvedSpans {get;init;}=[];
+    /// <summary>Past ambiguity does not erase a later confirmed stretch. Active or future ambiguity remains a boundary.</summary>
+    public double ConfirmationEndAfter(double boundary)
+        =>Math.Min(ConfirmedUntil,UnresolvedSpans.FirstOrDefault(s=>s.EndMeters>boundary)?.StartMeters??double.PositiveInfinity);
 }
 
 /// <summary>Runs only when route topology or loaded map facts change.</summary>
@@ -56,7 +60,7 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
             }).OrderBy(m=>m.DistanceMeters).ToArray();
         }
         var plan=new NavigationStructurePlan(route,instructionRoute,upcoming,lanes,[],detector.ForkDiagnostics.ToArray(),confirmedUntil,
-            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming,Auxiliaries=auxiliaries};
+            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming,Auxiliaries=auxiliaries,UnresolvedSpans=detector.UnresolvedSpans.ToArray()};
         return SelectLanes(plan,lanes,nearby,paths);
     }
 

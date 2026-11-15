@@ -24,7 +24,8 @@ public sealed class LaneMergeOriginClassifier
         var native=graph.ThroughTraffic.Edges;
         roads=native.Where(e=>NativeLaneGraph.Prefab(e) is null).GroupBy(e=>e.EndNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
         var paths=native.SelectMany(e=>e.LanePaths)
-            .DistinctBy(p=>(p.PrefabUid,p.EntryNodeUid,p.EntryLane,p.ExitNodeUid,p.ExitLane)).ToArray();
+            .DistinctBy(p=>(p.PrefabUid,p.EntryNodeUid,p.EntryLane,p.ExitNodeUid,p.ExitLane,
+                Curves:string.Join(',',p.CurveIndices),Length:new LanePolyline(p.Points).Length)).ToArray();
         lanes=paths.GroupBy(p=>p.ExitNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
         entries=paths.GroupBy(p=>(p.PrefabUid,p.EntryNodeUid)).ToDictionary(g=>g.Key,g=>g.ToArray());
         joins=paths.GroupBy(p=>(p.PrefabUid,p.ExitNodeUid)).Where(g=>g.Select(p=>p.EntryNodeUid).Distinct().Count()>1)
@@ -33,7 +34,7 @@ public sealed class LaneMergeOriginClassifier
 
     public LaneMergeOriginDecision Classify(PrefabLanePath ending,double endingPrefix,PrefabLanePath main,double mainPrefix)
     {
-        double a=0,b=0,prefixA=endingPrefix,prefixB=mainPrefix;
+        double a=0,b=0,aMin=0,bMin=0,prefixA=endingPrefix,prefixB=mainPrefix,prefixMinA=endingPrefix,prefixMinB=mainPrefix;
         ulong? approach=ending.EntryNodeUid==main.EntryNodeUid?ending.EntryNodeUid:null,sourceEntrance=null,sourcePrefab=null;
         var orders=(entries.GetValueOrDefault((ending.PrefabUid,ending.EntryNodeUid))??[])
             .GroupBy(p=>p.EntryLane).Where(g=>g.Select(p=>p.EntryOrder).Distinct().Count()==1)
@@ -48,11 +49,14 @@ public sealed class LaneMergeOriginClassifier
                 ApplicableEntryLanes=applicable??Array.AsReadOnly(orders.Keys.Order().ToArray()),Steps=Array.AsReadOnly(steps.ToArray())};
         LaneMergeOriginDecision Missing(string reason)=>Decision(LaneMergeKind.Uncertain,reason);
         LaneMergeOriginDecision Window()=>Decision(LaneMergeKind.LaneReduction,"原生来源累计已覆盖500米，窗口内未发现两线分属不同入口");
+        LaneMergeOriginDecision? Budget()=>Math.Max(a,b)<=500?null:Math.Max(aMin,bMin)<=500
+            ?Missing("原生曲线候选的累计里程跨越500米边界，来源未唯一确认"):Window();
         while(true)
         {
-            if(!double.IsFinite(prefixA)||!double.IsFinite(prefixB)||prefixA<0||prefixB<0)return Missing("反向原生里程无效");
-            a+=prefixA;b+=prefixB;
-            if(Math.Max(a,b)>500)return Window();
+            if(!double.IsFinite(prefixA)||!double.IsFinite(prefixB)||!double.IsFinite(prefixMinA)||!double.IsFinite(prefixMinB)
+                ||prefixMinA<0||prefixMinB<0)return Missing("反向原生里程无效");
+            a+=prefixA;b+=prefixB;aMin+=prefixMinA;bMin+=prefixMinB;
+            if(Budget() is {} exhausted)return exhausted;
             if(ending.PrefabUid!=main.PrefabUid)return Missing("两线未对应同一原生来源结构");
             if(ending.EntryNodeUid!=main.EntryNodeUid)
             {
@@ -75,15 +79,15 @@ public sealed class LaneMergeOriginClassifier
             }
             steps.Add(new(ending.PrefabUid,ending.EntryNodeUid,ending.EntryLane,main.EntryNodeUid,main.EntryLane,
                 Math.Max(a,b),applicable??Array.AsReadOnly(orders.Keys.Order().ToArray())));
-            if(Math.Max(a,b)>=500)return Window();
+            if(Math.Max(aMin,bMin)>=500)return Window();
             string mapping=string.Join(';',orders.OrderBy(p=>p.Key).Select(p=>$"{p.Key}:{p.Value}"));
             var key=(ending.PrefabUid,ending.EntryNodeUid,ending.EntryLane,main.EntryNodeUid,main.EntryLane,mapping);
             if(visited.TryGetValue(key,out var prior))
             {
-                if(a<=prior.A||b<=prior.B)return Missing("原生来源闭环未提供正向里程");
+                if(aMin<=prior.A||bMin<=prior.B)return Missing("原生来源闭环未提供正向里程");
                 a=b=500;return Window(); // A fully known positive deterministic cycle adds no new source.
             }
-            visited[key]=(a,b);
+            visited[key]=(aMin,bMin);
             ulong boundary=ending.EntryNodeUid;
             var visitedRoads=new HashSet<ulong>();
             string? lastRoad=null;
@@ -95,8 +99,8 @@ public sealed class LaneMergeOriginClassifier
                 var road=previous[0];double length=RouteGeometry.Length(road);
                 if(!double.IsFinite(length)||length<=0)return Missing("上游普通道路长度无效");
                 if(!visitedRoads.Add(boundary)){a=b=500;return Window();}
-                a+=length;b+=length;boundary=road.StartNodeUid;lastRoad=road.Id;
-                if(Math.Max(a,b)>500)return Window();
+                a+=length;b+=length;aMin+=length;bMin+=length;boundary=road.StartNodeUid;lastRoad=road.Id;
+                if(Budget() is {} roadEnd)return roadEnd;
             }
             var source=(lanes.GetValueOrDefault(boundary)??[]).Where(p=>p.PrefabUid!=ending.PrefabUid).ToArray();
             var side=source.Where(p=>p.ExitOrder==ending.EntryOrder&&p.ExitLaneCount==ending.EntryLaneCount).ToArray();
@@ -110,12 +114,10 @@ public sealed class LaneMergeOriginClassifier
                 return Missing("同一来源入口内的上游车道槽尚未唯一确认");
             var sideLengths=side.Select(p=>new LanePolyline(p.Points).Length).ToArray();
             var keptLengths=kept.Select(p=>new LanePolyline(p.Points).Length).ToArray();
-            if(fromA[0]!=fromB[0]&&Math.Max(a+sideLengths.Min(),b+keptLengths.Min())<=500
-                &&Math.Max(a+sideLengths.Max(),b+keptLengths.Max())>500)
-                return Missing("来源入口是否落在500米内受未唯一确认的车道槽影响");
             projection=orders.ToDictionary(p=>p.Key,p=>source.Where(v=>v.ExitOrder==p.Value&&v.ExitLaneCount==ending.EntryLaneCount).ToArray());
             ending=side[0];main=kept[0];
             prefixA=sideLengths.Max();prefixB=keptLengths.Max();
+            prefixMinA=sideLengths.Min();prefixMinB=keptLengths.Min();
         }
     }
 }

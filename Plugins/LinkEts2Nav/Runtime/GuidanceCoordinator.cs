@@ -250,7 +250,7 @@ public sealed class GuidanceCoordinator
             if(result.Disposition==TriggerDisposition.Ended){log("语音系列结束："+result.Event.SequenceId);continue;}
             if(result.Disposition!=TriggerDisposition.Queued)continue;
             var t=result.Trigger;
-            var item=new QueuedGuidanceSpeech(result.Source,result.Event.Id,t.Id,t.SequenceOrder,t.Priority,t.Text){SpeechSequenceId=result.Event.SequenceId};
+            var item=QueuedGuidanceSpeech.From(result);
             lastQueued[result.Source]=t.Text;
             log("语音触发入队："+t.Text+" 事件="+result.Event.Id+" 触发点="+t.Id);
             Queued?.Invoke(item);

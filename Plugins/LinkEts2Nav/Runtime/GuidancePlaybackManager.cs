@@ -17,6 +17,9 @@ public sealed record QueuedGuidanceSpeech(string Source,string EventId,string Tr
     public string? Stage {get;init;}
     public string? EventDescription {get;init;}
     public string SequenceId => SpeechSequenceId ?? EventId;
+    public static QueuedGuidanceSpeech From(GuidanceTriggerResult result)
+        =>new(result.Source,result.Event.Id,result.Trigger.Id,result.Trigger.SequenceOrder,result.Trigger.Priority,result.Trigger.Text)
+            {SpeechSequenceId=result.Event.SequenceId,Stage=result.Trigger.Kind.ToString(),EventDescription=result.Event.Description};
 }
 
 /// <summary>Owns pending playback, priority and same-event replacement. Preparation never plays.</summary>
@@ -67,10 +70,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                 else if(result.Disposition==TriggerDisposition.Queued)
                 {
                     var t=result.Trigger;
-                    EnqueueLocked(new(result.Source,result.Event.Id,t.Id,t.SequenceOrder,t.Priority,t.Text)
-                        {SpeechSequenceId=result.Event.SequenceId,Stage=t.Kind.ToString(),
-                            EventDescription=result.Event.Description.StartsWith("uncalibrated-proximity:",StringComparison.Ordinal)
-                                ?"uncalibrated-proximity":result.Event.Description});
+                    EnqueueLocked(QueuedGuidanceSpeech.From(result));
                 }
             }
             active=isActive;updateHeld=false;

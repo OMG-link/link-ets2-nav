@@ -243,10 +243,38 @@ public sealed class NavigationEventPlanner
         var environmental=environment.Build("navigation",playerAlong,environmentEvents,scheduler,active);
         var complete=events.GroupBy(e=>e.SequenceId).Where(g=>sequences.TryGetValue(g.Key,out var end)&&end.End is not null)
             .Select(g=>new SpeechSequence(g.Key,new RouteSpeechEnd(sequences[g.Key].End!.Value),g.ToArray(),
-                triggers.Where(t=>g.Any(e=>e.Id==t.EventId)).ToArray(),sequences[g.Key].Ended));
+                triggers.Where(t=>g.Any(e=>e.Id==t.EventId)).ToArray(),sequences[g.Key].Ended)).ToArray();
+        complete=JoinPassages(ordered,complete,auxiliaries);
         return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,[..complete,..auxiliaries,..environmental.Sequences])
             {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame,ReplacedSequenceIds=replacedContinuations.ToArray()};
     }
+    // Keep physical series independent. Playback confirms the optional second
+    // clause before retiring its own trigger; queueing the first clause is not enough.
+    private static SpeechSequence[] JoinPassages(IReadOnlyList<ActionPlan> ordered,
+        IReadOnlyList<SpeechSequence> sequences,IReadOnlyList<SpeechSequence> auxiliaries)
+    {
+        var passages=auxiliaries.Where(s=>!s.Ended).SelectMany(s=>s.Triggers
+            .Where(t=>t.Kind==SpeechTriggerKind.ActionAssist&&t.Window is not null&&!t.Silent)
+            .Select(t=>(Sequence:s,Trigger:t,Event:s.Events.First(e=>e.Id==t.EventId))))
+            .OrderBy(p=>p.Event.AlongMeters).ToArray();
+        return sequences.Select(s=>s.MapTriggers(t=>
+        {
+            if(t.Kind!=SpeechTriggerKind.Execution)return t;
+            var state=ordered.FirstOrDefault(p=>p.Id==t.EventId);
+            if(state is null||state.Maneuver.ExecutionOnly||state.Maneuver.Kind==ManeuverKind.EnterRoundabout
+                ||state.Maneuver.AnnouncementMode!=NavigationAnnouncementMode.Normal)return t;
+            double nextAction=ordered.Where(p=>p.Along>state.Along&&IsNavigationAction(p.Maneuver))
+                .Select(p=>p.Along).DefaultIfEmpty(double.PositiveInfinity).Min();
+            var following=passages.FirstOrDefault(p=>p.Event.AlongMeters>state.Along
+                &&p.Event.AlongMeters<nextAction&&p.Event.AlongMeters-state.Along<100);
+            if(following.Event is null)return t;
+            string alone=NavigationPrompts.Execute(state.Maneuver.Kind,state.Maneuver.ExecutionInstruction??Instruction(state.Maneuver,0));
+            return t with{Text=NavigationPrompts.Then(alone,ManeuverKind.Straight,
+                following.Event.AlongMeters-state.Along,following.Trigger.Text.TrimEnd('\u3002')),
+                FollowOn=new(following.Event.Id,following.Sequence.Id,following.Trigger.Id,alone)};
+        })).ToArray();
+    }
+
     /// <summary>Ordinary decisions share one chain; environment and proven main-road continuations do not block it.</summary>
     public static bool IsNavigationAction(NavigationManeuver m)=>m.Kind!=ManeuverKind.Straight&&m.AnnouncementMode==NavigationAnnouncementMode.Normal&&!m.IsMainRoadContinuation;
     // Actual junction passages remain useful before non-junction destinations;

@@ -35,11 +35,15 @@ public sealed record SpeechTriggerWindow
     }
 }
 
+/// <summary>A separate cue included in a longer sentence; covered only after that sentence actually plays.</summary>
+public sealed record SpeechFollowOn(string EventId,string SequenceId,string TriggerId,string StandaloneText);
+
 /// <summary>A concrete location before an event, independently of its cached audio.</summary>
 public sealed record SpeechTrigger(string Id,string EventId,SpeechTriggerKind Kind,
     double AlongMeters,string Text)
 {
     public SpeechTriggerWindow? Window { get; init; }
+    public SpeechFollowOn? FollowOn {get;init;}
     public int Priority { get; init; } = 10;
     public double SequenceOrder { get; init; }
     public bool Enabled { get; init; } = true;

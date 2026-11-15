@@ -22,7 +22,7 @@ public sealed class StructuralStraightGuidanceTests
         Assert.Contains(plan.Events,e=>e.Id.StartsWith("straight@"));
         Assert.DoesNotContain(plan.Triggers,t=>t.EventId.StartsWith("straight@"));
         Assert.Equal(130,Assert.Single(plan.Triggers,t=>t.Id.StartsWith("last@")&&t.Kind==SpeechTriggerKind.Overview).AlongMeters);
-        Assert.Equal("左转，然后八十米左转。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("first@")&&t.Kind==SpeechTriggerKind.Execution).Text);
+        Assert.Equal("左转，然后五十米直行通过当前路口。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("first@")&&t.Kind==SpeechTriggerKind.Execution).Text);
     }
     [Fact]
     public void OrdinaryCountsAtTwoHundredAndExcludesMinorAndTargetDuplicatePorts()

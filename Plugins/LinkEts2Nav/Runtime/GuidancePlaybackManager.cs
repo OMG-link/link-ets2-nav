@@ -12,6 +12,7 @@ public sealed record QueuedGuidanceSpeech(string Source,string EventId,string Tr
     double SequenceOrder,int Priority,string Text)
 {
     public string? SpeechSequenceId { get; init; }
+    public SpeechFollowOn? FollowOn {get;init;}
     public bool IsNotification { get; init; }
     public bool AllowsStalePosition {get;init;}
     public string? Stage {get;init;}
@@ -19,13 +20,14 @@ public sealed record QueuedGuidanceSpeech(string Source,string EventId,string Tr
     public string SequenceId => SpeechSequenceId ?? EventId;
     public static QueuedGuidanceSpeech From(GuidanceTriggerResult result)
         =>new(result.Source,result.Event.Id,result.Trigger.Id,result.Trigger.SequenceOrder,result.Trigger.Priority,result.Trigger.Text)
-            {SpeechSequenceId=result.Event.SequenceId,Stage=result.Trigger.Kind.ToString(),EventDescription=result.Event.Description};
+            {SpeechSequenceId=result.Event.SequenceId,Stage=result.Trigger.Kind.ToString(),EventDescription=result.Event.Description,FollowOn=result.Trigger.FollowOn};
 }
 
 /// <summary>Owns pending playback, priority and same-event replacement. Preparation never plays.</summary>
 public sealed class GuidancePlaybackManager:IAsyncDisposable
 {
     private readonly object gate=new();
+    private readonly SpeechPlaybackCoverage coverage=new();
     private readonly Dictionary<(string,string),(QueuedGuidanceSpeech Speech,long Order)> pending=[];
     private readonly Dictionary<(string,string),QueuedGuidanceSpeech> latest=[];
     private readonly Channel<bool> changed=Channel.CreateBounded<bool>(new BoundedChannelOptions(1){FullMode=BoundedChannelFullMode.DropWrite,SingleReader=true});
@@ -64,12 +66,12 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
             {
                 if(result.Disposition==TriggerDisposition.Ended)
                 {
+                    coverage.End(result.Source,result.Event.SequenceId);
                     var key=(result.Source,result.Event.SequenceId);
                     if(pending.Remove(key,out var removed))usage?.Withdrawn(removed.Speech.Text);latest.Remove(key);
                 }
                 else if(result.Disposition==TriggerDisposition.Queued)
                 {
-                    var t=result.Trigger;
                     EnqueueLocked(QueuedGuidanceSpeech.From(result));
                 }
             }
@@ -90,7 +92,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
     }
     private void EnqueueLocked(QueuedGuidanceSpeech speech)
     {
-        if(stop.IsCancellationRequested||speech.Text.Length==0)return;
+        if(stop.IsCancellationRequested||speech.Text.Length==0||coverage.IsFinished(speech)||coverage.IsSpoken(speech.Source,speech.TriggerId))return;
         var key=(speech.Source,speech.SequenceId);
         if(latest.TryGetValue(key,out var previous)&&speech.SequenceOrder<previous.SequenceOrder)return;
         if(pending.TryGetValue(key,out var existing)&&existing.Speech.TriggerId==speech.TriggerId)
@@ -108,14 +110,14 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
     {
         lock(gate)
         {
-            var texts=triggers.ToDictionary(t=>t.Id,t=>t.Text,StringComparer.Ordinal);
+            var texts=triggers.ToDictionary(t=>t.Id,StringComparer.Ordinal);
             foreach(var key in pending.Keys.Where(k=>k.Item1==source).ToArray())
             {
                 var item=pending[key];
-                if(texts.TryGetValue(item.Speech.TriggerId,out var text)&&text.Length>0)
+                if(texts.TryGetValue(item.Speech.TriggerId,out var point)&&point.Text.Length>0)
                 {
-                    if(item.Speech.Text!=text)usage?.Reworded(text);
-                    pending[key]=(item.Speech with{Text=text},item.Order);
+                    if(item.Speech.Text!=point.Text)usage?.Reworded(point.Text);
+                    pending[key]=(item.Speech with{Text=point.Text,FollowOn=point.FollowOn},item.Order);
                 }
             }
         }
@@ -127,6 +129,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         var ids=eventIds.ToHashSet(StringComparer.Ordinal);
         lock(gate)
         {
+            coverage.Withdraw(source,ids);
             foreach(var key in pending.Where(p=>p.Key.Item1==source&&ids.Contains(p.Value.Speech.EventId)).Select(p=>p.Key).ToArray())
             {usage?.Withdrawn(pending[key].Speech.Text);pending.Remove(key);}
             foreach(var key in latest.Where(p=>p.Key.Item1==source&&ids.Contains(p.Value.EventId)).Select(p=>p.Key).ToArray())latest.Remove(key);
@@ -135,10 +138,15 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
     }
     public void Reset()
     {
-        lock(gate){foreach(var item in pending.Values)usage?.Withdrawn(item.Speech.Text);pending.Clear();latest.Clear();generation++;updateHeld=false;}
+        lock(gate){foreach(var item in pending.Values)usage?.Withdrawn(item.Speech.Text);pending.Clear();latest.Clear();coverage.Reset();generation++;updateHeld=false;}
         PreparePending();Wake();
     }
-    private void PreparePending()=>cache?.UpdatePlan("guidance-playback",Pending.Select(p=>p.Text).ToArray(),-10);
+    private void PreparePending()
+    {
+        string[] texts;
+        lock(gate)texts=pending.Values.Select(p=>coverage.Resolve(p.Speech).Text).ToArray();
+        cache?.UpdatePlan("guidance-playback",texts,-10);
+    }
     private void Wake()=>changed.Writer.TryWrite(true);
     private async Task RunAsync()
     {
@@ -156,16 +164,17 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                         foreach(var item in pending.Values.Where(p=>(active||positionIndependentPlayback&&p.Speech.IsNotification&&p.Speech.AllowsStalePosition)
                             &&(!updateHeld||p.Speech.IsNotification)).OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order))
                         {
+                            var speech=coverage.Resolve(item.Speech);
                             string? file=null;var origin=SpeechPlaybackOrigin.Fallback;
-                            if(cache?.TryGetAudio(item.Speech.Text,out var ready,out bool exact)==true)
+                            if(cache?.TryGetAudio(speech.Text,out var ready,out bool exact)==true)
                             {file=ready;origin=exact?SpeechPlaybackOrigin.ExactPack:SpeechPlaybackOrigin.Prepared;}
-                            else if(cache is null||cache.HasFailed(item.Speech.Text))
+                            else if(cache is null||cache.HasFailed(speech.Text))
                             {
                                 try{file=fallback();}
                                 catch(Exception ex){log("回退音频配置不可用，保留待播项："+ex.Message);}
                             }
                             if(file is null)continue;
-                            next=(item.Speech,generation,file,origin);break;
+                            next=(speech,generation,file,origin);break;
                         }
                         if(next is {} selected)pending.Remove((selected.Speech.Source,selected.Speech.SequenceId));
                     }
@@ -177,7 +186,22 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                         await player.PlayAsync(job.File,stop.Token).ConfigureAwait(false);
                         completed=true;
                         usage?.Played(job.Speech.Text,job.Origin);
-                        bool current;lock(gate)current=job.Generation==generation;
+                        bool current;
+                        lock(gate)
+                        {
+                            current=job.Generation==generation;
+                            if(current&&job.Origin!=SpeechPlaybackOrigin.Fallback)
+                            {
+                                // Confirm and remove under the selection gate, before the worker can start another cue.
+                                coverage.Confirm(job.Speech);
+                                if(job.Speech.FollowOn is {} follow)
+                                {
+                                    var key=(job.Speech.Source,follow.SequenceId);
+                                    if(pending.TryGetValue(key,out var covered)&&covered.Speech.TriggerId==follow.TriggerId)
+                                    {pending.Remove(key);usage?.Withdrawn(covered.Speech.Text);}
+                                }
+                            }
+                        }
                         if(current)
                         {
                             log("语音播放完成："+job.Speech.Text+" 事件="+job.Speech.EventId);

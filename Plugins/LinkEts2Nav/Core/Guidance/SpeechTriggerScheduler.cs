@@ -27,7 +27,8 @@ public sealed class SpeechTriggerScheduler
             .Where(t=>!t.Silent&&!IsConsumed(p.Source,t.Id)&&t.Text.Length>0)
             .Select(t=>(Trigger:t,Distance:(t.Window?.StartAlongMeters??t.AlongMeters)-p.PlayerAlongMeters)))
             .OrderBy(t=>t.Distance).ThenBy(t=>t.Trigger.Priority)
-            .Select(t=>t.Trigger.Text).Distinct(StringComparer.Ordinal).ToArray();
+            .SelectMany(t=>t.Trigger.FollowOn is {} follow?new[]{t.Trigger.Text,follow.StandaloneText}:new[]{t.Trigger.Text})
+            .Distinct(StringComparer.Ordinal).ToArray();
     }
 
     public IReadOnlyList<GuidanceTriggerResult> Update(GuidanceTimeline timeline,DateTimeOffset now,

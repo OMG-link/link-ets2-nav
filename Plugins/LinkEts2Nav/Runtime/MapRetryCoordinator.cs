@@ -28,6 +28,7 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     private readonly Task demandWorker;
     private MapRetryContext? current;private long subscriber,epoch,scopeRevision;private bool disposed;
     public long ScopeRevision {get{lock(gate)return scopeRevision;}}
+    public long Generation {get{lock(gate)return epoch;}}
     public MapRetryCoordinator(Action<IReadOnlyList<SectorCoordinate>> request,Action<string>? log=null)
     {this.request=request;this.log=log;worker=Task.Run(WorkAsync);demandWorker=Task.Run(PublishDemandsAsync);}
     private bool Local(MissingMapSectors missing)=>current?.Snapshot.Coverage is {} coverage
@@ -105,15 +106,19 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     }
     /// <summary>Only call after a successful full derived snapshot became visible to consumers.</summary>
     public void Publish(NearbyMapSnapshot snapshot,long revision)
+        =>Publish(snapshot,revision,Generation);
+    /// <summary>Reject an in-flight load if its resource/session generation was reset before publication.</summary>
+    public bool Publish(NearbyMapSnapshot snapshot,long revision,long expectedGeneration)
     {
         CancellationTokenSource[] cancel;
         lock(gate)
         {
-            if(disposed)return;scopeRevision++;current=new(snapshot,revision);
+            if(disposed||epoch!=expectedGeneration)return false;scopeRevision++;current=new(snapshot,revision);
             cancel=entries.Values.Where(e=>e.Running).Select(e=>e.Cancellation).OfType<CancellationTokenSource>().ToArray();
             foreach(var entry in entries.Values.Where(e=>e.Running)){entry.Serial++;entry.Running=false;}
         }
         foreach(var c in cancel)SafeCancel(c);DemandChanged();wake.Writer.TryWrite(true);
+        return true;
     }
     private void DemandChanged()=>demandWake.Writer.TryWrite(true);
     private async Task PublishDemandsAsync()

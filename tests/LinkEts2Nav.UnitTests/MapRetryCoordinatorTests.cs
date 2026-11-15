@@ -159,5 +159,18 @@ public sealed class MapRetryCoordinatorTests
         finally{release.TrySetResult();await coordinator.DisposeAsync();}
         Assert.Empty(requests.Last());
     }
+    [Fact]
+    public async Task StaleLoadGenerationCannotPublishAfterReset()
+    {
+        await using var coordinator=new MapRetryCoordinator(_=>{});
+        long old=coordinator.Generation;
+        coordinator.Reset();long scope=coordinator.ScopeRevision;
+        Assert.False(coordinator.Publish(Snapshot(A),10,old));
+        Assert.Equal(scope,coordinator.ScopeRevision);
+        Assert.True(coordinator.Publish(Snapshot(A),11,coordinator.Generation));
+        using var handle=coordinator.Register("current-only",Missing(A),(c,t)=>ValueTask.FromResult(MapQueryResult<long>.Ready(c.Revision)));
+        await Wait(()=>handle.Capture().Result.IsSuccess);
+        Assert.Equal(11,handle.Capture().Result.Value);
+    }
 }
 

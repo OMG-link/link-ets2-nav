@@ -91,14 +91,8 @@ public static class AuxiliaryLaneGuidance
             }
             else if(sideEntry&&(terminal.Terminal.MainOnly||terminal.Terminal.Merges))
             {
-                // Navigation requires the main exit: the independently added side lane either merges physically
-                // or leads to a different road. The ordinary corridor permits the necessary planning transfer.
-                bool left=terminal.Terminal.NativeMoveLeft??!corridor.SideIsLeft.Value;
-                result.RemoveAll(a=>a.JunctionId==junction&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
-                result.Add(new("auxiliary-merge:"+corridor.Id+":"+terminal.Terminal.Edge.Id,left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,
-                    AuxiliaryLaneTiming.ActionPoint(interval),corridor.Origin.Id,terminal.Terminal.Edge.Id)
-                {JunctionId=junction,JunctionKind=NavigationJunctionKind.Ramp,EndDistanceMeters=end,
-                    HasSeparateApproachRoad=false,ApproachInterval=interval});
+                // Necessary transfers belong to the route's contraction view and shared origin classifier.
+                continue;
             }
             else if((mainEntry||sideEntry)&&existing is not null)
             {

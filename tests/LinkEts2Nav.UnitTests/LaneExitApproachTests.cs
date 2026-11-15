@@ -16,9 +16,12 @@ public sealed class LaneExitApproachTests
         var entering=kept with{Sections=[new(scene.Route[0].Id,side)]};
         var main=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,kept,index));
         Assert.Equal(ManeuverKind.Straight,main.Kind);Assert.Equal(NavigationAnnouncementMode.Silent,main.AnnouncementMode);
-        var merged=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,entering,index));
+        var baseActions=AuxiliaryLaneGuidance.Apply([action],route,entering,index);
+        var view=LaneContractionView.Build(route,index);
+        var merged=Assert.Single(LaneContractionGuidance.Apply(baseActions,view.Select([],entering)));
         Assert.Equal(ManeuverKind.MergeLeft,merged.Kind);
-        Assert.Equal(300,merged.EndDistanceMeters);Assert.Equal(100,merged.DistanceMeters);
+        Assert.Equal(NavigationAnnouncementMode.DistancePreview,merged.AnnouncementMode);
+        Assert.Equal(300,merged.EndDistanceMeters);Assert.Equal(300,merged.DistanceMeters);
         Assert.Same(index.Corridors,index.Corridors);
     }
 

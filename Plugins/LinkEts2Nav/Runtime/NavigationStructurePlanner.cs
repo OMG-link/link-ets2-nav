@@ -11,6 +11,7 @@ internal sealed record NavigationStructurePlan(IReadOnlyList<DirectedRoad> Route
 {
     public IReadOnlyList<NavigationManeuver> BaseActions {get;init;}=[];
     public AuxiliaryLaneIndex? Auxiliaries {get;init;}
+    public LaneContractionView? Contractions {get;init;}
     public IReadOnlyList<NavigationUnresolvedSpan> UnresolvedSpans {get;init;}=[];
     /// <summary>Past ambiguity does not erase a later confirmed stretch. Active or future ambiguity remains a boundary.</summary>
     public double ConfirmationEndAfter(double boundary)
@@ -60,7 +61,7 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
             }).OrderBy(m=>m.DistanceMeters).ToArray();
         }
         var plan=new NavigationStructurePlan(route,instructionRoute,upcoming,lanes,[],detector.ForkDiagnostics.ToArray(),confirmedUntil,
-            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming,Auxiliaries=auxiliaries,UnresolvedSpans=detector.UnresolvedSpans.ToArray()};
+            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming,Auxiliaries=auxiliaries,Contractions=LaneContractionView.Build(instructionRoute,auxiliaries),UnresolvedSpans=detector.UnresolvedSpans.ToArray()};
         return SelectLanes(plan,lanes,nearby,paths);
     }
 
@@ -70,34 +71,12 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
         IReadOnlyList<NavigationManeuver> upcoming=plan.Auxiliaries is {} auxiliaries
             ?AuxiliaryLaneGuidance.Apply(plan.BaseActions,plan.InstructionRoute,lanes,auxiliaries):plan.BaseActions;
         upcoming=SelectedStraightPassages(upcoming,plan.Route,lanes,nearby,paths.GetNavigationGraph());
-        var merges=mergeDetector.Find(plan.Route,paths.GetNavigationGraph(),lanes,0)
-            .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid))
-            .Select(m=>plan.Auxiliaries?.NativeMerge(m) is {} native?m with{Kind=LaneMergeKind.Ramp,
-                ParallelDistanceMeters=native.LengthMeters,Reason="已由加载地图中的原生辅助车道走廊证明完整区间"}:m).ToArray();
-        var issues=plan.Forks.ToList();
-        foreach(var merge in merges)
-        {
-            string group=$"prefab:{merge.PrefabUid:X16}";
-            // Ramp actions come exclusively from the immutable auxiliary-corridor index.
-            // The merge detector remains the source of ordinary lane-reduction environment events.
-            if(merge.Kind!=LaneMergeKind.LaneReduction)
-            {
-                if(merge.Kind==LaneMergeKind.Ramp&&plan.Auxiliaries?.NativeMerge(merge) is null
-                    &&!upcoming.Any(a=>a.JunctionId==group&&a.ApproachInterval is not null))
-                    issues.Add(new(group,merge.EndingEntryNode??0,0,"已见原生合流，但加载地图尚未证明完整辅助区间；不再从玩家路线/短距离几何猜测区间起点"));
-                continue;
-            }
-            if(merge.MoveLeft is null)continue;
-            var side=merge.MoveLeft==true?NavigationSide.Left:NavigationSide.Right;
-            string? selection=LaneInstructionFormatter.EdgeSelection(merge.ApproachLaneCount,side,merge.RecommendedLaneCount);
-            if(selection is null)continue;
-            double anchor=merge.DistanceMeters;
-            var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,anchor,"lane","lane")
-            { EndDistanceMeters=merge.EndDistanceMeters,JunctionKind=NavigationJunctionKind.Ramp,JunctionId="prefab:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
-                AnnouncementMode=NavigationAnnouncementMode.DistancePreview,
-                Instruction="车道合并，建议提前"+selection };
-            upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
-        }
+        var physical=mergeDetector.Find(plan.Route,paths.GetNavigationGraph(),lanes,0)
+            .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
+        var merges=plan.Contractions?.Select(physical,lanes)??physical;
+        upcoming=LaneContractionGuidance.Apply(upcoming,merges);
+        var issues=plan.Forks.Concat(merges.Where(m=>m.Kind==LaneMergeKind.Uncertain)
+            .Select(m=>new RoadForkDiagnostic($"prefab:{m.PrefabUid:X16}",m.EndingEntryNode??0,0,m.Reason))).ToList();
         return plan with{Actions=upcoming,Lanes=lanes,Merges=merges,Forks=issues.Distinct().ToArray()};
     }
 

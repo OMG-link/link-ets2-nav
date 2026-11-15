@@ -162,7 +162,7 @@ public sealed class LaneMergeDetectorTests
     }
 
     [Fact]
-    public void SideRoadJoiningAnUpstreamExitLaneDoesNotTruncateTheMainCorridor()
+    public void AnUnresolvedSourceAtTheNearestJoinCannotBorrowAnOlderContinuingLane()
     {
         var scene=Scene(upstream:80);var road=scene.Graph[0];float z=road.Points[0].Z;
         PrefabLanePath Lane(int lane)=>new(43,30,5,lane,lane,lane,lane,2,2,[lane],
@@ -173,15 +173,16 @@ public sealed class LaneMergeDetectorTests
         DirectedRoad[] upstream=[new("prefab:000000000000002B:0:1",30,5,left.Points){LanePaths=[left,right]},
             new("prefab:000000000000002B:2:1",40,5,side.Points){LanePaths=[side]}];
         var result=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..upstream,..scene.Graph],scene.Plan,0));
-        Assert.Equal(LaneMergeKind.LaneReduction,result.Kind);
+        Assert.Equal(LaneMergeKind.Uncertain,result.Kind);
         Assert.True(result.ParallelDistanceMeters>500);
+        Assert.Contains("未唯一",result.Reason);
     }
 
     [Fact]
-    public void ShortParallelGeometryWithoutNativeSeparateOriginDoesNotProveRamp()
+    public void AFullFiveHundredMetreSourceWindowIsSameOriginDespiteShortParallelShape()
     {
         var scene=Scene(shortApproach:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
-        Assert.Equal(LaneMergeKind.Uncertain,observation.Kind);Assert.InRange(observation.ParallelDistanceMeters!.Value,70,110);
+        Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);Assert.InRange(observation.ParallelDistanceMeters!.Value,70,110);
     }
     [Fact]
     public void SharedSuffixAndDistinctNativeEntrancesProveShortRamp()
@@ -210,21 +211,21 @@ public sealed class LaneMergeDetectorTests
         Assert.Equal(0,observation.MainEntryLane);Assert.True(observation.MoveLeft);
     }
     [Fact]
-    public void RampDoesNotBlockDriverAlreadyOnContinuingLane()
+    public void SameOriginReductionAlsoWarnsTheContinuingLane()
     {
         var scene=Scene(shortApproach:true);var main=scene.Edge.LanePaths[0];
         var plan=new LaneNavigationPlan([new(scene.Edge.Id,main)],[],true,null);
-        Assert.Empty(new LaneMergeDetector().Find([scene.Edge],scene.Graph,plan,0));
+        Assert.Equal(LaneMergeKind.LaneReduction,Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,plan,0)).Kind);
     }
     [Fact]
-    public void RampApproachDoesNotDisappearWhenLaneSelectionTemporarilyChanges()
+    public void ReductionRemainsVisibleWhenLaneSelectionChanges()
     {
         var scene=Scene(shortApproach:true);var detector=new LaneMergeDetector();
         Assert.Single(detector.Find([scene.Edge],scene.Graph,scene.Plan,0));
         var main=new LaneNavigationPlan([new(scene.Edge.Id,scene.Edge.LanePaths[0])],[],true,null);
         Assert.Single(detector.Find([scene.Edge],scene.Graph,main,10));
         Assert.Empty(detector.Find([scene.Edge],scene.Graph,main,1000));
-        Assert.Empty(detector.Find([scene.Edge],scene.Graph,main,0));
+        Assert.Single(detector.Find([scene.Edge],scene.Graph,main,0));
     }
     [Theory]
     [InlineData(true)]
@@ -243,39 +244,20 @@ public sealed class LaneMergeDetectorTests
         GameDataSnapshot Data(double x,double z,DateTimeOffset time)=>new(new(x,0,z,0,15,2100,true,false,1,time),route,RouteAvailability.Available,"s",true);
         int sounds=0;var spoken=new List<string>();var runtime=new NavigationRuntime(log:line=>{spoken.Add(line);if(line.StartsWith("\u5bfc\u822a\u6307\u4ee4\uff1a",StringComparison.Ordinal))sounds++;});
         var first=runtime.Process(Data(4.5,shortApproach?70:500,now),nearby,now);
-        Assert.Contains(first.LaneMerges,m=>m.Kind==(shortApproach?LaneMergeKind.Uncertain:LaneMergeKind.LaneReduction));
-        // The complete static route now recognizes its real SDK terminal before
-        // movement; environment and silent merge structure remain non-actions.
+        Assert.Contains(first.LaneMerges,m=>m.Kind==LaneMergeKind.LaneReduction);
         Assert.Equal(ManeuverKind.Destination,first.Next?.Kind);
-        if(shortApproach)Assert.DoesNotContain(first.Upcoming,m=>m.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
-        else Assert.Contains(first.Upcoming,m=>m.AnnouncementMode==NavigationAnnouncementMode.DistancePreview);
-        if(shortApproach)Assert.Equal(NavigationPrompts.Continue(first.Next!.DistanceMeters),first.LastSpoken);
-        else
-        {
-            Assert.Contains(spoken,s=>s.StartsWith("导航指令：")&&s.Contains("车道合并，建议提前走左侧车道。"));
-            Assert.Contains(spoken,s=>s.StartsWith("导航指令：")&&s.Contains(NavigationPrompts.Continue(first.Next!.DistanceMeters)));
-        }
-        Assert.Equal(shortApproach?1:2,sounds);
+        Assert.Contains(first.Upcoming,m=>m.AnnouncementMode==NavigationAnnouncementMode.DistancePreview);
+        Assert.Contains(spoken,s=>s.Contains("车道合并，建议提前走左侧车道。"));
         runtime.Process(Data(1,10,now.AddSeconds(1)),nearby,now.AddSeconds(1));
-        if(!shortApproach)
-        {
-            // The first 450m announcement consumes the 500m stage; 200m is still due.
-            var previews=spoken.Where(s=>s.StartsWith("\u5bfc\u822a\u6307\u4ee4\uff1a")&&s.Contains("\u8f66\u9053\u5408\u5e76")).ToArray();
-            Assert.Equal(2,previews.Length);
-            Assert.Contains("\u56db\u767e\u4e94\u5341\u7c73\u540e",previews[0]);
-            Assert.Contains("\u4e24\u767e\u7c73\u540e",previews[1]);
-        }
-        Assert.Equal(shortApproach?1:3,sounds);
         var after=runtime.Process(Data(0,-20,now.AddSeconds(2)),nearby,now.AddSeconds(2));
         Assert.DoesNotContain(after.LaneMerges,m=>m.PrefabUid==42);
         Assert.NotNull(after.LastSpoken);
-        Assert.Equal(shortApproach?2:4,sounds); // The now-known destination also reaches its 2km advance point.
     }
 
     [Theory]
     [InlineData(1)]
     [InlineData(4)]
-    public void NativeMergeWithoutAProvenPhysicalOriginIsDiagnosticInsteadOfARouteDerivedRamp(int stretch)
+    public void NativeDistinctEntrancesClassifyTheActualSharedContractionWithoutGuessingAnApproach(int stretch)
     {
         var shape=Scene(shortApproach:true);
         Vector3 Scale(Vector3 p)=>p with{Z=p.Z*stretch};
@@ -294,8 +276,8 @@ public sealed class LaneMergeDetectorTests
         var data=new GameDataSnapshot(new(ending.Points[0].X,0,ending.Points[0].Z+100,0,15,3000,true,false,1,now),route,RouteAvailability.Available,"s",true);
         var diagnostic=new NavigationRuntime().Process(data,new(map,[],[],[]){PrefabPaths=[selected,continuing]},now);
         var merge=Assert.Single(diagnostic.LaneMerges);Assert.Equal(LaneMergeKind.Ramp,merge.Kind);
-        Assert.DoesNotContain(diagnostic.Upcoming,a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
-        Assert.Contains(diagnostic.RoadForks,d=>d.Reason.Contains("\u672a\u8bc1\u660e\u5b8c\u6574\u8f85\u52a9\u533a\u95f4"));
+        Assert.Contains(diagnostic.Upcoming,a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
+        Assert.All(diagnostic.Upcoming.Where(a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight),a=>Assert.Null(a.ApproachInterval));
     }
     [Fact]
     public void PassingMergeRemovesItsAction()

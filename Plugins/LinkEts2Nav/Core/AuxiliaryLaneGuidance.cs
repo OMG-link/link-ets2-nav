@@ -64,6 +64,20 @@ public static class AuxiliaryLaneGuidance
                 }
             }
             var existing=result.FirstOrDefault(a=>a.JunctionId==junction&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
+            // A short auxiliary corridor can end in a genuine lane-group fork.
+            // Its history changes where to prepare, not which inherited outlet
+            // the driver must choose. A necessary transfer off the side lane is
+            // still handled by the merge case below.
+            bool inheritedChoice=existing is {Kind:ManeuverKind.ChooseLanes,ForkInstruction.Kind:ManeuverKind.ChooseLanes}
+                &&terminal.Terminal.Edge.ForkInfo?.Branches.Count(b=>b.HasInheritedLane)>1;
+            if(inheritedChoice&&(terminal.Terminal.SideOnly||mainEntry))
+            {
+                result.Remove(existing!);result.Add(existing! with
+                {
+                    DistanceMeters=AuxiliaryLaneTiming.ActionPoint(interval),EndDistanceMeters=end,ApproachInterval=interval
+                });
+                continue;
+            }
             if(terminal.Terminal.SideOnly)
             {
                 var signal=terminal.Terminal.Edge.ForkInfo?.Branches.FirstOrDefault(b=>b.ExitNode==terminal.Terminal.Edge.EndNodeUid)?.Signal;

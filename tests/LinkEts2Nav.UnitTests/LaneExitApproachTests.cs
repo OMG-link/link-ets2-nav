@@ -144,7 +144,7 @@ public sealed class LaneExitApproachTests
     }
 
     [Fact]
-    public void ProvenDecelerationLaneLeavesOriginalUnlitMainGroupSilent()
+    public void ProvenDecelerationLanePreservesTheInheritedMainLaneChoice()
     {
         var s=Scene();
         var info=new RoadForkInfo(20,3,[new(21,ForkSignal.None,[2],[2],[],true),new(22,ForkSignal.None,[0,1],[0,1],[],true)]);
@@ -154,8 +154,9 @@ public sealed class LaneExitApproachTests
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph([s.Route[0],s.Route[1],main,side]),TestContext.Current.CancellationToken);
         var lanes=new LaneNavigationPlan([new(s.Route[0].Id,s.Route[0].LanePaths.Single(p=>p.ExitLane==1))],[],true,null);
         var result=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,lanes,index));
-        Assert.Equal(ManeuverKind.Straight,result.Kind);Assert.True(result.IsMainRoadContinuation);
-        Assert.True(result.ForkInstruction!.Silent);Assert.Equal(NavigationAnnouncementMode.Silent,result.AnnouncementMode);
+        Assert.Equal(ManeuverKind.ChooseLanes,result.Kind);Assert.False(result.IsMainRoadContinuation);
+        Assert.False(result.ForkInstruction!.Silent);Assert.Equal(NavigationAnnouncementMode.Normal,result.AnnouncementMode);
+        Assert.Equal(action.Instruction,result.Instruction);Assert.NotNull(result.ApproachInterval);
     }
 
     [Theory]

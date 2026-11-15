@@ -40,6 +40,14 @@ public sealed class WarningPipeline(IWarningPlanner? planner = null,GuidanceCoor
         foreach (var camera in nearby.Cameras)
         {
             double directDistance = Vector3.Distance(position, camera.MonitoredPosition);
+            if (camera.NonEnforcing)
+            {
+                diagnostics.Add(new(camera.Id, camera.Hookup, directDistance, false,
+                    "按匹配配置暂记不测速，不预警；依据：" + camera.NonEnforcingEvidence,
+                    SourceDescriptor: camera.SourceDescriptor, Variant: camera.ModelVariant,
+                    MetadataFingerprint: camera.MetadataFingerprint, SpeedLimitReason: "配置暂记不测速"));
+                continue;
+            }
             var candidate = new CameraCandidate(camera.Id, CameraApproach.Unknown, directDistance);
             if (!camera.DirectionVerified && camera.ActivePartVerified)
                 unknownCameras.Add(new(camera.Id, CameraApproach.UncalibratedNearby,
@@ -93,7 +101,9 @@ public sealed class WarningPipeline(IWarningPlanner? planner = null,GuidanceCoor
             lastWarning = $"{warning.CameraId} · {warning.StageDistanceMeters:F0} m 阶段 · 实距 {warning.DistanceMeters:F0} m · {warning.DistanceKind}";
         }
         }
-        string state = nearby.Cameras.Any(c => c.DirectionVerified)
+        string state = nearby.Cameras.Count > 0 && nearby.Cameras.All(c => c.NonEnforcing)
+            ? "附近探头识别运行中；当前目标均按配置暂记不测速，不播报预警。"
+            : nearby.Cameras.Any(c => c.DirectionVerified)
             ? "预警运行中；已校准目标按路线预警，未校准目标仅作500米接近提醒。"
             : "附近探头识别运行中；未校准目标仅作500米接近提醒。";
         if (nearby.Diagnostics.Count > 0) state += " " + nearby.Diagnostics[0];

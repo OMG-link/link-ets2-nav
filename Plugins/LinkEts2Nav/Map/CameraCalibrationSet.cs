@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace LinkEts2Nav.Map;
 
-/// <summary>Explicit evidence-backed local transforms; never stores world-space trigger points.</summary>
+/// <summary>Explicit local transforms or non-enforcing observations, bound to exact model metadata.</summary>
 public sealed class CameraCalibrationSet
 {
     private readonly Dictionary<(string Descriptor, string Hookup, string Locator, string Variant), Entry> entries;
@@ -52,13 +52,16 @@ public sealed class CameraCalibrationSet
         if (!camera.ActivePartVerified || !entries.TryGetValue((camera.SourceDescriptor, camera.Hookup,
                 camera.LocatorName, camera.ModelVariant), out var entry)
             || !StringComparer.OrdinalIgnoreCase.Equals(camera.MetadataFingerprint, entry.MetadataFingerprint))
-            return camera with { DirectionVerified = false };
-        var direction = Vector3.TransformNormal(Axis(entry.TravelAxis), camera.LocalToWorld);
-        var offset = Vector3.TransformNormal(new(entry.MonitoredOffset.X, entry.MonitoredOffset.Y, entry.MonitoredOffset.Z), camera.LocalToWorld);
+            return camera with { DirectionVerified = false, NonEnforcing = false, NonEnforcingEvidence = null };
+        if (entry.NonEnforcing)
+            return camera with { DirectionVerified = false, NonEnforcing = true, NonEnforcingEvidence = entry.Evidence };
+        var direction = Vector3.TransformNormal(Axis(entry.TravelAxis!), camera.LocalToWorld);
+        var offset = Vector3.TransformNormal(new(entry.MonitoredOffset!.X, entry.MonitoredOffset.Y, entry.MonitoredOffset.Z), camera.LocalToWorld);
         var position = camera.LocatorPosition + offset;
         if (!Finite(direction) || direction.LengthSquared() < 0.001f || !Finite(position))
-            return camera with { DirectionVerified = false };
-        return camera with { TravelDirection = Vector3.Normalize(direction), MonitoredPosition = position, DirectionVerified = true };
+            return camera with { DirectionVerified = false, NonEnforcing = false, NonEnforcingEvidence = null };
+        return camera with { TravelDirection = Vector3.Normalize(direction), MonitoredPosition = position,
+            DirectionVerified = true, NonEnforcing = false, NonEnforcingEvidence = null };
     }
 
     private static void Validate(Entry entry)
@@ -68,8 +71,16 @@ public sealed class CameraCalibrationSet
             || string.IsNullOrWhiteSpace(entry.Hookup) || string.IsNullOrWhiteSpace(entry.Locator)
             || string.IsNullOrWhiteSpace(entry.Variant) || string.IsNullOrWhiteSpace(entry.Evidence)
             || entry.Evidence.Length > 2048 || entry.MetadataFingerprint is null || entry.MetadataFingerprint.Length != 64
-            || !entry.MetadataFingerprint.All(Uri.IsHexDigit) || entry.MonitoredOffset is null)
-            throw new InvalidDataException("Calibration requires descriptor, hookup, locator, variant, SHA256 fingerprint, offset and evidence.");
+            || !entry.MetadataFingerprint.All(Uri.IsHexDigit))
+            throw new InvalidDataException("Calibration requires descriptor, hookup, locator, variant, SHA256 fingerprint and evidence.");
+        if (entry.NonEnforcing)
+        {
+            if (entry.TravelAxis is not null || entry.MonitoredOffset is not null)
+                throw new InvalidDataException("Non-enforcing observations do not define travelAxis or monitoredOffset.");
+            return;
+        }
+        if (entry.TravelAxis is null || entry.MonitoredOffset is null)
+            throw new InvalidDataException("An enforcing calibration requires travelAxis and monitoredOffset.");
         _ = Axis(entry.TravelAxis);
         if (!Finite(new(entry.MonitoredOffset.X, entry.MonitoredOffset.Y, entry.MonitoredOffset.Z)))
             throw new InvalidDataException("Camera calibration offsets must be finite.");
@@ -95,8 +106,9 @@ public sealed class CameraCalibrationSet
         public required string Locator { get; init; }
         public required string Variant { get; init; }
         public required string MetadataFingerprint { get; init; }
-        public required string TravelAxis { get; init; }
-        public required Offset MonitoredOffset { get; init; }
+        public bool NonEnforcing { get; init; }
+        public string? TravelAxis { get; init; }
+        public Offset? MonitoredOffset { get; init; }
         public required string Evidence { get; init; }
     }
     private sealed class Offset

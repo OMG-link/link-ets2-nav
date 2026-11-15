@@ -16,6 +16,8 @@ public sealed record CameraObservation(
     public string ModelVariant { get; init; } = "";
     public string MetadataFingerprint { get; init; } = "";
     public bool ActivePartVerified { get; init; }
+    public bool NonEnforcing { get; init; }
+    public string? NonEnforcingEvidence { get; init; }
     public Matrix4x4 LocalToWorld { get; init; } = Matrix4x4.Identity;
     public float MeasurementDistanceMeters { get; init; }
     public bool ReverseDirection { get; init; }

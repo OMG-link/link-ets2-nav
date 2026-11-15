@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "descriptor": "/model/speedcamera/speedcamera_hw_de.pmd",
+      "hookup": "speedcam.20",
+      "locator": "0",
+      "variant": "default",
+      "metadataFingerprint": "9BB5CD4475CF7701410CF608487BE4EE87D06572101452FE9B37A70C6C4E20CA",
+      "nonEnforcing": true,
+      "evidence": "ETS2 1.62; provisional user decision on 2026-11-15 after replay 2026-11-15-144103-111-edd16e79 and similar observations elsewhere in Germany. Instances 55ae453f4c870001:0 and 55ae45baee070000:0 produced no observed fine at about 99-100 km/h with SDK limit 80. The first passage did not establish entry into the monitoring area; neither instance proves the engine disables enforcement. Treat this exact model/variant/hookup/locator/fingerprint as non-enforcing by user policy, not as a verified game flag. Remove this entry to revoke the classification."
+    }
+  ]
+}

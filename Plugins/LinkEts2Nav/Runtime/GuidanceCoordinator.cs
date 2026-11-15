@@ -135,6 +135,15 @@ public sealed class GuidanceCoordinator
             input.RemoveAll(e=>e.Id==id);
             input.Add(new(id,CameraChain(passage.Kind,passage.CameraId),playerAlong,null,_=>"",Ended:true,PhysicalEnd:Boundary(passage.CameraId,passage.Kind)));
         }
+        // A live calibration change also cancels this camera's retained pending series.
+        // Keep its original boundary rather than inventing a physical passage.
+        foreach(var camera in observations?.Where(c=>c.NonEnforcing)??[])
+        foreach(var sequence in Timeline.Sources.FirstOrDefault(p=>p.Source=="landmarks")?.Sequences??[])
+        foreach(var entry in sequence.Events.Where(e=>e.Id.StartsWith("landmark:"+camera.Id+":",StringComparison.Ordinal)))
+        {
+            input.RemoveAll(e=>e.Id==entry.Id);
+            input.Add(new(entry.Id,entry.Description,entry.AlongMeters,null,_=>"",Ended:true,PhysicalEnd:sequence.End));
+        }
         if(environmentFrame!=frame){environment.Rebase(input);environmentFrame=frame;}
         if(WillReplaceSource("landmarks",snapshot.RouteRevision))
             environment.Reconcile(input.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,Scheduler,"landmarks");

@@ -24,13 +24,16 @@
 | `locator` | 探测工具输出的 `LocatorName`，不是地图条目 UID |
 | `variant` | 当前模型变体，必须和探测结果一致 |
 | `metadataFingerprint` | 探测工具输出的 64 位 SHA256 元数据指纹 |
-| `travelAxis` | 已验证的有效行驶方向，取 `+X`、`-X`、`+Z` 或 `-Z` |
-| `monitoredOffset` | 实际监测位置相对挂点的局部偏移，包含数值字段 `x`、`y`、`z`，单位米 |
+| `travelAxis` | 测速记录的已验证有效行驶方向，取 `+X`、`-X`、`+Z` 或 `-Z` |
+| `monitoredOffset` | 测速记录的实际监测位置相对挂点的局部偏移，包含数值字段 `x`、`y`、`z`，单位米 |
+| `nonEnforcing` | 可选，默认 `false`；设为 `true` 时将精确匹配的挂点按配置记为不测速，并省略 `travelAxis` 和 `monitoredOffset` |
 | `evidence` | 标定依据，包括游戏版本、验证场景和结果 |
 
 `travelAxis` 指最终测速方向，不是镜头朝向；对于带反向参数的挂点也必须填写实际验证过的方向，配置应用时不会再次反转。偏移在挂点局部坐标中定义，插件根据当前地图实例的位置、旋转和缩放实时转换，不随地图更新保留旧世界坐标。
 
 插件还会检查挂点所属模型部件在所选变体中是否有效。关闭测速挂点的变体不能通过普通校准记录重新启用。
+
+`nonEnforcing` 是可撤销的分类，不是把部件伪装为不可见，也不证明游戏内部存在禁用标记。仍需模型、挂点、编号、变体、有效部件和指纹全部匹配，并在 `evidence` 中写清分类依据。匹配后保留原始挂点与“不测速”原因供诊断和回放使用，不产生测速或未校准接近提醒；重新读取配置时取消该目标尚未播放的旧语音系列，已开始的音频允许播完。移除条目即可撤销分类，其他模型、挂点或资源版本不受影响。
 
 ## 验证步骤
 
@@ -71,5 +74,7 @@
 [ETS2 1.62 德国三车道龙门架测速模型配置](calibration-profiles/ets2-1.62-germany-gantry.json) 覆盖 3lane_speedlimit_100_no_overtaking_trucks_60_sc.pmd 的 default 变体及指定指纹。依据为一处顺向测速罚款和另一处相反朝向模型的无罚款通过样本。后者的轨迹未进入计算出的 8 米监测邻域，因此不能据此单独证明同一探头反向绝不测速；其他变体和指纹不自动启用。
 
 [ETS2 1.62 speed_camera_02_poc 模型配置](calibration-profiles/ets2-1.62-speed-camera-02-poc.json) 覆盖 `/model2/speedcamera/speed_camera_02_poc.pmd` 的 default 与 se 变体、0 号 speedcam.20 挂点，各自严格匹配独立的资源指纹。两个变体均有顺向测速罚款及轨迹支持局部 +Z 方向、-Z20 米监测点估计；偏移不是精确测量。se 变体的另一处相反朝向实例虽然近距离超速未罚，但距顺向罚款仅约 4.85 秒，可能受执法冷却影响，不能证明反向一定不测速。独立实例的反向样本均不等同于同一探头的双向验证，其它同类实例仍需实测。
+
+[ETS2 1.62 德国高速探头暂定不测速配置](calibration-profiles/ets2-1.62-germany-hw-non-enforcing.json) 覆盖 `/model/speedcamera/speedcamera_hw_de.pmd` 的 default 变体、0 号 speedcam.20 挂点及指定指纹。该分类来自用户对两处现场及其他德国路段的观察和明确决定；未罚款不构成游戏内部禁用测速的证明，因此保留为暂定、可撤销的模型级配置，不泛化到全德国或其他 speedcam.20 挂点。
 
 使用时将其中 entries 的记录合并到宿主 Settings/LinkEts2Nav.CameraCalibrations.json 的 entries 数组，保留已有其他模型记录。不要添加重复键。插件会自动重新读取配置，无需重启。该文件不会自动启用，也不为其他指纹或变体提供兜底。

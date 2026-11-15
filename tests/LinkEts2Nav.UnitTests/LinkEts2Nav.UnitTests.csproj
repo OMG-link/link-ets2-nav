@@ -21,6 +21,7 @@
     <EmbeddedResource Include="Fixtures/merge-blinker-facts.json" LogicalName="MergeBlinkerFacts.json" />
     <EmbeddedResource Include="../../docs/calibration-profiles/ets2-1.62-finland.json" LogicalName="FinlandCalibration.json" />
     <EmbeddedResource Include="../../docs/calibration-profiles/ets2-1.62-germany-gantry.json" LogicalName="GermanGantryCalibration.json" />
+    <EmbeddedResource Include="../../docs/calibration-profiles/ets2-1.62-germany-hw-non-enforcing.json" LogicalName="GermanHwNonEnforcing.json" />
     <EmbeddedResource Include="../../docs/calibration-profiles/ets2-1.62-speed-camera-02-poc.json" LogicalName="PocCameraCalibration.json" />
   </ItemGroup>
 </Project>

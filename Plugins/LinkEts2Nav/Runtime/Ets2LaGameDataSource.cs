@@ -9,6 +9,7 @@ public sealed class Ets2LaGameDataSource : IDisposable
 {
     public const string TelemetryTopic = "ETS2LA.Telemetry.Data";
     public const string NavigationTopic = "ETS2LA.Game.SDK.Navigation.Data";
+    public const string TrafficSignalTopic = "ETS2LA.Game.SDK.Semaphore.Data";
     private readonly IEventBus events;
     private readonly TimeProvider clock;
     private readonly object gate = new();
@@ -22,6 +23,21 @@ public sealed class Ets2LaGameDataSource : IDisposable
         events.Subscribe<GameTelemetryData>(TelemetryTopic, OnTelemetry);
         try { events.Subscribe<NavigationData>(NavigationTopic, OnNavigation); }
         catch { events.Unsubscribe<GameTelemetryData>(TelemetryTopic, OnTelemetry); throw; }
+        try { events.Subscribe<SemaphoreData>(TrafficSignalTopic, OnTrafficSignals); }
+        catch
+        {
+            events.Unsubscribe<NavigationData>(NavigationTopic, OnNavigation);
+            events.Unsubscribe<GameTelemetryData>(TelemetryTopic, OnTelemetry);throw;
+        }
+    }
+
+    private void OnTrafficSignals(SemaphoreData data)
+    {
+        lock(gate)
+        {
+            if(disposed)return;
+            Store.UpdateTrafficSignals(TrafficSignalAdapter.Copy(data.semaphores,clock.GetUtcNow()));
+        }
     }
 
     private void OnTelemetry(GameTelemetryData data)
@@ -60,5 +76,6 @@ public sealed class Ets2LaGameDataSource : IDisposable
         lock (gate) { if (disposed) return; disposed = true; }
         events.Unsubscribe<GameTelemetryData>(TelemetryTopic, OnTelemetry);
         events.Unsubscribe<NavigationData>(NavigationTopic, OnNavigation);
+        events.Unsubscribe<SemaphoreData>(TrafficSignalTopic, OnTrafficSignals);
     }
 }

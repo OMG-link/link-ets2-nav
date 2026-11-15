@@ -22,6 +22,7 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     public SpeedLimitData SpeedLimits { get; init; } = SpeedLimitData.Empty;
     public FerryJourneyIndex? Ferries {get;init;}
     public IReadOnlyList<FreeNavigationArea> FreeNavigationAreas { get; init; } = [];
+    public TrafficSignalMap TrafficSignals {get;init;}=TrafficSignalMap.Empty;
 }
 
 /// <summary>
@@ -36,6 +37,7 @@ public sealed class NearbyCameraScanner
     private IReadOnlyList<DirectedRoad> junctionGeometry = [];
     private AuxiliaryLaneIndex? auxiliaryLanes;
     private IReadOnlyList<FreeNavigationArea> freeNavigationAreas = [];
+    private TrafficSignalMap trafficSignals=TrafficSignalMap.Empty;
     private string[] junctionDiagnostics = [];
     private Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
     private ScsMap? map;
@@ -70,6 +72,7 @@ public sealed class NearbyCameraScanner
             companies=data.Companies.Build(nextMap);
             cancellationToken.ThrowIfCancellationRequested();
             var junctions = new List<DirectedRoad>();
+            var signalPrefabs=new List<(Prefab Prefab,TruckLib.Models.Ppd.PrefabDescriptor Descriptor)>();
             var areas = new List<FreeNavigationArea>();
             var issues = new List<string>();
             var nextGeometry = new Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)>();
@@ -92,6 +95,7 @@ public sealed class NearbyCameraScanner
                 try
                 {
                     var access=permissions[prefab.Uid];var key=(prefab.Uid,access.CacheKey);
+                    signalPrefabs.Add((prefab,access.Descriptor));
                     roundaboutIndex.AddPrefab(prefab,access.Descriptor,resource,access.CacheKey);
                     if(!geometryCache.TryGetValue(key,out var geometry))
                         geometry=(PrefabPathGeometry.Build(prefab,access.Descriptor),FreeNavigationArea.Build(prefab,source.Descriptor));
@@ -107,6 +111,7 @@ public sealed class NearbyCameraScanner
                     .SelectMany(r=>Enumerable.Range(0,Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)+1)
                         .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),speedReader!,cancellationToken);
             var builtLimits = ProjectedSignBuilder.Build(data.ReadSpeedLimits(nextMap,regionData,cancellationToken),junctions,cancellationToken);
+            trafficSignals=new(signalPrefabs.SelectMany(p=>TrafficSignalMap.Build(p.Prefab,p.Descriptor,data.TrafficSignals,builtLimits)));
             // One annotated geometry graph per map version, shared with navigation consumers.
             var navigation=new RoadPathSource(nextMap,junctions,playerAccess:speedReader.RoadPlayerAccess);
             var builtAuxiliary=AuxiliaryLaneIndex.Build(new NativeLaneGraph(navigation.GetNavigationGraph()),cancellationToken);
@@ -189,7 +194,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)

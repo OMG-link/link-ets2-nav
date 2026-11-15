@@ -67,6 +67,30 @@ public sealed class RuntimeSubscriptionTests
     }
 
     [Fact]
+    public void TrafficSignalsAreCopiedAndUnsubscribedWithTheSource()
+    {
+        var bus=new FakeBus();var source=new Ets2LaGameDataSource(bus,new FixedClock());
+        var signal=new ETS2LA.Game.SDK.Semaphore{type=SemaphoreType.TRAFFICLIGHT,position=new(10,0,20),
+            rotation=new(1,0,0,0),state=(int)SignalPhase.Red,time_remaining=3,id=7};
+        bus.Publish(Ets2LaGameDataSource.TrafficSignalTopic,new SemaphoreData{semaphores=[signal]});
+        signal.time_remaining=100;signal.position.X=200;
+        var copied=Assert.Single(source.Capture().TrafficSignals.Signals);
+        Assert.Equal(3,copied.PhaseRemaining);Assert.Equal(10,copied.Position.X);
+        Assert.Equal(System.Numerics.Quaternion.Identity,copied.Rotation);
+        source.Dispose();Assert.Equal(0,bus.SubscriptionCount);
+        bus.Publish(Ets2LaGameDataSource.TrafficSignalTopic,new SemaphoreData{semaphores=[]});
+        Assert.Single(source.Capture().TrafficSignals.Signals);
+    }
+
+    [Fact]
+    public void AThirdSubscriptionFailureRollsBackBothEarlierSubscriptions()
+    {
+        var bus=new FakeBus{RejectSignals=true};
+        Assert.Throws<InvalidOperationException>(()=>new Ets2LaGameDataSource(bus));
+        Assert.Equal(0,bus.SubscriptionCount);
+    }
+
+    [Fact]
     public void AnnouncerDoesNotInitializePlaybackUntilWarning()
     {
         int plays = 0;
@@ -85,11 +109,14 @@ public sealed class RuntimeSubscriptionTests
     {
         private readonly Dictionary<string, List<Delegate>> handlers = new();
         public bool RejectNavigation { get; init; }
+        public bool RejectSignals {get;init;}
         public int SubscriptionCount => handlers.Values.Sum(x => x.Count);
         public void Subscribe<T>(string topic, Action<T> handler)
         {
             if (RejectNavigation && topic == Ets2LaGameDataSource.NavigationTopic)
                 throw new InvalidOperationException("Test subscription failure");
+            if(RejectSignals&&topic==Ets2LaGameDataSource.TrafficSignalTopic)
+                throw new InvalidOperationException("Test signal subscription failure");
             if (!handlers.TryGetValue(topic, out var list)) handlers[topic] = list = new();
             list.Add(handler);
         }

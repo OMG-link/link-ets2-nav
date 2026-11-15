@@ -69,6 +69,7 @@ public sealed record GameDataSnapshot(VehicleSnapshot? Vehicle, RouteSnapshot Ro
     public FerryUseObservation? FerryUse {get;init;}
     public VerifiedFerryArrival? FerryArrival {get;init;}
     public bool IsTransportPending {get;init;}
+    public TrafficSignalSnapshot TrafficSignals {get;init;}=TrafficSignalSnapshot.Empty;
 
     /// <summary>Paused fresh placement can warm read-only map data, but never authorizes a warning.</summary>
     public bool CanPrepareMap(DateTimeOffset now) => !IsTransportPending && Vehicle is { SdkActive: true, IsFinite: true } pose
@@ -81,6 +82,8 @@ public sealed class GameSnapshotStore
 {
     private readonly object gate = new();
     private VehicleSnapshot? vehicle;
+    private TrafficSignalSnapshot trafficSignals=TrafficSignalSnapshot.Empty;
+    public void UpdateTrafficSignals(TrafficSignalSnapshot value){lock(gate)trafficSignals=value;}
     private DateTimeOffset lastVehicleProgress;
     private readonly PositionSignalTracker positionSignal=new();
     private readonly FineObservationTracker fines = new();
@@ -213,7 +216,7 @@ public sealed class GameSnapshotStore
             }
             return new(vehicle, route, availability, $"{instanceId}:{session}", usable,
                 fines.Latest, fines.LatestCamera, fines.GetHistory(), fines.DroppedCount)
-                {PositionSignal=positionSignal.Capture(now),FerryUse=ferryEvents.Latest,FerryArrival=ferryArrival,IsTransportPending=pendingFerry is not null};
+                {PositionSignal=positionSignal.Capture(now),FerryUse=ferryEvents.Latest,FerryArrival=ferryArrival,IsTransportPending=pendingFerry is not null,TrafficSignals=trafficSignals};
         }
     }
 

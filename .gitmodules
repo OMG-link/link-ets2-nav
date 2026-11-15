@@ -1,3 +1,9 @@
 [submodule "ETS2LA"]
 	path = ETS2LA
 	url = https://github.com/ETS2LA/ETS2LA.git
+[submodule "dev-host/TruckLib.Sii"]
+	path = dev-host/TruckLib.Sii
+	url = https://github.com/OMG-link/TruckLib.Sii.git
+[submodule "dev-host/TruckLib.HashFs"]
+	path = dev-host/TruckLib.HashFs
+	url = https://github.com/OMG-link/TruckLib.HashFs.git

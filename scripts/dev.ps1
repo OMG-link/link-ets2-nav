@@ -55,7 +55,9 @@ try {
         $sdkList | ForEach-Object { Write-Host $_ }
         if (-not ($sdkList | Where-Object { $_ -match '^10\.\d+\.\d+\s' })) { $missing += '.NET 10 SDK' }
     }
-    foreach ($required in @($hostProject, (Join-Path $frameworkRoot 'TruckLib\TruckLib\TruckLib.csproj'))) {
+    foreach ($required in @($hostProject, (Join-Path $frameworkRoot 'TruckLib\TruckLib\TruckLib.csproj'),
+        (Join-Path $projectRoot 'dev-host\TruckLib.Sii\TruckLib.Sii\TruckLib.Sii.csproj'),
+        (Join-Path $projectRoot 'dev-host\TruckLib.HashFs\TruckLib.HashFs\TruckLib.HashFs.csproj'))) {
         if (-not (Test-Path -LiteralPath $required)) { $missing += "Submodule file: $required" }
     }
     if ($missing.Count -gt 0) {

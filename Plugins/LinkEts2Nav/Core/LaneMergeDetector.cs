@@ -35,6 +35,9 @@ public sealed class LaneMergeDetector
             foreach(var m in models.Where(m=>edge.LanePaths.Any(p=>p.PrefabUid==m.Ending.PrefabUid
                 &&(p.EntryNodeUid==m.Ending.EntryNodeUid||p.EntryNodeUid==m.Main.EntryNodeUid)&&p.ExitNodeUid==m.Ending.ExitNodeUid)))
             {
+                if(m.Kind==LaneMergeKind.LaneReduction&&(selected is null
+                    ||selected.EntryNodeUid!=m.Origin.ApplicableEntryNode
+                    ||!m.Origin.ApplicableEntryLanes.Contains(selected.EntryLane)))continue;
                 bool usesEnding=selected is not null&&selected.EntryNodeUid==m.Ending.EntryNodeUid
                     &&selected.EntryLane==m.Ending.EntryLane&&selected.ExitNodeUid==m.Ending.ExitNodeUid;
                 string id=$"lane-merge:{m.Ending.PrefabUid:X16}:{m.Ending.CurveIndices[^1]}:{m.Ending.EntryNodeUid:X16}:{m.Ending.EntryLane}";

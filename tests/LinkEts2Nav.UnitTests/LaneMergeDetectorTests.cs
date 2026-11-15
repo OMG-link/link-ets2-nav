@@ -217,6 +217,39 @@ public sealed class LaneMergeDetectorTests
         var plan=new LaneNavigationPlan([new(scene.Edge.Id,main)],[],true,null);
         Assert.Equal(LaneMergeKind.LaneReduction,Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,plan,0)).Kind);
     }
+
+    [Theory]
+    [InlineData(2,false,0,false,false)][InlineData(2,false,1,false,false)][InlineData(2,false,2,true,false)][InlineData(2,false,3,true,false)]
+    [InlineData(2,true,0,false,false)][InlineData(2,true,1,false,false)][InlineData(2,true,2,true,false)][InlineData(2,true,3,true,false)]
+    [InlineData(3,false,0,false,false)][InlineData(3,false,1,true,false)][InlineData(3,false,2,true,false)][InlineData(3,false,3,true,false)]
+    [InlineData(2,false,0,false,true)][InlineData(2,false,1,false,true)][InlineData(2,false,2,true,true)][InlineData(2,false,3,true,true)]
+    public void ReductionOnlyWarnsTheNativeSourceApproachGroupNotOtherLanesAtTheSameInput(int sourceCount,bool left,int selectedLane,bool expected,bool reverseIds)
+    {
+        var shape=Scene(left:left,upstream:80);var inputRoad=shape.Graph[0];
+        var continuing=shape.Edge.LanePaths[0] with{EntryLane=left?3:2,EntryOrder=left?3:2,EntryLaneCount=4,ExitLane=2,ExitOrder=2,ExitLaneCount=3};
+        var ending=shape.Edge.LanePaths[1] with{EntryLane=left?2:3,EntryOrder=left?2:3,EntryLaneCount=4,ExitLane=2,ExitOrder=2,ExitLaneCount=3};
+        PrefabLanePath Other(int lane)=>continuing with{EntryLane=lane,EntryOrder=lane,ExitLane=lane,ExitOrder=lane,CurveIndices=[20+lane]};
+        var edge=shape.Edge with{LanePaths=[Other(0),Other(1),continuing,ending]};
+        if(reverseIds)edge=edge with{LanePaths=[..edge.LanePaths.Select(p=>p with{EntryLane=3-p.EntryLane})]};
+        float sourceZ=inputRoad.Points[0].Z;
+        PrefabLanePath Source(ulong entrance,int input,int output)=>new(43,entrance,5,input,output,input,output,entrance==100?sourceCount:4-sourceCount,4,[100+output],
+            [new((output-2)*4.5f,0,sourceZ+20),new((output-2)*4.5f,0,sourceZ)],20);
+        var sourceA=new DirectedRoad("prefab:43:0:1",100,5,[new(0,0,sourceZ+20),new(0,0,sourceZ)])
+            {LanePaths=[..Enumerable.Range(0,sourceCount).Select(i=>Source(100,i,4-sourceCount+i))]};
+        var sourceB=sourceA with{Id="prefab:43:2:1",StartNodeUid=200,LanePaths=[..Enumerable.Range(0,4-sourceCount).Select(i=>Source(200,i,i))]};
+        var coveredA=new DirectedRoad("source-A-road",300,100,[new(0,0,sourceZ+670),new(0,0,sourceZ+20)]);
+        var coveredB=coveredA with{Id="source-B-road",StartNodeUid=400,EndNodeUid=200};
+        DirectedRoad[] graph=[coveredA,coveredB,sourceA,sourceB,inputRoad,edge];
+        var selected=edge.LanePaths.Single(p=>p.EntryOrder==selectedLane);
+        var observations=new LaneMergeDetector().Find([edge],graph,new([new(edge.Id,selected)],[],true,null),0);
+        Assert.Equal(expected,observations.Count==1);
+        if(expected)
+        {
+            var origin=Assert.Single(observations).Origin!;
+            Assert.Equal(LaneMergeKind.LaneReduction,origin.Kind);Assert.Equal(100UL,origin.SourceEntrance);
+            Assert.Equal(10UL,origin.ApplicableEntryNode);Assert.Equal(Enumerable.Range(4-sourceCount,sourceCount).Select(i=>reverseIds?3-i:i).Order(),origin.ApplicableEntryLanes);
+        }
+    }
     [Fact]
     public void ReductionRemainsVisibleWhenLaneSelectionChanges()
     {

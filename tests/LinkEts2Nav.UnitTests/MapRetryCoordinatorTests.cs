@@ -188,5 +188,22 @@ public sealed class MapRetryCoordinatorTests
         await Wait(()=>requests.Count>before&&requests.Last().Contains(B));
         Assert.DoesNotContain(A,requests.Last());
     }
+
+    [Fact]
+    public async Task DistantOwnerIsDiagnosedWithoutTruncatingALocalDependency()
+    {
+        var messages=new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var requested=new System.Collections.Concurrent.ConcurrentQueue<IReadOnlyList<TruckLib.ScsMap.SectorCoordinate>>();
+        await using var coordinator=new MapRetryCoordinator(sectors=>requested.Enqueue(sectors),messages.Enqueue);
+        var distant=new TruckLib.ScsMap.SectorCoordinate(5,0);
+        var map=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[])
+        {Coverage=MapScanCoverage.Create(System.Numerics.Vector3.Zero,1000,null,null,0)};
+        coordinator.Publish(map,1);
+        coordinator.Report(new MissingMapSectors([distant],"runtime native owner"){QueryAnchor=System.Numerics.Vector3.Zero});
+        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        while(!requested.Any(sectors=>sectors.Contains(distant)))await Task.Delay(5,timeout.Token);
+        Assert.Contains(messages,message=>message.Contains("exceeds 10km")&&message.Contains("not a measured geometry distance"));
+    }
 }
 

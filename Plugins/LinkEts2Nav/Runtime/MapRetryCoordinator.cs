@@ -48,7 +48,18 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
             if(reported.ContainsKey(identity)||Ready(missing))return;
             reported[identity]=missing;
         }
+        LogSpan(missing);
         DemandChanged();
+    }
+    private void LogSpan(MissingMapSectors missing)
+    {
+        if(log is null||missing.QueryAnchor is not {} anchor)return;
+        foreach(var sector in missing.Sectors)
+        {
+            double dx=(sector.X+.5)*TruckLib.ScsMap.Map.SectorSize-anchor.X,dz=(sector.Z+.5)*TruckLib.ScsMap.Map.SectorSize-anchor.Z;
+            double estimate=Math.Sqrt(dx*dx+dz*dz);
+            if(estimate>10000)log($"Map dependency sector-center estimate {estimate:F0}m exceeds 10km: query {anchor.X:F1},{anchor.Z:F1}, sector {sector.X},{sector.Z}; not a measured geometry distance. {missing.Reason}");
+        }
     }
     public MapRetryHandle<T> Register<T>(string key,MissingMapSectors missing,
         Func<MapRetryContext,CancellationToken,ValueTask<MapQueryResult<T>>> retry,CancellationToken cancellationToken=default)
@@ -71,7 +82,7 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
             id=++subscriber;entry.Subscribers.Add(id);
         }
         var handle=new MapRetryHandle<T>(()=>Capture<T>(entry,id),()=>Release(entry,id));
-        handle.CancelWith(cancellationToken);DemandChanged();wake.Writer.TryWrite(true);return handle;
+        handle.CancelWith(cancellationToken);LogSpan(missing);DemandChanged();wake.Writer.TryWrite(true);return handle;
     }
     private MapRetryStatus<T> Capture<T>(Entry entry,long id)
     {

@@ -39,6 +39,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     private readonly object gate = new();
     private readonly object lifecycleGate=new();
     private readonly MapRetryCoordinator retries;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string,byte> retryDiagnostics=new();
     public IMapRetryScheduler Retries=>retries;
     private MapScanRequest? latestRequest;
     private IReadOnlyList<TruckLib.ScsMap.SectorCoordinate> requiredSectors=[];
@@ -60,7 +61,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        retries=new MapRetryCoordinator(SetDependencies);
+        retries=new MapRetryCoordinator(SetDependencies,message=>retryDiagnostics.TryAdd(message,0));
         this.factory = factory ?? (request => new OfficialBackend(request, stop.Token));
         worker = Task.Run(WorkAsync);
     }
@@ -154,6 +155,9 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         }
     }
 
+    private NearbyMapSnapshot Decorate(NearbyMapSnapshot snapshot)=>snapshot with
+    {Retries=retries,Diagnostics=snapshot.Diagnostics.Concat(retryDiagnostics.Keys).Distinct().ToArray()};
+
     private void Publish(NearbyMapSnapshot snapshot,long revision,long expectedGeneration)
     {
         if(!retries.Publish(snapshot,revision,expectedGeneration))return;
@@ -194,7 +198,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                         lock (gate) needsNearby = state.Map is null && item.Request.Route is not null;
                         if (needsNearby)
                         {
-                            var nearby = readyBackend.Read(item.Request with { Route = null }, stop.Token) with {Retries=retries};
+                            var nearby = Decorate(readyBackend.Read(item.Request with { Route = null }, stop.Token));
                             long published=0;
                             lock (gate)
                                 if (item.Generation == generation && !stop.IsCancellationRequested)
@@ -202,7 +206,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                             if(published!=0)Publish(nearby,published,expectedRetryGeneration);
                             watch.Restart();
                         }
-                        completed = readyBackend.Read(item.Request, stop.Token) with {Retries=retries};
+                        completed = Decorate(readyBackend.Read(item.Request, stop.Token));
                     }
                     stop.Token.ThrowIfCancellationRequested();
                 }

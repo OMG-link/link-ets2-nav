@@ -1,5 +1,6 @@
 using System.Numerics;
 using LinkEts2Nav.Core;
+using LinkEts2Nav.Runtime;
 using System.Security.Cryptography;
 using System.Text;
 using TruckLib;
@@ -13,6 +14,11 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     IReadOnlyList<string> Diagnostics, IReadOnlyList<SectorCoordinate> Sectors)
 {
     public GameDataManager? Data {get;init;}
+    public IReadOnlyList<SectorCoordinate> ReadySectors {get;init;}=[];
+    public MapScanCoverage? Coverage {get;init;}
+    public Func<ulong,MapQueryIssue>? MissingConnection {get;init;}
+    public IMapRetryScheduler? Retries {get;init;}
+    public IReadOnlyList<MapQueryIssue> MapIssues {get;init;}=[];
     public IReadOnlyList<DirectedRoad> PrefabPaths { get; init; } = [];
     public AuxiliaryLaneIndex? AuxiliaryLanes {get;init;}
     public IReadOnlyList<RoundaboutStructure> Roundabouts { get; init; } = [];

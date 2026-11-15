@@ -148,7 +148,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
                 if(clip is null)return local(fallback);
                 names[name]=PcmAudio.Read(Resolve(clip,nameDirectory));
             }
-            var samples=parts.Select(p=>p.IsName?names[p.Text]:PcmAudio.Read(local(p.Text).Path)).ToArray();
+            var samples=parts.Select(p=>p.IsName?names[p.Text]:PcmAudio.Read(Generate(p.Text,local).Path)).ToArray();
             string key=Hash(Encoding.UTF8.GetBytes(identity+"|"+text+"|"+string.Join("|",samples.Select(Hash))));
             string result=Path.Combine(cacheDirectory,filePrefix+"-"+key+".wav");
             byte[] joined=samples.SelectMany(x=>x).ToArray();

@@ -1,0 +1,236 @@
+{
+  "Schema": 1,
+  "Items": [
+    {
+      "Text": "五十米后，进入",
+      "CarrierText": "五十米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 7
+    },
+    {
+      "Text": "一百米后，进入",
+      "CarrierText": "一百米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 7
+    },
+    {
+      "Text": "一百五十米后，进入",
+      "CarrierText": "一百五十米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 9
+    },
+    {
+      "Text": "两百米后，进入",
+      "CarrierText": "两百米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 7
+    },
+    {
+      "Text": "两百五十米后，进入",
+      "CarrierText": "两百五十米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 9
+    },
+    {
+      "Text": "三百米后，进入",
+      "CarrierText": "三百米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 7
+    },
+    {
+      "Text": "三百五十米后，进入",
+      "CarrierText": "三百五十米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 9
+    },
+    {
+      "Text": "四百米后，进入",
+      "CarrierText": "四百米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 7
+    },
+    {
+      "Text": "四百五十米后，进入",
+      "CarrierText": "四百五十米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 9
+    },
+    {
+      "Text": "五百米后，进入",
+      "CarrierText": "五百米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 7
+    },
+    {
+      "Text": "即将进入",
+      "CarrierText": "即将进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 4
+    },
+    {
+      "Text": "一公里后，进入",
+      "CarrierText": "一公里后，进入加来码头，乘坐前往多佛的轮渡。",
+      "FilledWords": [
+        "加来",
+        "多佛"
+      ],
+      "StartChar": 0,
+      "EndChar": 7
+    },
+    {
+      "Text": "两公里后，进入",
+      "CarrierText": "两公里后，进入加来码头，乘坐前往多佛的轮渡。",
+      "FilledWords": [
+        "加来",
+        "多佛"
+      ],
+      "StartChar": 0,
+      "EndChar": 7
+    },
+    {
+      "Text": "进入",
+      "CarrierText": "进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 2
+    },
+    {
+      "Text": "码头，乘坐前往",
+      "CarrierText": "两百米后，进入加来码头，乘坐前往多佛的轮渡。",
+      "FilledWords": [
+        "加来",
+        "多佛"
+      ],
+      "StartChar": 9,
+      "EndChar": 16
+    },
+    {
+      "Text": "的轮渡。",
+      "CarrierText": "两百米后，进入加来码头，乘坐前往多佛的轮渡。",
+      "FilledWords": [
+        "加来",
+        "多佛"
+      ],
+      "StartChar": 18,
+      "EndChar": 22
+    },
+    {
+      "Text": "到达",
+      "CarrierText": "到达巴黎货场附近，本次导航结束。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 0,
+      "EndChar": 2
+    },
+    {
+      "Text": "货场附近，本次导航结束。",
+      "CarrierText": "到达巴黎货场附近，本次导航结束。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 4,
+      "EndChar": 16
+    },
+    {
+      "Text": "货场。",
+      "CarrierText": "然后到达巴黎货场。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 6,
+      "EndChar": 9
+    },
+    {
+      "Text": "城区，请注意减速慢行。",
+      "CarrierText": "五百米后，进入巴黎城区，请注意减速慢行。",
+      "FilledWords": [
+        "巴黎"
+      ],
+      "StartChar": 9,
+      "EndChar": 20
+    },
+    {
+      "Text": "米处，有测速照相。",
+      "CarrierText": "五百米处，有测速照相。",
+      "FilledWords": [
+        "五百"
+      ],
+      "StartChar": 2,
+      "EndChar": 11
+    },
+    {
+      "Text": "米处，有测速照相，限速",
+      "CarrierText": "五百米处，有测速照相，限速八十。",
+      "FilledWords": [
+        "五百",
+        "八十"
+      ],
+      "StartChar": 2,
+      "EndChar": 13
+    },
+    {
+      "Text": "米内，有测速照相。",
+      "CarrierText": "两百米内，有测速照相。",
+      "FilledWords": [
+        "两百"
+      ],
+      "StartChar": 2,
+      "EndChar": 11
+    },
+    {
+      "Text": "米内，有测速照相，限速",
+      "CarrierText": "两百米内，有测速照相，限速八十。",
+      "FilledWords": [
+        "两百",
+        "八十"
+      ],
+      "StartChar": 2,
+      "EndChar": 13
+    },
+    {
+      "Text": "前方有测速照相，限速",
+      "CarrierText": "前方有测速照相，限速八十。",
+      "FilledWords": [
+        "八十"
+      ],
+      "StartChar": 0,
+      "EndChar": 10
+    }
+  ]
+}

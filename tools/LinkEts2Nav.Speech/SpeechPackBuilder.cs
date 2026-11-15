@@ -6,7 +6,7 @@ public static class SpeechPackBuilder
 {
     public static async Task<PackManifest> BuildAsync(string output, string model, string voice,
         IEnumerable<string> texts, Func<string, CancellationToken, Task<byte[]>> generate,
-        Action<string>? log = null, CancellationToken cancellationToken = default)
+        Action<string>? log = null, CancellationToken cancellationToken = default, bool reuseCachedAudio = true)
     {
         Directory.CreateDirectory(output);
         string manifestPath = Path.Combine(output, "manifest.json");
@@ -17,7 +17,7 @@ public static class SpeechPackBuilder
             previous = JsonSerializer.Deserialize<PackManifest>(await File.ReadAllTextAsync(manifestPath, cancellationToken));
         }
         string[] planned = texts.Distinct(StringComparer.Ordinal).ToArray();
-        var checkpoint = previous is { Schema: 1 } && previous.Model == model && previous.Voice == voice
+        var checkpoint = reuseCachedAudio && previous is { Schema: 1 } && previous.Model == model && previous.Voice == voice
             ? (previous.Entries ?? []).Where(e => e is not null && planned.Contains(e.Text, StringComparer.Ordinal)
                 && e.File == SpeechPack.FileName(e.Text)).ToDictionary(e => e.Text, StringComparer.Ordinal)
             : new Dictionary<string, PackEntry>(StringComparer.Ordinal);

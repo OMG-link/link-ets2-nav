@@ -13,6 +13,7 @@ if (args.Contains("--help", StringComparer.Ordinal))
     Console.WriteLine("Kokoro multi-lang v1.1-zh preset: zf_067 = speaker 36, speed 1.0, CPU only.");
     Console.WriteLine("Export provider-neutral jobs: --export-jobs --output FILE [--texts UTF8_FILE] [--kind fixed|city-names].");
     Console.WriteLine("Prepare missing names: --prepare-name-jobs --texts UTF8_FILE [--texts UTF8_FILE] --output FILE [--pack CityNames_DIR].");
+    Console.WriteLine("Context fragments: --export-context-jobs --output DIR [--plan FILE]; --generate-context-pack --keys FILE --output DIR [--plan FILE]; --slice-context-pack --carriers DIR --output DIR [--plan FILE].");
     Console.WriteLine("Import external WAVs: --import-pack --jobs FILE --input DIR --output DIR [--model NAME] [--voice NAME].");
     Console.WriteLine("Generate cloud pack: --generate-pack --keys FILE --output DIR [--texts UTF8_FILE] (explicit network calls, billed by provider).");
     Console.WriteLine("Generate city-name fragments: --generate-city-names --keys FILE --output DIR --texts UTF8_FILE.");
@@ -27,6 +28,7 @@ var json = new JsonSerializerOptions
 };
 try
 {
+    if (args.Length > 0 && args[0] is "--export-context-jobs" or "--generate-context-pack" or "--slice-context-pack") return await ContextualSpeech.RunAsync(args);
     if (args.Length > 0 && args[0] == "--prepare-name-jobs") return await NameSpeechJobs.RunAsync(args);
     if (args.Length > 0 && args[0] is "--export-jobs" or "--import-pack") return await SpeechPackCommands.RunAsync(args);
     if (args.Length > 0 && args[0] is "--generate-pack" or "--generate-city-names") return await QwenPackGenerator.RunAsync(args);

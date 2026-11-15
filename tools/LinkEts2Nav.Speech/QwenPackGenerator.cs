@@ -7,8 +7,8 @@ namespace LinkEts2Nav.Speech;
 internal static class QwenPackGenerator
 {
     private const string Endpoint = "wss://cn-beijing.maas.qianwenaiapi.com/api-ws/v1/inference";
-    private const string Model = "qwen-audio-3.1-tts-flash";
-    private const string Voice = "longanhuan_v3.1";
+    internal const string Model = "qwen-audio-3.1-tts-flash";
+    internal const string Voice = "longanhuan_v3.1";
 
     public static async Task<int> RunAsync(string[] args)
     {
@@ -16,15 +16,7 @@ internal static class QwenPackGenerator
         if ((args.Length != 5 && args.Length != 7) || cityNames && args.Length != 7
             || args[1] != "--keys" || args[3] != "--output" || args.Length == 7 && args[5] != "--texts")
             throw new ArgumentException("Usage: --generate-pack --keys FILE --output DIRECTORY; or --generate-city-names --keys FILE --output DIRECTORY --texts UTF8_FILE");
-        string? key = null;
-        foreach (string line in await File.ReadAllLinesAsync(args[2]))
-        {
-            int split = line.IndexOf('=');
-            if (split < 0 || line[..split].Trim() != "qwen") continue;
-            if (key is not null) throw new InvalidDataException("Duplicate qwen key.");
-            key = line[(split + 1)..].Trim();
-        }
-        if (string.IsNullOrWhiteSpace(key) || key.Any(char.IsControl)) throw new InvalidDataException("Missing or invalid qwen key.");
+        string key = await ReadKeyAsync(args[2]);
         string output = Path.GetFullPath(args[4]);
         IEnumerable<string> texts=SpeechPack.DefaultTexts();
         if (args.Length == 7)
@@ -56,7 +48,22 @@ internal static class QwenPackGenerator
         return 0;
     }
 
-    private static async Task<byte[]> GenerateAsync(string key, string text, CancellationToken token,string? instruction=null)
+    internal static async Task<string> ReadKeyAsync(string path)
+    {
+        string? key = null;
+        foreach (string line in await File.ReadAllLinesAsync(path))
+        {
+            int split = line.IndexOf('=');
+            if (split < 0 || line[..split].Trim() != "qwen") continue;
+            if (key is not null) throw new InvalidDataException("Duplicate qwen key.");
+            key = line[(split + 1)..].Trim();
+        }
+        if (string.IsNullOrWhiteSpace(key) || key.Any(char.IsControl)) throw new InvalidDataException("Missing or invalid qwen key.");
+        return key;
+    }
+
+    internal static async Task<byte[]> GenerateAsync(string key, string text, CancellationToken token,string? instruction=null,
+        bool timestamps=false, Action<JsonElement,long>? observeOutput=null)
     {
         using var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", "bearer " + key);
@@ -68,7 +75,8 @@ internal static class QwenPackGenerator
         await Send(new { header = Header("run-task"), payload = new {
             task_group = "audio", task = "tts", function = "SpeechSynthesizer", model = Model,
             parameters = new { text_type = "PlainText", voice = Voice, format = "pcm", sample_rate = 24000,
-                volume = 50, rate = 1, pitch = 1, enable_ssml = false, instruction }, input = new { } } });
+                volume = 50, rate = 1, pitch = 1, enable_ssml = false, instruction,
+                word_timestamp_enabled = timestamps ? true : (bool?)null }, input = new { } } });
         using var audio = new MemoryStream();
         byte[] buffer = new byte[16384];
         bool started = false;
@@ -92,6 +100,8 @@ internal static class QwenPackGenerator
             }
             using var json = JsonDocument.Parse(message.ToArray());
             var header = json.RootElement.GetProperty("header");
+            if (json.RootElement.TryGetProperty("payload",out var payload) && payload.TryGetProperty("output",out var output))
+                observeOutput?.Invoke(output.Clone(),audio.Length/2);
             if (header.GetProperty("task_id").GetString() != id) throw new InvalidDataException("Qwen task ID mismatch.");
             string? kind = header.GetProperty("event").GetString();
             if (kind == "task-failed")

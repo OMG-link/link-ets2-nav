@@ -84,6 +84,32 @@ dotnet run --project tools/LinkEts2Nav.Speech -- --prepare-name-jobs --texts rev
 
 ## 可选 Qwen 适配器
 
+### 从完整句中提取模板片段
+
+模板的固定部分应放在完整句中生成，再按字级时间戳提取，以保留上下文语调。默认方案位于 `tools/LinkEts2Nav.Speech/Texts/contextual-fragments.json`：每项给出片段文本、完整原句、填入的真实词汇及原文范围。例如“米处，有测速照相，限速”从“五百米处，有测速照相，限速八十。”中提取。
+
+先导出直接生成的完整文案，以及模板使用的完整原句：
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Speech -- --export-context-jobs --output artifacts/speech/context-plan
+dotnet run --project tools/LinkEts2Nav.Speech -- --generate-pack --keys .api-keys --texts artifacts/speech/context-plan/direct-texts.txt --output artifacts/speech/direct
+dotnet run --project tools/LinkEts2Nav.Speech -- --generate-context-pack --keys .api-keys --output artifacts/speech/context
+```
+
+后两条命令会调用云端服务并可能计费；应顺序运行，避免触发并发限流。上下文生成开启 Qwen 的 `word_timestamp_enabled`，完整原句 WAV、原句清单及不含密钥的响应内容保存在输出的 `carriers` 子目录。工具按返回的实际文字和时间戳找到字边界，验证源音频校验和后换算为 24 kHz 样本范围；不会根据字数或音频长度比例猜测切点。
+
+输出的 `context-provenance.json` 保存原句、填词、文字范围、源 WAV 校验和、样本切点和模型音色。时间戳缺失、文字不能逐字对应、切点跨越一个时间戳词，或服务把原句分成多个独立句子时，会保留完整源音频并报错，不生成推测的片段。提供方的索引可能按朗读字计数并将标点附在相邻字上，因此实际原文位置通过返回文字的严格顺序匹配确定。
+
+修改切点处理或方案后，可使用保留的源音频离线重新裁切，不再调用 API：
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Speech -- --slice-context-pack --carriers artifacts/speech/context/carriers --output artifacts/speech/context
+```
+
+三个上下文命令都支持 `--plan FILE` 使用自定义方案。离线裁切总会更新片段及校验和，不能让旧半句音频或旧切点命中缓存。直接生成包与片段包分别只包含各自的文本，安装前使用默认完整任务清单与已有导入命令，将两者整理为一个完整固定包。
+
+时间戳协议见 [Qwen 客户端事件](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-client-events)及[服务端事件](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-server-events)。
+
 原有 Qwen 命令继续可用，仅显式执行时联网并可能计费。密钥放在被忽略的 `.api-keys` 中：
 
 ```powershell

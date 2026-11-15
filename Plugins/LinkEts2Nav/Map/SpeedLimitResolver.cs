@@ -66,7 +66,7 @@ public sealed class SpeedLimitResolver
         if(unknown)return new(null,reason);
         return Compose(camera.MonitoringPosition,targetRoad!,temporary,urban,motorway,reason);
     }
-    // Country, road class, area and maximum-limit composition are unchanged.
+    // Temporary values constrain the target's road/area defaults; they cannot raise them.
     private SpeedLimitResult Compose(Vector3 position,DirectedRoad road,int? temporary,bool? urbanOverride,bool? motorway,string reason)
     {
         var metadata=data.SignProjections!.Context(road);
@@ -85,12 +85,12 @@ public sealed class SpeedLimitResolver
             return new(null,"缺少货车限速规则："+country+"/"+speedClass);
         bool urban=urbanOverride??regions.Any(r=>r.Urban);
         int baseline=urban?rule.Urban:rule.Rural;
-        int? value=temporary??(baseline>0?baseline:null);
+        int? value=baseline>0?(temporary.HasValue?Math.Min(temporary.Value,baseline):baseline):temporary;
         if(value is not >0)return new(null,"道路默认限速或解除后的限速未知");
         if(rule.Maximum>0)value=Math.Min(value.Value,rule.Maximum);
         var area=regions.Where(r=>r.SetKph is >0).Select(r=>r.SetKph!.Value).ToArray();
         if(area.Length>0)value=Math.Min(value.Value,area.Min());
-        if(temporary is null)reason+="；"+(urban?"城区默认限速":"国家道路默认限速");
+        if(baseline>0)reason+="；"+(urban?"城区默认限速":"国家道路默认限速");
         if(area.Length>0)reason+="；交通区域限速";
         return new(value,"实验估算："+reason+"；"+country+"/"+speedClass);
     }

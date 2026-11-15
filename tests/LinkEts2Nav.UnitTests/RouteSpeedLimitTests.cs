@@ -121,8 +121,39 @@ public sealed class RouteSpeedLimitTests
         var data=Source([Road],Sign("70",100,new(SetKph:70))) with{
             Regions=[new("numeric-area",[P(0,-20),P(1000,-20),P(1000,20),P(0,20)],0,false,40)]};
         Assert.Equal(40,Sim(Build(data),[Road]).Kph);
-        data=Source([Road],Sign("150",100,new(SetKph:150)));
+        data=Source([Road],Sign("150",100,new(SetKph:150))) with{
+            Limits=new Dictionary<string,TruckSpeedLimit>{{"test/local_road",new(160,50,120)}}};
         Assert.Equal(120,Sim(Build(data),[Road]).Kph);
+    }
+    [Fact]
+    public void RuralSdkSeedIsCappedByUrbanAreaAtCameraBeforePlayerEntersIt()
+    {
+        var data=Source([Road]) with{
+            Regions=[new("urban",[P(650,-20),P(1000,-20),P(1000,20),P(650,20)],0,true)]};
+        var result=Sim(Build(data),[Road],seed:80);
+        Assert.Equal(50,result.Kph);
+        Assert.Contains("SDK 当前限速初始化",result.Reason);
+        Assert.Contains("城区默认限速",result.Reason);
+    }
+    [Theory]
+    [InlineData(40,80,60,120,40)]
+    [InlineData(100,80,90,120,80)]
+    [InlineData(100,110,60,120,60)]
+    [InlineData(150,160,140,120,120)]
+    public void PostedRoadAreaAndTruckMaximumUseTheLowestValue(int posted,int rural,int area,int maximum,int expected)
+    {
+        var data=Source([Road],Sign("posted",100,new(SetKph:posted))) with{
+            Limits=new Dictionary<string,TruckSpeedLimit>{{"test/local_road",new(rural,50,maximum)}},
+            Regions=[new("numeric",[P(650,-20),P(1000,-20),P(1000,20),P(650,20)],0,false,area)]};
+        Assert.Equal(expected,Sim(Build(data),[Road]).Kph);
+    }
+    [Fact]
+    public void CancellationClearsThePostedValueAndRestoresUrbanDefaultAtCamera()
+    {
+        var data=Source([Road],Sign("posted",100,new(SetKph:30)),Sign("cancel",400,new(Reset:true))) with{
+            Regions=[new("urban",[P(650,-20),P(1000,-20),P(1000,20),P(650,20)],0,true)]};
+        Assert.Equal(30,Sim(Build(data),[Road],target:P(350)).Kph);
+        Assert.Equal(50,Sim(Build(data),[Road]).Kph);
     }
     private sealed class SilentAnnouncer:IWarningAnnouncer
     {

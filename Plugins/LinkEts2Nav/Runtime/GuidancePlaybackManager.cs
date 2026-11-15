@@ -20,7 +20,8 @@ public sealed record QueuedGuidanceSpeech(string Source,string EventId,string Tr
     public string SequenceId => SpeechSequenceId ?? EventId;
     public static QueuedGuidanceSpeech From(GuidanceTriggerResult result)
         =>new(result.Source,result.Event.Id,result.Trigger.Id,result.Trigger.SequenceOrder,result.Trigger.Priority,result.Trigger.Text)
-            {SpeechSequenceId=result.Event.SequenceId,Stage=result.Trigger.Kind.ToString(),EventDescription=result.Event.Description,FollowOn=result.Trigger.FollowOn};
+            {SpeechSequenceId=result.Event.SequenceId,Stage=result.Trigger.Kind.ToString(),EventDescription=result.Event.Description.StartsWith("uncalibrated-proximity:",StringComparison.Ordinal)
+                ?"uncalibrated-proximity":result.Event.Description,FollowOn=result.Trigger.FollowOn};
 }
 
 /// <summary>Owns pending playback, priority and same-event replacement. Preparation never plays.</summary>

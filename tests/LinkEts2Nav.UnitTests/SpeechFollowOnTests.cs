@@ -8,6 +8,16 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class SpeechFollowOnTests
 {
     [Fact]
+    public void SharedRequestFactoryKeepsProximityUsageIndependentOfCameraUid()
+    {
+        var sequence=new SpeechSequence("camera",new RouteSpeechEnd(100),
+            [new("camera",0,"uncalibrated-proximity:ABC")],
+            [new("camera:warning","camera",SpeechTriggerKind.Advance,0,"warning")]);
+        var result=Assert.Single(Due(sequence));
+        Assert.Equal("uncalibrated-proximity",QueuedGuidanceSpeech.From(result).EventDescription);
+    }
+
+    [Fact]
     public void NearbyPassageIsAppendedWithoutChangingEitherPhysicalSeries()
     {
         var now=DateTimeOffset.UtcNow;

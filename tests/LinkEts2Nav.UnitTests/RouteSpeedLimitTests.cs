@@ -155,6 +155,16 @@ public sealed class RouteSpeedLimitTests
         Assert.Equal(30,Sim(Build(data),[Road],target:P(350)).Kph);
         Assert.Equal(50,Sim(Build(data),[Road]).Kph);
     }
+    [Fact]
+    public void MissingSlowRoadUsesThirtyForTheActualCameraPath()
+    {
+        var data=Source([Road]);
+        data=data with{Roads=data.Roads.ToDictionary(p=>p.Key,p=>p.Value with{SpeedClass="slow_road"})};
+        var result=Sim(Build(data),[Road],seed:80);
+        Assert.Equal(30,result.Kph);Assert.Contains(TruckSpeedLimitRules.DefaultReason,result.Reason);
+        data=data with{Limits=new Dictionary<string,TruckSpeedLimit>{{"test/slow_road",new(45,45,45)}}};
+        Assert.Equal(45,Sim(Build(data),[Road],seed:80).Kph);
+    }
     private sealed class SilentAnnouncer:IWarningAnnouncer
     {
         public List<CameraWarning> Warnings { get; }=[];

@@ -103,9 +103,10 @@ public sealed class SpeedLimitDefinitionReader
         if(country is null)return new(null,"道路国家归属未知");
         string? speedClass=RoadClass(road,forward?road.LeftHandTraffic:!road.LeftHandTraffic);
         if(speedClass is null)return new(null,"道路类别或变体未知");
-        if(!limits.TryGetValue(country+"/"+speedClass,out var rule)||rule.Rural<=0)
+        if(!TruckSpeedLimitRules.TryGet(limits,country,speedClass,out var rule,out bool usedDefault)||rule.Rural<=0)
             return new(null,"缺少国家道路类别货车限速："+country+"/"+speedClass);
-        return new(rule.Maximum>0?Math.Min(rule.Rural,rule.Maximum):rule.Rural,country+"/"+speedClass);
+        return new(rule.Maximum>0?Math.Min(rule.Rural,rule.Maximum):rule.Rural,country+"/"+speedClass
+            +(usedDefault?"；"+TruckSpeedLimitRules.DefaultReason:""));
     }
 
     public SpeedLimitData Build(TruckLib.ScsMap.Map map) => Build(map,CancellationToken.None);

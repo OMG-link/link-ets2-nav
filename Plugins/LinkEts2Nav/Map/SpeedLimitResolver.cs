@@ -81,8 +81,9 @@ public sealed class SpeedLimitResolver
         string? speedClass=metadata?.ClassFor(road);
         if(motorway==true)speedClass="motorway";
         if(speedClass is null)return new(null,"监测道路车道类别或变体未支持");
-        if(!data.Limits.TryGetValue(country+"/"+speedClass,out var rule))
+        if(!TruckSpeedLimitRules.TryGet(data.Limits,country,speedClass,out var rule,out bool usedDefault))
             return new(null,"缺少货车限速规则："+country+"/"+speedClass);
+        if(usedDefault)reason+="；"+TruckSpeedLimitRules.DefaultReason;
         bool urban=urbanOverride??regions.Any(r=>r.Urban);
         int baseline=urban?rule.Urban:rule.Rural;
         int? value=baseline>0?(temporary.HasValue?Math.Min(temporary.Value,baseline):baseline):temporary;

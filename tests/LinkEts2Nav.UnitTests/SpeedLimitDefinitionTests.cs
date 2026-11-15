@@ -155,6 +155,19 @@ public sealed class SpeedLimitDefinitionTests
         Assert.Equal(80,reader.RoadCategoryLimit(road,false).Kph);
     }
 
+    [Fact]
+    public void PreparedJourneyCategoryDefaultsOnlyMissingSlowRoad()
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/traffic_lane.sii"]="""SiiNunit { traffic_lane_data : traffic_lane.road.local { speed_class: slow_road } }""";
+        fs.Files["/def/country/norway/speed_limits.sii"]="SiiNunit {}";
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(100,0,0),default);road.RoadType="un11";
+        road.Node.IsCountryBorder=true;road.Node.ForwardItem=road;road.Node.ForwardCountry=35;
+        var reader=new SpeedLimitDefinitionReader(fs);reader.PrepareHost(map,TestContext.Current.CancellationToken);
+        var result=reader.RoadCategoryLimit(road,true);
+        Assert.Equal(30,result.Kph);Assert.Contains(TruckSpeedLimitRules.DefaultReason,result.Reason);
+    }
+
     [Theory]
     [InlineData("motorway","","motorway")]
     [InlineData("expressway","","expressway")]

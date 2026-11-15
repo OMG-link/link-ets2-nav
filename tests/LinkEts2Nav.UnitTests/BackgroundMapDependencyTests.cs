@@ -93,4 +93,46 @@ public sealed class BackgroundMapDependencyTests
         Assert.False(handle.Capture().Result.IsSuccess);
         Assert.DoesNotContain(Required,scanner.Capture().Map!.ReadySectors);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NaturalRouteProgressKeepsPendingDependencyWhileReplacementCancelsIt(bool replacement)
+    {
+        var initial=new TruckLib.ScsMap.Map();var complete=new TruckLib.ScsMap.Map();
+        using var release=new ManualResetEventSlim();
+        var started=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var scanner=new BackgroundMapScanner(_=>new Backend((request,token)=>
+        {
+            if(!request.RequiredSectors.Contains(Required))return Snapshot(initial,false);
+            started.TrySetResult();release.Wait(token);return Snapshot(complete,true);
+        }),TestContext.Current.CancellationToken);
+        var now=DateTimeOffset.UtcNow;
+        var route=new RouteSnapshot([new(1,0,0),new(2,0,0),new(3,0,0)],"initial",RouteAvailability.Available,now);
+        var request=new MapScanRequest("resource","session","unused",[],Vector3.Zero){Route=route};
+        scanner.Request(request,now);
+        await WaitFor(()=>scanner.Capture().Map is not null);
+        int invoked=0;
+        using var handle=scanner.Retries.Register("progress",new MissingMapSectors([Required],"progress dependency"){QueryAnchor=Vector3.Zero},
+            (context,token)=>{Interlocked.Increment(ref invoked);return ValueTask.FromResult(MapQueryResult<int>.Ready(1));},TestContext.Current.CancellationToken);
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(6),TestContext.Current.CancellationToken);
+            var updated=route with{Revision="updated",Nodes=replacement?[new(9,0,0),new(10,0,0)]:[new(2,0,0),new(3,0,0),new(4,0,0)]};
+            Assert.True(scanner.Request(request with{Route=updated},now));
+            Assert.Equal(!replacement,handle.Capture().Active);
+        }
+        finally{release.Set();}
+        if(replacement)
+        {
+            await WaitFor(()=>!scanner.Capture().IsScanning);
+            Assert.False(handle.Capture().Active);Assert.Equal(0,Volatile.Read(ref invoked));
+        }
+        else
+        {
+            await WaitFor(()=>Volatile.Read(ref invoked)>0);
+            Assert.True(handle.Capture().Active);
+            Assert.Contains(Required,scanner.Capture().Map!.ReadySectors);
+        }
+    }
 }

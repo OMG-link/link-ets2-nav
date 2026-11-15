@@ -85,7 +85,9 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         lock (lifecycleGate)
         {
             bool reset;
-            lock (gate) reset=resourceId!=request.ResourceId||sessionId!=request.SessionId||requestedRoute!=request.Route?.Revision;
+            lock (gate) reset=resourceId!=request.ResourceId||sessionId!=request.SessionId
+                ||(requestedRoute!=request.Route?.Revision
+                   && !(latestRequest?.Route is {} previous&&request.Route is {} next&&RouteContinuity.IsForwardExtension(previous,next)));
             if(reset) retries.Reset();
             lock (gate)
             {
@@ -105,7 +107,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                 if (now < retryAfter) return false;
                 string? routeRevision = request.Route?.Revision;
                 bool changedRoute = requestedRoute != routeRevision;
-                if (changedRoute) generation++;
+                if (reset) generation++;
                 if (!changedRoute && Vector3.Distance(request.Position, requestedPosition) < 25
                     && now - requestedAt < TimeSpan.FromSeconds(3)) return false;
                 requestedRoute = routeRevision;

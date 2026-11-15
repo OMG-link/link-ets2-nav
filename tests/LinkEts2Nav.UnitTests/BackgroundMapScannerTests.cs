@@ -43,7 +43,7 @@ public sealed class BackgroundMapScannerTests
             return updated;
         }), TestContext.Current.CancellationToken);
         var now=DateTimeOffset.UtcNow;
-        var route=new RouteSnapshot([],"old",RouteAvailability.Available,now);
+        var route=new RouteSnapshot([new(1,0,0)],"old",RouteAvailability.Available,now);
         scanner.Request(Request() with { Route=route, NavigationRemainingMeters=10000 },now);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(8),TestContext.Current.CancellationToken);
         try
@@ -51,7 +51,7 @@ public sealed class BackgroundMapScannerTests
             Assert.Same(near.Map,scanner.Capture().Map?.Map);
             Assert.True(scanner.Capture().IsScanning);
             // Same position/time must not suppress a changed route.
-            Assert.True(scanner.Request(Request() with{Route=route with{Revision="new"}},now));
+            Assert.True(scanner.Request(Request() with{Route=route with{Revision="new",Nodes=[new(2,0,0)]}},now));
         }
         finally { release.Set(); }
         await WaitFor(()=>ReferenceEquals(updated.Map,scanner.Capture().Map?.Map));

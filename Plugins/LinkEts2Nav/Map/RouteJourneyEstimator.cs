@@ -11,10 +11,9 @@ public sealed record RouteJourneyEstimate(double? WorldMeters,double? RealSecond
 }
 
 /// <summary>
-/// Uses host-owned lightweight roads/nodes only. Estimates the supplied route from its first interface, independently of vehicle pose.
-/// Per-call route spans are released
-/// afterwards; no route-sector scan, PPD parsing or full-map geometry copy is performed.
-/// Prefabs use corrected interface chords; same-interface returns require native PPD passage lengths.
+/// Estimates the supplied route from its first interface, independently of vehicle pose.
+/// Ordinary prefab chords need no PPD geometry; same-interface returns query cached native chains on demand.
+/// Per-call spans are released afterwards; no route-sector scan or full-map geometry copy is performed.
 /// </summary>
 public sealed class RouteJourneyEstimator(GameMapData map,Func<Road,bool,SpeedLimitResult> categorySpeed,double prefabDistanceFactor=1,FerryJourneyIndex? ferries=null,
     Func<Prefab,ulong,ulong,IReadOnlyList<double>>? prefabLengths=null)

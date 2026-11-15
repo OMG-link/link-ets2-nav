@@ -32,7 +32,7 @@ public sealed class JunctionStructureTests
     public void SilentUnlitMainRoadRetainsRampStraightStructureAndItsRealEnd(bool minor)
     {
         var info=new RoadForkInfo(10,2,[new(20,ForkSignal.None,[0,1],[0,1],[],true),
-            new(30,ForkSignal.Right,[1],[1],[],true)]);
+            new(30,ForkSignal.Right,[1],[1],[],false)]);
         DirectedRoad approach=new("road",1,10,[Vector3.Zero,new(0,0,100)]);
         DirectedRoad main=new("prefab:1:0:1",10,20,[new(0,0,100),new(0,0,150)])
         {Junction=new(1,2,0){InterfaceCount=3},ForkInfo=info,IsMinorStraight=minor};
@@ -108,7 +108,7 @@ public sealed class JunctionStructureTests
     {
         var info=new PrefabJunctionInfo(2,2,0){InterfaceCount=4};
         DirectedRoad single=new("prefab:1:0:2",10,20,[new(0,0,100),new(0,0,150)]){Junction=info};
-        var fork=new RoadForkInfo(30,1,[new(20,ForkSignal.None,[0],[0],[],true),new(40,ForkSignal.Right,[0],[0],[],true)]);
+        var fork=new RoadForkInfo(30,1,[new(20,ForkSignal.None,[0],[0],[],true),new(40,ForkSignal.Right,[0],[0],[],false)]);
         DirectedRoad chosen=new("prefab:1:1:2",30,20,[new(0,0,100),new(0,0,150)]){Junction=info,ForkInfo=fork};
         DirectedRoad branch=new("prefab:1:1:3",30,40,[new(0,0,100),new(50,0,150)]){Junction=info,ForkInfo=fork};
         DirectedRoad approach=new("road",1,30,[Vector3.Zero,new(0,0,100)]);

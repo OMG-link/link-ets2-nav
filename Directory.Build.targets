@@ -57,7 +57,7 @@
     <Content Include="$(NavUi)Catalogue.razor" Link="Pages/Plugins/Catalogue.razor" TargetPath="Pages/Plugins/Catalogue.razor" />
   </ItemGroup>
   <!-- Build the forked libraries once for all host and plugin consumers. -->
-  <ItemGroup Condition="'$(MSBuildProjectName)' == 'TruckLib' Or '$(MSBuildProjectName)' == 'TruckLib.HashFs'">
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'TruckLib' Or '$(MSBuildProjectName)' == 'TruckLib.HashFs' Or '$(MSBuildProjectName)' == 'TruckLib.HashFs.Benchmarks'">
     <PackageReference Remove="TruckLib.Sii" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)dev-host/TruckLib.Sii/TruckLib.Sii/TruckLib.Sii.csproj" />
   </ItemGroup>

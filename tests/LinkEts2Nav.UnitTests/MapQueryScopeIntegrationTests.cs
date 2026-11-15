@@ -22,7 +22,14 @@ public sealed class MapQueryScopeIntegrationTests
             new(middle.ForwardNode.Uid,1000,0),new(far.ForwardNode.Uid,0,0)],DateTimeOffset.UtcNow);
         var nearOwner=new SectorCoordinate(0,0);var farOwner=new SectorCoordinate(3,0);
         var requests=new List<SectorCoordinate[]>();
-        await using var retries=new MapRetryCoordinator(sectors=>{lock(requests)requests.Add(sectors.ToArray());});
+        var nearNotified=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var farNotified=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var retries=new MapRetryCoordinator(sectors=>
+        {
+            lock(requests)requests.Add(sectors.ToArray());
+            if(sectors.Contains(nearOwner))nearNotified.TrySetResult();
+            if(sectors.Contains(farOwner))farNotified.TrySetResult();
+        });
         NearbyMapSnapshot Snapshot(Vector3 position,TruckLib.ScsMap.Map map,params SectorCoordinate[] ready)=>
             new(map,[],[],ready){ReadySectors=ready,Coverage=MapScanCoverage.Create(position,1000,null,null,0)};
         retries.Publish(Snapshot(Vector3.Zero,partial),1);
@@ -30,11 +37,13 @@ public sealed class MapQueryScopeIntegrationTests
             [full.Nodes[uid].Position.X>10000?farOwner:nearOwner],$"native boundary {uid:X16}"),
             reportMapIssue:retries.Report);
         paths.GetRouteComponents(route);
+        await nearNotified.Task.WaitAsync(TimeSpan.FromSeconds(2),TestContext.Current.CancellationToken);
         Assert.Contains(paths.MapIssues.OfType<MissingMapSectors>(),m=>m.QueryAnchor!.Value.X==15000);
         lock(requests)Assert.DoesNotContain(requests,sectors=>sectors.Contains(farOwner));
 
         retries.Publish(Snapshot(new(15000,0,0),partial),2);
         paths.ReconsiderMapIssues();
+        await farNotified.Task.WaitAsync(TimeSpan.FromSeconds(2),TestContext.Current.CancellationToken);
         lock(requests)Assert.Contains(requests,sectors=>sectors.Contains(farOwner));
         Assert.Equal(1,paths.RouteStructureBuildCount);
         var missing=paths.MapIssues.OfType<MissingMapSectors>().First(m=>m.QueryAnchor!.Value.X==15000);

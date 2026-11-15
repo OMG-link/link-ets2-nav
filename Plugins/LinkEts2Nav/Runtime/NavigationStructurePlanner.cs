@@ -65,6 +65,7 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
     {
         IReadOnlyList<NavigationManeuver> upcoming=plan.Auxiliaries is {} auxiliaries
             ?AuxiliaryLaneGuidance.Apply(plan.BaseActions,plan.InstructionRoute,lanes,auxiliaries):plan.BaseActions;
+        upcoming=SelectedStraightPassages(upcoming,plan.Route,lanes,nearby,paths.GetNavigationGraph());
         var merges=mergeDetector.Find(plan.Route,paths.GetNavigationGraph(),lanes,0)
             .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid))
             .Select(m=>plan.Auxiliaries?.NativeMerge(m) is {} native?m with{Kind=LaneMergeKind.Ramp,
@@ -94,6 +95,47 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
             upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
         }
         return plan with{Actions=upcoming,Lanes=lanes,Merges=merges,Forks=issues.Distinct().ToArray()};
+    }
+
+    // An outlet may combine a lane that needs a signal with a lane that continues
+    // without one. Keep that outlet-level diagnostic, while retaining the selected
+    // native lane's straight passage for junction counting and side reminders.
+    private static IReadOnlyList<NavigationManeuver> SelectedStraightPassages(IReadOnlyList<NavigationManeuver> actions,
+        IReadOnlyList<DirectedRoad> route,LaneNavigationPlan lanes,NearbyMapSnapshot nearby,IReadOnlyList<DirectedRoad> graph)
+    {
+        // Selected layers describe the unpassed suffix, including repeated visits.
+        var selections=new Dictionary<int,PrefabLanePath>();int cursor=route.Count-1;
+        foreach(var section in lanes.Sections.Reverse())
+        {
+            while(cursor>=0&&route[cursor].Id!=section.EdgeId)cursor--;
+            if(cursor<0)break;
+            selections[cursor--]=section.Path;
+        }
+        var result=actions.ToList();double offset=0;
+        for(int i=0;i<route.Count;i++)
+        {
+            var edge=route[i];double end=offset+RouteGeometry.Length(edge);
+            if(selections.GetValueOrDefault(i) is {NativeBranchSignal:ForkSignal.None} lane
+                &&lane.EntryNodeUid==edge.StartNodeUid&&lane.ExitNodeUid==edge.EndNodeUid&&edge.ForkInfo is {Branches.Count:>1}
+                &&edge.Junction?.IsJunction!=true&&!nearby.RoadStructures.ContainsKey(lane.PrefabUid))
+            {
+                string group=$"prefab:{lane.PrefabUid:X16}";
+                if(!result.Any(a=>a.JunctionId==group&&a.DistanceMeters>=offset&&a.DistanceMeters<=end))
+                {
+                    var connections=graph.Where(e=>e.StartNodeUid==edge.StartNodeUid&&e.Id.StartsWith(group+":",StringComparison.Ordinal))
+                        .GroupBy(e=>e.EndNodeUid).Select(g=>g.ToArray()).ToArray();
+                    result.Add(new($"fork:{lane.PrefabUid:X16}:{edge.StartNodeUid:X16}:{edge.EndNodeUid:X16}",
+                        ManeuverKind.Straight,offset,i>0?route[i-1].Id:edge.Id,edge.Id)
+                    {
+                        JunctionId=group,JunctionKind=NavigationJunctionKind.Ramp,EndDistanceMeters=end,IsMainRoadContinuation=true,
+                        StraightExitSides=NavigationManeuverDetector.AlternativeExitSides(edge,connections),
+                        HasSeparateApproachRoad=i>0&&!route[i-1].Id.StartsWith("prefab:",StringComparison.Ordinal)
+                    });
+                }
+            }
+            offset=end;
+        }
+        return result.OrderBy(a=>a.DistanceMeters).ToArray();
     }
 
     public static bool SelectionChanged(LaneNavigationPlan before,LaneNavigationPlan after)

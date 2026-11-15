@@ -400,7 +400,7 @@ public sealed class NavigationManeuverDetector
         => Math.Atan2(incoming.X * outgoing.Y - incoming.Y * outgoing.X,
             Vector2.Dot(incoming, outgoing)) * 180 / Math.PI;
 
-    private static NavigationSide AlternativeExitSides(DirectedRoad selected,DirectedRoad[][] connections)
+    internal static NavigationSide AlternativeExitSides(DirectedRoad selected,DirectedRoad[][] connections)
     {
         NavigationSide sides=NavigationSide.None;
         // Fork branches already contain permitted entrance-to-exit lane paths and

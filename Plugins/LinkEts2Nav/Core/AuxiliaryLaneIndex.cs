@@ -28,12 +28,17 @@ public sealed class AuxiliaryLaneIndex
         List<AuxiliaryLaneSection> Sections,double Length,HashSet<NativeRoadKey> Visited);
     public NativeLaneGraph Graph {get;}
     public IReadOnlyList<AuxiliaryLaneCorridor> Corridors {get;}
+    /// <summary>Completed parallel intervals of any length, used by route-feasibility contraction queries.</summary>
+    public IReadOnlyList<AuxiliaryLaneCorridor> ParallelCorridors {get;}
     public IReadOnlyDictionary<NativeRoadKey,IReadOnlyList<AuxiliaryLaneCorridor>> ByRoad {get;}
     public IReadOnlyList<string> Diagnostics {get;}
-    /// <summary>Stronger native corridor proof supersedes a geometric lane-reduction classification of this exact merge.</summary>
-    public AuxiliaryLaneCorridor? NativeMerge(LaneMergeObservation merge)
+    /// <summary>Returns the existing short auxiliary interval for this exact native merge.</summary>
+    public AuxiliaryLaneCorridor? NativeMerge(LaneMergeObservation merge)=>MatchMerge(Corridors,merge);
+    /// <summary>Returns a completed native parallel interval without imposing an auxiliary-length policy.</summary>
+    public AuxiliaryLaneCorridor? ParallelMerge(LaneMergeObservation merge)=>MatchMerge(ParallelCorridors,merge);
+    private static AuxiliaryLaneCorridor? MatchMerge(IReadOnlyList<AuxiliaryLaneCorridor> corridors,LaneMergeObservation merge)
     {
-        foreach(var corridor in Corridors)
+        foreach(var corridor in corridors)
         foreach(var terminal in corridor.Terminals.Where(t=>t.Merges))
         {
             var side=terminal.Edge.LanePaths.Where(p=>p.PrefabUid==merge.PrefabUid&&p.EntryNodeUid==merge.EndingEntryNode
@@ -47,8 +52,8 @@ public sealed class AuxiliaryLaneIndex
     }
     private AuxiliaryLaneIndex(NativeLaneGraph graph,List<AuxiliaryLaneCorridor> corridors,List<string> diagnostics)
     {
-        Graph=graph;Corridors=Array.AsReadOnly(corridors.ToArray());Diagnostics=Array.AsReadOnly(diagnostics.Distinct().ToArray());
-        ByRoad=corridors.SelectMany(c=>c.Sections.Select(s=>(Key:NativeRoadKey.Of(s.Edge),Corridor:c))
+        Graph=graph;ParallelCorridors=Array.AsReadOnly(corridors.ToArray());Corridors=Array.AsReadOnly(corridors.Where(c=>c.LengthMeters<=500).ToArray());Diagnostics=Array.AsReadOnly(diagnostics.Distinct().ToArray());
+        ByRoad=Corridors.SelectMany(c=>c.Sections.Select(s=>(Key:NativeRoadKey.Of(s.Edge),Corridor:c))
                 .Concat(c.Terminals.Select(t=>(Key:NativeRoadKey.Of(t.Edge),Corridor:c))))
             .GroupBy(p=>p.Key).ToFrozenDictionary(g=>g.Key,g=>(IReadOnlyList<AuxiliaryLaneCorridor>)Array.AsReadOnly(g.Select(p=>p.Corridor).DistinctBy(c=>c.Id).ToArray()));
     }
@@ -114,12 +119,14 @@ public sealed class AuxiliaryLaneIndex
             if(!seeds.Add(id))return;
             var initial=Read(side);
             var pending=new Stack<WalkState>();pending.Push(new(origin,side,main,count,sections,length,[]));
-            void Missing(string reason)=>diagnostics.Add($"辅助车道结构未完成：{id}；{reason}（后续地图版本补齐后重试）");
+            void Missing(string reason)
+            {if(length<=500)diagnostics.Add($"辅助车道结构未完成：{id}；{reason}（后续地图版本补齐后重试）");
+            }
             while(pending.TryPop(out var state))
             {
                 var previous=state.Previous;side=state.Side;main=state.Main;count=state.Count;
                 sections=state.Sections;length=state.Length;var visited=state.Visited;
-                while(length<=500)
+                while(true)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     // A shared road node also exposes the opposite-direction prefab. Never turn back into the component just left.
@@ -171,7 +178,7 @@ public sealed class AuxiliaryLaneIndex
                     if(merged||separate)
                     {
                         double finish=length+(merged?terminals.Where(t=>t.Merges).Select(t=>t.EndMeters).DefaultIfEmpty().Min():0);
-                        if(finish<=0||finish>500)break;
+                        if(finish<=0)break;
                         bool? left=side.Max()<main.Min()?true:side.Min()>main.Max()?false:null;
                         if(mainEntrance is null)diagnostics.Add($"辅助车道区间已确认：{id}；主路身份尚未确定");
                         if(left is null)diagnostics.Add($"辅助车道区间已确认：{id}；辅助群与主路群序位交错，无法得到唯一横向方向");

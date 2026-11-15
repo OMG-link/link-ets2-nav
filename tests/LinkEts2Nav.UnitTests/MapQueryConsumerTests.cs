@@ -68,4 +68,18 @@ public sealed class MapQueryConsumerTests
         source.GetRouteComponents(route);
         Assert.Equal(count, reported.Count);
     }
+
+    [Fact]
+    public void NoNavigationContinuationGapUsesTheSameTypedCollector()
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var road=Road.Add(map,Vector3.Zero,new(50,0,0),default);
+        var source=new RoadPathSource(map,missingConnection:_=>Missing());
+        var none=RouteSnapshot.Parse([],DateTimeOffset.UtcNow);
+        var path=source.GetPath(new(10,0,0),Vector3.UnitX,none,RouteAvailability.None);
+        Assert.Single(path);
+        var dependency=Assert.Single(source.MapIssues.OfType<MissingMapSectors>());
+        Assert.Equal([Required],dependency.Sectors);
+        Assert.Equal(road.ForwardNode.Position,dependency.QueryAnchor);
+    }
 }

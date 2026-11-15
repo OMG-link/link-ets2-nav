@@ -1,3 +1,4 @@
+using LinkEts2Nav.Map;
 namespace LinkEts2Nav.Core;
 
 public sealed record LaneMergeSourceStep(ulong PrefabUid,ulong EndingEntrance,int EndingLane,
@@ -5,6 +6,7 @@ public sealed record LaneMergeSourceStep(ulong PrefabUid,ulong EndingEntrance,in
 public sealed record LaneMergeOriginDecision(LaneMergeKind Kind,ulong? SourcePrefab,ulong? EndingEntrance,
     ulong? MainEntrance,double BackwardMeters,string Reason)
 {
+    public MapQueryIssue? MapIssue {get;init;}
     public ulong? ApplicableEntryNode {get;init;}
     public ulong? ApplicabilitySourcePrefab {get;init;}
     public ulong? SourceEntrance {get;init;}
@@ -15,12 +17,14 @@ public sealed record LaneMergeOriginDecision(LaneMergeKind Kind,ulong? SourcePre
 /// <summary>Follows a native lane pair through same-input structures within one total 500 m source window.</summary>
 public sealed class LaneMergeOriginClassifier
 {
+    private readonly Func<ulong,MapQueryIssue>? missingConnection;
     private readonly IReadOnlyDictionary<ulong,DirectedRoad[]> roads;
     private readonly IReadOnlyDictionary<ulong,PrefabLanePath[]> lanes;
     private readonly IReadOnlyDictionary<(ulong Prefab,ulong Entry),PrefabLanePath[]> entries;
     private readonly IReadOnlySet<(ulong Prefab,ulong Exit)> joins;
-    public LaneMergeOriginClassifier(NativeLaneGraph graph)
+    public LaneMergeOriginClassifier(NativeLaneGraph graph,Func<ulong,MapQueryIssue>? missingConnection=null)
     {
+        this.missingConnection=missingConnection;
         var native=graph.ThroughTraffic.Edges;
         roads=native.Where(e=>NativeLaneGraph.Prefab(e) is null).GroupBy(e=>e.EndNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
         var paths=native.SelectMany(e=>e.LanePaths)
@@ -42,12 +46,17 @@ public sealed class LaneMergeOriginClassifier
         Dictionary<int,PrefabLanePath[]>? projection=null;
         IReadOnlyList<int>? applicable=null;
         var steps=new List<LaneMergeSourceStep>();
+        MapQueryIssue? mapIssue=null;
         var visited=new Dictionary<(ulong,ulong,int,ulong,int,string),(double A,double B)>();
         LaneMergeOriginDecision Decision(LaneMergeKind kind,string reason,ulong? source=null,ulong? fromA=null,ulong? fromB=null)
             =>new(kind,source,fromA,fromB,Math.Min(500,Math.Max(a,b)),reason)
             {ApplicableEntryNode=approach,ApplicabilitySourcePrefab=sourcePrefab,SourceEntrance=sourceEntrance??approach,
-                ApplicableEntryLanes=applicable??Array.AsReadOnly(orders.Keys.Order().ToArray()),Steps=Array.AsReadOnly(steps.ToArray())};
-        LaneMergeOriginDecision Missing(string reason)=>Decision(LaneMergeKind.Uncertain,reason);
+                ApplicableEntryLanes=applicable??Array.AsReadOnly(orders.Keys.Order().ToArray()),Steps=Array.AsReadOnly(steps.ToArray()),MapIssue=mapIssue};
+        LaneMergeOriginDecision Missing(string reason,MapQueryIssue? issue=null)
+        {
+            mapIssue=issue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason);
+            return Decision(LaneMergeKind.Uncertain,reason);
+        }
         LaneMergeOriginDecision Window()=>Decision(LaneMergeKind.LaneReduction,"原生来源累计已覆盖500米，窗口内未发现两线分属不同入口");
         LaneMergeOriginDecision? Budget()=>Math.Max(a,b)<=500?null:Math.Max(aMin,bMin)<=500
             ?Missing("原生曲线候选的累计里程跨越500米边界，来源未唯一确认"):Window();
@@ -105,7 +114,12 @@ public sealed class LaneMergeOriginClassifier
             var source=(lanes.GetValueOrDefault(boundary)??[]).Where(p=>p.PrefabUid!=ending.PrefabUid).ToArray();
             var side=source.Where(p=>p.ExitOrder==ending.EntryOrder&&p.ExitLaneCount==ending.EntryLaneCount).ToArray();
             var kept=source.Where(p=>p.ExitOrder==main.EntryOrder&&p.ExitLaneCount==main.EntryLaneCount).ToArray();
-            if(side.Length==0||kept.Length==0)return Missing($"接口{boundary:X16}上游地图或原生车道继承未确认");
+            if(side.Length==0||kept.Length==0)
+            {
+                string reason=$"接口{boundary:X16}上游地图或原生车道继承未确认";
+                return Missing(reason,missingConnection?.Invoke(boundary)
+                    ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason));
+            }
             if(side.Concat(kept).Select(p=>p.PrefabUid).Distinct().Count()!=1)return Missing("两线的上游预制件来源不唯一");
             var fromA=side.Select(p=>p.EntryNodeUid).Distinct().ToArray();var fromB=kept.Select(p=>p.EntryNodeUid).Distinct().ToArray();
             if(fromA.Length!=1||fromB.Length!=1)return Missing("至少一条车道的上游来源入口尚未唯一确认");

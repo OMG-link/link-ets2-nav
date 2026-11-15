@@ -180,7 +180,8 @@ public sealed class RoundaboutBuilderTests
         Assert.Contains(20UL, index.UnresolvedBoundaryNodes[sectors[0]]);
         index.AddPrefab(new Prefab { Uid = 2, Nodes = [right, left] }, Half(right, left, 0, MathF.PI));
         Assert.Equal(1, index.BuiltSectorCount);
-        index.BuildNewSectors(sectors, TestContext.Current.CancellationToken);
+        // The old search cell need not still belong to the current active window.
+        index.BuildNewSectors([sectors[1]], TestContext.Current.CancellationToken);
         Assert.Single(index.Structures);
         Assert.Empty(index.UnresolvedBoundaryNodes);
         Assert.Equal(2, index.BuiltSectorCount);

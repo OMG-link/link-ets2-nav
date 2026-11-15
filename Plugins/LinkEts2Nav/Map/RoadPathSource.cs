@@ -20,6 +20,23 @@ public sealed class RoadPathSource
     private readonly HashSet<ulong> boundaryNodes = new();
     private readonly DirectedPathMatcher matcher = new();
     private readonly Action<string>? diagnosticLog;
+    private readonly Func<ulong,MapQueryIssue>? missingConnection;
+    private readonly Action<MapQueryIssue>? reportMapIssue;
+    private readonly List<MapQueryIssue> mapIssues=[];
+    public IReadOnlyList<MapQueryIssue> MapIssues=>mapIssues;
+    public MapQueryIssue DescribeMissingConnection(ulong node)=>missingConnection?.Invoke(node)
+        ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"地图接口{node:X16}没有可定位的加载依赖");
+    public void ReportMapIssue(MapQueryIssue issue)
+    {
+        bool Same(MapQueryIssue existing)=>existing.Reason==issue.Reason&&(existing,issue) switch
+        {
+            (MissingMapSectors a,MissingMapSectors b)=>a.Sectors.SequenceEqual(b.Sectors),
+            (MapQueryFailure a,MapQueryFailure b)=>a.Kind==b.Kind,
+            _=>false
+        };
+        if(!mapIssues.Any(Same))
+        {mapIssues.Add(issue);reportMapIssue?.Invoke(issue);}
+    }
     private readonly HashSet<(ulong,ulong)> reportedAmbiguities = new();
     private ulong[]? cachedNodes;
     private (bool Truncated,ulong? Terminal) cachedRouteMeaning;
@@ -28,9 +45,11 @@ public sealed class RoadPathSource
     private IReadOnlyList<DirectedRoad>? navigationGraph;
     private readonly IReadOnlyDictionary<NativeRoadKey,DirectedRoad>? preparedEdges;
 
-    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null,Func<Road,bool,bool?>? playerAccess=null,Func<Road,double?>? roadHalfWidth=null)
+    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null,Func<Road,bool,bool?>? playerAccess=null,Func<Road,double?>? roadHalfWidth=null,
+        Func<ulong,MapQueryIssue>? missingConnection=null,Action<MapQueryIssue>? reportMapIssue=null)
     {
         diagnosticLog=log;
+        this.missingConnection=missingConnection;this.reportMapIssue=reportMapIssue;
         this.playerAccess=playerAccess;this.roadHalfWidth=roadHalfWidth;
         navigationGraph=native?.Edges;
         preparedEdges=native?.Edges.ToDictionary(NativeRoadKey.Of);
@@ -46,7 +65,7 @@ public sealed class RoadPathSource
             boundaryNodes.Add(road.ForwardNode.Uid);
         }
         var annotated=native?.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null).ToArray()
-            ??new RoadJoinPriorityBuilder(incidentRoads,log).Annotate(junctions??[]);
+            ??new RoadJoinPriorityBuilder(incidentRoads,log,DescribeMissingConnection,ReportMapIssue).Annotate(junctions??[]);
         foreach (var group in annotated.GroupBy(p => (p.StartNodeUid, p.EndNodeUid)))
         {
             boundaryNodes.Add(group.Key.StartNodeUid);
@@ -180,7 +199,17 @@ public sealed class RoadPathSource
                     }
                 }
             }
-            if (directed is null) { chunk = null; continue; }
+            if (directed is null)
+            {
+                if(ambiguous.Contains(key))ReportMapIssue(new MapQueryFailure(MapQueryFailureKind.Ambiguous,
+                    $"已加载导航连接冲突：{key.Item1:X16}/{key.Item2:X16}"));
+                else
+                {
+                    ReportMapIssue(DescribeMissingConnection(key.Item1));
+                    if(key.Item2!=key.Item1)ReportMapIssue(DescribeMissingConnection(key.Item2));
+                }
+                chunk = null; continue;
+            }
             if (chunk is null) { chunk = new(); cachedChunks.Add(chunk); }
             chunk.Add(directed);
         }

@@ -5,11 +5,12 @@ using TruckLib.ScsMap;
 namespace LinkEts2Nav.Map;
 
 /// <summary>Annotates the already-loaded prefab snapshot; never opens archives or queries the full map.</summary>
-public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>> incidentRoads,Action<string>? log=null)
+public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>> incidentRoads,Action<string>? log=null,
+    Func<ulong,MapQueryIssue>? missingConnection=null,Action<MapQueryIssue>? reportMapIssue=null)
 {
     public IReadOnlyList<DirectedRoad> Annotate(IEnumerable<DirectedRoad> source)
     {
-        var result=source.ToArray();var sampler=new RoadSlopeWindowSampler(incidentRoads,result.Where(e=>!e.ReturnsToEntry).ToArray());
+        var result=source.ToArray();var sampler=new RoadSlopeWindowSampler(incidentRoads,result.Where(e=>!e.ReturnsToEntry).ToArray(),missingConnection);
         var groups=result.Select((edge,index)=>(edge,index)).Where(p=>!p.edge.ReturnsToEntry&&p.edge.Id.StartsWith("prefab:",StringComparison.Ordinal))
             .GroupBy(p=>(Prefab:p.edge.Id.Split(':')[1],Exit:p.edge.EndNodeUid));
         foreach(var group in groups)
@@ -17,11 +18,13 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
             var entries=RoadJoinTopology.IndependentEntries(group.First().edge.LaneConnections,group.Key.Exit);
             if(entries.Count==0)continue;
             var output=sampler.Sample(group.Key.Exit,false,group.Key.Prefab);var measurements=new List<RoadJoinEntryMeasurement>();
+            if(output.MapIssue is {} outputIssue)reportMapIssue?.Invoke(outputIssue);
             foreach(var entry in entries)
             {
                 ulong uid=entry[0].EntryNode;int count=entry.Select(c=>c.EntryLane).Distinct().Count();
                 var candidates=group.Where(p=>p.edge.StartNodeUid==uid).Select(p=>p.edge).ToArray();
                 var input=sampler.Sample(uid,true,group.Key.Prefab);
+                if(input.MapIssue is {} inputIssue)reportMapIssue?.Invoke(inputIssue);
                 double? angle=candidates.Length==1?DirectionDifference(candidates[0]):null;
                 string? failure=input.Failure??output.Failure;
                 if(angle is null)failure=(failure is null?"":failure+"；")+"竞争入口原生方向缺失或不唯一";

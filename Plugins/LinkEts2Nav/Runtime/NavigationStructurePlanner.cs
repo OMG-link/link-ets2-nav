@@ -71,8 +71,9 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
         IReadOnlyList<NavigationManeuver> upcoming=plan.Auxiliaries is {} auxiliaries
             ?AuxiliaryLaneGuidance.Apply(plan.BaseActions,plan.InstructionRoute,lanes,auxiliaries):plan.BaseActions;
         upcoming=SelectedStraightPassages(upcoming,plan.Route,lanes,nearby,paths.GetNavigationGraph());
-        var physical=mergeDetector.Find(plan.Route,paths.GetNavigationGraph(),lanes,0)
+        var physical=mergeDetector.Find(plan.Route,paths.GetNavigationGraph(),lanes,0,paths.DescribeMissingConnection)
             .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
+        foreach(var issue in physical.Select(m=>m.Origin?.MapIssue).OfType<MapQueryIssue>())paths.ReportMapIssue(issue);
         var merges=plan.Contractions?.Select(physical,lanes)??physical;
         upcoming=LaneContractionGuidance.Apply(upcoming,merges);
         upcoming=ActionPointConstraints.Apply(upcoming);

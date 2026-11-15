@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using LinkEts2Nav.Map;
 namespace LinkEts2Nav.Core;
 
 public enum AuxiliaryBoundaryKind { IndependentEntrance, NativeSplit, NativeMerge, SeparateExit }
@@ -32,6 +33,7 @@ public sealed class AuxiliaryLaneIndex
     public IReadOnlyList<AuxiliaryLaneCorridor> ParallelCorridors {get;}
     public IReadOnlyDictionary<NativeRoadKey,IReadOnlyList<AuxiliaryLaneCorridor>> ByRoad {get;}
     public IReadOnlyList<string> Diagnostics {get;}
+    public IReadOnlyList<MapQueryIssue> MapIssues {get;private init;}=[];
     /// <summary>Returns the existing short auxiliary interval for this exact native merge.</summary>
     public AuxiliaryLaneCorridor? NativeMerge(LaneMergeObservation merge)=>MatchMerge(Corridors,merge);
     /// <summary>Returns a completed native parallel interval without imposing an auxiliary-length policy.</summary>
@@ -58,11 +60,13 @@ public sealed class AuxiliaryLaneIndex
             .GroupBy(p=>p.Key).ToFrozenDictionary(g=>g.Key,g=>(IReadOnlyList<AuxiliaryLaneCorridor>)Array.AsReadOnly(g.Select(p=>p.Corridor).DistinctBy(c=>c.Id).ToArray()));
     }
 
-    public static AuxiliaryLaneIndex Build(NativeLaneGraph graph,CancellationToken cancellationToken=default)
+    public static AuxiliaryLaneIndex Build(NativeLaneGraph graph,CancellationToken cancellationToken=default,
+        Func<ulong,MapQueryIssue>? missingConnection=null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var completeGraph=graph;graph=graph.ThroughTraffic;
         var corridors=new List<AuxiliaryLaneCorridor>();var diagnostics=new List<string>();var seeds=new HashSet<string>(StringComparer.Ordinal);
+        var mapIssues=new List<MapQueryIssue>();
         foreach(var shared in graph.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null)
             .GroupBy(e=>(Prefab:NativeLaneGraph.Prefab(e),e.EndNodeUid)))
         {
@@ -109,7 +113,7 @@ public sealed class AuxiliaryLaneIndex
                     [new(edge,start,RouteGeometry.Length(edge),0,Read(side),Read(mainOrders))],length);
             }
         }
-        return new(completeGraph,corridors,diagnostics);
+        return new(completeGraph,corridors,diagnostics){MapIssues=Array.AsReadOnly(mapIssues.ToArray())};
 
         static IReadOnlyList<int> Read(IEnumerable<int> values)=>Array.AsReadOnly(values.Distinct().Order().ToArray());
         void Trace(DirectedRoad origin,AuxiliaryBoundaryKind startKind,ulong? mainEntrance,HashSet<int> side,HashSet<int> main,
@@ -119,8 +123,10 @@ public sealed class AuxiliaryLaneIndex
             if(!seeds.Add(id))return;
             var initial=Read(side);
             var pending=new Stack<WalkState>();pending.Push(new(origin,side,main,count,sections,length,[]));
-            void Missing(string reason)
-            {if(length<=500)diagnostics.Add($"辅助车道结构未完成：{id}；{reason}（后续地图版本补齐后重试）");
+            void Missing(string reason,MapQueryIssue? issue=null)
+            {
+                if(length<=500)diagnostics.Add($"辅助车道结构未完成：{id}；{reason}");
+                mapIssues.Add(issue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason));
             }
             while(pending.TryPop(out var state))
             {
@@ -132,7 +138,12 @@ public sealed class AuxiliaryLaneIndex
                     // A shared road node also exposes the opposite-direction prefab. Never turn back into the component just left.
                     var next=graph.From(previous.EndNodeUid).Where(e=>e.EndNodeUid!=previous.StartNodeUid
                         &&(NativeLaneGraph.Prefab(previous) is not {} p||NativeLaneGraph.Prefab(e)!=p)).ToArray();
-                    if(next.Length==0){Missing("下游原生道路/预制件尚未加载");break;}
+                    if(next.Length==0)
+                    {
+                        const string reason="下游原生道路/预制件尚未加载";
+                        Missing(reason,missingConnection?.Invoke(previous.EndNodeUid)
+                            ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason));break;
+                    }
                     var roads=next.Where(e=>NativeLaneGraph.Prefab(e) is null).ToArray();
                     if(roads.Length>0)
                     {
@@ -146,7 +157,12 @@ public sealed class AuxiliaryLaneIndex
                     if(next.Any(e=>e.Roundabout is not null||e.Junction?.IsJunction==true))break;
                     var sidePaths=next.SelectMany(e=>e.LanePaths).Where(p=>side.Contains(p.EntryOrder)&&p.EntryLaneCount==count).ToArray();
                     var mainPaths=next.SelectMany(e=>e.LanePaths).Where(p=>main.Contains(p.EntryOrder)&&p.EntryLaneCount==count).ToArray();
-                    if(sidePaths.Length==0||mainPaths.Length==0){Missing("车道继承缺少原生连接");break;}
+                    if(sidePaths.Length==0||mainPaths.Length==0)
+                    {
+                        const string reason="车道继承缺少原生连接";
+                        Missing(reason,missingConnection?.Invoke(previous.EndNodeUid)
+                            ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason));break;
+                    }
                     var terminals=new List<AuxiliaryLaneTerminal>();bool merged=false;
                     foreach(var edge in next)
                     {

@@ -7,11 +7,12 @@ namespace LinkEts2Nav.Map;
 public sealed record RoadSlopeWindow(double? AngleDegrees,double CoveredMeters,string? Failure,IReadOnlyList<ulong> Roads)
 {
     public IReadOnlyList<ulong> Prefabs { get; init; }=[];
+    public MapQueryIssue? MapIssue {get;init;}
 }
 
 /// <summary>Measures only native road and PPD geometry. Shared interface UIDs add no connector mileage.</summary>
 public sealed class RoadSlopeWindowSampler(IReadOnlyDictionary<ulong,List<Road>> incidentRoads,
-    IReadOnlyList<DirectedRoad>? prefabPaths=null)
+    IReadOnlyList<DirectedRoad>? prefabPaths=null,Func<ulong,MapQueryIssue>? missingConnection=null)
 {
     private const double WindowMeters=20,SampleStepMeters=.5,ParallelSlopeToleranceDegrees=.1;
     private readonly Dictionary<(ulong Node,bool Incoming,string? Exclude),RoadSlopeWindow> cached=[];
@@ -28,8 +29,8 @@ public sealed class RoadSlopeWindowSampler(IReadOnlyDictionary<ulong,List<Road>>
     private RoadSlopeWindow Read(ulong node,bool incoming,string? excludePrefab,int? lane,
         double covered,double rise,HashSet<ulong> roads,HashSet<ulong> usedPrefabs)
     {
-        RoadSlopeWindow Result(double? angle,string? failure)=>new(angle,covered,failure,roads.ToArray())
-            {Prefabs=usedPrefabs.ToArray()};
+        RoadSlopeWindow Result(double? angle,string? failure,MapQueryIssue? issue=null)=>new(angle,covered,failure,roads.ToArray())
+            {Prefabs=usedPrefabs.ToArray(),MapIssue=issue??(failure is null?null:new MapQueryFailure(MapQueryFailureKind.Ambiguous,failure))};
         if(covered>=WindowMeters)return Result(Math.Atan2(rise,covered)*180/Math.PI,null);
         var options=(incidentRoads.GetValueOrDefault(node)??[]).Where(r=>!roads.Contains(r.Uid)).ToArray();
         if(options.Length>1)return Result(null,"20米道路坡度窗口存在多个连接");
@@ -52,7 +53,12 @@ public sealed class RoadSlopeWindowSampler(IReadOnlyDictionary<ulong,List<Road>>
 
         var edges=(incoming?incomingPrefabs:outgoingPrefabs)[node].Where(e=>NativeLaneGraph.Prefab(e)!=excludePrefab&&!usedPrefabs.Contains(e.LanePaths.FirstOrDefault()?.PrefabUid??0))
             .Where(e=>e.LanePaths.Any(p=>lane is null||(incoming?p.ExitOrder:p.EntryOrder)==lane)).ToArray();
-        if(edges.Length==0)return Result(null,"20米道路坡度窗口不完整（缺少相接道路或原生预制件车道）");
+        if(edges.Length==0)
+        {
+            const string reason="20米道路坡度窗口不完整（缺少相接道路或原生预制件车道）";
+            return Result(null,reason,missingConnection?.Invoke(node)
+                ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason));
+        }
         // Distinct upstream/downstream ports are real route alternatives, not interchangeable lanes.
         if(edges.Select(e=>incoming?e.StartNodeUid:e.EndNodeUid).Distinct().Count()!=1)
             return Result(null,"20米预制件坡度窗口存在多个支路接口");

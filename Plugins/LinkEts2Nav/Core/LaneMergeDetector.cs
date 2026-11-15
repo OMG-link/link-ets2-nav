@@ -25,9 +25,9 @@ public sealed class LaneMergeDetector
     private sealed record Model(PrefabLanePath Ending,PrefabLanePath Main,Vector3 Position,bool? Left,int Count,
         double? Parallel,LaneMergeKind Kind,string Reason,LaneMergeOriginDecision Origin);
     public IReadOnlyList<LaneMergeObservation> Find(IReadOnlyList<DirectedRoad> route,IReadOnlyList<DirectedRoad> graph,
-        LaneNavigationPlan plan,double vehicleAlong)
+        LaneNavigationPlan plan,double vehicleAlong,Func<ulong,LinkEts2Nav.Map.MapQueryIssue>? missingConnection=null)
     {
-        if(!ReferenceEquals(indexed,graph)){indexed=graph;models=Build(graph);}
+        if(!ReferenceEquals(indexed,graph)){indexed=graph;models=Build(graph,missingConnection);}
         var result=new List<LaneMergeObservation>();double offset=0;
         foreach(var edge in route)
         {
@@ -66,12 +66,12 @@ public sealed class LaneMergeDetector
     }
 
 
-    private static IReadOnlyList<Model> Build(IReadOnlyList<DirectedRoad> graph)
+    private static IReadOnlyList<Model> Build(IReadOnlyList<DirectedRoad> graph,Func<ulong,LinkEts2Nav.Map.MapQueryIssue>? missingConnection)
     {
         var lanes=graph.Where(e=>!e.ReturnsToEntry).SelectMany(e=>e.LanePaths).DistinctBy(p=>(p.PrefabUid,p.EntryNodeUid,p.EntryLane,p.ExitNodeUid,p.ExitLane)).ToArray();
         var roads=graph.Where(e=>!e.Id.StartsWith("prefab:",StringComparison.Ordinal)).GroupBy(e=>e.EndNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
         var laneEnds=lanes.GroupBy(p=>p.ExitNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
-        var result=new List<Model>();var origins=new LaneMergeOriginClassifier(new NativeLaneGraph(graph));
+        var result=new List<Model>();var origins=new LaneMergeOriginClassifier(new NativeLaneGraph(graph),missingConnection);
         foreach(var group in lanes.GroupBy(p=>(p.PrefabUid,p.ExitNodeUid,p.ExitLane)))
         {
             var paths=group.ToArray();

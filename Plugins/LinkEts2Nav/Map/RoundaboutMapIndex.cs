@@ -14,6 +14,8 @@ public sealed class RoundaboutMapIndex
     public RoundaboutMapIndex(SpecialRoundaboutCatalog? special=null) => this.special=special??SpecialRoundaboutCatalog.Default;
     private readonly HashSet<SectorCoordinate> built = [];
     private readonly Dictionary<SectorCoordinate, HashSet<ulong>> waitingBoundaries = [];
+    private readonly HashSet<SectorCoordinate> dirtyAttachments = [];
+    public IReadOnlyList<MapQueryIssue> MapIssues {get;private set;}=[];
     public IReadOnlyDictionary<SectorCoordinate, IReadOnlySet<ulong>> UnresolvedBoundaryNodes =>
         waitingBoundaries.ToDictionary(p => p.Key, p => (IReadOnlySet<ulong>)p.Value.ToHashSet());
     private readonly Dictionary<ulong, (SectorCoordinate Sector, RoundaboutCurve[] Curves, RoundaboutCurveKey[] Entrances,string Access)> prefabs = [];
@@ -114,14 +116,19 @@ public sealed class RoundaboutMapIndex
             if (pending.Value.Overlaps(added))
             {
                 built.Remove(pending.Key);
+                dirtyAttachments.Add(pending.Key);
                 pending.Value.ExceptWith(added);
                 if (pending.Value.Count == 0) waitingBoundaries.Remove(pending.Key);
             }
     }
 
-    public void BuildNewSectors(IEnumerable<SectorCoordinate> sectors, CancellationToken token = default)
+    public void BuildNewSectors(IEnumerable<SectorCoordinate> sectors, CancellationToken token = default,
+        Func<ulong,MapQueryIssue>? missingConnection=null)
     {
-        var fresh = sectors.Where(s => !built.Contains(s)).Distinct().ToArray();
+        // A completed attachment can dirty an older search cell outside the new
+        // active window. Its native curves are already retained by this index.
+        var fresh = sectors.Concat(dirtyAttachments)
+            .Where(s => !built.Contains(s)).Distinct().ToArray();
         var inputs = curves.Values.Where(c => c.EntryNode != 0).GroupBy(c => c.EntryNode).ToDictionary(g => g.Key, g => g.ToArray());
         var graph = curves.Values.Select(c =>
         {
@@ -162,6 +169,11 @@ public sealed class RoundaboutMapIndex
             if (missing.Count == 0) waitingBoundaries.Remove(sector);
             else waitingBoundaries[sector] = missing;
             built.Add(sector);
+            dirtyAttachments.Remove(sector);
         }
+        MapIssues=waitingBoundaries.Values.SelectMany(nodes=>nodes).Distinct()
+            .Select(node=>missingConnection?.Invoke(node)
+                ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"环岛搜索接口{node:X16}未解析外部附件，缺少其所属区块证据"))
+            .ToArray();
     }
 }

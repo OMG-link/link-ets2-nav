@@ -12,7 +12,8 @@ public sealed class MapScanCoverage
     public float NearbyRadius { get; }
     public IReadOnlyList<(Vector3 From, Vector3 To)> RouteSegments { get; }
     public IReadOnlyList<SectorCoordinate> Sectors { get; }
-    private MapScanCoverage(Vector3 position, float radius, List<(Vector3 From, Vector3 To)> segments)
+    private readonly HashSet<SectorCoordinate> localSectors;
+    private MapScanCoverage(Vector3 position, float radius, List<(Vector3 From, Vector3 To)> segments,IEnumerable<SectorCoordinate>? extra=null)
     {
         Position = position; NearbyRadius = radius; RouteSegments = segments;
         var sectors = NearbyCameraScanner.SectorsNear(position, radius + 100).ToHashSet();
@@ -23,8 +24,15 @@ public sealed class MapScanCoverage
             for (int i = 0; i <= steps; i++)
                 sectors.UnionWith(NearbyCameraScanner.SectorsNear(Vector3.Lerp(from, to, (float)i / steps), CorridorRadius + 100));
         }
-        Sectors = sectors.OrderBy(s => s.X).ThenBy(s => s.Z).ToArray();
+        localSectors=sectors.ToHashSet();
+        if(extra is not null)sectors.UnionWith(extra);
+        Sectors = Array.AsReadOnly(sectors.OrderBy(s => s.X).ThenBy(s => s.Z).ToArray());
     }
+    public MapScanCoverage WithAdditionalSectors(IEnumerable<SectorCoordinate> sectors)=>new(Position,NearbyRadius,RouteSegments.ToList(),sectors);
+    public bool ContainsQueryAnchor(Vector3 point)=>float.IsFinite(point.X)&&float.IsFinite(point.Z)
+        &&Math.Abs((double)point.X/TruckLib.ScsMap.Map.SectorSize)<int.MaxValue-1d
+        &&Math.Abs((double)point.Z/TruckLib.ScsMap.Map.SectorSize)<int.MaxValue-1d
+        &&localSectors.Contains(TruckLib.ScsMap.Map.GetSectorOfCoordinate(point));
     public static MapScanCoverage Create(Vector3 position, float radius, TruckLib.ScsMap.Map? host,
         RouteSnapshot? route, double remaining)
         =>CreateCore(position,radius,host is null?null:new System.Collections.ObjectModel.ReadOnlyDictionary<ulong,INode>(host.Nodes),route,remaining);

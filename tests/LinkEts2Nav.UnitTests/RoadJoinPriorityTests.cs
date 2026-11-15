@@ -120,6 +120,23 @@ public sealed class RoadJoinPriorityTests
         Assert.False(unknown);Assert.True(double.IsPositiveInfinity(first));Assert.True(end-50>800);
     }
     [Fact]
+    public void AdjacentPrefabProvidesTheMissingEntranceWindowBeforeMainRoadScoring()
+    {
+        var scene=Scene();scene.Map.MapItems.Remove(scene.Before.Uid);
+        var previous=new DirectedRoad("prefab:41:0:1",scene.Before.Node.Uid,scene.Before.ForwardNode.Uid,
+            [new(0,0,100),new(0,0,0)])
+        {
+            LanePaths=Enumerable.Range(0,2).Select(lane=>new PrefabLanePath(41,scene.Before.Node.Uid,
+                scene.Before.ForwardNode.Uid,lane,lane,lane,lane,2,2,[lane],
+                [new(lane*3,0,100),new(lane*3,0,0)],100)).ToArray()
+        };
+        var paths=new RoadPathSource(scene.Map,[previous,scene.Main,scene.Side]);
+        var main=paths.GetNavigationGraph().Single(e=>e.Id==scene.Main.Id);
+        Assert.Equal(scene.Main.StartNodeUid,main.JoinPriority!.MainEntry);
+        Assert.All(main.JoinPriority.Measurements,m=>Assert.Null(m.Failure));
+        Assert.Equal(2,main.JoinPriority.Scores.Count);Assert.True(main.JoinPriority.WinningMargin>=5);
+    }
+    [Fact]
     public void MissingSideRoadStillCompetesAndKeepsTheUnknownJoinBarrier()
     {
         var scene=Scene(false);var paths=new RoadPathSource(scene.Map,[scene.Main,scene.Side]);

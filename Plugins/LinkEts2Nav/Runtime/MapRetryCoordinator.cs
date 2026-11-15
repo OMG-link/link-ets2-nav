@@ -107,7 +107,9 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
         }
         SafeCancel(cancel);DemandChanged();
     }
-    public void Reset()
+    public void Reset()=>ResetScope()();
+    // Invalidate under an owner's lifecycle lock, then cancel callers after all owner locks exit.
+    internal Action ResetScope()
     {
         CancellationTokenSource[] cancel;
         lock(gate)
@@ -115,7 +117,8 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
             epoch++;scopeRevision++;current=null;cancel=entries.Values.Select(e=>e.Cancellation).OfType<CancellationTokenSource>().ToArray();
             entries.Clear();reported.Clear();
         }
-        foreach(var c in cancel)SafeCancel(c);DemandChanged();
+        DemandChanged();
+        return ()=>{foreach(var c in cancel)SafeCancel(c);};
     }
     /// <summary>Only call after a successful full derived snapshot became visible to consumers.</summary>
     public void Publish(NearbyMapSnapshot snapshot,long revision)

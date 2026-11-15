@@ -83,13 +83,16 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     public bool Request(MapScanRequest request, DateTimeOffset now)
     {
         // Reset query lifetimes outside the scanner gate: cancellation belongs to callers.
+        Action? cancel=null;
+        try
+        {
         lock (lifecycleGate)
         {
             bool reset;
             lock (gate) reset=resourceId!=request.ResourceId||sessionId!=request.SessionId
                 ||(requestedRoute!=request.Route?.Revision
                    && !(latestRequest?.Route is {} previous&&request.Route is {} next&&RouteContinuity.IsForwardExtension(previous,next)));
-            if(reset) retries.Reset();
+            if(reset) cancel=retries.ResetScope();
             lock (gate)
             {
                 if (stop.IsCancellationRequested) return false;
@@ -122,13 +125,18 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                 return true;
             }
         }
+        }
+        finally{cancel?.Invoke();}
     }
 
     public void Invalidate()
     {
+        Action? cancel=null;
+        try
+        {
         lock(lifecycleGate)
         {
-            retries.Reset();
+            cancel=retries.ResetScope();
             lock (gate)
             {
                 generation++;
@@ -140,6 +148,8 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                 state = new(null, default, default, state.Revision, null, false);
             }
         }
+        }
+        finally{cancel?.Invoke();}
     }
 
     private void SetDependencies(IReadOnlyList<TruckLib.ScsMap.SectorCoordinate> sectors)

@@ -15,6 +15,7 @@ public sealed class RoadPathSource
     private readonly HashSet<(ulong, ulong)> ambiguous = new();
     private readonly Road[] roads;
     private readonly Func<Road,bool,bool?>? playerAccess;
+    private readonly Func<Road,double?>? roadHalfWidth;
     private readonly Dictionary<(ulong, ulong), DirectedRoad> junctionLinks = new();
     private readonly HashSet<ulong> boundaryNodes = new();
     private readonly DirectedPathMatcher matcher = new();
@@ -27,10 +28,10 @@ public sealed class RoadPathSource
     private IReadOnlyList<DirectedRoad>? navigationGraph;
     private readonly IReadOnlyDictionary<NativeRoadKey,DirectedRoad>? preparedEdges;
 
-    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null,Func<Road,bool,bool?>? playerAccess=null)
+    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null,Func<Road,bool,bool?>? playerAccess=null,Func<Road,double?>? roadHalfWidth=null)
     {
         diagnosticLog=log;
-        this.playerAccess=playerAccess;
+        this.playerAccess=playerAccess;this.roadHalfWidth=roadHalfWidth;
         navigationGraph=native?.Edges;
         preparedEdges=native?.Edges.ToDictionary(NativeRoadKey.Of);
         roads = map.MapItems.Values.OfType<Road>().Where(r=>CanUse(r,true)||CanUse(r,false)).ToArray();
@@ -193,7 +194,7 @@ public sealed class RoadPathSource
             return false;
         var nearby = roads.Where(r => r.Node is not null && r.ForwardNode is not null && Near(r, position))
             .Select(r => (Road: r, Score: Distance(position, [Orient(r, r.Node.Uid)])))
-            .Where(p => p.Score < 12).OrderBy(p => p.Score).ToArray();
+            .Where(p => p.Score < LateralTolerance(p.Road)).OrderBy(p => p.Score).ToArray();
         // A nearby clamped road endpoint is not ownership evidence inside a prefab.
         // Apply the same finite-path projection rule used when selecting the current road.
         var candidates = nearby.Where(p => HasProjection(position, Orient(p.Road, p.Road.Node.Uid)))
@@ -243,7 +244,7 @@ public sealed class RoadPathSource
             .Where(p => matcher.ProjectDistance(position, heading, [p.Sample]).HasValue
                 || matcher.ProjectDistance(position, -heading, [p.Sample]).HasValue)
             .Select(p => (p.Road, p.Sample, Score: Distance(position, [p.Sample])))
-            .Where(p => p.Score < 12).OrderBy(p => p.Score).Take(3).ToArray();
+            .Where(p => p.Score < LateralTolerance(p.Road)).OrderBy(p => p.Score).Take(3).ToArray();
         if (candidates.Length == 0)
         {
             var junctions = junctionLinks.Values.Where(p => !ambiguous.Contains((p.StartNodeUid, p.EndNodeUid))
@@ -366,10 +367,16 @@ public sealed class RoadPathSource
             int count = Math.Clamp((int)Math.Ceiling(road.Length / 8), 16, 256);
             var points = Enumerable.Range(0, count + 1).Select(i => road.InterpolateCurve((float)i / count).Position).ToArray();
             sample = new(road.Uid.ToString("X16"), road.Node.Uid, road.ForwardNode.Uid, points)
-            { RoadType = road.RoadType.ToString() };
+            { RoadType = road.RoadType.ToString(),ReferenceHalfWidthMeters=roadHalfWidth?.Invoke(road) };
             samples.Add(road.Uid, sample);
         }
         return start == sample.StartNodeUid ? sample : sample with { StartNodeUid = sample.EndNodeUid, EndNodeUid = sample.StartNodeUid, Points = sample.Points.Reverse().ToArray() };
+    }
+
+    private double LateralTolerance(Road road)
+    {
+        var width=Orient(road,road.Node.Uid).ReferenceHalfWidthMeters;
+        return width is {} w&&double.IsFinite(w)&&w>0?Math.Max(12,w):12;
     }
 
     private static double Distance(Vector3 point, IReadOnlyList<DirectedRoad> path)

@@ -31,6 +31,8 @@ public sealed record DirectedRoad(
     public IReadOnlyList<int> SegmentStarts { get; init; } = [];
     /// <summary>Map road-type token; absent for prefab connections or unavailable metadata.</summary>
     public string? RoadType { get; init; }
+    /// <summary>Loaded road-reference half-width; absent for prefabs and unresolved road definitions.</summary>
+    public double? ReferenceHalfWidthMeters { get; init; }
     public PrefabJunctionInfo? Junction { get; init; }
     /// <summary>Only the chosen entrance and exit are interfaces at least three meters wide.</summary>
     public bool IsMinorStraight { get; init; }
@@ -149,7 +151,9 @@ public sealed class DirectedPathMatcher
                     continue;
                 if (!TryNormalizeHorizontal(end - start, out var heading))
                     return null;
-                segments.Add(new Segment(start, end, heading, offset, length));
+                double tolerance=road.ReferenceHalfWidthMeters is {} width&&double.IsFinite(width)&&width>0
+                    ?Math.Max(_horizontalTolerance,width):_horizontalTolerance;
+                segments.Add(new Segment(start, end, heading, offset, length,tolerance));
                 offset += length;
             }
             if (segments.Count == countBeforeRoad)
@@ -183,10 +187,10 @@ public sealed class DirectedPathMatcher
             var projected = Vector3.Lerp(segment.Start, segment.End, t);
             var horizontalError = Vector2.Distance(location, start + delta * t);
             var verticalError = Math.Abs(position.Y - projected.Y);
-            if (horizontalError > _horizontalTolerance || verticalError > _verticalTolerance)
+            if (horizontalError > segment.LateralTolerance || verticalError > _verticalTolerance)
                 continue;
             candidates.Add(new Projection(segment.Offset + segment.Length * t,
-                Math.Sqrt(horizontalError * horizontalError + verticalError * verticalError)));
+                Math.Sqrt(horizontalError * horizontalError + verticalError * verticalError),segment.LateralTolerance));
         }
         if (candidates.Count == 0)
             return null;
@@ -195,7 +199,7 @@ public sealed class DirectedPathMatcher
         // similarly close location far along the path indicates a loop, parallel return
         // or overlapping level; choosing a path occurrence would be a guess.
         if (candidates.Any(candidate => candidate.Error <= best.Error + 2
-            && Math.Abs(candidate.AlongDistance - best.AlongDistance) > _horizontalTolerance * 2 + 1))
+            && Math.Abs(candidate.AlongDistance - best.AlongDistance) > Math.Max(candidate.LateralTolerance,best.LateralTolerance) * 2 + 1))
             return null;
         return best;
     }
@@ -222,6 +226,6 @@ public sealed class DirectedPathMatcher
         return true;
     }
 
-    private readonly record struct Segment(Vector3 Start, Vector3 End, Vector2 Heading, double Offset, double Length);
-    private readonly record struct Projection(double AlongDistance, double Error);
+    private readonly record struct Segment(Vector3 Start, Vector3 End, Vector2 Heading, double Offset, double Length,double LateralTolerance);
+    private readonly record struct Projection(double AlongDistance, double Error,double LateralTolerance);
 }

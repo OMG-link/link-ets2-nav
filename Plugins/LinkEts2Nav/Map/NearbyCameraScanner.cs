@@ -113,7 +113,7 @@ public sealed class NearbyCameraScanner
             var builtLimits = ProjectedSignBuilder.Build(data.ReadSpeedLimits(nextMap,regionData,cancellationToken),junctions,cancellationToken);
             trafficSignals=new(signalPrefabs.SelectMany(p=>TrafficSignalMap.Build(p.Prefab,p.Descriptor,data.TrafficSignals,builtLimits)));
             // One annotated geometry graph per map version, shared with navigation consumers.
-            var navigation=new RoadPathSource(nextMap,junctions,playerAccess:speedReader.RoadPlayerAccess);
+            var navigation=new RoadPathSource(nextMap,junctions,playerAccess:speedReader.RoadPlayerAccess,roadHalfWidth:speedReader.ReferenceHalfWidth);
             var builtAuxiliary=AuxiliaryLaneIndex.Build(new NativeLaneGraph(navigation.GetNavigationGraph()),cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             geometryCache = nextGeometry;

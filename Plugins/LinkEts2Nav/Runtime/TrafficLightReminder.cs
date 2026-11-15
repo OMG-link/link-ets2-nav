@@ -31,6 +31,7 @@ public sealed class TrafficSignalBinder
     private TruckLib.ScsMap.Map? previousMap;
     private RoadPathSource? paths;
     private IReadOnlyList<DirectedRoad>? previousPaths;
+    private NativeLaneGraph? throughTraffic;
     public TrafficSignalSelection? Match(GameDataSnapshot game,NearbyMapSnapshot nearby,NavigationDiagnostic navigation,out string reason)
     {
         reason="等待停止线前的唯一受控车道";
@@ -38,8 +39,9 @@ public sealed class TrafficSignalBinder
         var position=new Vector3((float)vehicle.X,(float)vehicle.Y,(float)vehicle.Z);
         bool routed=game.RouteAvailability==RouteAvailability.Available;
         if(!routed&&game.RouteAvailability!=RouteAvailability.None){reason="导航状态不确定";return null;}
+        if(!routed)PrepareUnroutedApproach(nearby);
         var selected=routed?navigation.LaneRoute?.Sections.Select(s=>s.Path).ToArray()??[]:
-            nearby.PrefabPaths.SelectMany(p=>p.LanePaths).ToArray();
+            throughTraffic!.Edges.SelectMany(p=>p.LanePaths).ToArray();
         var candidates=selected.Select(path=>(Path:path,Control:First(path,nearby.TrafficSignals)))
             .Where(p=>p.Control is not null).Select(p=>(p.Path,Control:p.Control!,Distance:WaitingDistance(p.Control!,position,vehicle.ForwardDirection)))
             .Where(p=>p.Distance is not null).OrderBy(p=>p.Distance).ToArray();
@@ -50,16 +52,10 @@ public sealed class TrafficSignalBinder
         {reason="停止线灯组归属不唯一";return null;}
         if(!routed)
         {
-            if(!ReferenceEquals(previousMap,nearby.Map)||!ReferenceEquals(previousPaths,nearby.PrefabPaths))
-            {
-                previousMap=nearby.Map;previousPaths=nearby.PrefabPaths;
-                paths=new(nearby.Map,nearby.PrefabPaths,native:nearby.AuxiliaryLanes?.Graph,
-                    playerAccess:nearby.Data is {} data?data.SpeedLimits.RoadPlayerAccess:null);
-            }
             var approach=paths!.GetPath(position,vehicle.ForwardDirection,game.Route,RouteAvailability.None);
             if(!approach.Any(e=>e.EndNodeUid==closest.Path.EntryNodeUid))
             {reason="无导航时尚未证明必经该路口";return null;}
-            var alternatives=nearby.PrefabPaths.Where(p=>p.StartNodeUid==closest.Path.EntryNodeUid).SelectMany(p=>p.LanePaths).ToArray();
+            var alternatives=throughTraffic!.From(closest.Path.EntryNodeUid).SelectMany(p=>p.LanePaths).ToArray();
             if(alternatives.Length==0||alternatives.Select(p=>First(p,nearby.TrafficSignals)?.Id).Any(id=>id!=closest.Control.Id))
             {reason="无导航且前向延续不共享单一灯组";return null;}
         }
@@ -71,6 +67,14 @@ public sealed class TrafficSignalBinder
         {reason="同组实时灯色或倒计时不一致";return null;}
         reason="已绑定必经受控灯组";
         return new(closest.Control,matches.MaxBy(s=>s.PhaseRemaining)!,game.TrafficSignals.ReceivedAt,closest.Distance!.Value);
+    }
+    private void PrepareUnroutedApproach(NearbyMapSnapshot nearby)
+    {
+        if(ReferenceEquals(previousMap,nearby.Map)&&ReferenceEquals(previousPaths,nearby.PrefabPaths))return;
+        previousMap=nearby.Map;previousPaths=nearby.PrefabPaths;
+        throughTraffic=(nearby.AuxiliaryLanes?.Graph??new NativeLaneGraph(nearby.PrefabPaths)).ThroughTraffic;
+        paths=new(nearby.Map,nearby.PrefabPaths,native:nearby.AuxiliaryLanes?.Graph,
+            playerAccess:nearby.Data is {} data?data.SpeedLimits.RoadPlayerAccess:null);
     }
     private static TrafficSignalControl? First(PrefabLanePath path,TrafficSignalMap controls)
         =>path.CurveIndices.Select(i=>controls.Find(path.PrefabUid,i)).FirstOrDefault(c=>c is not null);

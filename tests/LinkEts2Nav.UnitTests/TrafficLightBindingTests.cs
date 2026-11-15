@@ -69,4 +69,27 @@ public sealed class TrafficLightBindingTests
         // A nearby lamp is insufficient when there is no proven road approach at all.
         Assert.Null(new TrafficSignalBinder().Match(Data(false),Nearby([Control()],paths:[Edge(through)]),Navigation(),out _));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OptionalUnroutedReturnDoesNotChangeTheForwardStopGroup(bool returnHasDifferentGroup)
+    {
+        var map=new ScsMap();var road=Road.Add(map,Vector3.Zero,new(100,0,0),default);
+        ulong entry=road.ForwardNode.Uid;
+        var forward=Lane(entry,2);var returning=Lane(entry,entry,1);
+        DirectedRoad Edge(PrefabLanePath lane)=>new("prefab:7:"+lane.ExitNodeUid,entry,lane.ExitNodeUid,lane.Points){LanePaths=[lane]};
+        var controls=returnHasDifferentGroup?new[]{Control(),Control(1,1)}:new[]{Control()};
+        var selected=new TrafficSignalBinder().Match(Data(false),Nearby(controls,map,[Edge(forward),Edge(returning)]),Navigation(),out _);
+        Assert.NotNull(selected);Assert.Equal(0,selected.Control.SignalId);
+    }
+
+    [Fact]
+    public void NavigationExplicitlySelectingAReturnKeepsItsOwnControlledGroup()
+    {
+        var returning=Lane(1,1,1);
+        var edge=new DirectedRoad("prefab:7:0:0",1,1,returning.Points){LanePaths=[returning]};
+        var selected=new TrafficSignalBinder().Match(Data(),Nearby([Control(),Control(1,1)],paths:[edge]),Navigation(returning),out _);
+        Assert.NotNull(selected);Assert.Equal(1,selected.Control.SignalId);
+    }
 }

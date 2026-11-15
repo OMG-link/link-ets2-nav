@@ -175,7 +175,6 @@ public sealed class NavigationEventPlanner
             if(countAlong is {} at)auxiliaries.AddRange(JunctionSpeechPlanner.Numbered(state.Id,at,countedSites,targetSide,active,
                 state.BriefingStrict&&at==state.BriefingAlong));
             int ordinal=countedSites.Length==0?0:countedSites.Length+1;
-            var wording=ordered.Select(p=>p.Maneuver with{DistanceMeters=p.Along-playerAlong}).ToArray();
             string overviewId=state.Id+":overview";
             if(!m.ExecutionOnly&&initial is >=50)
             {
@@ -199,7 +198,7 @@ public sealed class NavigationEventPlanner
                 // A preceding action can leave no part of this action's interval
                 // available. Its normal end still closes the series; do not cue it late.
                 if(state.EndAlong is {} finish&&(executionAlong>finish||executionAlong==finish&&strict))continue;
-                triggers.Add(new(state.Id+":execute",state.Id,SpeechTriggerKind.Execution,executionAlong,Execution(wording,i))
+                triggers.Add(new(state.Id+":execute",state.Id,SpeechTriggerKind.Execution,executionAlong,NavigationPrompts.Execute(m.Kind,m.ExecutionInstruction??Instruction(m,0)))
                     {Enabled=active,StrictCrossing=strict,Silent=silent,Priority=0,SequenceOrder=m.ExecutionOnly?m.SpeechSequenceOrder:0,
                         Window=new(start,ExecutionDue,state.BriefingStrict)});
             }
@@ -244,6 +243,12 @@ public sealed class NavigationEventPlanner
         var complete=events.GroupBy(e=>e.SequenceId).Where(g=>sequences.TryGetValue(g.Key,out var end)&&end.End is not null)
             .Select(g=>new SpeechSequence(g.Key,new RouteSpeechEnd(sequences[g.Key].End!.Value),g.ToArray(),
                 triggers.Where(t=>g.Any(e=>e.Id==t.EventId)).ToArray(),sequences[g.Key].Ended)).ToArray();
+        // Later actions now have their actual first-speaking boundary. Compose
+        // executions only after that shared planning step, rather than predicting it.
+        var wording=ordered.Select(p=>p.Maneuver with{DistanceMeters=p.Along}).ToArray();
+        var executionTexts=ordered.Select((p,i)=>(p.Id,Text:Execution(wording,i))).ToDictionary(p=>p.Id,p=>p.Text);
+        complete=complete.Select(s=>s.MapTriggers(t=>t.Kind==SpeechTriggerKind.Execution
+            ?t with{Text=executionTexts[t.EventId]}:t)).ToArray();
         complete=JoinPassages(ordered,complete,auxiliaries);
         return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,[..complete,..auxiliaries,..environmental.Sequences])
             {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame,ReplacedSequenceIds=replacedContinuations.ToArray()};

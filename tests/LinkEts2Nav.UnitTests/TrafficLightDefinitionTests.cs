@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using LinkEts2Nav.Map;
 using LinkEts2Nav.Runtime;
 using TruckLib;
@@ -69,4 +69,3 @@ public sealed class TrafficLightDefinitionTests
         public string GetParent(string path)=>path[..path.LastIndexOf('/')];
     }
 }
-

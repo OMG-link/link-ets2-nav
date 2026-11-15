@@ -70,4 +70,3 @@ public sealed class TrafficLightBindingTests
         Assert.Null(new TrafficSignalBinder().Match(Data(false),Nearby([Control()],paths:[Edge(through)]),Navigation(),out _));
     }
 }
-

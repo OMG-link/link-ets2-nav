@@ -100,7 +100,7 @@ public sealed class TrafficSignalMap(IEnumerable<TrafficSignalControl> controls)
         if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return [];
         var countries=limits.Roads.Values.Where(r=>prefab.Nodes.Any(n=>n.Uid==r.Geometry.StartNodeUid||n.Uid==r.Geometry.EndNodeUid))
             .Where(r=>!r.CountryUncertain).Select(r=>r.Country).OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
-        string? country=countries.Length==1?countries[0]:limits.Country;
+        string? country=countries.Length==1?countries[0]:countries.Length>1?null:limits.Country;
         var groups=new Dictionary<int,(TrafficSignalLamp[] Lamps,TrafficSignalTiming? Timing,string Reason)>();
         var z=placement.ToWorldDirection(Vector3.UnitZ);var rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,MathF.Atan2(z.X,z.Z));
         var result=new List<TrafficSignalControl>();

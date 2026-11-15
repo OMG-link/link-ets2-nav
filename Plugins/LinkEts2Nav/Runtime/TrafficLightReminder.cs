@@ -51,7 +51,11 @@ public sealed class TrafficSignalBinder
         if(!routed)
         {
             if(!ReferenceEquals(previousMap,nearby.Map)||!ReferenceEquals(previousPaths,nearby.PrefabPaths))
-            {previousMap=nearby.Map;previousPaths=nearby.PrefabPaths;paths=new(nearby.Map,nearby.PrefabPaths,native:nearby.AuxiliaryLanes?.Graph);}
+            {
+                previousMap=nearby.Map;previousPaths=nearby.PrefabPaths;
+                paths=new(nearby.Map,nearby.PrefabPaths,native:nearby.AuxiliaryLanes?.Graph,
+                    playerAccess:nearby.Data is {} data?data.SpeedLimits.RoadPlayerAccess:null);
+            }
             var approach=paths!.GetPath(position,vehicle.ForwardDirection,game.Route,RouteAvailability.None);
             if(!approach.Any(e=>e.EndNodeUid==closest.Path.EntryNodeUid))
             {reason="无导航时尚未证明必经该路口";return null;}

@@ -236,6 +236,20 @@ public sealed class SpeedLimitDefinitionReader
         var states=configurations.Select(Configuration).Distinct().ToArray();
         return states.Length==1?states[0]:null;
     }
+    /// <summary>Native direction lanes, ordered left to right as seen by the driver.
+    /// SCS road_look arrays run from road centre to border; differing variants remain unknown.</summary>
+    public IReadOnlyList<bool?>? RoadLanePlayerAccess(Road road,bool forward)
+    {
+        var configurations=RoadLanes(road,forward?road.LeftHandTraffic:!road.LeftHandTraffic);
+        if(configurations is not {Length:>0}||configurations.Select(c=>c.Length).Distinct().Count()!=1)return null;
+        var lanes=Enumerable.Range(0,configurations[0].Length).Select(i=>
+        {
+            var permissions=configurations.Select(c=>lanePlayerAccess.GetValueOrDefault(Link(c[i]))).Distinct().ToArray();
+            return permissions.Length==1?permissions[0]:null;
+        }).ToArray();
+        if(road.LeftHandTraffic)Array.Reverse(lanes);
+        return Array.AsReadOnly(lanes);
+    }
     public bool? RulePlayerAccess(string name)=>playerAccess.Read(string.IsNullOrEmpty(name)||name.StartsWith("traffic_rule.",StringComparison.Ordinal)?name:"traffic_rule."+name);
 
     private bool HasSingleTrackRule(string name,HashSet<string> seen)

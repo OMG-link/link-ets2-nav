@@ -73,30 +73,31 @@ public sealed class NearbyCameraScanner
             var areas = new List<FreeNavigationArea>();
             var issues = new List<string>();
             var nextGeometry = new Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)>();
-            foreach (var prefab in nextMap.MapItems.Values.OfType<Prefab>())
+            var prefabSources=new List<PrefabPermissionSource>();var prefabResources=new Dictionary<ulong,string>();
+            foreach(var prefab in nextMap.MapItems.Values.OfType<Prefab>())
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if(!data.World.Prefabs.TryGetValue(prefab.Model.ToString(),out var definition))continue;
-                string resource=definition.Descriptor;
                 try
                 {
-                    var descriptor=data.GetPrefabDescription(resource);
-                    if (descriptor is not null)
-                    {
-                        var access=PrefabPlayerAccess.Build(prefab,descriptor,speedReader,data.Map);
-                        var key=(prefab.Uid,access.CacheKey);
-                        roundaboutIndex.AddPrefab(prefab, access.Descriptor, resource,access.CacheKey);
-                        if (!geometryCache.TryGetValue(key, out var geometry))
-                            geometry = (PrefabPathGeometry.Build(prefab, access.Descriptor), FreeNavigationArea.Build(prefab,descriptor));
-                        nextGeometry[key] = geometry;
-                        junctions.AddRange(geometry.Paths);
-                        areas.AddRange(geometry.Areas);
-                    }
+                    var descriptor=data.GetPrefabDescription(definition.Descriptor);
+                    if(descriptor is not null){prefabSources.Add(new(prefab,descriptor));prefabResources[prefab.Uid]=definition.Descriptor;}
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch(Exception ex) when(ex is not OperationCanceledException){issues.Add($"Prefab {definition.Descriptor}: {ex.Message}");}
+            }
+            var permissions=PrefabPlayerAccessWindow.Build(prefabSources,speedReader,data.Map,issues.Add,cancellationToken);
+            foreach(var source in prefabSources)
+            {
+                cancellationToken.ThrowIfCancellationRequested();var prefab=source.Prefab;string resource=prefabResources[prefab.Uid];
+                try
                 {
-                    issues.Add($"Prefab {resource}: {ex.Message}");
+                    var access=permissions[prefab.Uid];var key=(prefab.Uid,access.CacheKey);
+                    roundaboutIndex.AddPrefab(prefab,access.Descriptor,resource,access.CacheKey);
+                    if(!geometryCache.TryGetValue(key,out var geometry))
+                        geometry=(PrefabPathGeometry.Build(prefab,access.Descriptor),FreeNavigationArea.Build(prefab,source.Descriptor));
+                    nextGeometry[key]=geometry;junctions.AddRange(geometry.Paths);areas.AddRange(geometry.Areas);
                 }
+                catch(Exception ex) when(ex is not OperationCanceledException){issues.Add($"Prefab {resource}: {ex.Message}");}
             }
             foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road,speedReader);
             roundaboutIndex.BuildNewSectors(sectors,cancellationToken);

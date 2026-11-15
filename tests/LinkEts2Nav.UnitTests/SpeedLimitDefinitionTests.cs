@@ -28,6 +28,31 @@ public sealed class SpeedLimitDefinitionTests
         public Stream Open(string p)=>new MemoryStream(ReadAllBytes(p));
         public string GetParent(string p)=>p[..(p.LastIndexOf('/')+1)];
     }
+    [Theory]
+    [InlineData(false,true,true)]
+    [InlineData(false,false,false)]
+    [InlineData(true,true,true)]
+    [InlineData(true,false,false)]
+    public void OrderedLanePlayerPermissionsRespectTrafficSideAndDirection(bool leftHand,bool forward,bool firstAllowed)
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/traffic_rules.sii"]="""SiiNunit { traffic_rule_data : traffic_rule.closed { rule: actor_access num_params[]: 1 num_params[]: 1 num_params[]: 1 num_params[]: 1 num_params[]: 0 } traffic_rule_data : traffic_rule.open { rule: actor_access num_params[]: 1 num_params[]: 1 num_params[]: 1 num_params[]: 1 num_params[]: 1 } }""";
+        fs.Files["/def/world/traffic_lane.sii"]="""SiiNunit { traffic_lane_data : traffic_lane.closed { speed_class: local_road traffic_rules[]: traffic_rule.closed } traffic_lane_data : traffic_lane.open { speed_class: local_road traffic_rules[]: traffic_rule.open } }""";
+        fs.Files["/def/world/road_look.sii"]="""SiiNunit { road_look : road.un11 { lanes_left[]: traffic_lane.closed lanes_left[]: traffic_lane.open lanes_right[]: traffic_lane.open lanes_right[]: traffic_lane.closed } }""";
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(100,0,0),"un11");road.LeftHandTraffic=leftHand;
+        Assert.Equal(new bool?[]{firstAllowed,!firstAllowed},new SpeedLimitDefinitionReader(fs).RoadLanePlayerAccess(road,forward));
+    }
+    [Fact]
+    public void VariantDisagreementRetainsUnknownPerLaneInsteadOfBanningIt()
+    {
+        var fs=new Fs();
+        fs.Files["/def/world/traffic_rules.sii"]="""SiiNunit { traffic_rule_data : traffic_rule.closed { rule: actor_access num_params[]: 1 num_params[]: 1 num_params[]: 1 num_params[]: 1 num_params[]: 0 } }""";
+        fs.Files["/def/world/traffic_lane.sii"]="""SiiNunit { traffic_lane_data : traffic_lane.closed { speed_class: local_road traffic_rules[]: traffic_rule.closed } traffic_lane_data : traffic_lane.open { speed_class: local_road } }""";
+        fs.Files["/def/world/road_look.sii"]="""SiiNunit { road_look : road.un11 { lane_variant_default: local_road lane_variants[]: .a lane_variants[]: .b } road_template_variant : .a { lane_variant: local_road lanes_right[]: traffic_lane.closed lanes_right[]: traffic_lane.open } road_template_variant : .b { lane_variant: local_road lanes_right[]: traffic_lane.open lanes_right[]: traffic_lane.closed } }""";
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(100,0,0),"un11");
+        Assert.Equal(new bool?[]{null,null},new SpeedLimitDefinitionReader(fs).RoadLanePlayerAccess(road,true));
+    }
+
     private static Fs VariantDefinitions()
     {
         var fs=new Fs();

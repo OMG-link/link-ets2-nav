@@ -10,7 +10,7 @@ public static class PrefabPathGeometry
     public static IReadOnlyList<DirectedRoad> Build(Prefab prefab,PrefabDescriptor descriptor)
     {
         int count=descriptor.Nodes.Count;
-        if(count<2||prefab.Nodes.Count!=count||prefab.Origin>=count||descriptor.NavCurves.Count==0)return [];
+        if(count<1||prefab.Nodes.Count!=count||prefab.Origin>=count||descriptor.NavCurves.Count==0)return [];
         if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return [];
         var control=placement.ControlNodes;var curves=descriptor.NavCurves;
         bool Valid(int i)=>i>=0&&i<curves.Count&&Finite(curves[i].StartPosition)&&Finite(curves[i].EndPosition)
@@ -43,7 +43,6 @@ public static class PrefabPathGeometry
         for(int from=0;from<count;from++)
         for(int to=0;to<count;to++)
         {
-            if(from==to)continue;
             var entryOrder=Order(from,true);var exitOrder=Order(to,false);
             IReadOnlyList<int> Starts(IReadOnlyList<int> chain)
             {

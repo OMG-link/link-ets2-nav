@@ -9,8 +9,8 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
 {
     public IReadOnlyList<DirectedRoad> Annotate(IEnumerable<DirectedRoad> source)
     {
-        var result=source.ToArray();var sampler=new RoadSlopeWindowSampler(incidentRoads,result);
-        var groups=result.Select((edge,index)=>(edge,index)).Where(p=>p.edge.Id.StartsWith("prefab:",StringComparison.Ordinal))
+        var result=source.ToArray();var sampler=new RoadSlopeWindowSampler(incidentRoads,result.Where(e=>!e.ReturnsToEntry).ToArray());
+        var groups=result.Select((edge,index)=>(edge,index)).Where(p=>!p.edge.ReturnsToEntry&&p.edge.Id.StartsWith("prefab:",StringComparison.Ordinal))
             .GroupBy(p=>(Prefab:p.edge.Id.Split(':')[1],Exit:p.edge.EndNodeUid));
         foreach(var group in groups)
         {

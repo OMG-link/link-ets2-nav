@@ -56,6 +56,7 @@ public sealed class AuxiliaryLaneIndex
     public static AuxiliaryLaneIndex Build(NativeLaneGraph graph,CancellationToken cancellationToken=default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var completeGraph=graph;graph=graph.ThroughTraffic;
         var corridors=new List<AuxiliaryLaneCorridor>();var diagnostics=new List<string>();var seeds=new HashSet<string>(StringComparer.Ordinal);
         foreach(var shared in graph.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null)
             .GroupBy(e=>(Prefab:NativeLaneGraph.Prefab(e),e.EndNodeUid)))
@@ -103,7 +104,7 @@ public sealed class AuxiliaryLaneIndex
                     [new(edge,start,RouteGeometry.Length(edge),0,Read(side),Read(mainOrders))],length);
             }
         }
-        return new(graph,corridors,diagnostics);
+        return new(completeGraph,corridors,diagnostics);
 
         static IReadOnlyList<int> Read(IEnumerable<int> values)=>Array.AsReadOnly(values.Distinct().Order().ToArray());
         void Trace(DirectedRoad origin,AuxiliaryBoundaryKind startKind,ulong? mainEntrance,HashSet<int> side,HashSet<int> main,

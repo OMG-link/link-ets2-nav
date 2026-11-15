@@ -247,7 +247,7 @@ public sealed class RoadPathSource
             .Where(p => p.Score < LateralTolerance(p.Road)).OrderBy(p => p.Score).Take(3).ToArray();
         if (candidates.Length == 0)
         {
-            var junctions = junctionLinks.Values.Where(p => !ambiguous.Contains((p.StartNodeUid, p.EndNodeUid))
+            var junctions = junctionLinks.Values.Where(p => !p.ReturnsToEntry&&!ambiguous.Contains((p.StartNodeUid, p.EndNodeUid))
                 && matcher.ProjectDistance(position, heading, [p]).HasValue)
                 .Select(p => (Path: p, Error: Distance(position, [p]))).Where(p => p.Error < 12).ToArray();
             // Inside a junction, heading/projection may narrow the legal exits, but
@@ -300,7 +300,7 @@ public sealed class RoadPathSource
                 &&CanUse(r,r.Node.Uid==current.EndNodeUid)).ToArray();
             if (successors.Length == 0)
             {
-                var exits = junctionLinks.Values.Where(p => p.StartNodeUid == current.EndNodeUid
+                var exits = junctionLinks.Values.Where(p => !p.ReturnsToEntry&&p.StartNodeUid == current.EndNodeUid
                     && !ambiguous.Contains((p.StartNodeUid, p.EndNodeUid))
                     && !visitedJunctions.Contains(p.Id.Split(':')[1])).ToArray();
                 if (exits.Length != 1) break;

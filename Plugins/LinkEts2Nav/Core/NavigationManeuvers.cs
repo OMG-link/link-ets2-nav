@@ -114,7 +114,7 @@ public sealed class NavigationManeuverDetector
         if (route.Any(r => !Valid(r))) return result;
         for (int i = 1; i < route.Count; i++)
             if (!Connected(route[i - 1], route[i])) return result;
-        if (route.Count == 1 && route[0].Roundabout is null && route[0].ForkInfo is null&&route[0].Junction?.IsAnyJunction!=true)
+        if (route.Count == 1 && !route[0].ReturnsToEntry&&route[0].Roundabout is null && route[0].ForkInfo is null&&route[0].Junction?.IsAnyJunction!=true)
         {
             if (PrefabKey(route[0]) is null) confirmedUntil = Length(route[0]);
             return result;
@@ -148,6 +148,16 @@ public sealed class NavigationManeuverDetector
                         Instruction=selected?"驶出环岛":"经过第"+NavigationPrompts.Number(exit.Number)+"出口"});
                 }
                 confirmedUntil = end; offset = end; continue;
+            }
+            // An explicitly selected native return is a structural instruction,
+            // not an angle-derived turn at an ordinary crossing junction.
+            if(current.ReturnsToEntry&&current.LanePaths.Any(p=>p.CurveIndices.Count>0&&p.LengthMeters>.001
+                &&p.EntryNodeUid==current.StartNodeUid&&p.ExitNodeUid==current.EndNodeUid))
+            {
+                if(end>=vehicleAlong)
+                    result.Add(new("return:"+current.Id,ManeuverKind.UTurn,offset-vehicleAlong,current.Id,current.Id)
+                        {JunctionId="prefab:"+PrefabKey(current),EndDistanceMeters=end-vehicleAlong});
+                confirmedUntil=end;offset=end;continue;
             }
             // A road is known up to its exit even if the choice beyond it is unknown.
             // A prefab requires its connection to be validated before advancing.
@@ -294,7 +304,7 @@ public sealed class NavigationManeuverDetector
     private void Index(IReadOnlyList<DirectedRoad> graph)
     {
         if (ReferenceEquals(indexedGraph, graph)) return;
-        var edges = graph.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)).ToArray();
+        var edges = graph.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)&&!e.ReturnsToEntry).ToArray();
         roadStarts = edges.Where(e => PrefabKey(e) is null).GroupBy(e => e.StartNodeUid)
             .ToDictionary(g => g.Key, g => g.ToArray());
         prefabStarts = edges.Where(e => PrefabKey(e) is not null)

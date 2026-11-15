@@ -59,7 +59,7 @@ public sealed class LaneMergeDetector
 
     private static IReadOnlyList<Model> Build(IReadOnlyList<DirectedRoad> graph)
     {
-        var lanes=graph.SelectMany(e=>e.LanePaths).DistinctBy(p=>(p.PrefabUid,p.EntryNodeUid,p.EntryLane,p.ExitNodeUid,p.ExitLane)).ToArray();
+        var lanes=graph.Where(e=>!e.ReturnsToEntry).SelectMany(e=>e.LanePaths).DistinctBy(p=>(p.PrefabUid,p.EntryNodeUid,p.EntryLane,p.ExitNodeUid,p.ExitLane)).ToArray();
         var roads=graph.Where(e=>!e.Id.StartsWith("prefab:",StringComparison.Ordinal)).GroupBy(e=>e.EndNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
         var laneEnds=lanes.GroupBy(p=>p.ExitNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
         var result=new List<Model>();

@@ -16,6 +16,15 @@
     <button type="button" class="link-nav-action" disabled="@previewing" @onclick="PreviewAudio">@(previewing ? "试听中…" : "试听预警音")</button>
     <p>@audioMessage</p>
     <div style="margin:16px 0">
+        <label for="speech-pack-directory">预生成语音包目录</label><br />
+        <input id="speech-pack-directory" type="text" @bind="speechPackDirectory" @bind:event="oninput" disabled="@savingSpeechPack"
+               style="width:100%;padding:8px;border:1px solid #6b7280;border-radius:6px;background:transparent;color:inherit" />
+        <p>可填写绝对路径，或相对于宿主目录的路径。目录应包含语音包清单，名称片段放在其 CityNames 子目录。</p>
+        <button type="button" class="link-nav-action" disabled="@savingSpeechPack" @onclick="SaveSpeechPack">@(savingSpeechPack ? "校验并保存中…" : "保存并应用")</button>
+        <p role="status">@speechPackMessage</p>
+        <p>当前生效目录：@(speechPackView?.ActiveDirectory ?? "语音工作进程尚未启用")</p>
+    </div>
+    <div style="margin:16px 0">
         <label for="replay-comment">回放评论（可选）</label><br />
         <textarea id="replay-comment" @bind="replayComment" @bind:event="oninput" maxlength="4000"
                   disabled="@savingReplay" rows="3" style="width:100%;padding:8px;border:1px solid #6b7280;border-radius:6px;background:transparent;color:inherit" placeholder="描述刚才遇到的问题，也可以直接保存"></textarea><br />
@@ -105,6 +114,25 @@
 </div>
 
 @code {
+    private bool savingSpeechPack;
+    private string speechPackDirectory="";
+    private string speechPackMessage="保存后自动切换，无需重启宿主；已经开始的语音允许播完。";
+    private SpeechPackSettingView? speechPackView;
+    private async Task SaveSpeechPack()
+    {
+        if(savingSpeechPack)return;
+        savingSpeechPack=true;
+        try
+        {
+            var pack=await SpeechPackSettings.Current.SaveAsync(speechPackDirectory,stop.Token);
+            speechPackView=SpeechPackSettings.Current.Read();
+            speechPackMessage=$"已保存，固定语音 {pack.Fixed.Count} 条、名称 {pack.Names.Count} 条。"+
+                (speechPackView.ActiveDirectory is null?"启用插件语音后生效。":"正在应用；下一条语音使用新包，当前播放不打断。");
+        }
+        catch(OperationCanceledException)when(stop.IsCancellationRequested) { }
+        catch(Exception ex){speechPackMessage="保存失败："+ex.Message;}
+        finally {savingSpeechPack=false;}
+    }
 
     private bool savingReplay;
     private string replayComment = "";
@@ -152,7 +180,12 @@
     private readonly CancellationTokenSource stop = new();
     private Task? refresh;
 
-    protected override void OnInitialized() => refresh = Refresh();
+    protected override void OnInitialized()
+    {
+        try{speechPackView=SpeechPackSettings.Current.Read();speechPackDirectory=speechPackView.ConfiguredDirectory;}
+        catch(Exception ex){speechPackMessage="读取语音配置失败："+ex.Message;}
+        refresh=Refresh();
+    }
 
     private async Task Refresh()
     {
@@ -160,7 +193,9 @@
         try
         {
             while (await timer.WaitForNextTickAsync(stop.Token))
-                await InvokeAsync(() => { snapshot = NavDiagnostics.Current; StateHasChanged(); });
+                await InvokeAsync(() => { snapshot = NavDiagnostics.Current;
+                    try{speechPackView=SpeechPackSettings.Current.Read();}catch{ }
+                    StateHasChanged(); });
         }
         catch (OperationCanceledException) { }
     }

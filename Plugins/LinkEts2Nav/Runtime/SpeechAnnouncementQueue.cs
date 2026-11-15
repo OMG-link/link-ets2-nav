@@ -16,6 +16,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
     private readonly HashSet<string> failed = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (int Priority, string[] Texts)> plans = new(StringComparer.Ordinal);
     private readonly Task worker;
+    private long audioVersion;
     public event Action? CacheChanged;
     public bool IsStopped => stop.IsCancellationRequested;
 
@@ -53,6 +54,15 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
     }
 
     public void ClearPlan(string channel) { lock (gate) plans.Remove(channel); }
+    public void ReplacePreparedAudio(IReadOnlyDictionary<string,string> files,Action replaceSynthesizer)
+    {
+        lock(gate)
+        {
+            replaceSynthesizer();audioVersion++;ready.Clear();failed.Clear();
+            foreach(var entry in files)ready[entry.Key]=entry.Value;
+        }
+        changed.Writer.TryWrite(true);CacheChanged?.Invoke();
+    }
     public bool IsReady(string text)
     {
         lock (gate) return ready.TryGetValue(text, out string? file) && File.Exists(file);
@@ -102,22 +112,22 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
                 while (changed.Reader.TryRead(out _)) { }
                 while (!stop.IsCancellationRequested)
                 {
-                    string? text;
-                    lock (gate) text = plans.OrderBy(p => p.Value.Priority).ThenBy(p => p.Key, StringComparer.Ordinal).SelectMany(p => p.Value.Texts).FirstOrDefault(p => !ready.ContainsKey(p) && !failed.Contains(p));
+                    string? text;long version;
+                    lock (gate){version=audioVersion;text = plans.OrderBy(p => p.Value.Priority).ThenBy(p => p.Key, StringComparer.Ordinal).SelectMany(p => p.Value.Texts).FirstOrDefault(p => !ready.ContainsKey(p) && !failed.Contains(p));}
                     if (text is null) break;
                     try
                     {
                         log("开始准备 TTS 音频：" + text);
                         string file = await synthesizer.SynthesizeAsync(text, stop.Token);
                         if (stop.IsCancellationRequested) break;
-                        lock (gate) ready[text] = file;
+                        lock (gate){if(version!=audioVersion)continue;ready[text] = file;}
                         log("TTS 文件缓存已就绪：" + text + " 文件=" + file);
                         CacheChanged?.Invoke();
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
                     catch (Exception ex)
                     {
-                        lock (gate) failed.Add(text);
+                        lock (gate){if(version!=audioVersion)continue;failed.Add(text);}
                         log("TTS 合成失败，本次启用期间使用现有提示音：" + ex.Message);
                         CacheChanged?.Invoke();
                     }

@@ -30,6 +30,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private double routeOrigin;
     public int StructureBuildCount { get; private set; }
     public int EventPlanBuildCount { get; private set; }
+    /// <summary>Reword future named events without resetting progress or consumed triggers.</summary>
+    public void RefreshSpeechNames(){structures.Clear();publishedStructure=null;}
     private readonly GuidanceTimeline analysisTimeline=new();
     private readonly SpeechTriggerScheduler analysisScheduler=new();
     private string? planningSession;

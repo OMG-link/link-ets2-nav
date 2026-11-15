@@ -75,6 +75,7 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
             .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
         var merges=plan.Contractions?.Select(physical,lanes)??physical;
         upcoming=LaneContractionGuidance.Apply(upcoming,merges);
+        upcoming=ActionPointConstraints.Apply(upcoming);
         var issues=plan.Forks.Concat(merges.Where(m=>m.Kind==LaneMergeKind.Uncertain)
             .Select(m=>new RoadForkDiagnostic($"prefab:{m.PrefabUid:X16}",m.EndingEntryNode??0,0,m.Reason))).ToList();
         return plan with{Actions=upcoming,Lanes=lanes,Merges=merges,Forks=issues.Distinct().ToArray()};
@@ -103,7 +104,7 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
                 &&edge.Junction?.IsJunction!=true&&!nearby.RoadStructures.ContainsKey(lane.PrefabUid))
             {
                 string group=$"prefab:{lane.PrefabUid:X16}";
-                if(!result.Any(a=>a.JunctionId==group&&a.DistanceMeters>=offset&&a.DistanceMeters<=end))
+                if(!result.Any(a=>a.JunctionId==group&&a.EndDistanceMeters is {} exit&&Math.Abs(exit-end)<=.001))
                 {
                     var connections=graph.Where(e=>e.StartNodeUid==edge.StartNodeUid&&e.Id.StartsWith(group+":",StringComparison.Ordinal))
                         .GroupBy(e=>e.EndNodeUid).Select(g=>g.ToArray()).ToArray();

@@ -281,6 +281,28 @@ public sealed class SpeedLimitDefinitionTests
         Assert.Equal(0,projection.Descriptor.NavCurves[0].Length);Assert.Equal(10,projection.Descriptor.NavCurves[1].Length);
     }
 
+    [Fact]
+    public void HostUnresolvedRoadReferenceUsesSupplementedMapByUidWithoutMutation()
+    {
+        var fs=PlayerAccessDefinitions();
+        fs.Files["/def/world/road_look.sii"]="""SiiNunit { road_look : road.un11 { lanes_left[]: traffic_lane.tram lanes_right[]: traffic_lane.tram } }""";
+        var supplement=new TruckLib.ScsMap.Map();var rail=Road.Add(supplement,new(10,0,-4),new(20,0,-4),default);rail.RoadType="un11";
+        var node=rail.Node;node.ForwardItem=(IMapObject)Activator.CreateInstance(typeof(MapItem).Assembly.GetTypes().Single(t=>t.Name=="UnresolvedItem"),rail.Uid)!;
+        var prefab=new Prefab{Uid=999,Nodes=[new Node{Uid=100},node,new Node{Uid=300}]};
+        var host=new TruckLib.ScsMap.Map();host.Nodes.Add(node.Uid,node);host.MapItems.Add(prefab.Uid,prefab);
+        var descriptor=new TruckLib.Models.Ppd.PrefabDescriptor
+        {
+            Nodes=[new(){InputLines=[0,1],OutputLines=[]},new(){InputLines=[],OutputLines=[0]},new(){InputLines=[],OutputLines=[1]}],
+            NavCurves=[new(){Length=10},new(){Length=10}]
+        };
+        using var data=new GameDataManager(fs,map:host);data.Map.Publish(supplement);
+        var reader=new SpeedLimitDefinitionReader(data);
+        Assert.Same(descriptor,PrefabPlayerAccess.Build(prefab,descriptor,reader).Descriptor);
+        var projected=PrefabPlayerAccess.Build(prefab,descriptor,reader,data.Map);
+        Assert.Equal(0,projected.Descriptor.NavCurves[0].Length);Assert.Equal(10,projected.Descriptor.NavCurves[1].Length);
+        Assert.Equal("UnresolvedItem",node.ForwardItem!.GetType().Name);
+    }
+
     private static Fs PlayerAccessDefinitions()
     {
         var fs=new Fs();

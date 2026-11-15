@@ -173,6 +173,33 @@ public sealed class RoundaboutBuilderTests
     }
 
     [Fact]
+    public void ChangedPlayerProjectionInvalidatesOnlyAffectedRingAndBuildVersion()
+    {
+        var left=new Node{Uid=10,Position=new(3990,0,0)};
+        var right=new Node{Uid=20,Position=new(4010,0,0)};
+        PrefabDescriptor Half(Node start,Node end,float a,float b,bool open=true)=>new()
+        {
+            Nodes=[new ControlNode{Position=start.Position,InputLines=[0],OutputLines=[]},new ControlNode{Position=end.Position,InputLines=[],OutputLines=[0]}],
+            NavCurves=[new NavCurve{StartPosition=start.Position,EndPosition=end.Position,StartRotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,a),EndRotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,b),Length=open?10*MathF.PI:0}]
+        };
+        var first=new Prefab{Uid=1,Nodes=[left,right]};var second=new Prefab{Uid=2,Nodes=[right,left]};
+        var index=new RoundaboutMapIndex();var sectors=new[]{new SectorCoordinate(0,0),new SectorCoordinate(1,0)};
+        index.AddPrefab(first,Half(left,right,MathF.PI,0),access:"unknown");
+        index.AddPrefab(second,Half(right,left,0,MathF.PI));
+        index.BuildNewSectors(sectors,TestContext.Current.CancellationToken);
+        Assert.Single(index.Structures);Assert.Equal(2,index.BuiltSectorCount);
+        index.AddPrefab(first,Half(left,right,MathF.PI,0,false),access:"closed");
+        Assert.Empty(index.Structures);Assert.Equal(0,index.BuiltSectorCount);
+        index.BuildNewSectors(sectors,TestContext.Current.CancellationToken);
+        Assert.Empty(index.Structures);Assert.Equal(2,index.BuiltSectorCount);
+        index.AddPrefab(first,Half(left,right,MathF.PI,0,false),access:"closed");
+        Assert.Equal(2,index.BuiltSectorCount);
+        index.AddPrefab(first,Half(left,right,MathF.PI,0),access:"open");
+        index.BuildNewSectors(sectors,TestContext.Current.CancellationToken);
+        Assert.Single(index.Structures);Assert.Equal(2,index.BuiltSectorCount);
+    }
+
+    [Fact]
     public void DifferentLaneRingsShareIdentityOnlyWhenPrefabSetsMatch()
     {
         var outer=Circle(2);

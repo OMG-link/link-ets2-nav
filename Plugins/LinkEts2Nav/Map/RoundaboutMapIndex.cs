@@ -13,7 +13,7 @@ public sealed class RoundaboutMapIndex
     public IReadOnlyList<string> Diagnostics => diagnostics.ToArray();
     public RoundaboutMapIndex(SpecialRoundaboutCatalog? special=null) => this.special=special??SpecialRoundaboutCatalog.Default;
     private readonly HashSet<SectorCoordinate> built = [];
-    private readonly Dictionary<ulong, (SectorCoordinate Sector, RoundaboutCurve[] Curves, RoundaboutCurveKey[] Entrances)> prefabs = [];
+    private readonly Dictionary<ulong, (SectorCoordinate Sector, RoundaboutCurve[] Curves, RoundaboutCurveKey[] Entrances,string Access)> prefabs = [];
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurve> curves = [];
     private readonly Dictionary<string, RoundaboutStructure> structures = [];
     public IReadOnlyList<RoundaboutStructure> Structures => structures.Values.ToArray();
@@ -22,9 +22,26 @@ public sealed class RoundaboutMapIndex
         .GroupBy(p => p.uid).ToDictionary(g => g.Key, g => g.First().r);
     public int BuiltSectorCount => built.Count;
 
-    public void AddPrefab(Prefab prefab, PrefabDescriptor descriptor, string? resource=null)
+    public void AddPrefab(Prefab prefab, PrefabDescriptor descriptor, string? resource=null,string access="native")
     {
-        if (prefabs.ContainsKey(prefab.Uid) || !PrefabPlacement.TryCreate(prefab, descriptor, out var placement)) return;
+        if(prefabs.TryGetValue(prefab.Uid,out var previous)&&previous.Access==access)return;
+        if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return;
+        if(previous.Curves is not null)
+        {
+            // Additional permission evidence creates a new structural version.
+            // Unchanged sectors still build once; invalidate only affected owners.
+            var affected=structures.Values.Where(r=>r.PrefabUids.Contains(prefab.Uid)).ToArray();
+            foreach(var structure in affected)
+            {
+                structures.Remove(structure.Id);
+                foreach(ulong member in structure.PrefabUids)
+                    if(prefabs.TryGetValue(member,out var owned))built.Remove(owned.Sector);
+            }
+            built.Remove(previous.Sector);
+            foreach(var curve in previous.Curves)curves.Remove(curve.Key);
+            string uid=prefab.Uid.ToString("X16");
+            diagnostics.RemoveWhere(d=>d.Contains(uid,StringComparison.OrdinalIgnoreCase));
+        }
         if(resource is not null)resources[prefab.Uid]=new(resource,descriptor.NavCurves.Count,descriptor.Nodes.Count);
         var entry = new Dictionary<int, ulong>(); var exit = new Dictionary<int, ulong>();
         var entryLanes = new Dictionary<int,int>(); var exitLanes=new Dictionary<int,int>();
@@ -57,7 +74,7 @@ public sealed class RoundaboutMapIndex
                 placement.ToWorldDirection(a),placement.ToWorldDirection(b)),EntryLane=entryLanes.GetValueOrDefault(i,-1),ExitLane=exitLanes.GetValueOrDefault(i,-1)});
         }
         var sector = TruckLib.ScsMap.Map.GetSectorOfCoordinate(prefab.Nodes[0].Position);
-        prefabs[prefab.Uid] = (sector, result.ToArray(), entry.Keys.Select(i => new RoundaboutCurveKey(prefab.Uid, i)).ToArray());
+        prefabs[prefab.Uid] = (sector, result.ToArray(), entry.Keys.Select(i => new RoundaboutCurveKey(prefab.Uid, i)).ToArray(),access);
         foreach (var curve in result) curves[curve.Key] = curve;
     }
 

@@ -8,7 +8,7 @@ public sealed record PrefabPlayerProjection(PrefabDescriptor Descriptor,string C
 /// <summary>A player-drivable view of native curves. Unknown permissions retain native connectivity.</summary>
 public static class PrefabPlayerAccess
 {
-    public static PrefabPlayerProjection Build(Prefab prefab,PrefabDescriptor source,SpeedLimitDefinitionReader definitions)
+    public static PrefabPlayerProjection Build(Prefab prefab,PrefabDescriptor source,SpeedLimitDefinitionReader definitions,GameMapData? map=null)
     {
         int count=source.Nodes.Count;
         if(prefab.Nodes.Count!=count||prefab.Origin>=count)return new(source,"native",0);
@@ -16,7 +16,10 @@ public static class PrefabPlayerAccess
         for(int n=0;n<count;n++)
         {
             var node=prefab.Nodes[(n-prefab.Origin+count)%count];
-            var roads=new[]{node.ForwardItem,node.BackwardItem}.OfType<Road>().Distinct().ToArray();
+            // Host nodes may still reference UnresolvedItem after the manager has
+            // supplemented the filtered road. Resolve its UID through the shared map.
+            var roads=(map?.ConnectedItems(node.Uid)??new[]{node.ForwardItem,node.BackwardItem}.OfType<MapItem>().ToArray())
+                .OfType<Road>().DistinctBy(r=>r.Uid).ToArray();
             bool? Access(bool leaving)
             {
                 var states=roads.Where(r=>r.Node.Uid==node.Uid||r.ForwardNode.Uid==node.Uid)

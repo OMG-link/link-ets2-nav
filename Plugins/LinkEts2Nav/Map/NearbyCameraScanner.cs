@@ -83,9 +83,9 @@ public sealed class NearbyCameraScanner
                     var descriptor=data.GetPrefabDescription(resource);
                     if (descriptor is not null)
                     {
-                        var access=PrefabPlayerAccess.Build(prefab,descriptor,speedReader);
+                        var access=PrefabPlayerAccess.Build(prefab,descriptor,speedReader,data.Map);
                         var key=(prefab.Uid,access.CacheKey);
-                        roundaboutIndex.AddPrefab(prefab, access.Descriptor, resource);
+                        roundaboutIndex.AddPrefab(prefab, access.Descriptor, resource,access.CacheKey);
                         if (!geometryCache.TryGetValue(key, out var geometry))
                             geometry = (PrefabPathGeometry.Build(prefab, access.Descriptor), FreeNavigationArea.Build(prefab,descriptor));
                         nextGeometry[key] = geometry;

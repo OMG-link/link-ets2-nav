@@ -89,7 +89,7 @@ public sealed class LaneRoutePlanner
                 for(int k=0;k<prior.Count;k++)
                 {
                     // Directly attached PPDs must meet physically; no road exists to change lanes on.
-                    var transition=Connection(prior[k],choice,adjacent);
+                    var transition=LaneRouteConnections.Between(prior[k],choice,adjacent);
                     if(!transition.Possible)continue;
                     bool same=transition.Same;
                     var priorCost=costs[layer-1][k];
@@ -108,7 +108,7 @@ public sealed class LaneRoutePlanner
         for(int i=1;i<layers.Length;i++)
         {
             var a=sections[i-1];var b=sections[i];
-            var connection=Connection(a.Path,b.Path,layers[i].index==layers[i-1].index+1);
+            var connection=LaneRouteConnections.Between(a.Path,b.Path,layers[i].index==layers[i-1].index+1);
             bool same=connection.Same;
             transfers.Add(new(a.EdgeId,b.EdgeId,route.Skip(layers[i-1].index+1).Take(layers[i].index-layers[i-1].index-1).Select(e=>e.Id).ToArray(),
                 a.Path.ExitOrder,b.Path.EntryOrder,same){AllowedLaneChange=connection.Allowed});
@@ -124,18 +124,6 @@ public sealed class LaneRoutePlanner
         bool complete=transfers.All(t=>t.SameLaneVerified||t.AllowedLaneChange)&&(initial is null||initial.AllowedLaneChange);
         return cached=new(sections,transfers,complete,complete?null:"存在需要变道或车道数变化的道路连接；尚未验证该道路上的变道许可"){InitialTransfer=initial};
     }
-    private static (bool Possible,bool Same,bool Allowed) Connection(PrefabLanePath a,PrefabLanePath b,bool adjacent)
-    {
-        double gap=Vector3.Distance(a.Points[^1],b.Points[0]);
-        if(adjacent&&gap<=.5)return(true,true,false);
-        bool same=a.ExitLaneCount==b.EntryLaneCount&&a.ExitOrder==b.EntryOrder;
-        if(!adjacent)return(true,same,!same&&a.ExitLaneCount==b.EntryLaneCount);
-        var before=new LanePolyline(a.Points);var after=new LanePolyline(b.Points);
-        var heading=before.Heading(before.Length);var delta=b.Points[0]-a.Points[^1];
-        bool parallel=a.ExitLaneCount==b.EntryLaneCount&&Math.Abs(delta.Y)<=.5
-            &&Math.Abs(Vector3.Dot(delta,heading))<=1&&gap<=6*Math.Max(1,Math.Abs(a.ExitOrder-b.EntryOrder))
-            &&Vector3.Dot(heading,after.Heading(0))>=Math.Cos(Math.PI/180);
-        return(parallel,false,parallel);
-    }
+
 
 }

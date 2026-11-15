@@ -82,4 +82,15 @@ public sealed class MapQueryConsumerTests
         Assert.Equal([Required],dependency.Sectors);
         Assert.Equal(road.ForwardNode.Position,dependency.QueryAnchor);
     }
+
+    [Fact]
+    public void SdkGapRetainsProviderKnownStartOutsideTheActiveGeometryWindow()
+    {
+        var source=new RoadPathSource(new(),missingConnection:uid=>Missing()
+            with{QueryAnchor=new(uid==10?15000:15100,0,0)});
+        var route=RouteSnapshot.Parse([new(10,100,0),new(20,0,0)],DateTimeOffset.UtcNow);
+        source.GetRouteComponents(route);
+        Assert.NotEmpty(source.MapIssues);
+        Assert.All(source.MapIssues,issue=>Assert.Equal(new Vector3(15000,0,0),issue.QueryAnchor));
+    }
 }

@@ -212,8 +212,11 @@ public sealed class RoadPathSource
                     $"已加载导航连接冲突：{key.Item1:X16}/{key.Item2:X16}"));
                 else
                 {
-                    Vector3? anchor=sourceMap.Nodes.TryGetValue(key.Item1,out var seed)?seed.Position:null;
-                    ReportMapIssue(DescribeMissingConnection(key.Item1) with{QueryAnchor=anchor});
+                    var firstIssue=DescribeMissingConnection(key.Item1);
+                    // The unified provider can know a host node outside this
+                    // active geometry window. Preserve its exact start anchor.
+                    Vector3? anchor=sourceMap.Nodes.TryGetValue(key.Item1,out var seed)?seed.Position:firstIssue.QueryAnchor;
+                    ReportMapIssue(firstIssue with{QueryAnchor=anchor});
                     if(key.Item2!=key.Item1)ReportMapIssue(DescribeMissingConnection(key.Item2) with{QueryAnchor=anchor});
                 }
                 chunk = null; continue;

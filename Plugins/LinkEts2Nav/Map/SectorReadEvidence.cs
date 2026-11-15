@@ -19,7 +19,7 @@ internal sealed class SectorReadEvidence:IDisposable
         observing=true;
         try
         {
-            bool inSector=new System.Diagnostics.StackTrace(args.Exception).GetFrames()?.Any(f=>
+            bool inSector=new System.Diagnostics.StackTrace().GetFrames()?.Any(f=>
                 f.GetMethod() is {} method&&method.DeclaringType==typeof(TruckLib.ScsMap.Map)
                     &&method.Name is "ReadSector" or "ReadSectors")==true;
             if(inSector)failures.TryAdd(sector,args.Exception.GetType().Name+": "+args.Exception.Message);

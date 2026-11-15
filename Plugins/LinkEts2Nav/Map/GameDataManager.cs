@@ -168,12 +168,44 @@ public sealed class GameDataManager:IDisposable
     {
         var sectors=requested.Distinct().OrderBy(s=>s.X).ThenBy(s=>s.Z).ToArray();
         if(loadedWindow is not null&&sectors.SequenceEqual(loadedSectors))return loadedWindow;
-        var map=new SupplementMap(Map.NativeBase);map.Read(mapPath,resources,sectors);Map.MergeInto(map,sectors);
+        using var evidence=new SectorReadEvidence();
+        var map=new SupplementMap(Map.NativeBase,evidence);
+        try{map.Read(mapPath,resources,sectors);}finally{evidence.End();}
+        if(evidence.Failures.Count>0)throw new MapSectorReadException(evidence.Failures);
+        Map.MergeInto(map,sectors);
         loadedWindow=map;loadedSectors=sectors;Map.Publish(map);return map;
     }
     public void Dispose()=>owner?.Dispose();
-    private sealed class SupplementMap(NativeMap? basis):NativeMap
+    public MapQueryIssue DescribeMissingConnection(ulong boundaryUid,IReadOnlySet<ulong> representedItemUids,
+        IReadOnlySet<SectorCoordinate> publishedSectors)
     {
+        if(Map.GetNode(boundaryUid) is not Node node)
+            return new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"Boundary {boundaryUid:X16} has no known native node.");
+        var missing=new HashSet<SectorCoordinate>();var unknown=new List<ulong>();
+        foreach(var reference in new[]{node.BackwardItem,node.ForwardItem}.Where(i=>i is not null).DistinctBy(i=>i.Uid))
+        {
+            if(representedItemUids.Contains(reference.Uid))continue;
+            var item=Map.GetItem(reference.Uid)??reference as MapItem;
+            System.Numerics.Vector3? center=item switch
+            {
+                Road r when r.Node is Node from&&r.ForwardNode is Node to=>(from.Position+to.Position)/2,
+                Prefab p when p.Nodes.Count>0&&p.Nodes.All(n=>n is Node)=>p.Nodes.Cast<Node>().Aggregate(System.Numerics.Vector3.Zero,(sum,n)=>sum+n.Position)/p.Nodes.Count,
+                _=>null
+            };
+            if(center is not {} position||!float.IsFinite(position.X)||!float.IsFinite(position.Y)||!float.IsFinite(position.Z))
+            {unknown.Add(reference.Uid);continue;}
+            var owner=NativeMap.GetSectorOfCoordinate(position);
+            if(!publishedSectors.Contains(owner))missing.Add(owner);
+        }
+        if(missing.Count>0)return new MissingMapSectors(missing,$"Boundary {boundaryUid:X16} needs connected native item owners."){QueryAnchor=node.Position};
+        return new MapQueryFailure(unknown.Count>0?MapQueryFailureKind.UnresolvedReference:MapQueryFailureKind.DefinitionUnavailable,
+            unknown.Count>0?$"Boundary {boundaryUid:X16} has unlocated references: {string.Join(',',unknown.Select(u=>u.ToString("X16")))}."
+                :$"Boundary {boundaryUid:X16} is inside published sectors; loading cannot establish this connection."){QueryAnchor=node.Position};
+    }
+    private sealed class SupplementMap(NativeMap? basis,SectorReadEvidence evidence):NativeMap
+    {
+        protected override void OnSectorLoading(Sector sector,int current,int total)
+        {evidence.Begin(sector.Coordinate);base.OnSectorLoading(sector,current,total);}
         protected override bool PostProcessItem(MapItem item)
         {
             if(basis?.MapItems.ContainsKey(item.Uid)==true)return false;

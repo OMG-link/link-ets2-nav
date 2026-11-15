@@ -1,7 +1,12 @@
 using TruckLib.ScsMap;
+using System.Numerics;
 namespace LinkEts2Nav.Map;
 
-public abstract record MapQueryIssue(string Reason);
+public abstract record MapQueryIssue(string Reason)
+{
+    /// <summary>The actual local query seed, not the requested sector's center.</summary>
+    public Vector3? QueryAnchor {get;init;}
+}
 public enum MapQueryFailureKind { UnresolvedReference, Ambiguous, InvalidData, DefinitionUnavailable }
 public sealed record MapQueryFailure(MapQueryFailureKind Kind,string Detail):MapQueryIssue(Detail);
 /// <summary>Exact owning sectors supported by native reference evidence; never a guessed search radius.</summary>

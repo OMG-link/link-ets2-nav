@@ -31,6 +31,28 @@ public sealed class PmgLocatorReaderTests
         Assert.Empty(PmgLocatorReader.Read(Model("flare.vehicle"), Definitions));
     }
     [Fact]
+    public void ManagedNamedAnchorsShareOneResourceAndOneCachedResult()
+    {
+        var fs=new LocatorFileSystem(Model("sign.city1_0"));var data=new GameDataManager(fs);
+        var anchors=data.GetNamedModelLocators("/model/a.pmd");
+        Assert.Single(anchors);
+        Assert.Same(anchors,data.GetNamedModelLocators("/model/./a.pmd"));
+        Assert.Equal(1,fs.Reads);
+    }
+    private sealed class LocatorFileSystem(byte[] bytes):TruckLib.IFileSystem
+    {
+        public int Reads;
+        public char DirectorySeparator=>'/';
+        public bool FileExists(string p)=>p=="/model/a.pmg";
+        public bool DirectoryExists(string p)=>p.TrimEnd('/')=="/model";
+        public IList<string> GetFiles(string p)=>DirectoryExists(p)?["/model/a.pmg"]:[];
+        public byte[] ReadAllBytes(string p){Reads++;return bytes;}
+        public Stream Open(string p)=>new MemoryStream(ReadAllBytes(p));
+        public string ReadAllText(string p)=>throw new NotSupportedException();
+        public string ReadAllText(string p,Encoding encoding)=>throw new NotSupportedException();
+        public string GetParent(string p)=>p[..(p.LastIndexOf('/')+1)];
+    }
+    [Fact]
     public void GenericMetadataPreservesNativeNameAndHookupWithoutCreatingACamera()
     {
         var bytes=Model("sign.city1_0");

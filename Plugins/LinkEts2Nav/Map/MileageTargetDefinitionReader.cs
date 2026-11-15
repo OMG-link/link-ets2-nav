@@ -13,17 +13,18 @@ public sealed record MileageTargetDefinition(string Id,string Source,string RawD
     IReadOnlyList<MileageNameVariant> Variants,ulong? NodeUid,Vector3? Position,float? SearchRadius);
 
 /// <summary>Offline name/target metadata. A target node is a destination, never an owning local road or sign.</summary>
-public sealed class MileageTargetDefinitionReader(IFileSystem fs)
+public sealed class MileageTargetDefinitionReader(GameDataManager data)
 {
+    public MileageTargetDefinitionReader(IFileSystem fs):this(GameDataManager.From(fs)) { }
     public List<string> Diagnostics {get;}=[];
     public IReadOnlyList<MileageTargetDefinition> Read()
     {
         Diagnostics.Clear();var result=new Dictionary<string,MileageTargetDefinition>(StringComparer.Ordinal);
-        foreach(string file in fs.GetFiles("/def/sign/").Where(p=>fs.GetParent(p).TrimEnd('/')=="/def/sign"
+        foreach(string file in data.GetFiles("/def/sign/").Where(p=>data.GetParent(p).TrimEnd('/')=="/def/sign"
             &&Path.GetFileName(p).StartsWith("mileage_targets",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order(StringComparer.Ordinal))
         try
         {
-            foreach(var unit in SiiFile.Open(file,fs).Units.Where(u=>u.Class=="mileage_target"))
+            foreach(var unit in data.GetSii(file).OfClass("mileage_target"))
             {
                 string raw=Text(unit,"default_name");string? name=Name(raw,unit.Name);
                 var tokens=Array(unit,"variants");var texts=Array(unit,"names");

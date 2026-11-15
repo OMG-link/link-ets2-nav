@@ -110,6 +110,9 @@ public sealed class GameDataManager:IDisposable
     }
     public PrefabDescriptor GetPrefabDescription(string path)=>Projection("ppd",GameResourceStore.Key(path),()=>PrefabDescriptor.Open(path,resources));
     public TruckLib.Models.Model GetModelDescription(string path)=>Projection("model-description",GameResourceStore.Key(path),()=>TruckLib.Models.Model.Open(path,resources));
+    /// <summary>All named model anchors and hookups, before instance variant visibility is applied.</summary>
+    public IReadOnlyList<ModelLocator> GetNamedModelLocators(string descriptor)=>Projection("named-model-locators",GameResourceStore.Key(descriptor),()=>
+    {using var stream=resources.Open(Path.ChangeExtension(descriptor,".pmg"));return Array.AsReadOnly(PmgLocatorReader.ReadAll(stream).ToArray());});
     public IReadOnlyList<SpeedCameraLocator> GetModelLocators(string descriptor)=>Projection("camera-locators",GameResourceStore.Key(descriptor),()=>
     {using var stream=resources.Open(Path.ChangeExtension(descriptor,".pmg"));return PmgLocatorReader.Read(stream,World.Cameras);});
     public (IReadOnlySet<int> Visible,string Fingerprint) GetModelVariant(string descriptor,string variant)

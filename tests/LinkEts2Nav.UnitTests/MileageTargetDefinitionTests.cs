@@ -6,6 +6,16 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class MileageTargetDefinitionTests
 {
     [Fact]
+    public void MultipleReadersShareTheManagedSiiDocument()
+    {
+        var fs=new Fs();var data=GameDataManager.From(fs);
+        var expected=Assert.Single(new MileageTargetDefinitionReader(data).Read());
+        Assert.Equal(expected.DefaultName,Assert.Single(new MileageTargetDefinitionReader(fs).Read()).DefaultName);
+        Assert.Equal(expected.DefaultName,Assert.Single(new MileageTargetDefinitionReader(data).Read()).DefaultName);
+        Assert.Equal(1,data.Statistics.SiiParses);
+        Assert.Equal(1,fs.Reads);
+    }
+    [Fact]
     public void ExactNamesVariantsAndDestinationNodeRemainSeparateFromRoadOwnership()
     {
         var data=new MileageTargetDefinitionReader(new Fs()).Read();
@@ -58,6 +68,7 @@ public sealed class MileageTargetDefinitionTests
     }
     private sealed class Fs:IFileSystem
     {
+        public int Reads;
         public string Content="""
             SiiNunit
             {
@@ -77,7 +88,7 @@ public sealed class MileageTargetDefinitionTests
         public bool FileExists(string p)=>p=="/def/sign/mileage_targets.sii";
         public bool DirectoryExists(string p)=>p.TrimEnd('/')=="/def/sign";
         public IList<string> GetFiles(string p)=>DirectoryExists(p)?["/def/sign/mileage_targets.sii"]:[];
-        public byte[] ReadAllBytes(string p)=>Encoding.UTF8.GetBytes(Content);
+        public byte[] ReadAllBytes(string p){Reads++;return Encoding.UTF8.GetBytes(Content);}
         public string ReadAllText(string p)=>Content;
         public string ReadAllText(string p,Encoding encoding)=>Content;
         public Stream Open(string p)=>new MemoryStream(ReadAllBytes(p));

@@ -24,9 +24,10 @@ internal static class MapNameExporter
             .Select(p=>new Name(p.Value!,"company-definition","company.permanent."+p.Key)).ToList();
         diagnostics.AddRange(companyReader.Diagnostics.Select(d=>(object)new{reason="CompanyNameUnresolved",detail=d}));
         var cityTokens=new Dictionary<string,string>(StringComparer.Ordinal);
-        foreach(var path in fs.GetFiles("/def/").Where(p=>fs.GetParent(p).TrimEnd('/')=="/def"&&Path.GetFileName(p).StartsWith("city",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order())
+        var data=GameDataManager.From(fs);
+        foreach(var path in data.GetFiles("/def/").Where(p=>data.GetParent(p).TrimEnd('/')=="/def"&&Path.GetFileName(p).StartsWith("city",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order())
         {
-            try { foreach(var unit in SiiFile.Open(path,fs).Units.Where(u=>u.Class=="city_data"))
+            try { foreach(var unit in data.GetSii(path).OfClass("city_data"))
                 foreach(var key in new[]{"city_name","city_name_localized","short_city_name"})
                 {
                     string text=Text(unit,key);

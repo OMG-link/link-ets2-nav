@@ -48,6 +48,8 @@ public sealed class NearbyCameraScanner
     private Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
     private ScsMap? map;
     private SectorCoordinate[] loadedSectors = [];
+    private IReadOnlyList<MapQueryIssue> mapIssues=[];
+    private Func<ulong,MapQueryIssue>? missingConnection;
     private SpeedLimitDefinitionReader speedReader=>data.SpeedLimits;
     private SpeedLimitAreaCache? areaCache;
     private CompanyPlaceIndex companies=CompanyPlaceIndex.Empty;
@@ -75,6 +77,10 @@ public sealed class NearbyCameraScanner
         if (map == null || !sectors.SequenceEqual(loadedSectors))
         {
             var nextMap=data.ReadWindow(sectors);
+            var typedIssues=new List<MapQueryIssue>();
+            var represented=nextMap.MapItems.Values.Where(i=>i is Road or Prefab).Select(i=>i.Uid).ToHashSet();
+            var readySet=sectors.ToHashSet();
+            Func<ulong,MapQueryIssue> need=uid=>data.DescribeMissingConnection(uid,represented,readySet);
             companies=data.Companies.Build(nextMap);
             cancellationToken.ThrowIfCancellationRequested();
             var junctions = new List<DirectedRoad>();
@@ -110,7 +116,8 @@ public sealed class NearbyCameraScanner
                 catch(Exception ex) when(ex is not OperationCanceledException){issues.Add($"Prefab {resource}: {ex.Message}");}
             }
             foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road,speedReader);
-            roundaboutIndex.BuildNewSectors(sectors,cancellationToken);
+            roundaboutIndex.BuildNewSectors(sectors,cancellationToken,need);
+            typedIssues.AddRange(roundaboutIndex.MapIssues);
             areaCache ??= new(data);
             var regionData=areaCache.Update(nextMap,sectors,
                 junctions.SelectMany(e=>e.Points).Concat(nextMap.MapItems.Values.OfType<Road>()
@@ -119,8 +126,10 @@ public sealed class NearbyCameraScanner
             var builtLimits = ProjectedSignBuilder.Build(data.ReadSpeedLimits(nextMap,regionData,cancellationToken),junctions,cancellationToken);
             trafficSignals=new(signalPrefabs.SelectMany(p=>TrafficSignalMap.Build(p.Prefab,p.Descriptor,data.TrafficSignals,builtLimits)));
             // One annotated geometry graph per map version, shared with navigation consumers.
-            var navigation=new RoadPathSource(nextMap,junctions,playerAccess:speedReader.RoadPlayerAccess,roadHalfWidth:speedReader.ReferenceHalfWidth);
-            var builtAuxiliary=AuxiliaryLaneIndex.Build(new NativeLaneGraph(navigation.GetNavigationGraph()),cancellationToken);
+            var navigation=new RoadPathSource(nextMap,junctions,playerAccess:speedReader.RoadPlayerAccess,roadHalfWidth:speedReader.ReferenceHalfWidth,missingConnection:need,reportMapIssue:typedIssues.Add);
+            var builtAuxiliary=AuxiliaryLaneIndex.Build(new NativeLaneGraph(navigation.GetNavigationGraph()),cancellationToken,need);
+            typedIssues.AddRange(navigation.MapIssues);
+            typedIssues.AddRange(builtAuxiliary.MapIssues);
             cancellationToken.ThrowIfCancellationRequested();
             geometryCache = nextGeometry;
             junctionGeometry = junctions;
@@ -130,6 +139,7 @@ public sealed class NearbyCameraScanner
             auxiliaryLanes=builtAuxiliary;
             map = nextMap;
             loadedSectors = sectors;
+            missingConnection=need; mapIssues=typedIssues.Distinct().ToArray();
         }
         var diagnostics = new List<string>(data.Diagnostics);
         diagnostics.AddRange(data.Companies.Diagnostics);
@@ -200,7 +210,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { ReadySectors=loadedSectors,Coverage=coverage,MissingConnection=missingConnection,MapIssues=mapIssues,Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)

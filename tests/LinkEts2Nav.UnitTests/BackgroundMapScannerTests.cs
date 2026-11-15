@@ -48,13 +48,13 @@ public sealed class BackgroundMapScannerTests
         await started.Task.WaitAsync(TimeSpan.FromSeconds(8),TestContext.Current.CancellationToken);
         try
         {
-            Assert.Same(near,scanner.Capture().Map);
+            Assert.Same(near.Map,scanner.Capture().Map?.Map);
             Assert.True(scanner.Capture().IsScanning);
             // Same position/time must not suppress a changed route.
             Assert.True(scanner.Request(Request() with{Route=route with{Revision="new"}},now));
         }
         finally { release.Set(); }
-        await WaitFor(()=>ReferenceEquals(updated,scanner.Capture().Map));
+        await WaitFor(()=>ReferenceEquals(updated.Map,scanner.Capture().Map?.Map));
         Assert.Equal(2,scanner.Capture().Revision); // nearby + new route; old result was discarded
     }
 
@@ -112,16 +112,16 @@ public sealed class BackgroundMapScannerTests
             // Capture must not wait for the refresh's I/O. Use a bounded task so a
             // regression holding the publication lock during Read fails without hanging.
             var snapshot = await Task.Run(scanner.Capture, TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
-            Assert.Same(first, snapshot.Map);
+            Assert.Same(first.Map, snapshot.Map?.Map);
             Assert.True(snapshot.IsScanning);
             var engine = new CameraWarningEngine();
             var now = DateTimeOffset.UtcNow;
             Assert.Single(engine.Update(new("session", "", false, true, now,
                 [new("first", CameraApproach.UnavoidableAhead, 499, 499)]), now));
-            Assert.Same(first, scanner.Capture().Map);
+            Assert.Same(first.Map, scanner.Capture().Map?.Map);
         }
         finally { release.Set(); }
-        await WaitFor(() => ReferenceEquals(scanner.Capture().Map, second));
+        await WaitFor(() => ReferenceEquals(scanner.Capture().Map?.Map, second.Map));
     }
 
     [Theory]
@@ -152,7 +152,7 @@ public sealed class BackgroundMapScannerTests
         }
         finally { release.Set(); }
         await WaitFor(() => scanner.Capture().Map is not null);
-        Assert.Same(current, scanner.Capture().Map);
+        Assert.Same(current.Map, scanner.Capture().Map?.Map);
         Assert.Equal(resourceChange ? 1 : 0, disposed);
         Assert.Equal(1, scanner.Capture().Revision); // stale completion never published
     }
@@ -193,11 +193,11 @@ public sealed class BackgroundMapScannerTests
         await WaitFor(() => scanner.Capture().Map is not null);
         scanner.Request(Request(x: 30), DateTimeOffset.UtcNow);
         await WaitFor(() => scanner.Capture().Error is not null);
-        Assert.Same(ready, scanner.Capture().Map);
+        Assert.Same(ready.Map, scanner.Capture().Map?.Map);
         Assert.False(scanner.Request(Request(x: 60), DateTimeOffset.UtcNow));
         Assert.True(scanner.Request(Request(x: 60), DateTimeOffset.UtcNow.AddSeconds(6)));
         await WaitFor(() => scanner.Capture().Error is null);
-        Assert.Same(ready, scanner.Capture().Map);
+        Assert.Same(ready.Map, scanner.Capture().Map?.Map);
     }
 
     [Fact]

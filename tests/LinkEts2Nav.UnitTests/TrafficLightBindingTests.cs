@@ -9,6 +9,18 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class TrafficLightBindingTests
 {
+    [Fact]
+    public void CustomizedOrdinaryControlStillRequiresAMatchingConsistentLiveLamp()
+    {
+        var control=Control() with{Timing=new(null,"PPD",CustomLayout:true)};
+        var nearby=Nearby([control]);var navigation=Navigation(Lane(1,2));
+        Assert.NotNull(new TrafficSignalBinder().Match(Data(),nearby,navigation,out _));
+        Assert.Null(new TrafficSignalBinder().Match(Data() with{TrafficSignals=new(Now,[])},nearby,navigation,out _));
+        var inconsistent=Data() with{TrafficSignals=new(Now,[new(1,new(100,0,4),Quaternion.Identity,SignalPhase.Red,2),
+            new(2,new(100,0,4),Quaternion.Identity,SignalPhase.Green,2)])};
+        Assert.Null(new TrafficSignalBinder().Match(inconsistent,nearby,navigation,out _));
+        Assert.Null(new TrafficSignalBinder().Match(Data(),Nearby([control,Control(1,1)]),Navigation(Lane(1,2),Lane(1,3,1)),out _));
+    }
     private static readonly DateTimeOffset Now=DateTimeOffset.UtcNow;
     private static PrefabLanePath Lane(ulong entry,ulong exit,int curve=0,int lane=0)=>new(7,entry,exit,lane,0,lane,0,2,1,[curve],
         [new(100,0,lane*3.5f),new(130,0,lane*3.5f)],30);

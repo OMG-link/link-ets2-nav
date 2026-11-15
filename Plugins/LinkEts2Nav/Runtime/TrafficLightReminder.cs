@@ -135,7 +135,10 @@ public sealed class TrafficLightReminderPolicy
         {stoppedAt=null;return new(Diagnostic("车辆仍在移动，不提醒"));}
         stoppedAt??=now;
         if(signal.Phase!=SignalPhase.Red)return new(Diagnostic("当前不是红灯等待相位"));
-        if(timing?.NextAfterRed is not (SignalPhase.Green or SignalPhase.OrangeToGreen))
+        // For a customized ordinary lamp the SDK red countdown ends at green or preparatory
+        // red/amber. Its exact variant is unknown; never invent it from the unmodified PPD.
+        if(timing?.NextAfterRed is not (SignalPhase.Green or SignalPhase.OrangeToGreen)
+            &&timing is not {CustomLayout:true,NextAfterRed:null})
             return new(Diagnostic("红灯后的下一相位未知"));
         if(!clockVerified||now-progressAt>TimeSpan.FromMilliseconds(500))return new(Diagnostic("等待验证倒计时按现实秒连续更新"));
         if(now-stoppedAt<TimeSpan.FromMilliseconds(400))return new(Diagnostic("等待确认车辆完全停止"));

@@ -11,6 +11,22 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class TrafficLightDefinitionTests
 {
     [Theory]
+    [InlineData(SemaphoreType.TrafficLight,true)]
+    [InlineData(SemaphoreType.ModelOnly,false)]
+    [InlineData(SemaphoreType.UseProfile,false)]
+    public void CustomizedLayoutsRetainOnlyProvenOrdinaryControlsForLiveConfirmation(SemaphoreType type,bool ordinary)
+    {
+        var descriptor=new PrefabDescriptor{Nodes=[new(){Position=System.Numerics.Vector3.Zero},new(){Position=new(0,0,30)}],
+            NavCurves=[new(){Length=10,SemaphoreId=0,StartRotation=System.Numerics.Quaternion.Identity}],
+            Semaphores=[new(){Type=type,SemaphoreId=0,Rotation=System.Numerics.Quaternion.Identity,Intervals=new(15,2,23,1)}]};
+        var prefab=new Prefab{CustomSemaphores=true,Nodes=[new Node{Position=System.Numerics.Vector3.Zero},new Node{Position=new(0,0,30)}]};
+        var control=Assert.Single(TrafficSignalMap.Build(prefab,descriptor,new GameDataManager(new Files()).TrafficSignals,SpeedLimitData.Empty));
+        if(!ordinary){Assert.Null(control.Timing);return;}
+        Assert.True(control.Timing!.CustomLayout);
+        Assert.Null(control.Timing.NextAfterRed);
+        Assert.Contains("实时",control.Reason);
+    }
+    [Theory]
     [InlineData("1.0",SignalPhase.OrangeToGreen)]
     [InlineData("0.0",SignalPhase.Green)]
     public void RealSiiFloatQuadruplesUseScsQuaternionOrderForPhaseIntervals(string redAmber,SignalPhase expected)

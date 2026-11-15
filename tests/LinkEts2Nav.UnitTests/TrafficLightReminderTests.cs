@@ -6,6 +6,32 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class TrafficLightReminderTests
 {
+    [Fact]
+    public void LiveBoundCustomizedOrdinaryLampCanPrepareWithoutInventingItsExactNextPhase()
+    {
+        var policy=new TrafficLightReminderPolicy();
+        for(int i=0;i<3;i++)
+        {
+            double time=i*.2;
+            var selection=Selection(time,3.4f-(float)time) with{Control=Control with{Timing=new(null,"PPD",CustomLayout:true)}};
+            var decision=policy.Update(Data(time),selection,Start.AddSeconds(time),"missing");
+            Assert.Equal(i==2,decision.NoticeId is not null);
+            Assert.Null(decision.Diagnostic.NextPhase);
+        }
+    }
+    [Theory]
+    [InlineData(null,false)]
+    [InlineData(SignalPhase.OrangeToRed,true)]
+    public void UnsupportedTransitionIsNotEnabledByARealCountdown(SignalPhase? next,bool custom)
+    {
+        var policy=new TrafficLightReminderPolicy();
+        for(int i=0;i<5;i++)
+        {
+            double time=i*.2;
+            var selection=Selection(time,3.4f-(float)time) with{Control=Control with{Timing=new(next,"unknown",custom)}};
+            Assert.Null(policy.Update(Data(time),selection,Start.AddSeconds(time),"missing").NoticeId);
+        }
+    }
     private static readonly DateTimeOffset Start=DateTimeOffset.Parse("2026-11-15T00:00:00Z");
     private static readonly TrafficSignalControl Control=new(1,0,0,new(10,0,0),Vector3.UnitX,
         [new(new(10,0,3),Quaternion.Identity)],new(SignalPhase.OrangeToGreen,"PPD"),"test");

@@ -11,7 +11,7 @@ using PpdSignal=TruckLib.Models.Ppd.Semaphore;
 
 namespace LinkEts2Nav.Map;
 
-public sealed record TrafficSignalTiming(SignalPhase NextAfterRed,string Source);
+public sealed record TrafficSignalTiming(SignalPhase? NextAfterRed,string Source,bool CustomLayout=false);
 
 /// <summary>Static transition evidence only. Current phase and remaining time always come from the SDK.</summary>
 public sealed class TrafficSignalDefinitions
@@ -120,9 +120,13 @@ public sealed class TrafficSignalMap(IEnumerable<TrafficSignalControl> controls)
                 }
                 var distinct=resolved.Distinct().ToArray();
                 TrafficSignalTiming? confirmed=!uncertain&&distinct.Length==1?distinct[0]:null;
-                if(prefab.CustomSemaphores){confirmed=null;reason="自定义灯组移除规则尚未确认";}
+                // Customization may remove lamp instances. It does not invalidate an ordinary lamp
+                // that the binder subsequently confirms by its actual SDK pose and countdown.
+                // Do not claim the unmodified PPD's exact next phase for this layout.
+                if(prefab.CustomSemaphores&&confirmed is not null)
+                    confirmed=confirmed with{NextAfterRed=null,CustomLayout=true};
                 group=(semaphores.Select(s=>new TrafficSignalLamp(placement.ToWorld(s.Position),Quaternion.Normalize(rotation*s.Rotation))).ToArray(),
-                    confirmed,confirmed is null?reason:"已确认受控曲线灯组");
+                    confirmed,confirmed is null?reason:confirmed.CustomLayout?"自定义普通灯组须匹配实时灯确认":"已确认受控曲线灯组");
                 groups[curve.SemaphoreId]=group;
             }
             var forward=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curve.StartRotation));forward.Y=0;

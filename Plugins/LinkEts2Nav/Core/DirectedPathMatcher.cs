@@ -27,6 +27,9 @@ public sealed record DirectedRoad(
     ulong EndNodeUid,
     IReadOnlyList<Vector3> Points)
 {
+    /// <summary>A native prefab passage returning to its own road interface, selected explicitly by route UIDs.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ReturnsToEntry=>StartNodeUid==EndNodeUid&&Id.StartsWith("prefab:",StringComparison.Ordinal);
     /// <summary>Indices starting a separate native edge; the preceding gap has no route mileage.</summary>
     public IReadOnlyList<int> SegmentStarts { get; init; } = [];
     /// <summary>Map road-type token; absent for prefab connections or unavailable metadata.</summary>

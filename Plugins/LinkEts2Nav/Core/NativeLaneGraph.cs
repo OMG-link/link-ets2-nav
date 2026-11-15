@@ -4,11 +4,15 @@ namespace LinkEts2Nav.Core;
 public sealed class NativeLaneGraph
 {
     public IReadOnlyList<DirectedRoad> Edges {get;}
+    private readonly Lazy<NativeLaneGraph> throughTraffic;
+    /// <summary>Ordinary continuation and merging queries exclude optional same-interface returns.</summary>
+    public NativeLaneGraph ThroughTraffic=>throughTraffic.Value;
     private readonly Dictionary<ulong,IReadOnlyList<DirectedRoad>> starts;
     private readonly Dictionary<string,IReadOnlyList<DirectedRoad>> prefabs;
     public NativeLaneGraph(IReadOnlyList<DirectedRoad> edges)
     {
         Edges=Array.AsReadOnly(edges.ToArray());
+        throughTraffic=new(()=>Edges.Any(e=>e.ReturnsToEntry)?new NativeLaneGraph(Edges.Where(e=>!e.ReturnsToEntry).ToArray()):this);
         starts=edges.GroupBy(e=>e.StartNodeUid).ToDictionary(g=>g.Key,g=>(IReadOnlyList<DirectedRoad>)Array.AsReadOnly(g.ToArray()));
         prefabs=edges.Where(e=>Prefab(e) is not null).GroupBy(e=>Prefab(e)!)
             .ToDictionary(g=>g.Key,g=>(IReadOnlyList<DirectedRoad>)Array.AsReadOnly(g.ToArray()),StringComparer.Ordinal);

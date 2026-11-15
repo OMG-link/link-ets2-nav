@@ -41,6 +41,7 @@ public sealed class SignTextReader(GameDataManager data)
                         if(over.Id==id&&over.AreaName.ToString()==area)
                             foreach(var attribute in over.Attributes.Where(a=>a.Index==0&&a.Type==typeof(string)))
                                 value=(string)attribute.GetValue();
+                    if(!raw&&text.Class=="sign_template_text"&&!VisibleText(text,sign,area,id))continue;
                     value=Regex.Replace(value.Trim(),@"\s+"," ").Normalize();
                     if(!raw&&(value.Length is <1 or >128||value is "Name" or "City" or "Text"||value.StartsWith("@@",StringComparison.Ordinal)
                         ||!value.Any(char.IsLetter)||value.Any(c=>char.IsControl(c)||c is '<' or '>' or '[' or ']' or '{' or '}')))continue;
@@ -67,6 +68,27 @@ public sealed class SignTextReader(GameDataManager data)
         }
         catch(Exception e) when(e is IOException or InvalidDataException or FormatException or ArgumentException)
         {return null;}
+    }
+
+    // Native sign_template_text overrides use: text=0, face=1, size=2, color=3,
+    // font_opacity=4. This is not the schema of images, frames or mileage objects.
+    private bool VisibleText(Unit text,Sign sign,string area,uint id)
+    {
+        string configured=Text(text,"font_opacity");
+        float opacity=1;
+        if(configured.Length>0&&!float.TryParse(configured,NumberStyles.Float,CultureInfo.InvariantCulture,out opacity))
+        {diagnostics.Add(new("UnknownTextOpacity",sign.SignTemplate,$"{area}:{id} font_opacity={configured}"));return false;}
+        foreach(var over in sign.SignOverrides??[])
+            if(over.Id==id&&over.AreaName.ToString()==area)
+                foreach(var attribute in over.Attributes.Where(a=>a.Index==4))
+                {
+                    if(attribute.Type!=typeof(float))
+                    {diagnostics.Add(new("UnknownTextOpacity",sign.SignTemplate,$"{area}:{id} override type={attribute.Type.Name}"));return false;}
+                    opacity=(float)attribute.GetValue();
+                }
+        if(!float.IsFinite(opacity))
+        {diagnostics.Add(new("UnknownTextOpacity",sign.SignTemplate,$"{area}:{id} non-finite opacity"));return false;}
+        return opacity>0;
     }
 
     private IReadOnlyDictionary<string,string> Index(string prefix)=>data.SignIndex(prefix);

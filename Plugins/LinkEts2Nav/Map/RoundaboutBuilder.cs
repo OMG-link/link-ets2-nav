@@ -3,6 +3,7 @@ using System.Numerics;
 namespace LinkEts2Nav.Map;
 
 public sealed record RoundaboutCurveKey(ulong ItemUid, int CurveIndex);
+internal sealed record RoundaboutBoundaryDependency(ulong NodeUid,RoundaboutCurveKey Entrance,Vector3 QueryAnchor);
 public sealed record RoundaboutExit(ulong NodeUid, IReadOnlyList<RoundaboutCurveKey> Branches);
 public sealed record RoundaboutStructure(string Id, IReadOnlyList<ulong> PrefabUids,
     IReadOnlyList<RoundaboutCurveKey> Ring, IReadOnlyList<Vector3> Geometry,
@@ -44,6 +45,8 @@ public sealed class RoundaboutBuilder
     // Missing indices inside an already-read PPD are not missing sectors.
     public IReadOnlySet<ulong> UnresolvedBoundaryNodes => unresolvedBoundaryNodes;
     private readonly HashSet<ulong> unresolvedBoundaryNodes = [];
+    internal IReadOnlyList<RoundaboutBoundaryDependency> BoundaryDependencies=>boundaryDependencies;
+    private readonly List<RoundaboutBoundaryDependency> boundaryDependencies=[];
     // Session-only memo 1: deterministic branch choice, including unresolved branches.
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurveKey?> successors = new();
     // Session-only memo 2: resolved suffix and ALL owners traversed to reach it.
@@ -57,6 +60,7 @@ public sealed class RoundaboutBuilder
         CancellationToken cancellationToken = default)
     {
         unresolvedBoundaryNodes.Clear();
+        boundaryDependencies.Clear();
         foreach (var entrance in entrances.Distinct())
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -133,7 +137,11 @@ public sealed class RoundaboutBuilder
             if (next is null)
             {
                 if (curve.Next.Count == 0 && curve.ExitNode != 0)
+                {
                     unresolvedBoundaryNodes.Add(curve.ExitNode);
+                    if(graph.TryGetValue(start,out var entrance)&&entrance.Points.Count>0)
+                        boundaryDependencies.Add(new(curve.ExitNode,start,entrance.Points[0]));
+                }
                 // A missing referenced curve is incomplete map data, not a permanent dead end.
                 cacheable = curve.Next.All(graph.ContainsKey)
                     && !(curve.Next.Count == 0 && curve.ExitNode != 0); break;

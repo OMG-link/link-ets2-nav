@@ -13,11 +13,11 @@ public sealed class RoundaboutMapIndex
     public IReadOnlyList<string> Diagnostics => diagnostics.ToArray();
     public RoundaboutMapIndex(SpecialRoundaboutCatalog? special=null) => this.special=special??SpecialRoundaboutCatalog.Default;
     private readonly HashSet<SectorCoordinate> built = [];
-    private readonly Dictionary<SectorCoordinate, Dictionary<ulong,Vector3>> waitingBoundaries = [];
+    private readonly Dictionary<SectorCoordinate, HashSet<RoundaboutBoundaryDependency>> waitingBoundaries = [];
     private readonly HashSet<SectorCoordinate> dirtyAttachments = [];
     public IReadOnlyList<MapQueryIssue> MapIssues {get;private set;}=[];
     public IReadOnlyDictionary<SectorCoordinate, IReadOnlySet<ulong>> UnresolvedBoundaryNodes =>
-        waitingBoundaries.ToDictionary(p => p.Key, p => (IReadOnlySet<ulong>)p.Value.Keys.ToHashSet());
+        waitingBoundaries.ToDictionary(p => p.Key, p => (IReadOnlySet<ulong>)p.Value.Select(d=>d.NodeUid).ToHashSet());
     private readonly Dictionary<ulong, (SectorCoordinate Sector, RoundaboutCurve[] Curves, RoundaboutCurveKey[] Entrances,string Access)> prefabs = [];
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurve> curves = [];
     private readonly Dictionary<string, RoundaboutStructure> structures = [];
@@ -113,11 +113,11 @@ public sealed class RoundaboutMapIndex
     {
         var added = nodes.Where(n => n != 0).ToHashSet();
         foreach (var pending in waitingBoundaries.ToArray())
-            if (pending.Value.Keys.Any(added.Contains))
+            if (pending.Value.Any(d=>added.Contains(d.NodeUid)))
             {
                 built.Remove(pending.Key);
                 dirtyAttachments.Add(pending.Key);
-                foreach(var node in added)pending.Value.Remove(node);
+                pending.Value.RemoveWhere(d=>added.Contains(d.NodeUid));
                 if (pending.Value.Count == 0) waitingBoundaries.Remove(pending.Key);
             }
     }
@@ -154,14 +154,13 @@ public sealed class RoundaboutMapIndex
             // All dictionaries used to memoize this sector's search die with this builder.
             var builder = new RoundaboutBuilder(graph);
             var additions = new List<RoundaboutStructure>();
-            var missing = new Dictionary<ulong,Vector3>();
+            var missing = new HashSet<RoundaboutBoundaryDependency>();
             foreach (var pair in prefabs.Where(p => p.Value.Sector == sector).OrderBy(p => p.Key))
             {
                 if (structures.Values.Concat(additions).Any(r => r.PrefabUids.Contains(pair.Key))) continue;
                 var found = builder.Find(pair.Key, pair.Value.Entrances, token);
                 if (found is not null) additions.Add(found);
-                else if(pair.Value.Curves.FirstOrDefault(c=>c.Points.Count>0) is {} seed)
-                    foreach(var node in builder.UnresolvedBoundaryNodes)missing.TryAdd(node,seed.Points[0]);
+                else missing.UnionWith(builder.BoundaryDependencies);
             }
             foreach(var check in builder.DirectionChecks)diagnostics.Add(check.ToString());
             foreach(var geometry in builder.GeometryChecks)diagnostics.Add(geometry.ToString());
@@ -173,9 +172,9 @@ public sealed class RoundaboutMapIndex
             dirtyAttachments.Remove(sector);
         }
         MapIssues=waitingBoundaries.Values.SelectMany(nodes=>nodes).Distinct()
-            .Select(p=>(missingConnection?.Invoke(p.Key)
-                ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"环岛搜索接口{p.Key:X16}未解析外部附件，缺少其所属区块证据"))
-                with{QueryAnchor=p.Value})
+            .Select(p=>(missingConnection?.Invoke(p.NodeUid)
+                ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"环岛搜索接口{p.NodeUid:X16}未解析外部附件，缺少其所属区块证据"))
+                with{QueryAnchor=p.QueryAnchor})
             .ToArray();
     }
 }

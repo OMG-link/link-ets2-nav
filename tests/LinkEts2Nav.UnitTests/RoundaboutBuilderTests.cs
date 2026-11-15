@@ -159,6 +159,46 @@ public sealed class RoundaboutBuilderTests
     }
 
     [Fact]
+    public void SharedMissingBoundaryRetainsEveryActualSearchEntrance()
+    {
+        var first=new RoundaboutCurve(new(1,0),1,false,[new(-900,0,0),new(-800,0,0)],[]);
+        var near=new RoundaboutCurve(new(1,1),1,false,[new(10,0,0),new(100,0,0)],[new(1,3)]);
+        var far=new RoundaboutCurve(new(1,2),1,false,[new(3000,0,0),new(100,0,0)],[new(1,3)]);
+        var tail=new RoundaboutCurve(new(1,3),1,false,[new(100,0,0),new(200,0,0)],[],ExitNode:99);
+        var builder=new RoundaboutBuilder([first,near,far,tail]);
+        Assert.Null(builder.Find(1,[far.Key,near.Key],TestContext.Current.CancellationToken));
+        Assert.Equal(2,builder.BoundaryDependencies.Count);
+        Assert.All(builder.BoundaryDependencies,d=>Assert.Equal(99UL,d.NodeUid));
+        Assert.Equal(new[]{near.Points[0],far.Points[0]}.OrderBy(p=>p.X),
+            builder.BoundaryDependencies.Select(d=>d.QueryAnchor).OrderBy(p=>p.X));
+        Assert.DoesNotContain(builder.BoundaryDependencies,d=>d.QueryAnchor==first.Points[0]);
+    }
+
+    [Fact]
+    public void TwoPrefabsInOneSearchCellKeepBothSeedsForTheSameMissingAttachment()
+    {
+        var end=new Node{Uid=99,Position=new(3900,0,0)};
+        var index=new RoundaboutMapIndex();
+        void Add(ulong uid,float x)
+        {
+            var start=new Node{Uid=uid+100,Position=new(x,0,0)};
+            var descriptor=new PrefabDescriptor
+            {
+                Nodes=[new ControlNode{Position=start.Position,InputLines=[0],OutputLines=[]},
+                    new ControlNode{Position=end.Position,InputLines=[],OutputLines=[0]}],
+                NavCurves=[new NavCurve{StartPosition=start.Position,EndPosition=end.Position,
+                    StartRotation=Quaternion.Identity,EndRotation=Quaternion.Identity,Length=3900-x}]
+            };
+            index.AddPrefab(new Prefab{Uid=uid,Nodes=[start,end]},descriptor);
+        }
+        Add(1,3000);Add(2,10);
+        index.BuildNewSectors([new(0,0)],TestContext.Current.CancellationToken,
+            _=>new MissingMapSectors([new SectorCoordinate(1,0)],"shared missing owner"));
+        Assert.Equal(2,index.MapIssues.Count);
+        Assert.Equal(new float[]{10,3000},index.MapIssues.Select(i=>i.QueryAnchor!.Value.X).Order());
+    }
+
+    [Fact]
     public void NewlyAvailableAttachmentRetriesAnAlreadyAttemptedSector()
     {
         var left = new Node { Uid = 10, Position = new(3990, 0, 0) };

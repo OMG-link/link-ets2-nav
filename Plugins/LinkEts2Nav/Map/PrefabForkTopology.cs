@@ -107,8 +107,10 @@ public static class PrefabForkTopology
                 ForkSignal? signal=Signal(lamps);
                 foreach(var row in rows)signals[(prefab.Nodes[from].Uid,row.Key.Lane,prefab.Nodes[to].Uid,row.Key.Output)]=Signal(row.Value);
                 var inputs=rows.Select(p=>p.Key.Lane).Distinct().Order().ToArray();
-                bool inherited=inputs.Any(l=>outcomes.Where(p=>p.Key.Lane==l&&p.Value.Contains(0)).Select(p=>p.Key.Exit).Distinct().SequenceEqual(new[]{to})
-                    &&rows.Where(p=>p.Key.Lane==l&&p.Value.Contains(0)).Any(p=>!rows.Any(q=>q.Key.Lane!=l&&q.Key.Output==p.Key.Output&&q.Value.Contains(0))));
+                // Complete inheritance is a connectivity fact: one input stays
+                // in this outlet and retains an output not shared by another input.
+                bool inherited=inputs.Any(l=>outcomes.Where(p=>p.Key.Lane==l).Select(p=>p.Key.Exit).Distinct().SequenceEqual(new[]{to})
+                    &&rows.Where(p=>p.Key.Lane==l).Any(p=>!rows.Any(q=>q.Key.Lane!=l&&q.Key.Output==p.Key.Output)));
                 var inputCurve=nodes[from].InputLines.FirstOrDefault(i=>i>=0&&i<count,-1);
                 var outputCurve=nodes[to].OutputLines.FirstOrDefault(i=>i>=0&&i<count,-1);
                 double? turn=null;

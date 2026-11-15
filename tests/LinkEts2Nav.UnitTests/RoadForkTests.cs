@@ -14,11 +14,11 @@ public sealed class RoadForkTests
     [Fact]
     public void OnlyUnlitExitIsSilentButLitExitUsesItsOwnLamp()
     {
-        var info=new RoadForkInfo(1,2,[Branch(2,ForkSignal.None,[0,1]),Branch(3,ForkSignal.Right,[1])]);
+        var info=new RoadForkInfo(1,2,[Branch(2,ForkSignal.None,[0,1]),Branch(3,ForkSignal.Right,[1],false)]);
         Assert.True(RoadForkRules.Decide(info,2).Silent);
         Assert.Equal(ManeuverKind.KeepRight,RoadForkRules.Decide(info,3).Kind);
         Assert.Empty(RoadForkRules.Decide(info,3).DedicatedOrders);
-        Assert.Equal(ManeuverKind.KeepLeft,RoadForkRules.Decide(info with{Branches=[Branch(3,ForkSignal.Left,[0])]},3).Kind);
+        Assert.Equal(ManeuverKind.KeepLeft,RoadForkRules.Decide(info with{Branches=[Branch(3,ForkSignal.Left,[0],false)]},3).Kind);
     }
     [Fact]
     public void MultipleUnlitExitsUseReachableEntranceLaneGroups()
@@ -56,7 +56,7 @@ public sealed class RoadForkTests
     [Fact]
     public void ThreeExitInterfacesUseMultipleExitWordingIncludingLitInterfaces()
     {
-        var info=new RoadForkInfo(1,5,[Branch(2,ForkSignal.None,[0]),Branch(3,ForkSignal.None,[1,3]),Branch(4,ForkSignal.Right,[4])]);
+        var info=new RoadForkInfo(1,5,[Branch(2,ForkSignal.None,[0]),Branch(3,ForkSignal.None,[1,3]),Branch(4,ForkSignal.Right,[4],false)]);
         Assert.Equal("有多个相近出口，请走最左侧车道",RoadForkRules.Decide(info,2).Text);
         Assert.Equal("有多个相近出口，请走右侧第二、第四车道",RoadForkRules.Decide(info,3).Text);
         Assert.Equal(ManeuverKind.KeepRight,RoadForkRules.Decide(info,4).Kind);
@@ -89,7 +89,7 @@ public sealed class RoadForkTests
     {
         var info=new RoadForkInfo(1,1,[Branch(2,ForkSignal.None,[0]),Branch(3,ForkSignal.None,[0])]);
         Assert.NotNull(RoadForkRules.Decide(info,2).Failure);
-        info=info with{EntryLaneCount=2,Branches=[Branch(2,ForkSignal.None,[0]),Branch(3,null,[1])]};
+        info=info with{EntryLaneCount=2,Branches=[Branch(2,ForkSignal.None,[0]),Branch(3,null,[1],false)]};
         Assert.NotNull(RoadForkRules.Decide(info,2).Failure);
         Assert.NotNull(RoadForkRules.Decide(info,3).Failure);
     }
@@ -167,7 +167,7 @@ public sealed class RoadForkTests
     // only. No model meshes, textures or full game assets are embedded.
     [Theory]
     [InlineData(0,ManeuverKind.ChooseLanes,"分岔口靠右，走最右侧车道")]
-    [InlineData(1,ManeuverKind.KeepRight,null)]
+    [InlineData(1,ManeuverKind.ChooseLanes,"分岔口靠右，走最右侧车道")]
     [InlineData(2,ManeuverKind.KeepRight,null)]
     public void RetainedRealNativeForksFollowSignalAndLaneRules(int fixture,ManeuverKind expected,string? text)
     {
@@ -191,13 +191,13 @@ public sealed class RoadForkTests
         var selected=RoadForkRules.Decide(info,30);
         Assert.Equal(expected,selected.Kind);Assert.Equal(text,selected.Text);Assert.Null(selected.Failure);
         var retained=RoadForkRules.Decide(info,20);
-        if(fixture==0)Assert.Equal("分岔口靠左，走左侧两车道",retained.Text);else Assert.True(retained.Silent);
+        if(fixture is 0 or 1)Assert.Equal("分岔口靠左，走左侧两车道",retained.Text);else Assert.True(retained.Silent);
     }
 
     [Fact]
     public void OrdinaryForkNeedsNoCrossingJunctionAndDoesNotUseExitAngle()
     {
-        var info=new RoadForkInfo(10,3,[Branch(20,ForkSignal.None,[0,1]),Branch(30,ForkSignal.Right,[2])]);
+        var info=new RoadForkInfo(10,3,[Branch(20,ForkSignal.None,[0,1]),Branch(30,ForkSignal.Right,[2],false)]);
         DirectedRoad approach=new("road",1,10,[new(0,0,0),new(0,0,100)]);
         DirectedRoad main=new("prefab:1:0:1",10,20,[new(0,0,100),new(-100,0,200)]){ForkInfo=info};
         DirectedRoad side=new("prefab:1:0:2",10,30,[new(0,0,100),new(-100,0,150)]){ForkInfo=info};

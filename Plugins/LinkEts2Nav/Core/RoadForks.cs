@@ -17,7 +17,7 @@ public sealed record RoadForkInstruction(ManeuverKind Kind,bool Silent,string? T
 }
 public sealed record RoadForkDiagnostic(string Prefab,ulong EntryNode,ulong ExitNode,string Reason);
 
-/// <summary>Branch lamps and lane reachability select the action. Outlet order only clarifies lane-selection wording.</summary>
+/// <summary>Inherited entrance lanes select the action; lamps classify wholly new branches. Outlet order clarifies lane wording.</summary>
 public static class RoadForkRules
 {
     public static RoadForkInstruction Decide(RoadForkInfo info,ulong exit)
@@ -26,13 +26,14 @@ public static class RoadForkRules
         if(info.Failure is {} failure)return Unknown(failure);
         var branch=info.Branches.SingleOrDefault(b=>b.ExitNode==exit);
         if(branch is null)return Unknown("导航出口不在完整原生分流集合中");
-        if(branch.Signal is null)return Unknown(branch.Failure??"目标分支灯光不一致");
+        ForkSignal? EffectiveSignal(RoadForkBranch b)=>b.HasInheritedLane?ForkSignal.None:b.Signal;
+        if(EffectiveSignal(branch) is null)return Unknown(branch.Failure??"目标分支灯光不一致");
         var otherOrders=info.Branches.Where(b=>b.ExitNode!=exit).SelectMany(b=>b.EntryOrders).ToHashSet();
         var dedicated=branch.EntryOrders.Where(o=>!otherOrders.Contains(o)).Order().ToArray();
-        if(branch.Signal is ForkSignal.Left or ForkSignal.Right)
-            return new(branch.Signal==ForkSignal.Left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight,false,null,branch.EntryOrders,dedicated);
-        if(info.Branches.Any(b=>b.Signal is null))return Unknown("其他出口灯光不确定，无法完整统计无灯分支");
-        var unlit=info.Branches.Where(b=>b.Signal==ForkSignal.None).ToArray();
+        if(EffectiveSignal(branch) is ForkSignal.Left or ForkSignal.Right)
+            return new(EffectiveSignal(branch)==ForkSignal.Left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight,false,null,branch.EntryOrders,dedicated);
+        if(info.Branches.Any(b=>EffectiveSignal(b) is null))return Unknown("其他出口灯光不确定，无法完整统计无灯分支");
+        var unlit=info.Branches.Where(b=>EffectiveSignal(b)==ForkSignal.None).ToArray();
         if(unlit.Length==1)return new(ManeuverKind.Straight,true,null,branch.EntryOrders,dedicated);
         var selectedOrders=branch.EntryOrders.Distinct().Order().ToArray();
         var indistinguishable=unlit.Where(b=>b.EntryOrders.Distinct().Order().SequenceEqual(selectedOrders))

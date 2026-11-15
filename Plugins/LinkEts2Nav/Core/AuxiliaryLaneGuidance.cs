@@ -28,6 +28,7 @@ public static class AuxiliaryLaneGuidance
             if(start is null||incomplete)continue;
             double end=offsets[terminal.Index]+terminal.Terminal.EndMeters;
             var interval=new LaneActionInterval(start.Value,end);
+            double passageEnd=LaneCorridorRoute.PassageEnd(route,offsets,terminal.Terminal.Edge)!.Value;
             string junction="prefab:"+NativeLaneGraph.Prefab(terminal.Terminal.Edge);
             var originSelection=lanes.Sections.FirstOrDefault(s=>s.EdgeId==corridor.Origin.Id)?.Path;
             bool sideEntry=corridor.StartKind==AuxiliaryBoundaryKind.IndependentEntrance
@@ -76,7 +77,7 @@ public static class AuxiliaryLaneGuidance
             {
                 result.Remove(existing!);result.Add(existing! with
                 {
-                    DistanceMeters=AuxiliaryLaneTiming.ActionPoint(interval),EndDistanceMeters=end,ApproachInterval=interval
+                    DistanceMeters=AuxiliaryLaneTiming.ActionPoint(interval),EndDistanceMeters=passageEnd,ApproachInterval=interval
                 });
                 continue;
             }
@@ -87,7 +88,7 @@ public static class AuxiliaryLaneGuidance
                 var kind=left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight;
                 var action=existing??new NavigationManeuver("auxiliary-exit:"+corridor.Id+":"+terminal.Terminal.Edge.Id,kind,end,"lane",terminal.Terminal.Edge.Id){JunctionId=junction,JunctionKind=NavigationJunctionKind.Ramp};
                 result.Remove(action);
-                result.Add(action with{Kind=kind,DistanceMeters=AuxiliaryLaneTiming.ActionPoint(interval),EndDistanceMeters=end,
+                result.Add(action with{Kind=kind,DistanceMeters=AuxiliaryLaneTiming.ActionPoint(interval),EndDistanceMeters=passageEnd,
                     ApproachInterval=interval,Instruction=null,NearInstruction=null,ExecutionInstruction=null,
                     ForkInstruction=action.ForkInstruction is {} f?f with{Kind=kind,Text=null}:null});
             }
@@ -99,7 +100,7 @@ public static class AuxiliaryLaneGuidance
             else if((mainEntry||sideEntry)&&existing is not null)
             {
                 result.Remove(existing);result.Add(existing with{Kind=ManeuverKind.Straight,AnnouncementMode=NavigationAnnouncementMode.Silent,
-                    IsMainRoadContinuation=true,EndDistanceMeters=end,Instruction=null,NearInstruction=null,ExecutionInstruction=null,
+                    IsMainRoadContinuation=true,EndDistanceMeters=passageEnd,Instruction=null,NearInstruction=null,ExecutionInstruction=null,
                     ForkInstruction=existing.ForkInstruction is {} f?f with{Kind=ManeuverKind.Straight,Silent=true,Text=null}:null});
             }
         }

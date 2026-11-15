@@ -3,6 +3,7 @@ using LinkEts2Nav.Core;
 namespace LinkEts2Nav.UnitTests;
 public sealed class LaneExitApproachTests
 {
+    private static readonly double SideExitLength=Vector3.Distance(new(300,0,0),new(350,0,20));
     [Fact]
     public void NativeSplitSelectionReusesMapFactsWithoutTreatingAllUsersAsSideEntrants()
     {
@@ -59,7 +60,7 @@ public sealed class LaneExitApproachTests
         Assert.Equal(100,Assert.Single(detector.Apply([s.Action],s.Route,s.Graph,0)).DistanceMeters);
         var trimmed=Assert.Single(detector.Apply([s.Action with{DistanceMeters=200}],s.Route.Skip(1).ToArray(),s.Graph,0));
         Assert.Equal(0,trimmed.DistanceMeters);
-        Assert.Equal(200,trimmed.EndDistanceMeters);
+        Assert.Equal(200+SideExitLength,trimmed.EndDistanceMeters);
         detector.Reset();
         Assert.Equal(0,Assert.Single(detector.Apply([s.Action with{DistanceMeters=200}],s.Route.Skip(1).ToArray(),s.Graph,0)).DistanceMeters);
     }
@@ -70,7 +71,7 @@ public sealed class LaneExitApproachTests
         Assert.Empty(detector.Apply([],s.Route,s.Graph,0));
         var straight=s.Action with{Kind=ManeuverKind.Straight};
         Assert.Equal(straight,Assert.Single(detector.Apply([straight],s.Route,s.Graph,0)));
-        Assert.Equal(s.Action with{DistanceMeters=100,EndDistanceMeters=300,ApproachInterval=new(20,300)},Assert.Single(detector.Apply([s.Action],s.Route,s.Graph,0)));
+        Assert.Equal(s.Action with{DistanceMeters=100,EndDistanceMeters=300+SideExitLength,ApproachInterval=new(20,300)},Assert.Single(detector.Apply([s.Action],s.Route,s.Graph,0)));
         // Previously cached lead distances must not revive absent or changed actions.
         Assert.Empty(detector.Apply([],s.Route,s.Graph,0));
         Assert.Equal(straight,Assert.Single(detector.Apply([straight],s.Route,s.Graph,0)));
@@ -102,16 +103,18 @@ public sealed class LaneExitApproachTests
     }
 
     [Fact]
-    public void OpeningBelongsToExclusiveLaneSetAndEndsStrictlyAtForkEntry()
+    public void OpeningEndsAtForkEntryButActionEndsAfterTheWholePrefab()
     {
         var s=Scene();var action=s.Action with{Kind=ManeuverKind.ChooseLanes,
             ForkInstruction=new(ManeuverKind.ChooseLanes,false,"走最右侧车道",[2],[2])};
         var moved=Assert.Single(new LaneExitApproach().Apply([action],s.Route,s.Graph,0));
         Assert.Equal(100,moved.DistanceMeters);
         Assert.Equal(ManeuverKind.KeepRight,moved.Kind);
-        Assert.Equal(300,moved.EndDistanceMeters);
+        Assert.Equal(300+SideExitLength,moved.EndDistanceMeters);
+        Assert.Equal(300,moved.ApproachInterval!.EndMeters);
         Assert.Single(new LaneExitApproach().Apply([action],s.Route,s.Graph,300));
-        Assert.Empty(new LaneExitApproach().Apply([action],s.Route,s.Graph,300.01));
+        Assert.Single(new LaneExitApproach().Apply([action],s.Route,s.Graph,300.01));
+        Assert.Empty(new LaneExitApproach().Apply([action],s.Route,s.Graph,300+SideExitLength+.01));
     }
 
     [Fact]
@@ -139,7 +142,7 @@ public sealed class LaneExitApproachTests
         var route=new[]{own,s.Route[1],s.Route[2]};
         var moved=Assert.Single(new LaneExitApproach().Apply([s.Action],route,[own,s.Route[1],s.Route[2],s.Graph[^1],side],0));
         Assert.Equal(120,moved.DistanceMeters);
-        Assert.Equal(300,moved.EndDistanceMeters);
+        Assert.Equal(300+SideExitLength,moved.EndDistanceMeters);
         // Without an ordinary-road corridor, independent entrances do not establish
         // permission to move laterally inside the prefab.
         Assert.Equal(100,Assert.Single(new LaneExitApproach().Apply([s.Action with{DistanceMeters=100}],
@@ -159,7 +162,7 @@ public sealed class LaneExitApproachTests
         var result=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,lanes,index));
         Assert.Equal(ManeuverKind.Straight,result.Kind);Assert.True(result.IsMainRoadContinuation);
         Assert.True(result.ForkInstruction!.Silent);Assert.Equal(NavigationAnnouncementMode.Silent,result.AnnouncementMode);
-        Assert.Null(result.Instruction);Assert.Equal(300,result.EndDistanceMeters);
+        Assert.Null(result.Instruction);Assert.Equal(400,result.EndDistanceMeters);
     }
 
     [Theory]
@@ -193,7 +196,7 @@ public sealed class LaneExitApproachTests
         var route=new[]{s.Route[0],road,s.Route[2]};var action=s.Action with{DistanceMeters=300+shift};
         var result=Assert.Single(new LaneExitApproach().Apply([action],route,[s.Graph[0],road,..s.Graph.Skip(2)],0));
         Assert.Equal(shortLane,result.ApproachInterval is not null);
-        if(shortLane){Assert.Equal(500,result.ApproachInterval!.LengthMeters);Assert.Equal(result.EndDistanceMeters!.Value-200,result.DistanceMeters);}
+        if(shortLane){Assert.Equal(500,result.ApproachInterval!.LengthMeters);Assert.Equal(result.ApproachInterval.EndMeters-200,result.DistanceMeters);}
     }
     [Fact]
     public void OutputSlotsFromDifferentPrefabsAreNotAnAddedLaneProof()

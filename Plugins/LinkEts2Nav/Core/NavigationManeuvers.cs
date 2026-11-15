@@ -186,7 +186,7 @@ public sealed class NavigationManeuverDetector
                     {
                         result.Add(new($"fork:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",instruction.Kind,
                             offset-vehicleAlong,i>0?route[i-1].Id:current.Id,current.Id)
-                        {JunctionId="prefab:"+prefab,EndDistanceMeters=instruction.Kind==ManeuverKind.Straight?end-vehicleAlong:offset-vehicleAlong,ForkInstruction=instruction,
+                        {JunctionId="prefab:"+prefab,EndDistanceMeters=end-vehicleAlong,ForkInstruction=instruction,
                             JunctionKind=NavigationJunctionKind.Ramp,IsMinorStraight=false,
                             IsMainRoadContinuation=instruction.Kind==ManeuverKind.Straight,
                             StraightExitSides=AlternativeExitSides(current,connections),

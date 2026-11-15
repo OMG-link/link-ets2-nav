@@ -299,7 +299,8 @@ public sealed class AuxiliaryLaneDirectionTests
         Assert.Null(proof.Signal);Assert.Equal(left,proof.MoveLeft);
         var updated=Assert.Single(new LaneExitApproach().Apply([scene.Action],scene.Route,scene.Graph,0));
         Assert.Equal(left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight,updated.Kind);
-        Assert.Null(updated.Instruction);Assert.Equal(120,updated.DistanceMeters);Assert.Equal(300,updated.EndDistanceMeters);
+        Assert.Null(updated.Instruction);Assert.Equal(120,updated.DistanceMeters);
+        Assert.Equal(300d+Vector3.Distance(new(300,0,0),new(350,0,20)),updated.EndDistanceMeters);
         Assert.Equal(new LaneActionInterval(100,300),updated.ApproachInterval);
         Assert.Equal(before,scene.Graph.SelectMany(e=>e.LanePaths).Select(p=>(p.NativeBranchSignal,p.CurveBlinkers)).ToArray());
         Assert.All(scene.Graph.SelectMany(e=>e.LanePaths),p=>Assert.All(p.CurveBlinkers,b=>Assert.Equal(LaneBlinker.NoBlinker,b)));

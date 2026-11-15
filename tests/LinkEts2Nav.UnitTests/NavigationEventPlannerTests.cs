@@ -138,7 +138,7 @@ public sealed class NavigationEventPlannerTests
     }
 
     [Fact]
-    public void DedicatedForkChoosesLaneAtOpeningAndReleasesNextBriefingOnEntry()
+    public void DedicatedForkChoosesLaneAtOpeningAndReleasesNextBriefingAfterItsPhysicalExit()
     {
         var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
         var fork=new NavigationManeuver("fork",ManeuverKind.ChooseLanes,100,"in","out")

@@ -6,6 +6,24 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class TrafficLightReminderTests
 {
+    [Theory]
+    [InlineData(1.00001f,false)]
+    [InlineData(1f,true)]
+    [InlineData(.00001f,true)]
+    [InlineData(0f,false)]
+    public void PreparationWindowIsPositiveAndAtMostOneSecond(float remaining,bool expected)
+    {
+        var policy=new TrafficLightReminderPolicy();
+        Step(policy,0,remaining+.4f);Step(policy,.2,remaining+.2f);
+        Assert.Equal(expected,Step(policy,.4,remaining).NoticeId is not null);
+    }
+    [Fact]
+    public void ExhaustedRedCountdownWithdrawsAnAlreadyPreparedReminder()
+    {
+        var policy=new TrafficLightReminderPolicy();
+        Step(policy,0,1.4f);Step(policy,.2,1.2f);Assert.NotNull(Step(policy,.4,1).NoticeId);
+        Assert.NotEqual("本次红灯等待已提醒",Step(policy,1.4,0).Diagnostic.State);
+    }
     [Fact]
     public void LiveBoundCustomizedOrdinaryLampCanPrepareWithoutInventingItsExactNextPhase()
     {
@@ -13,7 +31,7 @@ public sealed class TrafficLightReminderTests
         for(int i=0;i<3;i++)
         {
             double time=i*.2;
-            var selection=Selection(time,3.4f-(float)time) with{Control=Control with{Timing=new(null,"PPD",CustomLayout:true)}};
+            var selection=Selection(time,1.4f-(float)time) with{Control=Control with{Timing=new(null,"PPD",CustomLayout:true)}};
             var decision=policy.Update(Data(time),selection,Start.AddSeconds(time),"missing");
             Assert.Equal(i==2,decision.NoticeId is not null);
             Assert.Null(decision.Diagnostic.NextPhase);
@@ -28,7 +46,7 @@ public sealed class TrafficLightReminderTests
         for(int i=0;i<5;i++)
         {
             double time=i*.2;
-            var selection=Selection(time,3.4f-(float)time) with{Control=Control with{Timing=new(next,"unknown",custom)}};
+            var selection=Selection(time,1.4f-(float)time) with{Control=Control with{Timing=new(next,"unknown",custom)}};
             Assert.Null(policy.Update(Data(time),selection,Start.AddSeconds(time),"missing").NoticeId);
         }
     }
@@ -51,13 +69,13 @@ public sealed class TrafficLightReminderTests
     public void CountsDownToTheKnownRedToAmberTransitionAndQueuesOnce()
     {
         var policy=new TrafficLightReminderPolicy();
-        Assert.Null(Step(policy,0,4).NoticeId);
-        Assert.Null(Step(policy,.2,3.8f).NoticeId);
-        Assert.Null(Step(policy,.4,3.6f).NoticeId);
-        var notice=Step(policy,1,3);
+        Assert.Null(Step(policy,0,2).NoticeId);
+        Assert.Null(Step(policy,.2,1.8f).NoticeId);
+        Assert.Null(Step(policy,.4,1.6f).NoticeId);
+        var notice=Step(policy,1,1);
         Assert.NotNull(notice.NoticeId);Assert.True(notice.Diagnostic.ClockVerified);
         Assert.Equal(SignalPhase.OrangeToGreen,notice.Diagnostic.NextPhase);
-        Assert.Null(Step(policy,1.2,2.8f).NoticeId);
+        Assert.Null(Step(policy,1.2,.8f).NoticeId);
     }
     [Fact]
     public void CountriesWithoutPreparatoryAmberCanUseTheDirectGreenTransition()
@@ -66,7 +84,7 @@ public sealed class TrafficLightReminderTests
         for(int i=0;i<3;i++)
         {
             double time=i*.2;
-            var selection=Selection(time,3.4f-(float)time) with{Control=Control with{Timing=new(SignalPhase.Green,"country")}};
+            var selection=Selection(time,1.4f-(float)time) with{Control=Control with{Timing=new(SignalPhase.Green,"country")}};
             var decision=policy.Update(Data(time),selection,Start.AddSeconds(time),"missing");
             Assert.Equal(i==2,decision.NoticeId is not null);
             Assert.Equal(SignalPhase.Green,decision.Diagnostic.NextPhase);
@@ -80,22 +98,22 @@ public sealed class TrafficLightReminderTests
     public void RollingSlowlyIsNotAStoppedVehicle(double speed)
     {
         var policy=new TrafficLightReminderPolicy();
-        for(int i=0;i<5;i++)Assert.Null(Step(policy,i*.2,3f-i*.2f,speed).NoticeId);
+        for(int i=0;i<5;i++)Assert.Null(Step(policy,i*.2,1f-i*.2f,speed).NoticeId);
     }
     [Fact]
     public void TinyFloatNoiseAtStandstillIsAllowedButTheStopMustPersist()
     {
         var policy=new TrafficLightReminderPolicy();
-        Assert.Null(Step(policy,0,3,.0001).NoticeId);
-        Assert.Null(Step(policy,.2,2.8f,-.0001).NoticeId);
-        Assert.NotNull(Step(policy,.4,2.6f,.0001).NoticeId);
+        Assert.Null(Step(policy,0,1,.0001).NoticeId);
+        Assert.Null(Step(policy,.2,.8f,-.0001).NoticeId);
+        Assert.NotNull(Step(policy,.4,.6f,.0001).NoticeId);
     }
     [Fact]
     public void HighFrequencySamplesStillAccumulateEnoughTimeToVerifyTheCountdown()
     {
         var policy=new TrafficLightReminderPolicy();
         var notices=new List<TrafficLightDecision>();
-        for(int i=0;i<100;i++)notices.Add(Step(policy,i*.01,3.5f-i*.01f));
+        for(int i=0;i<100;i++)notices.Add(Step(policy,i*.01,1.5f-i*.01f));
         Assert.Single(notices,n=>n.NoticeId is not null);
     }
     [Theory]
@@ -106,7 +124,7 @@ public sealed class TrafficLightReminderTests
     public void OtherPhasesAreNotMisreportedAsAnUpcomingRedExit(SignalPhase phase)
     {
         var policy=new TrafficLightReminderPolicy();
-        for(int i=0;i<4;i++)Assert.Null(Step(policy,i*.2,3-i*.2f,phase:phase).NoticeId);
+        for(int i=0;i<4;i++)Assert.Null(Step(policy,i*.2,1-i*.2f,phase:phase).NoticeId);
     }
     [Fact]
     public void FrozenSamplesAndWrongCountdownUnitsCannotTrigger()
@@ -114,39 +132,39 @@ public sealed class TrafficLightReminderTests
         var frozen=new TrafficLightReminderPolicy();var accelerated=new TrafficLightReminderPolicy();
         for(int i=0;i<6;i++)
         {
-            Assert.Null(Step(frozen,i*.2,2.9f).NoticeId);
-            Assert.Null(Step(accelerated,i*.2,3f-i*.4f).NoticeId);
+            Assert.Null(Step(frozen,i*.2,.9f).NoticeId);
+            Assert.Null(Step(accelerated,i*.2,1f-i*.4f).NoticeId);
         }
         var stale=new TrafficLightReminderPolicy();
-        Step(stale,0,3.2f);Step(stale,.2,3);
-        var old=Selection(.2,3);
+        Step(stale,0,1.2f);Step(stale,.2,1);
+        var old=Selection(.2,1);
         Assert.Null(stale.Update(Data(2),old,Start.AddSeconds(2),"missing").NoticeId);
     }
     [Fact]
     public void PausingFreezesTheWaitAndDoesNotCreateAnotherReminderOnResume()
     {
-        var policy=new TrafficLightReminderPolicy();Step(policy,0,3.4f);Step(policy,.2,3.2f);
-        Assert.NotNull(Step(policy,.4,3).NoticeId);
-        Assert.Null(policy.Update(Data(10,paused:true),Selection(10,3),Start.AddSeconds(10),"paused").NoticeId);
-        Assert.Null(Step(policy,60,3).NoticeId);
-        Assert.Null(Step(policy,60.2,2.8f).NoticeId);
-        Assert.Null(Step(policy,60.4,2.6f).NoticeId);
+        var policy=new TrafficLightReminderPolicy();Step(policy,0,1.4f);Step(policy,.2,1.2f);
+        Assert.NotNull(Step(policy,.4,1).NoticeId);
+        Assert.Null(policy.Update(Data(10,paused:true),Selection(10,1),Start.AddSeconds(10),"paused").NoticeId);
+        Assert.Null(Step(policy,60,1).NoticeId);
+        Assert.Null(Step(policy,60.2,.8f).NoticeId);
+        Assert.Null(Step(policy,60.4,.6f).NoticeId);
     }
     [Fact]
     public void ANewRedCycleCanRemindAgain()
     {
-        var policy=new TrafficLightReminderPolicy();Step(policy,0,3.4f);Step(policy,.2,3.2f);
-        var first=Step(policy,.4,3);Assert.NotNull(first.NoticeId);
+        var policy=new TrafficLightReminderPolicy();Step(policy,0,1.4f);Step(policy,.2,1.2f);
+        var first=Step(policy,.4,1);Assert.NotNull(first.NoticeId);
         Step(policy,1,10,phase:SignalPhase.Green);
-        Step(policy,10,3.4f);Step(policy,10.2,3.2f);
-        var second=Step(policy,10.4,3);Assert.NotNull(second.NoticeId);Assert.NotEqual(first.NoticeId,second.NoticeId);
+        Step(policy,10,1.4f);Step(policy,10.2,1.2f);
+        var second=Step(policy,10.4,1);Assert.NotNull(second.NoticeId);Assert.NotEqual(first.NoticeId,second.NoticeId);
     }
     [Fact]
     public void TheShortWindowNeverStartsSynthesisOrQueuesUnpreparedAudio()
     {
         var policy=new TrafficLightReminderPolicy();
-        for(int i=0;i<4;i++)Assert.Null(Step(policy,i*.2,3f-i*.2f,audioReady:false).NoticeId);
-        Assert.NotNull(Step(policy,.8,2.2f,audioReady:true).NoticeId);
+        for(int i=0;i<4;i++)Assert.Null(Step(policy,i*.2,1.4f-i*.2f,audioReady:false).NoticeId);
+        Assert.NotNull(Step(policy,.8,.6f,audioReady:true).NoticeId);
     }
     [Fact]
     public void InvalidAndUnknownNextPhasesRemainSilent()
@@ -154,7 +172,7 @@ public sealed class TrafficLightReminderTests
         var policy=new TrafficLightReminderPolicy();
         for(int i=0;i<4;i++)
         {
-            var s=Selection(i*.2,3f-i*.2f) with{Control=Control with{Timing=null}};
+            var s=Selection(i*.2,1f-i*.2f) with{Control=Control with{Timing=null}};
             Assert.Null(policy.Update(Data(i*.2),s,Start.AddSeconds(i*.2),"missing").NoticeId);
         }
     }

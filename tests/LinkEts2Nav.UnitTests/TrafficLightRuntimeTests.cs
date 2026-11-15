@@ -29,7 +29,7 @@ public sealed class TrafficLightRuntimeTests
             {
                 var now=begin.AddSeconds(seconds);
                 return new(new(90,0,0,.75,speed,100,true,false,1,now),RouteSnapshot.Parse([new(1,100,1),new(2,0,0)],now),
-                    RouteAvailability.Available,"s",true){TrafficSignals=new(now,[new(1,new(100,0,4),Quaternion.Identity,phase,3.4f-(float)seconds)])};
+                    RouteAvailability.Available,"s",true){TrafficSignals=new(now,[new(1,new(100,0,4),Quaternion.Identity,phase,1.4f-(float)seconds)])};
             }
             coordinator.Observe(Sample(0),begin,processJourney:false);
             runtime.Process(Sample(0),map,navigation,begin);

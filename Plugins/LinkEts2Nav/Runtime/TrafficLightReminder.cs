@@ -142,8 +142,9 @@ public sealed class TrafficLightReminderPolicy
             return new(Diagnostic("红灯后的下一相位未知"));
         if(!clockVerified||now-progressAt>TimeSpan.FromMilliseconds(500))return new(Diagnostic("等待验证倒计时按现实秒连续更新"));
         if(now-stoppedAt<TimeSpan.FromMilliseconds(400))return new(Diagnostic("等待确认车辆完全停止"));
+        if(signal.PhaseRemaining<=0)return new(Diagnostic("红灯转换时间已到，撤销准备提醒"));
         if(notified)return new(Diagnostic("本次红灯等待已提醒"));
-        if(signal.PhaseRemaining>3)return new(Diagnostic("红灯尚未进入三秒准备区间"));
+        if(signal.PhaseRemaining>1)return new(Diagnostic("红灯尚未进入一秒准备区间"));
         if(!audioReady)return new(Diagnostic("固定提醒音频尚未预热就绪"));
         notified=true;
         return new(Diagnostic("已安排红灯即将变绿提醒",true),selection.Control.Id+":red:"+cycle);

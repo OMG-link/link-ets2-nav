@@ -122,10 +122,20 @@ public sealed class NavPlugin : Plugin
         var pipeline = new WarningPipeline(speech,guidance);
         var navigation = new NavigationRuntime(speech?.Queue,
             message => logOutput.Event(message, DateTimeOffset.UtcNow),guidance,cityNames);
+        TrafficLightReminderOptions signalOptions;
+        try { signalOptions=TrafficLightReminderOptions.Load(AppContext.BaseDirectory); }
+        catch(Exception ex)
+        {
+            signalOptions=new(){Enabled=false};
+            logOutput.Event("信号灯实验设置无效，已关闭该提醒："+ex.Message,DateTimeOffset.UtcNow);
+        }
+        var trafficLightReminder=new TrafficLightReminderRuntime(guidance,signalOptions);
         void Publish(NavDiagnosticSnapshot snapshot, bool isWarning = false)
         {
             if (token.IsCancellationRequested) return;
             var fineState = source.Capture();
+            if(snapshot.TrafficLight is null)
+                snapshot=snapshot with{TrafficLight=trafficLightReminder.Suspend(fineState,snapshot.UpdatedAt,"等待地图和受控车道数据")};
             snapshot = snapshot with { LatestFine = fineState.LatestFine, LatestCameraFine = fineState.LatestCameraFine,
                 FineHistory = fineState.FineHistory, DroppedFineCount = fineState.DroppedFineCount };
             if (snapshot.Navigation is null)
@@ -288,7 +298,8 @@ public sealed class NavPlugin : Plugin
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var navigationDiagnostic=navigation.Process(latest,calibrated,DateTimeOffset.UtcNow);
                     source.Store.ExpectFerry(navigation.ExpectedFerry);
-                    var diagnostic=pipeline.Process(latest,calibrated,DateTimeOffset.UtcNow) with{Navigation=navigationDiagnostic};
+                    var diagnostic=pipeline.Process(latest,calibrated,DateTimeOffset.UtcNow) with{Navigation=navigationDiagnostic,
+                        TrafficLight=trafficLightReminder.Process(latest,calibrated,navigationDiagnostic,DateTimeOffset.UtcNow)};
                     guidance.Tick(latest,DateTimeOffset.UtcNow);
                     diagnostic=diagnostic with{Guidance=guidance.Diagnostic};
                     motionTrace.Record(latest, calibrated, diagnostic, signature, currentInstallation.Path);

@@ -49,6 +49,12 @@
         }
         <p>最近指令：@(navigation.LastSpoken ?? "无")</p>
     }
+    @if (snapshot.TrafficLight is { } trafficLight)
+    {
+        <h3>信号灯实验</h3>
+        <p>@trafficLight.State</p>
+        <p>灯组：@(trafficLight.TargetId ?? "未知") · 相位：@trafficLight.Phase · 相位剩余：@trafficLight.Remaining · 停止线距离：@trafficLight.StopDistance · 现实秒验证：@trafficLight.ClockVerified</p>
+    }
     @if (snapshot.Guidance is { } guidance)
     {
         <details>

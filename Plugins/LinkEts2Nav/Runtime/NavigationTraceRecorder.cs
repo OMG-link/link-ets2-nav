@@ -81,10 +81,10 @@ public sealed class NavigationTraceRecorder : IAsyncDisposable
                 string Serialize(bool includeNodes) => JsonSerializer.Serialize(new
                 {
                     Schema = 1, frame.Sequence, frame.Diagnostic.UpdatedAt, frame.ResourceId, frame.GamePath,
-                    data.SessionId, data.Vehicle, data.IsVehicleUsable, data.RouteAvailability,data.PositionSignal,data.FerryUse,data.FerryArrival,data.IsTransportPending,
+                    data.SessionId, data.Vehicle, data.IsVehicleUsable, data.RouteAvailability,data.PositionSignal,data.FerryUse,data.FerryArrival,data.IsTransportPending,data.TrafficSignals,
                     Route = new { data.Route.Revision, data.Route.Availability, data.Route.ReceivedAt,
                         data.Route.MayBeTruncated, Nodes = includeNodes ? data.Route.Nodes : null },
-                    frame.Map.Sectors, frame.Map.Cameras, Decisions = frame.Diagnostic.Cameras, frame.Diagnostic.Navigation, frame.Diagnostic.CurrentSpeedLimit, frame.Diagnostic.Guidance
+                    frame.Map.Sectors, frame.Map.Cameras, Decisions = frame.Diagnostic.Cameras, frame.Diagnostic.Navigation, frame.Diagnostic.CurrentSpeedLimit, frame.Diagnostic.Guidance,frame.Diagnostic.TrafficLight
                 }, Json);
                 string line = Serialize(nodes != lastNodes);
                 int size = System.Text.Encoding.UTF8.GetByteCount(line) + 1;

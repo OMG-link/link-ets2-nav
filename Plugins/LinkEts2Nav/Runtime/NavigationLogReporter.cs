@@ -76,6 +76,8 @@ public sealed class NavigationLogReporter
 
     public void Report(NavDiagnosticSnapshot snapshot)
     {
+        if(snapshot.TrafficLight is {} signal)
+            Change("traffic-light",$"信号灯实验：{signal.State}；灯组={signal.TargetId??"未知"}；相位={signal.Phase?.ToString()??"未知"}；下一相位={signal.NextPhase?.ToString()??"未知"}。",snapshot.UpdatedAt);
         Status(snapshot.State + " 路线=" + snapshot.RouteState, snapshot.UpdatedAt,
             detail: $"车辆={snapshot.VehiclePosition ?? "未知"}，附近探头={snapshot.CameraCount}。");
         // Waiting/paused snapshots are not evidence that previously observed cameras disappeared.

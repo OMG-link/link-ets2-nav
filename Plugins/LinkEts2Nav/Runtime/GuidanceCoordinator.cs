@@ -73,6 +73,9 @@ public sealed class GuidanceCoordinator
     }
     public void WithdrawNotifications(string source)
         =>playback?.Withdraw(source,playback.Pending.Where(p=>p.Source==source&&p.IsNotification).Select(p=>p.EventId));
+    public void PrepareNotifications(string source,IReadOnlyList<string> texts)
+        =>cache?.UpdatePlan("notification-preparation:"+source,texts,5);
+    public bool IsPrepared(string text)=>cache?.IsReady(text)==true;
     public void Publish(GuidanceSourcePlan plan)
     {
         EnsureSession(plan.SessionId);playback?.BeginUpdate();

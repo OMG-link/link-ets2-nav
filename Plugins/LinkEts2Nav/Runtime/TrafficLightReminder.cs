@@ -150,7 +150,7 @@ public sealed class TrafficLightReminderPolicy
 
 public sealed class TrafficLightReminderRuntime
 {
-    public const string Text="请注意红灯即将变绿。";
+    public const string Text="红灯即将变绿。";
     public const string Source="traffic-light";
     private readonly TrafficSignalBinder binder=new();
     private readonly TrafficLightReminderPolicy policy=new();

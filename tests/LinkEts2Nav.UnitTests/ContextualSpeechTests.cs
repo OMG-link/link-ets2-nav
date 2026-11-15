@@ -50,7 +50,7 @@ public sealed class ContextualSpeechTests : IDisposable
         Assert.All(plan.Items,i=>Assert.EndsWith("。",i.CarrierText));
         var direct=File.ReadAllLines(Path.Combine(root,"direct-texts.txt"));
         Assert.Equal(231,direct.Length);Assert.DoesNotContain(plan.Items,i=>direct.Contains(i.Text));
-        Assert.Contains("请注意红灯即将变绿。",direct);
+        Assert.Contains("红灯即将变绿。",direct);
         Assert.Equal(22,File.ReadAllLines(Path.Combine(root,"carrier-texts.txt")).Length);
     }
 

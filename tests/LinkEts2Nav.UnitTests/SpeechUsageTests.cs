@@ -44,9 +44,9 @@ public sealed class SpeechUsageTests:IDisposable
     {
         var usage=new SpeechUsageCollector();var player=new Player{FailFirst=true};
         await using var manager=new GuidancePlaybackManager(null,player,()=>"fallback.wav",usage:usage);
-        manager.Notify("signal",new("green","请注意红灯即将变绿。"));
+        manager.Notify("signal",new("green","红灯即将变绿。"));
         var retry=await player.Started.Reader.ReadAsync(Token).AsTask().WaitAsync(TimeSpan.FromSeconds(3),Token);
-        var row=Row(usage,"请注意红灯即将变绿。");Assert.Equal(1,row.EnqueuedCount);Assert.Equal(1,row.PlaybackFailureCount);Assert.Equal(0,row.PlayedCount);
+        var row=Row(usage,"红灯即将变绿。");Assert.Equal(1,row.EnqueuedCount);Assert.Equal(1,row.PlaybackFailureCount);Assert.Equal(0,row.PlayedCount);
         retry.Done.SetResult();await Until(()=>Row(usage,row.Text).FallbackCount==1);
         Assert.Equal(0,Row(usage,row.Text).PlayedCount);Assert.Equal(1,Row(usage,row.Text).EnqueuedCount);
     }

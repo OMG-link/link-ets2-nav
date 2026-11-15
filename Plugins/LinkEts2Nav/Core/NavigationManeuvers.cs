@@ -219,7 +219,7 @@ public sealed class NavigationManeuverDetector
                         double angle=Angle(directEntry,directExit);
                         var kind=Math.Abs(angle)>=150?ManeuverKind.UTurn:
                             angle<=-TurnAngleDegrees?ManeuverKind.TurnLeft:angle>=TurnAngleDegrees?ManeuverKind.TurnRight:
-                            angle<=-MinimumForkSpreadDegrees?ManeuverKind.KeepLeft:angle>=MinimumForkSpreadDegrees?ManeuverKind.KeepRight:ManeuverKind.Straight;
+                            angle<0?ManeuverKind.KeepLeft:angle>0?ManeuverKind.KeepRight:ManeuverKind.Straight;
                         string? warning=direct.TrafficSide switch{NavigationSide.Left=>"注意左侧来车",NavigationSide.Right=>"注意右侧来车",_=>null};
                         if(warning is null)forkIssues.Add(new(prefab,current.StartNodeUid,current.EndNodeUid,"直接合流已确认，但主路来车方向无法唯一确定"));
                         result.Add(new($"direct-join:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",kind,

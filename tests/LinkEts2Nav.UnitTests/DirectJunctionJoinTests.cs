@@ -54,6 +54,23 @@ public sealed class DirectJunctionJoinTests
         Assert.Null(action.ExecutionInstruction); // Parallel approach does not identify a side of oncoming traffic.
     }
 
+    [Theory]
+    [InlineData(15,ManeuverKind.KeepRight,"向右前方行驶，注意左侧来车")]
+    [InlineData(90,ManeuverKind.TurnRight,"右转，注意左侧来车")]
+    [InlineData(-15,ManeuverKind.KeepLeft,"向左前方行驶，注意右侧来车")]
+    [InlineData(-90,ManeuverKind.TurnLeft,"左转，注意右侧来车")]
+    [InlineData(1,ManeuverKind.KeepRight,null)]
+    public void SideTurnNamingAndMainTrafficWarningUseIndependentNativeDirections(double angle,ManeuverKind expected,string? warning)
+    {
+        var(s,m,o)=Scene();double radians=angle*Math.PI/180;
+        s=s with{NativeEntryTangent=new((float)Math.Cos(radians),0,(float)-Math.Sin(radians)),NativeExitTangent=Vector3.UnitX,
+            LanePaths=[s.LanePaths[0] with{CurveBlinkers=[LaneBlinker.NoBlinker,LaneBlinker.Left,LaneBlinker.NoBlinker]}]};
+        var action=Assert.Single(new NavigationManeuverDetector().FindSequence([s],0,[s,m,o]));
+        Assert.Equal(expected,action.Kind);Assert.Equal(warning,action.ExecutionInstruction);
+        Assert.Null(action.Instruction);Assert.Null(action.NearInstruction);
+        Assert.DoesNotContain(new NavigationManeuverDetector().FindSequence([m],0,[s,m,o]),a=>a.Id.StartsWith("direct-join:"));
+    }
+
     [Fact]
     public void AmbiguousPriorityAndSameEntranceLaneReductionAreNotDirectJoin()
     {

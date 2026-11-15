@@ -14,7 +14,9 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     IReadOnlyList<string> Diagnostics, IReadOnlyList<SectorCoordinate> Sectors)
 {
     public GameDataManager? Data {get;init;}
+    /// <summary>Successfully evaluated derived window, including confirmed absent/empty cells.</summary>
     public IReadOnlyList<SectorCoordinate> ReadySectors {get;init;}=[];
+    public IReadOnlyList<SectorCoordinate> EmptySectors {get;init;}=[];
     public MapScanCoverage? Coverage {get;init;}
     public Func<ulong,MapQueryIssue>? MissingConnection {get;init;}
     public IMapRetryScheduler? Retries {get;init;}
@@ -48,6 +50,7 @@ public sealed class NearbyCameraScanner
     private Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
     private ScsMap? map;
     private SectorCoordinate[] loadedSectors = [];
+    private IReadOnlyList<SectorCoordinate> emptySectors=[];
     private IReadOnlyList<MapQueryIssue> mapIssues=[];
     private Func<ulong,MapQueryIssue>? missingConnection;
     private SpeedLimitDefinitionReader speedReader=>data.SpeedLimits;
@@ -139,10 +142,19 @@ public sealed class NearbyCameraScanner
             auxiliaryLanes=builtAuxiliary;
             map = nextMap;
             loadedSectors = sectors;
+            emptySectors=data.WindowReadiness(nextMap).Empty;
             missingConnection=need; mapIssues=typedIssues.Distinct().ToArray();
         }
         var diagnostics = new List<string>(data.Diagnostics);
         diagnostics.AddRange(data.Companies.Diagnostics);
+        foreach(var need in mapIssues.OfType<MissingMapSectors>())
+            if(need.QueryAnchor is {} anchor)
+                foreach(var sector in need.Sectors)
+                {
+                    double dx=(sector.X+.5)*ScsMap.SectorSize-anchor.X,dz=(sector.Z+.5)*ScsMap.SectorSize-anchor.Z;
+                    double estimate=Math.Sqrt(dx*dx+dz*dz);
+                    if(estimate>10000)diagnostics.Add($"Map dependency sector-center estimate {estimate:F0}m exceeds 10km: query {anchor.X:F1},{anchor.Z:F1}, sector {sector.X},{sector.Z}; this is not a measured geometry distance. {need.Reason}");
+                }
         diagnostics.AddRange(junctionDiagnostics);
         diagnostics.AddRange(roundaboutIndex.Diagnostics);
         diagnostics.AddRange(speedLimits.Diagnostics);
@@ -210,7 +222,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { ReadySectors=loadedSectors,Coverage=coverage,MissingConnection=missingConnection,MapIssues=mapIssues,Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { ReadySectors=loadedSectors,EmptySectors=emptySectors,Coverage=coverage,MissingConnection=missingConnection,MapIssues=mapIssues,Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)

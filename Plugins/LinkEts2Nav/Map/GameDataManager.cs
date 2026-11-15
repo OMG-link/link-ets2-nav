@@ -37,6 +37,7 @@ public sealed class GameDataManager:IDisposable
     private readonly Lazy<TrafficSignalDefinitions> trafficSignals;
     private NativeMap? loadedWindow;
     private SectorCoordinate[] loadedSectors=[];
+    private readonly ConditionalWeakTable<NativeMap,MapWindowReadiness> windowReadiness=new();
     private readonly IReadOnlyList<string> mods;
     internal IFileSystem Resources=>resources;
     public GameMapData Map {get;}
@@ -172,9 +173,13 @@ public sealed class GameDataManager:IDisposable
         var map=new SupplementMap(Map.NativeBase,evidence);
         try{map.Read(mapPath,resources,sectors);}finally{evidence.End();}
         if(evidence.Failures.Count>0)throw new MapSectorReadException(evidence.Failures);
+        // Capture before merging host metadata: absent files are confirmed empty, not loaded.
+        var existing=map.Sectors.Keys.ToHashSet();
+        windowReadiness.Add(map,new(sectors.Where(existing.Contains).ToArray(),sectors.Where(s=>!existing.Contains(s)).ToArray()));
         Map.MergeInto(map,sectors);
         loadedWindow=map;loadedSectors=sectors;Map.Publish(map);return map;
     }
+    internal MapWindowReadiness WindowReadiness(NativeMap window)=>windowReadiness.TryGetValue(window,out var value)?value:throw new InvalidOperationException("Unknown map read window.");
     public void Dispose()=>owner?.Dispose();
     public MapQueryIssue DescribeMissingConnection(ulong boundaryUid,IReadOnlySet<ulong> representedItemUids,
         IReadOnlySet<SectorCoordinate> publishedSectors)
@@ -214,3 +219,5 @@ public sealed class GameDataManager:IDisposable
         }
     }
 }
+
+internal sealed record MapWindowReadiness(IReadOnlyList<SectorCoordinate> Loaded,IReadOnlyList<SectorCoordinate> Empty);

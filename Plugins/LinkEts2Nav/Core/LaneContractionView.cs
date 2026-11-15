@@ -19,8 +19,8 @@ public sealed class LaneContractionView
         foreach(var corridor in auxiliaries.ParallelCorridors)
         foreach(var terminal in corridor.Terminals.Where(t=>t.MainOnly&&!t.Merges&&!t.DirectionConflict))
         {
-            int at=Find(route,terminal.Edge);if(at<0||corridor.SideIsLeft is null)continue;
-            if(!corridor.Terminals.Any(t=>t.SideOnly&&Find(route,t.Edge)<0))continue;
+            int at=LaneCorridorRoute.Find(route,terminal.Edge);if(at<0||corridor.SideIsLeft is null)continue;
+            if(!corridor.Terminals.Any(t=>t.SideOnly&&LaneCorridorRoute.Find(route,t.Edge)<0))continue;
             var all=auxiliaries.Graph.InPrefab(terminal.Edge).SelectMany(e=>e.LanePaths)
                 .Where(p=>p.EntryNodeUid==terminal.Edge.StartNodeUid).ToArray();
             var side=all.Where(p=>terminal.SideOrders.Contains(p.EntryOrder)&&p.ExitNodeUid!=terminal.Edge.EndNodeUid).ToArray();
@@ -32,7 +32,7 @@ public sealed class LaneContractionView
             bool permitted=corridor.Origin.LanePaths.Where(p=>corridor.OriginSideOrders.Contains(p.ExitOrder))
                 .Any(p=>LaneRouteConnections.Between(p,pair.B,adjacent) is {Possible:true,Allowed:true});
             if(!permitted)continue; // Removing an outlet alone never invents a crossing or lane-change connection.
-            var interval=Interval(route,offsets,corridor,terminal);if(interval is null)continue;
+            var interval=LaneCorridorRoute.Interval(route,offsets,corridor,terminal);if(interval is null)continue;
             var point=new LanePolyline(terminal.Edge.Points).At(terminal.EndMeters);
             var origin=origins.Classify(pair.A,new LanePolyline(pair.A.Points).Project(point).Along,
                 pair.B,new LanePolyline(pair.B.Points).Project(point).Along);
@@ -52,7 +52,7 @@ public sealed class LaneContractionView
         var result=physical.Select(m=>
         {
             var corridor=auxiliaries.ParallelMerge(m);var terminal=corridor?.Terminals.FirstOrDefault(t=>t.Merges&&t.Edge.LanePaths.Any(p=>p.PrefabUid==m.PrefabUid));
-            var interval=terminal is null?null:Interval(route,offsets,corridor!,terminal);
+            var interval=terminal is null?null:LaneCorridorRoute.Interval(route,offsets,corridor!,terminal);
             return interval is null?m:m with{DistanceMeters=interval.EndMeters,EndDistanceMeters=interval.EndMeters,ApproachInterval=interval};
         }).ToList();
         foreach(var candidate in required)
@@ -63,7 +63,7 @@ public sealed class LaneContractionView
                 ?route.Any(e=>e.Id==corridor.Origin.Id):origin is {} p&&corridor.OriginSideOrders.Contains(p.ExitOrder);
             if(!ending&&origin is null)
             {
-                var first=corridor.Sections.FirstOrDefault(s=>Find(route,s.Edge)>=0);
+                var first=corridor.Sections.FirstOrDefault(s=>LaneCorridorRoute.Find(route,s.Edge)>=0);
                 int? lane=lanes.InitialTransfer?.FromLane;
                 if(lane is null&&first is not null)lane=lanes.Sections.FirstOrDefault(s=>s.EdgeId==first.Edge.Id)?.Path.EntryOrder;
                 ending=lane is {} order&&first?.SideOrders.Contains(order)==true;
@@ -73,18 +73,7 @@ public sealed class LaneContractionView
         return result.DistinctBy(m=>m.Id).OrderBy(m=>m.DistanceMeters).ToArray();
     }
 
-    private static LaneActionInterval? Interval(IReadOnlyList<DirectedRoad> route,double[] offsets,AuxiliaryLaneCorridor corridor,AuxiliaryLaneTerminal terminal)
-    {
-        int end=Find(route,terminal.Edge);if(end<0)return null;
-        foreach(var section in corridor.Sections)
-        {
-            int at=Find(route,section.Edge);if(at<0)continue;
-            return new(offsets[at]+section.StartMeters-section.CorridorAlong,offsets[end]+terminal.EndMeters);
-        }
-        return null;
-    }
-    private static int Find(IReadOnlyList<DirectedRoad> route,DirectedRoad edge)
-    {var key=NativeRoadKey.Of(edge);for(int i=0;i<route.Count;i++)if(NativeRoadKey.Of(route[i])==key)return i;return -1;}
+
 }
 
 /// <summary>One instruction policy for physical and goal-constrained contraction candidates.</summary>

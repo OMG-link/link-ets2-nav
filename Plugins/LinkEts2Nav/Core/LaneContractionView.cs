@@ -1,7 +1,7 @@
 using System.Numerics;
 namespace LinkEts2Nav.Core;
 
-/// <summary>Route-owned feasibility overlay. Native graph objects and cached map corridors are never edited.</summary>
+/// <summary>Plans entrance-owned required joins from complete native side-lane intervals, without editing map connectivity.</summary>
 public sealed class LaneContractionView
 {
     private sealed record Required(LaneMergeObservation Merge,AuxiliaryLaneCorridor Corridor);
@@ -15,36 +15,48 @@ public sealed class LaneContractionView
     public static LaneContractionView Build(IReadOnlyList<DirectedRoad> route,AuxiliaryLaneIndex auxiliaries)
     {
         double[] offsets=new double[route.Count+1];for(int i=0;i<route.Count;i++)offsets[i+1]=offsets[i]+RouteGeometry.Length(route[i]);
-        var result=new List<Required>();var origins=new LaneMergeOriginClassifier(auxiliaries.Graph.ThroughTraffic);
-        foreach(var corridor in auxiliaries.ParallelCorridors)
-        foreach(var terminal in corridor.Terminals.Where(t=>t.MainOnly&&!t.Merges&&!t.DirectionConflict))
+        var result=new List<Required>();
+        foreach(var corridor in auxiliaries.Corridors.Where(c=>c.StartKind==AuxiliaryBoundaryKind.IndependentEntrance
+            &&c.MainEntrance is not null&&c.SideIsLeft is not null))
+        foreach(var terminal in corridor.Terminals.Where(t=>(t.MainOnly||t.Merges)&&!t.DirectionConflict))
         {
-            int at=LaneCorridorRoute.Find(route,terminal.Edge);if(at<0||corridor.SideIsLeft is null)continue;
-            if(!corridor.Terminals.Any(t=>t.SideOnly&&LaneCorridorRoute.Find(route,t.Edge)<0))continue;
+            if(LaneCorridorRoute.Find(route,terminal.Edge)<0)continue;
+            if(!terminal.Merges&&!corridor.Terminals.Any(t=>t.SideOnly&&LaneCorridorRoute.Find(route,t.Edge)<0))continue;
             var all=auxiliaries.Graph.InPrefab(terminal.Edge).SelectMany(e=>e.LanePaths)
                 .Where(p=>p.EntryNodeUid==terminal.Edge.StartNodeUid).ToArray();
-            var side=all.Where(p=>terminal.SideOrders.Contains(p.EntryOrder)&&p.ExitNodeUid!=terminal.Edge.EndNodeUid).ToArray();
+            var side=all.Where(p=>terminal.SideOrders.Contains(p.EntryOrder)
+                &&(terminal.Merges||p.ExitNodeUid!=terminal.Edge.EndNodeUid)).ToArray();
             var kept=terminal.Edge.LanePaths.Where(p=>terminal.MainOrders.Contains(p.EntryOrder)).ToArray();
-            var possible=(from a in side from b in kept orderby Math.Abs(a.EntryOrder-b.EntryOrder) select(A:a,B:b)).ToArray();
+            var possible=(from a in side from b in kept
+                where !terminal.Merges||SharesTail(a,b)
+                orderby Math.Abs(a.EntryOrder-b.EntryOrder) select(A:a,B:b)).ToArray();
             if(possible.Length==0)continue;
             var pair=possible[0];
             bool adjacent=!corridor.Sections.Any(s=>NativeLaneGraph.Prefab(s.Edge) is null);
-            bool permitted=corridor.Origin.LanePaths.Where(p=>corridor.OriginSideOrders.Contains(p.ExitOrder))
+            bool permitted=terminal.Merges||corridor.Origin.LanePaths.Where(p=>corridor.OriginSideOrders.Contains(p.ExitOrder))
                 .Any(p=>LaneRouteConnections.Between(p,pair.B,adjacent) is {Possible:true,Allowed:true});
-            if(!permitted)continue; // Removing an outlet alone never invents a crossing or lane-change connection.
+            if(!permitted)continue;
             var interval=LaneCorridorRoute.Interval(route,offsets,corridor,terminal);if(interval is null)continue;
-            var point=new LanePolyline(terminal.Edge.Points).At(terminal.EndMeters);
-            var origin=origins.Classify(pair.A,new LanePolyline(pair.A.Points).Project(point).Along,
-                pair.B,new LanePolyline(pair.B.Points).Project(point).Along);
-            bool left=pair.A.EntryOrder>pair.B.EntryOrder;
-            int count=terminal.MainOrders.Count(n=>left?n<pair.A.EntryOrder:n>pair.A.EntryOrder);
-            var merge=new LaneMergeObservation("route-contraction:"+corridor.Id+":"+terminal.Edge.Id,pair.A.PrefabUid,
-                pair.A.EntryNodeUid,pair.A.EntryLane,pair.B.EntryNodeUid,pair.B.EntryLane,point,left,Math.Max(1,count),
-                corridor.LengthMeters,origin.Kind,interval.EndMeters,origin.Reason)
-                {EndDistanceMeters=interval.EndMeters,ApproachInterval=interval,Origin=origin,RouteConstrained=true,ApproachLaneCount=pair.A.EntryLaneCount,JunctionId="prefab:"+NativeLaneGraph.Prefab(terminal.Edge)};
+            bool left=terminal.NativeMoveLeft??!corridor.SideIsLeft!.Value;
+            ulong prefab=corridor.Origin.LanePaths[0].PrefabUid;
+            var merge=new LaneMergeObservation("entrance-merge:"+corridor.Id+":"+terminal.Edge.Id,prefab,
+                corridor.Origin.StartNodeUid,pair.A.EntryLane,corridor.MainEntrance,pair.B.EntryLane,
+                new LanePolyline(terminal.Edge.Points).At(terminal.EndMeters),left,terminal.MainOrders.Count,
+                corridor.LengthMeters,LaneMergeKind.Ramp,interval.EndMeters,"Native entrance and complete side-lane end within 500 m")
+                {EndDistanceMeters=LaneCorridorRoute.PassageEnd(route,offsets,terminal.Edge),ApproachInterval=interval,EntranceBased=true,
+                    CompletionJunctionId="prefab:"+NativeLaneGraph.Prefab(terminal.Edge),
+                    ApproachLaneCount=pair.A.EntryLaneCount,JunctionId="prefab:"+NativeLaneGraph.Prefab(corridor.Origin)};
             result.Add(new(merge,corridor));
         }
         return new(route,auxiliaries,result.ToArray(),offsets);
+    }
+
+    private static bool SharesTail(PrefabLanePath side,PrefabLanePath main)
+    {
+        if(side.ExitNodeUid!=main.ExitNodeUid||side.ExitLane!=main.ExitLane)return false;
+        int common=0;while(common<Math.Min(side.CurveIndices.Count,main.CurveIndices.Count)
+            &&side.CurveIndices[^(common+1)]==main.CurveIndices[^(common+1)])common++;
+        return common>0&&MergeBlinkerDirection.Classify(side,main,common).FirstEnds==true;
     }
 
     public IReadOnlyList<LaneMergeObservation> Select(IReadOnlyList<LaneMergeObservation> physical,LaneNavigationPlan lanes)
@@ -76,17 +88,17 @@ public sealed class LaneContractionView
 
 }
 
-/// <summary>One instruction policy for physical and goal-constrained contraction candidates.</summary>
+/// <summary>Physical same-source reductions are environment warnings; required entrance joins are navigation actions.</summary>
 public static class LaneContractionGuidance
 {
     public static IReadOnlyList<NavigationManeuver> Apply(IReadOnlyList<NavigationManeuver> actions,IReadOnlyList<LaneMergeObservation> merges)
     {
         // Generic prefab entrance roles are not physical contraction positions.
         var result=actions.Where(a=>!a.Id.StartsWith("merge:",StringComparison.Ordinal)).ToList();
-        foreach(var merge in merges.Where(m=>m.MoveLeft is not null&&m.Kind!=LaneMergeKind.Uncertain))
+        foreach(var merge in merges.Where(m=>m.MoveLeft is not null&&(m.Kind==LaneMergeKind.LaneReduction||m.EntranceBased)))
         {
             bool left=merge.MoveLeft!.Value;string group=merge.JunctionId??$"prefab:{merge.PrefabUid:X16}";
-            result.RemoveAll(a=>a.JunctionId==group&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
+            result.RemoveAll(a=>(a.JunctionId==group||merge.EntranceBased&&a.JunctionId==merge.CompletionJunctionId)&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
             var action=new NavigationManeuver(merge.Id,left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,
                 merge.Kind==LaneMergeKind.Ramp&&merge.ApproachInterval is {} interval?AuxiliaryLaneTiming.ActionPoint(interval):merge.DistanceMeters,"lane","lane")
                 {EndDistanceMeters=merge.EndDistanceMeters,JunctionId=group,JunctionKind=NavigationJunctionKind.Ramp,

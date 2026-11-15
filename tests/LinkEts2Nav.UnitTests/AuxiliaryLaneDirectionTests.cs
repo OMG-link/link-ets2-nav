@@ -49,7 +49,7 @@ public sealed class AuxiliaryLaneDirectionTests
         var guidance=Guidance([action],route,new([],[],true,null),index);
         Assert.Equal(NavigationAnnouncementMode.Silent,guidance.Single(a=>a.Id==action.Id).AnnouncementMode);
         var merge=Assert.Single(guidance,a=>a.Kind==ManeuverKind.MergeLeft);
-        Assert.Equal("prefab:3",merge.JunctionId);Assert.Equal(route.Take(4).Sum(RouteGeometry.Length)+10,merge.EndDistanceMeters);
+        Assert.Equal("prefab:1",merge.JunctionId);Assert.Equal(route.Sum(RouteGeometry.Length),merge.EndDistanceMeters);
         var ownExit=Assert.Single(Guidance([scene.Action],[fromSide,scene.Route[1],sideExit],new([],[],true,null),index));
         Assert.Equal(ManeuverKind.KeepRight,ownExit.Kind);
     }
@@ -95,7 +95,8 @@ public sealed class AuxiliaryLaneDirectionTests
         Assert.Equal(ManeuverKind.Straight,main.Kind);
         var required=Assert.Single(Guidance([mainAction],[sideBirth,scene.Route[1],mainExit],empty,index));
         Assert.Equal(left?ManeuverKind.MergeRight:ManeuverKind.MergeLeft,required.Kind);
-        Assert.Equal(required.AnnouncementMode==NavigationAnnouncementMode.DistancePreview?0:200,required.EndDistanceMeters!.Value-required.DistanceMeters,5);
+        Assert.Equal(200,required.ApproachInterval!.EndMeters-required.DistanceMeters,5);
+        Assert.Equal(mainRoute.Sum(RouteGeometry.Length)-RouteGeometry.Length(mainRoute[0])+RouteGeometry.Length(sideBirth),required.EndDistanceMeters!.Value,5);
         Assert.DoesNotContain(Guidance([scene.Action],[sideBirth,..scene.Route.Skip(1)],empty,index),a=>a.Id==required.Id);
         var middle=new LaneNavigationPlan([],[],true,null){InitialTransfer=new("road",mainExit.Id,[scene.Route[1].Id],left?0:2,1,false){AllowedLaneChange=true}};
         var midway=Assert.Single(Guidance([mainAction],[scene.Route[1],mainExit],middle,index));
@@ -120,7 +121,7 @@ public sealed class AuxiliaryLaneDirectionTests
     }
 
     [Theory][InlineData(false)][InlineData(true)]
-    public void GoalConstrainedContractionsUseTheSameNearestSourcePolicyAsPhysicalMerges(bool nearerSameEntrance)
+    public void EntranceGuidanceOwnsRequiredTransfersInsteadOfTheTerminalSourceClassification(bool nearerSameEntrance)
     {
         var scene=Corridor([0,1],[2],[2],100);var main=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
         var graph=scene.Graph;
@@ -134,19 +135,18 @@ public sealed class AuxiliaryLaneDirectionTests
         var lanes=new LaneRoutePlanner().Build(route,graph:native.Edges);
         var original=native.Edges.ToArray();var view=LaneContractionView.Build(route,index);
         var candidate=Assert.Single(view.Select([],lanes));
-        Assert.True(candidate.RouteConstrained);Assert.NotNull(candidate.Origin);
-        Assert.Equal(nearerSameEntrance?LaneMergeKind.LaneReduction:LaneMergeKind.Ramp,candidate.Kind);
-        Assert.Equal(nearerSameEntrance?2UL:1UL,candidate.Origin.SourcePrefab);
-        Assert.Equal(nearerSameEntrance?20UL:99UL,candidate.Origin.EndingEntrance);
-        Assert.Equal(nearerSameEntrance?20UL:10UL,candidate.Origin.MainEntrance);
+        Assert.True(candidate.EntranceBased);Assert.False(candidate.RouteConstrained);
+        Assert.Equal(LaneMergeKind.Ramp,candidate.Kind);Assert.Equal(1UL,candidate.PrefabUid);
+        Assert.Equal("prefab:1",candidate.JunctionId);Assert.Equal("prefab:2",candidate.CompletionJunctionId);
+        Assert.Equal(99UL,candidate.EndingEntryNode);Assert.Equal(10UL,candidate.MainEntryNode);
         Assert.Equal(original,native.Edges); // The constraint view did not delete or fabricate native map edges.
         Assert.Single(view.Select([],lanes)); // Re-selection reuses the already built view.
         var action=Assert.Single(LaneContractionGuidance.Apply([], [candidate]));
-        Assert.Equal(nearerSameEntrance?NavigationAnnouncementMode.DistancePreview:NavigationAnnouncementMode.Normal,action.AnnouncementMode);
+        Assert.Equal(NavigationAnnouncementMode.Normal,action.AnnouncementMode);
     }
 
     [Fact]
-    public void LongGoalConstrainedParallelIntervalStillUsesTheSharedOriginLimit()
+    public void LongParallelLaneKeepsTheOrdinaryForkInsteadOfCreatingAVirtualReduction()
     {
         var scene=Corridor([0,1],[2],[2],600);
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph),TestContext.Current.CancellationToken);
@@ -155,11 +155,11 @@ public sealed class AuxiliaryLaneDirectionTests
         var main=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
         DirectedRoad[] route=[side,scene.Route[1],main];
         var lanes=new LaneRoutePlanner().Build(route,graph:index.Graph.Edges);
-        var candidate=Assert.Single(LaneContractionView.Build(route,index).Select([],lanes));
-        Assert.True(candidate.RouteConstrained);
-        Assert.Equal(LaneMergeKind.LaneReduction,candidate.Kind);
-        Assert.Equal(600,candidate.ApproachInterval!.LengthMeters);
-        Assert.Equal(NavigationAnnouncementMode.DistancePreview,Assert.Single(LaneContractionGuidance.Apply([], [candidate])).AnnouncementMode);
+        Assert.Empty(LaneContractionView.Build(route,index).Select([],lanes));
+        var kept=Assert.Single(Guidance([scene.Action],route,lanes,index));
+        Assert.Equal(scene.Action.Kind,kept.Kind);Assert.Equal(scene.Action.Instruction,kept.Instruction);
+        Assert.NotEqual(NavigationAnnouncementMode.DistancePreview,kept.AnnouncementMode);
+
     }
 
     [Fact]
@@ -170,7 +170,57 @@ public sealed class AuxiliaryLaneDirectionTests
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(graph),TestContext.Current.CancellationToken);
         Assert.NotEmpty(index.Corridors);Assert.All(index.Corridors,c=>Assert.Null(c.MainEntrance));
         Assert.Contains(index.Diagnostics,d=>d.Contains("主路身份尚未确定"));
-        Assert.Equal(ManeuverKind.MergeRight,Assert.Single(Guidance([scene.Action],scene.Route,new([],[],true,null),index)).Kind);
+        Assert.Equal(ManeuverKind.ChooseLanes,Assert.Single(Guidance([scene.Action],scene.Route,new([],[],true,null),index)).Kind);
+    }
+
+    [Theory][InlineData(499,true)][InlineData(500,true)][InlineData(500.25,false)]
+    public void EntranceRequiresACompleteSideLaneEndWithinFiveHundredMetres(float length,bool expected)
+    {
+        var scene=Corridor([0,1],[2],[2],length);
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph),TestContext.Current.CancellationToken);
+        var side=scene.Graph.Single(e=>e.StartNodeUid==99);var main=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
+        DirectedRoad[] route=[side,scene.Route[1],main];
+        var lanes=new LaneRoutePlanner().Build(route,graph:index.Graph.Edges);
+        var candidates=LaneContractionView.Build(route,index).Select([],lanes);
+        Assert.Equal(expected,candidates.Count==1);
+        if(expected)
+        {
+            var candidate=Assert.Single(candidates);
+            Assert.Equal("prefab:1",candidate.JunctionId);
+            Assert.Equal(route.Sum(RouteGeometry.Length),candidate.EndDistanceMeters);
+            Assert.True(candidate.EndDistanceMeters>candidate.ApproachInterval!.EndMeters);
+        }
+        Assert.Empty(LaneContractionView.Build([],index).Select([],new([],[],true,null)));
+        Assert.Empty(LaneContractionView.Build(scene.Route,index).Select([],new LaneRoutePlanner().Build(scene.Route,graph:index.Graph.Edges)));
+    }
+
+    [Fact]
+    public void ExecutingTheEntranceCueDoesNotUnlockTheNextActionBeforeLeavingTheTerminalPrefab()
+    {
+        var scene=Corridor([0,1],[2],[2],200);
+        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph),TestContext.Current.CancellationToken);
+        var side=scene.Graph.Single(e=>e.StartNodeUid==99);var main=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
+        DirectedRoad[] route=[side,scene.Route[1],main];
+        var selected=LaneContractionView.Build(route,index).Select([],new LaneRoutePlanner().Build(route,graph:index.Graph.Edges));
+        var merge=Assert.Single(LaneContractionGuidance.Apply([],selected));
+        double end=merge.EndDistanceMeters!.Value;
+        Assert.True(merge.DistanceMeters<merge.ApproachInterval!.EndMeters);
+        Assert.True(merge.ApproachInterval.EndMeters<end);
+        var following=new NavigationManeuver("following",ManeuverKind.TurnLeft,end+450,"in","out")
+            {JunctionId="other-real-junction",EndDistanceMeters=end+500};
+        var now=DateTimeOffset.UtcNow;var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        var plan=new NavigationEventPlanner().Build("s","r",now,0,[merge,following],true,false,false,scheduler,"f");
+        timeline.Publish(plan with{PlayerAlongMeters=merge.ApproachInterval.EndMeters-1});
+        Assert.DoesNotContain(scheduler.Update(timeline,now,15),t=>t.Disposition==TriggerDisposition.Queued&&t.Event.Id.StartsWith("following"));
+        timeline.Publish(plan with{PlayerAlongMeters=(merge.ApproachInterval.EndMeters+end)/2});
+        Assert.DoesNotContain(scheduler.Update(timeline,now,15),t=>t.Disposition==TriggerDisposition.Queued&&t.Event.Id.StartsWith("following"));
+        timeline.Publish(plan with{PlayerAlongMeters=end});
+        var boundary=scheduler.Update(timeline,now,15);
+        Assert.DoesNotContain(boundary,t=>t.Disposition==TriggerDisposition.Queued&&t.Event.Id.StartsWith("following"));
+        timeline.Publish(plan with{PlayerAlongMeters=end+.1});
+        var passed=scheduler.Update(timeline,now,15);
+        Assert.Contains(passed,t=>t.Disposition==TriggerDisposition.Ended);
+        Assert.Contains(passed,t=>t.Disposition==TriggerDisposition.Queued&&t.Event.Id.StartsWith("following"));
     }
 
     [Theory][InlineData(false)][InlineData(true)]

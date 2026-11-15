@@ -19,9 +19,9 @@ public sealed class LaneExitApproachTests
         var baseActions=AuxiliaryLaneGuidance.Apply([action],route,entering,index);
         var view=LaneContractionView.Build(route,index);
         var merged=Assert.Single(LaneContractionGuidance.Apply(baseActions,view.Select([],entering)));
-        Assert.Equal(ManeuverKind.MergeLeft,merged.Kind);
-        Assert.Equal(NavigationAnnouncementMode.DistancePreview,merged.AnnouncementMode);
-        Assert.Equal(300,merged.EndDistanceMeters);Assert.Equal(300,merged.DistanceMeters);
+        Assert.Empty(view.Select([],entering)); // A native split is not an independently joining entrance.
+        Assert.Equal(ManeuverKind.ChooseLanes,merged.Kind);
+        Assert.NotEqual(NavigationAnnouncementMode.DistancePreview,merged.AnnouncementMode);
         Assert.Same(index.Corridors,index.Corridors);
     }
 

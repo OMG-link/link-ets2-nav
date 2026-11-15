@@ -10,6 +10,8 @@ public sealed record LaneMergeObservation(string Id,ulong PrefabUid,ulong? Endin
     public LaneActionInterval? ApproachInterval { get; init; }
     public LaneMergeOriginDecision? Origin { get; init; }
     public bool RouteConstrained { get; init; }
+    public bool EntranceBased { get; init; }
+    public string? CompletionJunctionId { get; init; }
     public string? JunctionId { get; init; }
     public int? ApproachLaneCount { get; init; }
 }

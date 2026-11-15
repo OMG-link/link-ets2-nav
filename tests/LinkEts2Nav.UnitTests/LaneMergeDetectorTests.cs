@@ -276,8 +276,8 @@ public sealed class LaneMergeDetectorTests
         var data=new GameDataSnapshot(new(ending.Points[0].X,0,ending.Points[0].Z+100,0,15,3000,true,false,1,now),route,RouteAvailability.Available,"s",true);
         var diagnostic=new NavigationRuntime().Process(data,new(map,[],[],[]){PrefabPaths=[selected,continuing]},now);
         var merge=Assert.Single(diagnostic.LaneMerges);Assert.Equal(LaneMergeKind.Ramp,merge.Kind);
-        Assert.Contains(diagnostic.Upcoming,a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
-        Assert.All(diagnostic.Upcoming.Where(a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight),a=>Assert.Null(a.ApproachInterval));
+        Assert.DoesNotContain(diagnostic.Upcoming,a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
+        Assert.DoesNotContain(diagnostic.Upcoming,a=>a.AnnouncementMode==NavigationAnnouncementMode.DistancePreview);
     }
     [Fact]
     public void PassingMergeRemovesItsAction()

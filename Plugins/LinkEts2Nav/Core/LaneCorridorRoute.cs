@@ -13,6 +13,10 @@ internal static class LaneCorridorRoute
         }
         return null;
     }
+    public static double? PassageEnd(IReadOnlyList<DirectedRoad> route,double[] offsets,DirectedRoad edge)
+    {
+        int at=Find(route,edge);return at<0?null:offsets[at]+RouteGeometry.Length(edge);
+    }
     public static int Find(IReadOnlyList<DirectedRoad> route,DirectedRoad edge)
     {var key=NativeRoadKey.Of(edge);for(int i=0;i<route.Count;i++)if(NativeRoadKey.Of(route[i])==key)return i;return -1;}
 }

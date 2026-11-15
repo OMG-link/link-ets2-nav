@@ -98,7 +98,9 @@ public static class LaneContractionGuidance
         foreach(var merge in merges.Where(m=>m.MoveLeft is not null&&(m.Kind==LaneMergeKind.LaneReduction||m.EntranceBased)))
         {
             bool left=merge.MoveLeft!.Value;string group=merge.JunctionId??$"prefab:{merge.PrefabUid:X16}";
-            result.RemoveAll(a=>(a.JunctionId==group||merge.EntranceBased&&a.JunctionId==merge.CompletionJunctionId)&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
+            result.RemoveAll(a=>(merge.EntranceBased
+                ?a.JunctionId==merge.CompletionJunctionId&&SamePassageEnd(a.EndDistanceMeters,merge.EndDistanceMeters)
+                :a.JunctionId==group)&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
             var action=new NavigationManeuver(merge.Id,left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,
                 merge.Kind==LaneMergeKind.Ramp&&merge.ApproachInterval is {} interval?AuxiliaryLaneTiming.ActionPoint(interval):merge.DistanceMeters,"lane","lane")
                 {EndDistanceMeters=merge.EndDistanceMeters,JunctionId=group,JunctionKind=NavigationJunctionKind.Ramp,
@@ -114,4 +116,8 @@ public static class LaneContractionGuidance
         }
         return result.OrderBy(m=>m.DistanceMeters).ToArray();
     }
+    // The real exit identifies this visit even when its cue was advanced or later clamped.
+    // This tolerance only absorbs coordinate arithmetic rounding, never an approach-distance heuristic.
+    private static bool SamePassageEnd(double? actionEnd,double? joinEnd)
+        =>actionEnd is {} a&&joinEnd is {} b&&Math.Abs(a-b)<=.001;
 }

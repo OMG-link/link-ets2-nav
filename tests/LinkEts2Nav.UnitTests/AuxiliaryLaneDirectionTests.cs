@@ -93,13 +93,15 @@ public sealed class AuxiliaryLaneDirectionTests
         var main=Assert.Single(Guidance([mainAction],mainRoute,empty,index));
         Assert.Equal(NavigationAnnouncementMode.Silent,main.AnnouncementMode);
         Assert.Equal(ManeuverKind.Straight,main.Kind);
-        var required=Assert.Single(Guidance([mainAction],[sideBirth,scene.Route[1],mainExit],empty,index));
+        var required=Assert.Single(Guidance([mainAction with{EndDistanceMeters=RouteGeometry.Length(sideBirth)+RouteGeometry.Length(scene.Route[1])+RouteGeometry.Length(mainExit)}],
+            [sideBirth,scene.Route[1],mainExit],empty,index));
         Assert.Equal(left?ManeuverKind.MergeRight:ManeuverKind.MergeLeft,required.Kind);
         Assert.Equal(200,required.ApproachInterval!.EndMeters-required.DistanceMeters,5);
         Assert.Equal(mainRoute.Sum(RouteGeometry.Length)-RouteGeometry.Length(mainRoute[0])+RouteGeometry.Length(sideBirth),required.EndDistanceMeters!.Value,5);
         Assert.DoesNotContain(Guidance([scene.Action],[sideBirth,..scene.Route.Skip(1)],empty,index),a=>a.Id==required.Id);
         var middle=new LaneNavigationPlan([],[],true,null){InitialTransfer=new("road",mainExit.Id,[scene.Route[1].Id],left?0:2,1,false){AllowedLaneChange=true}};
-        var midway=Assert.Single(Guidance([mainAction],[scene.Route[1],mainExit],middle,index));
+        var midway=Assert.Single(Guidance([mainAction with{EndDistanceMeters=RouteGeometry.Length(scene.Route[1])+RouteGeometry.Length(mainExit)}],
+            [scene.Route[1],mainExit],middle,index));
         Assert.Equal(required.Kind,midway.Kind);Assert.Same(immutable,index.Corridors);
         Assert.Equal(required.ApproachInterval!.LengthMeters,midway.ApproachInterval!.LengthMeters,5);
         var alreadyMain=new LaneNavigationPlan([new(mainExit.Id,mainExit.LanePaths[0])],[],true,null);
@@ -221,6 +223,23 @@ public sealed class AuxiliaryLaneDirectionTests
         var passed=scheduler.Update(timeline,now,15);
         Assert.Contains(passed,t=>t.Disposition==TriggerDisposition.Ended);
         Assert.Contains(passed,t=>t.Disposition==TriggerDisposition.Queued&&t.Event.Id.StartsWith("following"));
+    }
+
+    [Fact]
+    public void TerminalCoverageUsesTheRealExitOfThisVisitRatherThanAnAdvancedCueOrPrefabIdAlone()
+    {
+        var join=new LaneMergeObservation("join",1,10,0,11,0,default,true,1,100,LaneMergeKind.Ramp,200,"native")
+            {EntranceBased=true,JunctionId="prefab:1",CompletionJunctionId="prefab:2",
+                ApproachInterval=new(100,200),EndDistanceMeters=250};
+        var covered=new NavigationManeuver("covered",ManeuverKind.KeepLeft,120,"in","out")
+            {JunctionId="prefab:2",EndDistanceMeters=250};
+        var later=covered with{Id="later",DistanceMeters=150,EndDistanceMeters=650};
+        var sameOrigin=covered with{Id="independent-origin",JunctionId="prefab:1",EndDistanceMeters=110};
+        var unknown=covered with{Id="unknown-end",EndDistanceMeters=null};
+        var result=LaneContractionGuidance.Apply([covered,later,sameOrigin,unknown],[join]);
+        Assert.DoesNotContain(result,a=>a.Id==covered.Id);
+        Assert.Contains(later,result);Assert.Contains(sameOrigin,result);Assert.Contains(unknown,result);
+        Assert.Contains(result,a=>a.Id==join.Id);
     }
 
     [Theory][InlineData(false)][InlineData(true)]

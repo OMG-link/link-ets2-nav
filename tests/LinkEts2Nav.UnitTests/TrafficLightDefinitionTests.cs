@@ -11,6 +11,31 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class TrafficLightDefinitionTests
 {
     [Theory]
+    [InlineData("1.0",SignalPhase.OrangeToGreen)]
+    [InlineData("0.0",SignalPhase.Green)]
+    public void RealSiiFloatQuadruplesUseScsQuaternionOrderForPhaseIntervals(string redAmber,SignalPhase expected)
+    {
+        var fs=new Files{Text=$$"""
+            SiiNunit {
+              tr_semaphore_profile : tr_sem_prof.base {
+                type[]: traffic_light_minor
+                interval[]: (24.0, 3.0, 32.0, {{redAmber}})
+              }
+              tr_semaphore_profile : tr_sem_prof.test { inherited: tr_sem_prof.base }
+              tr_semaphore_profile : tr_sem_prof.test.germany { inherited: tr_sem_prof.test }
+            }
+            """};
+        var manager=new GameDataManager(fs);
+        var unit=Assert.Single(manager.GetSii("/def/world/semaphore_profile.sii").Named("tr_sem_prof.base"));
+        object raw=unit.Attributes["interval"];
+        var items=Assert.IsAssignableFrom<System.Collections.IEnumerable>(raw);
+        var native=Assert.IsType<System.Numerics.Quaternion>(Assert.Single(items.Cast<object>()));
+        Assert.Equal(24,native.W);Assert.Equal(3,native.X);Assert.Equal(32,native.Y);Assert.Equal(float.Parse(redAmber,System.Globalization.CultureInfo.InvariantCulture),native.Z);
+        var result=manager.TrafficSignals.Resolve(new Prefab{SemaphoreProfile="test"},new Semaphore{Type=SemaphoreType.UseProfile},"germany",out _);
+        Assert.Equal(expected,result?.NextAfterRed);
+        Assert.Equal(1,fs.Reads);
+    }
+    [Theory]
     [InlineData(0,SignalPhase.Green)]
     [InlineData(2,SignalPhase.OrangeToGreen)]
     public void ExplicitNativeIntervalsDetermineThePhaseAfterRed(float preparation,SignalPhase expected)

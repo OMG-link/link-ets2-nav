@@ -75,6 +75,8 @@ public sealed class TrafficSignalDefinitions
     {
         value=Value(value);result=default;
         if(value is Vector4 vector){result=vector;return true;}
+        // SII float quadruples use SCS quaternion order (w,x,y,z), even for non-rotation data.
+        if(value is Quaternion quaternion){result=new(quaternion.W,quaternion.X,quaternion.Y,quaternion.Z);return true;}
         if(value is not ITuple {Length:4} tuple)return false;
         var numbers=new float[4];
         for(int i=0;i<4;i++)if(!float.TryParse(Text(tuple[i]),NumberStyles.Float,CultureInfo.InvariantCulture,out numbers[i]))return false;

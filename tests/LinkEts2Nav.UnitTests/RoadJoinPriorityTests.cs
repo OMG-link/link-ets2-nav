@@ -54,10 +54,10 @@ public sealed class RoadJoinPriorityTests
         Assert.Equal(RoadJoinRole.Continuing,RoadJoinClassifier.Classify(shared,1,3,misleading).Role);
     }
     [Fact]
-    public void MultipleExitsOrLaneContractionAreNotIndependentAdditions()
+    public void MultipleExitsAreNotIndependentButAContractionIntoItsOwnAddedLaneIs()
     {
         Assert.Empty(RoadJoinTopology.IndependentEntries([new(1,0,3,0),new(1,0,4,0),new(2,0,3,1)],3));
-        Assert.Empty(RoadJoinTopology.IndependentEntries([new(1,0,3,0),new(1,1,3,0),new(2,0,3,1)],3));
+        Assert.Equal(2,RoadJoinTopology.IndependentEntries([new(1,0,3,0),new(1,1,3,0),new(2,0,3,1)],3).Count);
     }
     [Fact]
     public void RealTwentyMetreMeasurementsReproduceTheTwoObservedMainEntrances()

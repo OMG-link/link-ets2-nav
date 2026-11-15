@@ -27,8 +27,7 @@ public sealed class NavigationEventPlannerTests
     [InlineData(210,100,true)] [InlineData(349.999,200,false)] [InlineData(350,200,true)]
     [InlineData(388,200,true)] [InlineData(388,100,true)]
     [InlineData(749.999,500,false)] [InlineData(750,500,true)]
-    [InlineData(1499.999,1000,false)] [InlineData(1500,1000,true)]
-    [InlineData(2100,2000,true)]
+    [InlineData(1000.001,1000,true)] [InlineData(1500,1000,true)]
     public void FirstRawDistanceKeepsTheImmediateLowerStageAtTheIntervalMidpoint(double initial,double next,bool spoken)
     {
         var p=new NavigationEventPlanner();var s=new SpeechTriggerScheduler();var t=new GuidanceTimeline();
@@ -48,6 +47,8 @@ public sealed class NavigationEventPlannerTests
         t.Publish(p.Build("s","r",Now,300,[Turn(1100,"later")],true,true,false,s));
         Assert.DoesNotContain(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued&&r.Event.Id.StartsWith("later@"));Assert.NotEmpty(s.Prepare(t,Now));
         t.Publish(p.Build("s","r",Now,351,[Turn(1049,"later")],true,false,false,s));
+        Assert.Equal("沿当前道路，继续行驶一公里。",Assert.Single(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
+        t.Publish(p.Build("s","r",Now,400,[Turn(1000,"later")],true,false,false,s));
         Assert.Equal("一公里后，左转。",Assert.Single(s.Update(t,Now,0),r=>r.Disposition==TriggerDisposition.Queued).Trigger.Text);
     }
     [Fact]

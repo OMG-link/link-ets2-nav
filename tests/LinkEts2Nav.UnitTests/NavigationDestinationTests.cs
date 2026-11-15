@@ -62,10 +62,11 @@ public sealed class NavigationDestinationTests
     {
         var cue=new NavigationManeuver("destination",ManeuverKind.Destination,6000,"a","b"){EndDistanceMeters=6000};
         var plan=new NavigationEventPlanner().Build("s","r",Now,0,[cue],true,false,false,new());
-        foreach(int stage in new[]{2000,1000,500,200,100})
+        foreach(int stage in new[]{1000,500,200,100})
             Assert.Contains(plan.Triggers,t=>t.Kind==SpeechTriggerKind.Advance&&t.AlongMeters==6000-stage
                 &&t.Text==NavigationPrompts.AtDistance(ManeuverKind.Destination,stage));
         Assert.Contains(plan.Triggers,t=>t.Kind==SpeechTriggerKind.Execution&&t.AlongMeters==5980);
+        Assert.DoesNotContain(plan.Triggers,t=>t.Kind==SpeechTriggerKind.Advance&&t.AlongMeters==4000);
     }
 
     [Fact]

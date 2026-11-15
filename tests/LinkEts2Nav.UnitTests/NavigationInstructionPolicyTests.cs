@@ -49,7 +49,7 @@ public sealed class NavigationInstructionPolicyTests
         Assert.Equal("两百米后，左转。",Assert.Single(Update(p,[M(200)])));
         var q=new NavigationInstructionPolicy();Update(q,[M(2500)]);
         Assert.Empty(Update(q,[M(2000)],_=>false));
-        Assert.Equal("两公里后，左转。",Assert.Single(Update(q,[M(1750)])));
+        Assert.Empty(Update(q,[M(1750)]));
         Assert.Equal("一公里后，左转。",Assert.Single(Update(q,[M(1000)])));
     }
     [Fact]

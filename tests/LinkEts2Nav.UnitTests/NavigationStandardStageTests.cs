@@ -17,7 +17,7 @@ public sealed class NavigationStandardStageTests
     public void NoAdditionalEightHundredMeterBriefingAppearsBetweenStandards()
     {
         var p=new NavigationInstructionPolicy();p.Update(Turn(1500),"s",Now,Now,true);
-        Assert.Equal("一公里后，右转。",Assert.Single(p.Update(Turn(1000),"s",Now,Now,true))); // At the midpoint, the first preview takes the 2000m stage and keeps 1000m.
+        Assert.Equal("一公里后，右转。",Assert.Single(p.Update(Turn(1000),"s",Now,Now,true))); // The earlier long-road overview does not consume the first fixed 1000m stage.
         foreach(double distance in new[]{900d,800,750,600,501})Assert.Empty(p.Update(Turn(distance),"s",Now,Now,true));
         Assert.Equal("五百米后，右转。",Assert.Single(p.Update(Turn(500),"s",Now,Now,true)));
     }

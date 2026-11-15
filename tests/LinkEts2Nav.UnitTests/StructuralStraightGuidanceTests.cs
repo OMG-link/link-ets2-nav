@@ -207,9 +207,9 @@ public sealed class StructuralStraightGuidanceTests
         t.Publish(p with{PlayerAlongMeters=131});Assert.Contains(scheduler.Update(t,Now,0),r=>r.Event.Id.Contains(":through:")&&r.Disposition==TriggerDisposition.Ended);
     }
     [Theory]
-    [InlineData(1000,"一公里后，左转。")][InlineData(2000,"两公里后，左转。")]
+    [InlineData(1000,"一公里后，左转。")][InlineData(2000,"沿当前道路，继续行驶两公里。")]
     [InlineData(2050,"沿当前道路，继续行驶两公里。")]
-    public void OnlyDistancesOverTwoKilometersUseContinueDistance(double distance,string expected)
+    public void OnlyDistancesOverOneKilometerUseContinueDistance(double distance,string expected)
         =>Assert.Equal(expected,Assert.Single(Plan(A("target",distance)).Triggers,t=>t.Kind==SpeechTriggerKind.Overview).Text);
     [Fact]
     public void AnUnknownNextActionUsesTheActualConfirmedEndEvenWithStraightStructureAhead()

@@ -5,7 +5,7 @@ namespace LinkEts2Nav.Core.Guidance;
 /// <summary>Places speech on the route when actions are discovered, never when they become current.</summary>
 public sealed class NavigationEventPlanner
 {
-    private static readonly int[] Stages = [2000,1000,500,200,100];
+    private static readonly int[] Stages = [NavigationPrompts.MaximumPreviewDistanceMeters,500,200,100];
     private sealed class ActionPlan(NavigationManeuver maneuver, string id, double along,double discoveredAlong)
     {
         public NavigationManeuver Maneuver = maneuver;
@@ -179,7 +179,7 @@ public sealed class NavigationEventPlanner
             if(!m.ExecutionOnly&&initial is >=50)
             {
                 int rounded=(int)NavigationPrompts.RoundDistance(initial.Value);
-                string text=initial>2000?NavigationPrompts.Continue(initial.Value)
+                string text=initial>Stages[0]?NavigationPrompts.Continue(initial.Value)
                     :NavigationPrompts.AtDistance(m.Kind,rounded,firstStage==countStage?ordinal:0,Instruction(m,firstStage??rounded));
                 triggers.Add(new(overviewId,state.Id,SpeechTriggerKind.Overview,state.BriefingAlong!.Value,text)
                     {Enabled=active,StrictCrossing=state.BriefingStrict,SequenceOrder=-initial.Value,Silent=silent,SkipAtSpeedKph=firstStage==100?60:null});

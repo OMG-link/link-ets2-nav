@@ -4,6 +4,7 @@ namespace LinkEts2Nav.Core;
 
 public static class NavigationPrompts
 {
+    public const int MaximumPreviewDistanceMeters=1000;
     public static string Action(ManeuverKind kind) => kind switch
     {
         ManeuverKind.TurnLeft => "左转", ManeuverKind.TurnRight => "右转",
@@ -64,7 +65,7 @@ public static class NavigationPrompts
     public static string FirstLayer(ManeuverKind kind, double distance, int junctionOrdinal, string? instruction = null)
     {
         if (!double.IsFinite(distance) || distance < 0) throw new ArgumentOutOfRangeException(nameof(distance));
-        if (distance > 2000) return Continue(distance);
+        if (distance > MaximumPreviewDistanceMeters) return Continue(distance);
         int meters = (int)RoundDistance(distance);
         if (meters < 50 && junctionOrdinal <= 1) return Immediate(kind,instruction);
         string where = junctionOrdinal <= 1 ? "" : "在第" + Number(junctionOrdinal) + "个路口";

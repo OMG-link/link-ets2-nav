@@ -16,4 +16,18 @@ public static class LaneInstructionFormatter
         }
         return "走右侧第"+string.Join("、第",lanes.Select(l=>count-l).Order().Select(NavigationPrompts.Number))+"车道";
     }
+    /// <summary>Selects a contiguous outer group; unknown total count keeps the neutral single-edge wording.</summary>
+    public static string? EdgeSelection(int? totalCount,NavigationSide side,int selectedCount)
+    {
+        if(selectedCount<1||side is not (NavigationSide.Left or NavigationSide.Right))return null;
+        if(totalCount is {} total)
+        {
+            if(total<=selectedCount)return null;
+            int start=side==NavigationSide.Left?0:total-selectedCount;
+            return Selection(total,Enumerable.Range(start,selectedCount).ToArray());
+        }
+        string edge=side==NavigationSide.Left?"左":"右";
+        return "走"+edge+"侧"+(selectedCount==1?"":selectedCount==2?"两":NavigationPrompts.Number(selectedCount))+"车道";
+    }
+
 }

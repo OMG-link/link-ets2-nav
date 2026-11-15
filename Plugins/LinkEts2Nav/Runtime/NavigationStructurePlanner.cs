@@ -83,13 +83,14 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
                 continue;
             }
             if(merge.MoveLeft is null)continue;
-            string side=merge.MoveLeft==true?"左":"右";
-            string laneWords=merge.RecommendedLaneCount==1?"车道":(merge.RecommendedLaneCount==2?"两":NavigationPrompts.Number(merge.RecommendedLaneCount))+"条车道";
+            var side=merge.MoveLeft==true?NavigationSide.Left:NavigationSide.Right;
+            string? selection=LaneInstructionFormatter.EdgeSelection(merge.ApproachLaneCount,side,merge.RecommendedLaneCount);
+            if(selection is null)continue;
             double anchor=merge.DistanceMeters;
             var action=new NavigationManeuver(merge.Id,merge.MoveLeft==true?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,anchor,"lane","lane")
             { EndDistanceMeters=merge.EndDistanceMeters,JunctionKind=NavigationJunctionKind.Ramp,JunctionId="prefab:"+merge.PrefabUid.ToString("X16"),HasSeparateApproachRoad=false,
                 AnnouncementMode=NavigationAnnouncementMode.DistancePreview,
-                Instruction=$"车道合并，建议提前走{side}侧{laneWords}" };
+                Instruction="车道合并，建议提前"+selection };
             upcoming=upcoming.Append(action).OrderBy(m=>m.DistanceMeters).ToArray();
         }
         return plan with{Actions=upcoming,Lanes=lanes,Merges=merges,Forks=issues.Distinct().ToArray()};

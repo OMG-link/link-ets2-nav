@@ -58,6 +58,14 @@ public static class PrefabPlayerAccess
         var toOpen=Reach(false,false);var toClosed=Reach(false,true);
         var allowed=Enumerable.Range(0,count).Select(i=>!explicitBan[i]
             &&!(fromClosed[i]&&!fromOpen[i])&&!(toClosed[i]&&!toOpen[i])).ToArray();
+        return Project(source,allowed);
+    }
+
+    internal static PrefabPlayerProjection Project(PrefabDescriptor source,IReadOnlyList<bool> allowed)
+    {
+        if(allowed.Count!=source.NavCurves.Count)throw new ArgumentException("Permission count must match native curves.",nameof(allowed));
+        int count=source.NavCurves.Count;
+        bool Valid(int i)=>i>=0&&i<count;
         int excluded=allowed.Count(a=>!a);
         if(excluded==0)return new(source,"native",0);
         bool Keep(int i)=>Valid(i)&&allowed[i];

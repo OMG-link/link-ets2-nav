@@ -245,8 +245,7 @@ public sealed class NavigationEventPlanner
                 triggers.Where(t=>g.Any(e=>e.Id==t.EventId)).ToArray(),sequences[g.Key].Ended)).ToArray();
         // Later actions now have their actual first-speaking boundary. Compose
         // executions only after that shared planning step, rather than predicting it.
-        var wording=ordered.Select(p=>p.Maneuver with{DistanceMeters=p.Along}).ToArray();
-        var executionTexts=ordered.Select((p,i)=>(p.Id,Text:Execution(wording,i))).ToDictionary(p=>p.Id,p=>p.Text);
+        var executionTexts=ordered.Select((p,i)=>(p.Id,Text:Execution(ordered,i))).ToDictionary(p=>p.Id,p=>p.Text);
         complete=complete.Select(s=>s.MapTriggers(t=>t.Kind==SpeechTriggerKind.Execution
             ?t with{Text=executionTexts[t.EventId]}:t)).ToArray();
         complete=JoinPassages(ordered,complete,auxiliaries);
@@ -292,20 +291,22 @@ public sealed class NavigationEventPlanner
         :shared+(state.SequenceStartAlong is {} visit?VisitSuffix(visit):"@"+state.Generation)+FrameSuffix();
     private string ContinuationId(ActionPlan? previous)=>"continuation:"+(previous is null?"origin"+FrameSuffix():SequenceId(previous));
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
-    private static int ActionIndex(IReadOnlyList<NavigationManeuver> list,int start)
-    {for(int i=start;i<list.Count;i++)if(IsNavigationAction(list[i]))return i;return -1;}
+    private static int ActionIndex(IReadOnlyList<ActionPlan> list,int start)
+    {for(int i=start;i<list.Count;i++)if(IsNavigationAction(list[i].Maneuver))return i;return -1;}
     private static bool ExecutionDue(SpeechTriggerContext context)
         =>context.DistanceToEventMeters<=Math.Max(0,context.SpeedMetersPerSecond)*2;
 
-    private static string Execution(IReadOnlyList<NavigationManeuver> list,int i)
+    private static string Execution(IReadOnlyList<ActionPlan> list,int i)
     {
-        var m=list[i];string text=NavigationPrompts.Execute(m.Kind,m.ExecutionInstruction??Instruction(m,0));
+        var m=list[i].Maneuver;string text=NavigationPrompts.Execute(m.Kind,m.ExecutionInstruction??Instruction(m,0));
         if(m.ExecutionOnly||m.Kind==ManeuverKind.EnterRoundabout||m.AnnouncementMode!=NavigationAnnouncementMode.Normal)return text;
-        int next=ActionIndex(list,i+1);if(next<0||list[next].ExecutionOnly||list[next].JunctionId==m.JunctionId)return text;
-        double gap=list[next].DistanceMeters-m.DistanceMeters;
-        if(gap<=0||gap>=100)return text;
-        string? nextInstruction=list[next].Kind==ManeuverKind.Destination&&list[next].DestinationCompanyName is {} company
-            ?"到达"+company+"货场":list[next].Instruction;
-        return NavigationPrompts.Then(text,list[next].Kind,gap,nextInstruction);
+        int next=ActionIndex(list,i+1);if(next<0||list[next].Maneuver.ExecutionOnly||list[next].Maneuver.JunctionId==m.JunctionId)return text;
+        if(list[next].BriefingAlong is not {} first)return text;
+        double available=list[next].Along-first;
+        double gap=list[next].Along-list[i].Along;
+        if(gap<=0||available<0||available>=100)return text;
+        string? nextInstruction=list[next].Maneuver.Kind==ManeuverKind.Destination&&list[next].Maneuver.DestinationCompanyName is {} company
+            ?"到达"+company+"货场":list[next].Maneuver.Instruction;
+        return NavigationPrompts.Then(text,list[next].Maneuver.Kind,gap,nextInstruction);
     }
 }

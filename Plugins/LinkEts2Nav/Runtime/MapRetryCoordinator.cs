@@ -3,7 +3,8 @@ using LinkEts2Nav.Map;
 using TruckLib.ScsMap;
 namespace LinkEts2Nav.Runtime;
 
-/// <summary>One callback pump per scanner. Queries consume published snapshots and return values; they must not publish external state.</summary>
+/// <summary>Queries consume published snapshots and return values; they must not publish external state.
+/// Loader demand notifications are asynchronous, coalesced, and serialized independently of query callbacks.</summary>
 public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
 {
     private sealed class Entry
@@ -19,11 +20,16 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     private readonly Action<IReadOnlyList<SectorCoordinate>> request;
     private readonly Action<string>? log;
     private readonly Channel<bool> wake=Channel.CreateBounded<bool>(new BoundedChannelOptions(1){SingleReader=true,FullMode=BoundedChannelFullMode.DropWrite});
+    // Notifications carry no captured sector list. A single consumer reads the
+    // latest scope immediately before calling the loader, so a delayed old
+    // notification cannot overwrite a newer Reset/Release demand.
+    private readonly Channel<bool> demandWake=Channel.CreateBounded<bool>(new BoundedChannelOptions(1){SingleReader=true,FullMode=BoundedChannelFullMode.DropWrite});
     private readonly CancellationTokenSource stop=new();private readonly Task worker;
+    private readonly Task demandWorker;
     private MapRetryContext? current;private long subscriber,epoch,scopeRevision;private bool disposed;
     public long ScopeRevision {get{lock(gate)return scopeRevision;}}
     public MapRetryCoordinator(Action<IReadOnlyList<SectorCoordinate>> request,Action<string>? log=null)
-    {this.request=request;this.log=log;worker=Task.Run(WorkAsync);}
+    {this.request=request;this.log=log;worker=Task.Run(WorkAsync);demandWorker=Task.Run(PublishDemandsAsync);}
     private bool Local(MissingMapSectors missing)=>current?.Snapshot.Coverage is {} coverage
         &&missing.QueryAnchor is {} anchor&&coverage.ContainsQueryAnchor(anchor);
     private bool Ready(MissingMapSectors missing)=>current is {} context&&missing.Sectors.All(context.Snapshot.ReadySectors.Contains);
@@ -32,21 +38,20 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     public void Report(MapQueryIssue issue)
     {
         if(issue is not MissingMapSectors missing)return;
-        IReadOnlyList<SectorCoordinate> demands;
         lock(gate)
         {
             if(disposed||!Local(missing))return;
             string identity=missing.Reason+"@"+missing.QueryAnchor+":"+string.Join(';',missing.Sectors.Select(s=>$"{s.X},{s.Z}"));
             if(reported.ContainsKey(identity)||Ready(missing))return;
-            reported[identity]=missing;demands=Demands();
+            reported[identity]=missing;
         }
-        request(demands);
+        DemandChanged();
     }
     public MapRetryHandle<T> Register<T>(string key,MissingMapSectors missing,
         Func<MapRetryContext,CancellationToken,ValueTask<MapQueryResult<T>>> retry,CancellationToken cancellationToken=default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);ArgumentNullException.ThrowIfNull(retry);
-        Entry entry;long id;IReadOnlyList<SectorCoordinate> demands;
+        Entry entry;long id;
         lock(gate)
         {
             ObjectDisposedException.ThrowIf(disposed,this);var identity=(key,typeof(T));
@@ -60,10 +65,10 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
             }
             else if(!entry.Finished)
                 entry.Missing=new MissingMapSectors(entry.Missing.Sectors.Concat(missing.Sectors),missing.Reason){QueryAnchor=missing.QueryAnchor??entry.Missing.QueryAnchor};
-            id=++subscriber;entry.Subscribers.Add(id);demands=Demands();
+            id=++subscriber;entry.Subscribers.Add(id);
         }
         var handle=new MapRetryHandle<T>(()=>Capture<T>(entry,id),()=>Release(entry,id));
-        handle.CancelWith(cancellationToken);request(demands);wake.Writer.TryWrite(true);return handle;
+        handle.CancelWith(cancellationToken);DemandChanged();wake.Writer.TryWrite(true);return handle;
     }
     private MapRetryStatus<T> Capture<T>(Entry entry,long id)
     {
@@ -79,15 +84,14 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     }
     private void Release(Entry entry,long id)
     {
-        CancellationTokenSource? cancel=null;IReadOnlyList<SectorCoordinate> demands;
+        CancellationTokenSource? cancel=null;
         lock(gate)
         {
             entry.Subscribers.Remove(id);
             if(entry.Subscribers.Count==0&&entries.GetValueOrDefault(entry.Key)==entry)
             {entries.Remove(entry.Key);entry.Serial++;cancel=entry.Cancellation;}
-            demands=Demands();
         }
-        SafeCancel(cancel);request(demands);
+        SafeCancel(cancel);DemandChanged();
     }
     public void Reset()
     {
@@ -97,20 +101,37 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
             epoch++;scopeRevision++;current=null;cancel=entries.Values.Select(e=>e.Cancellation).OfType<CancellationTokenSource>().ToArray();
             entries.Clear();reported.Clear();
         }
-        foreach(var c in cancel)SafeCancel(c);request([]);
+        foreach(var c in cancel)SafeCancel(c);DemandChanged();
     }
     /// <summary>Only call after a successful full derived snapshot became visible to consumers.</summary>
     public void Publish(NearbyMapSnapshot snapshot,long revision)
     {
-        CancellationTokenSource[] cancel;IReadOnlyList<SectorCoordinate> demands;
+        CancellationTokenSource[] cancel;
         lock(gate)
         {
             if(disposed)return;scopeRevision++;current=new(snapshot,revision);
             cancel=entries.Values.Where(e=>e.Running).Select(e=>e.Cancellation).OfType<CancellationTokenSource>().ToArray();
             foreach(var entry in entries.Values.Where(e=>e.Running)){entry.Serial++;entry.Running=false;}
-            demands=Demands();
         }
-        foreach(var c in cancel)SafeCancel(c);request(demands);wake.Writer.TryWrite(true);
+        foreach(var c in cancel)SafeCancel(c);DemandChanged();wake.Writer.TryWrite(true);
+    }
+    private void DemandChanged()=>demandWake.Writer.TryWrite(true);
+    private async Task PublishDemandsAsync()
+    {
+        // Separate from query callbacks: a slow retry cannot delay cancellation
+        // or prevent the loader from receiving newly required sectors.
+        while(await demandWake.Reader.WaitToReadAsync().ConfigureAwait(false))
+        {
+            while(demandWake.Reader.TryRead(out _)){}
+            IReadOnlyList<SectorCoordinate> demands;
+            lock(gate)demands=disposed?[]:Demands();
+            try{request(demands);}
+            catch(Exception ex)
+            {
+                // One failing consumer must not permanently kill the notifier.
+                try{log?.Invoke("Map demand notification failed: "+ex.GetType().Name+": "+ex.Message);}catch{}
+            }
+        }
     }
     private async Task WorkAsync()
     {
@@ -134,7 +155,7 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
                     try{(result,issue)=await job.Query(context,cancellation.Token).ConfigureAwait(false);}
                     catch(OperationCanceledException) when(cancellation.IsCancellationRequested){}
                     catch(Exception ex){error=ex;}
-                    IReadOnlyList<SectorCoordinate>? demands=null;
+                    bool demandsChanged=false;
                     lock(gate)
                     {
                         if(!disposed&&scope==epoch&&job.Serial==serial&&current?.Revision==context.Revision&&entries.GetValueOrDefault(job.Key)==job)
@@ -142,7 +163,7 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
                             job.Running=false;
                             job.Error=error is null?null:new MapQueryFailure(MapQueryFailureKind.InvalidData,error.GetType().Name+": "+error.Message);
                             if(result is not null){job.Result=result;job.ResultRevision=context.Revision;}
-                            if(issue is MissingMapSectors missing&&!Ready(missing)){job.Missing=missing;demands=Demands();}
+                            if(issue is MissingMapSectors missing&&!Ready(missing)){job.Missing=missing;demandsChanged=true;}
                             else
                             {
                                 job.Finished=true;
@@ -154,7 +175,7 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
                     }
                     cancellation.Dispose();
                     if(error is not null)log?.Invoke("Map retry failed: "+error.GetType().Name+": "+error.Message);
-                    if(demands is not null)request(demands);
+                    if(demandsChanged)DemandChanged();
                 }
             }
         }
@@ -170,6 +191,8 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         lock(gate){if(disposed)return;disposed=true;}
-        Reset();stop.Cancel();wake.Writer.TryComplete();await worker.ConfigureAwait(false);stop.Dispose();
+        Reset();stop.Cancel();wake.Writer.TryComplete();demandWake.Writer.TryComplete();
+        try{await worker.ConfigureAwait(false);}
+        finally{await demandWorker.ConfigureAwait(false);stop.Dispose();}
     }
 }

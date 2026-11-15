@@ -31,6 +31,37 @@
         <button type="button" class="link-nav-action" disabled="@(savingReplay || !ReplayCapture.IsAvailable)" @onclick="SaveReplay">@(savingReplay ? "保存中…" : "保存回放")</button>
         <p role="status">@replayMessage</p>
     </div>
+    <details style="margin:16px 0">
+        <summary>语音使用统计</summary>
+        <p>按原文累计。入队、准备和实际播放分别统计，重复规划不增加次数；回退提示音不算已播报文本。准备耗时包含工作进程请求与缓存读取，不等于纯本地推理耗时。</p>
+        <label for="speech-usage-sort">排序：</label>
+        <select id="speech-usage-sort" @bind="speechUsageSort"><option value="played">成功播报次数</option><option value="cost">累计准备耗时</option></select>
+        <label><input type="checkbox" @bind="speechUsageCandidates" /> 仅显示已播报且当前未整句预生成的候选</label>
+        <button type="button" class="link-nav-action" @onclick="RefreshSpeechUsage">刷新</button>
+        <button type="button" class="link-nav-action" disabled="@(exportingSpeechUsage || SpeechUsageReports.Current is null)" @onclick="ExportSpeechUsage">@(exportingSpeechUsage?"导出中…":"导出 JSON / CSV")</button>
+        <p role="status">@speechUsageMessage</p>
+        @if(SpeechUsageReports.Current?.LastError is {} usageError){<p>@usageError；播放不受影响，内存统计仍可导出。</p>}
+        @if(speechUsage is {} usage)
+        {
+            <p>累计 @usage.Entries.Count 种文本 · @usage.CollectionSessions 次收集会话 · 当前视图显示前100条；导出包含全部文本。</p>
+            <table style="width:100%;text-align:left">
+                <thead><tr><th>原文</th><th>入队 / 已播报</th><th>提示音 / 失败</th><th>准备次数 / 总耗时</th><th>整句预生成</th><th>首次 / 最近活动</th></tr></thead>
+                <tbody>
+                    @foreach(var entry in SpeechUsageRows())
+                    {
+                        <tr><td><details><summary>@entry.Text</summary>
+                            <p>覆盖 @entry.SupersededCount · 撤销 @entry.WithdrawnCount · 重写 @entry.RewordedCount · 准备失败 @entry.PreparationFailureCount · 准备取消 @entry.PreparationCancelledCount</p>
+                            <p>工作进程缓存命中 @entry.WorkerCacheHitCount · 未命中 @entry.WorkerCacheMissCount · 未知 @entry.WorkerCacheUnknownCount</p>
+                            @foreach(var context in entry.Contexts){<p>@context.Source · @context.Stage · @context.EventDescription</p>}
+                        </details></td><td>@entry.EnqueuedCount / @entry.PlayedCount</td><td>@entry.FallbackCount / @entry.PlaybackFailureCount</td>
+                            <td>@entry.PreparationCount / @entry.PreparationMilliseconds.ToString("F0") ms</td>
+                            <td>@(entry.CurrentlyPreGenerated?"是":"否")</td>
+                            <td>@entry.FirstSeenAt.ToLocalTime().ToString("MM-dd HH:mm") / @entry.LastSeenAt.ToLocalTime().ToString("MM-dd HH:mm")</td></tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </details>
     <dl>
         <dt>路线状态</dt><dd>@snapshot.RouteState</dd>
         <dt>车辆世界坐标（X, Y, Z）</dt><dd>@(snapshot.VehiclePosition ?? "未知")</dd>
@@ -120,6 +151,25 @@
 </div>
 
 @code {
+    private SpeechUsageSnapshot? speechUsage;
+    private string speechUsageSort="played",speechUsageMessage="启用插件后自动收集；每30秒保存，正常停用时刷新，崩溃时最多丢失上次保存后的内存记录。";
+    private bool speechUsageCandidates,exportingSpeechUsage;
+    private void RefreshSpeechUsage()=>speechUsage=SpeechUsageReports.Current?.Collector.Capture();
+    private IEnumerable<SpeechUsageEntry> SpeechUsageRows()
+    {
+        IEnumerable<SpeechUsageEntry> entries=speechUsage?.Entries??[];
+        if(speechUsageCandidates)entries=entries.Where(e=>e.PlayedCount>0&&!e.CurrentlyPreGenerated);
+        return(speechUsageSort=="cost"?entries.OrderByDescending(e=>e.PreparationMilliseconds).ThenByDescending(e=>e.PlayedCount)
+            :entries.OrderByDescending(e=>e.PlayedCount).ThenByDescending(e=>e.PreparationMilliseconds)).Take(100);
+    }
+    private async Task ExportSpeechUsage()
+    {
+        if(exportingSpeechUsage||SpeechUsageReports.Current is not {} store)return;
+        exportingSpeechUsage=true;
+        try{string directory=await store.ExportAsync();speechUsageMessage="已导出全部统计："+directory;RefreshSpeechUsage();}
+        catch(Exception ex){speechUsageMessage="导出失败："+ex.Message;}
+        finally{exportingSpeechUsage=false;}
+    }
     private bool savingSpeechPack;
     private string speechPackDirectory="";
     private string speechPackMessage="保存后自动切换，无需重启宿主；已经开始的语音允许播完。";
@@ -188,6 +238,7 @@
 
     protected override void OnInitialized()
     {
+        RefreshSpeechUsage();
         try{speechPackView=SpeechPackSettings.Current.Read();speechPackDirectory=speechPackView.ConfiguredDirectory;}
         catch(Exception ex){speechPackMessage="读取语音配置失败："+ex.Message;}
         refresh=Refresh();

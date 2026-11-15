@@ -1,8 +1,9 @@
 namespace LinkEts2Nav.Runtime;
 
 /// <summary>Swaps only speech resources; map, route progress and trigger consumption remain intact.</summary>
-public sealed class ReloadableSpeech:ISpeechSynthesizer
+public sealed class ReloadableSpeech:ISpeechSynthesizer,ISpeechSynthesisDiagnostics
 {
+    public bool? LastCacheHit {get{lock(gate)return(worker as ISpeechSynthesisDiagnostics)?.LastCacheHit;}}
     private readonly SpeechOptions options;
     private readonly SpeechPackSettings settings;
     private readonly Func<SpeechOptions,ISpeechSynthesizer> create;

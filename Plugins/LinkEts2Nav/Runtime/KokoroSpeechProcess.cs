@@ -8,10 +8,16 @@ public interface ISpeechSynthesizer : IAsyncDisposable
 {
     Task<string> SynthesizeAsync(string text, CancellationToken cancellationToken);
 }
+/// <summary>Worker-reported cache reuse; a miss may include local synthesis or fragment assembly.</summary>
+public interface ISpeechSynthesisDiagnostics
+{
+    bool? LastCacheHit {get;}
+}
 
 /// <summary>One persistent child process keeps native inference out of the host and serializes requests.</summary>
-public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesizer
+public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesizer,ISpeechSynthesisDiagnostics
 {
+    public bool? LastCacheHit {get;private set;}
     private Process? process;
     private Task? errorPump;
     private readonly Queue<string> errors = new();
@@ -19,6 +25,7 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
 
     public async Task<string> SynthesizeAsync(string text, CancellationToken cancellationToken)
     {
+        LastCacheHit=null;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(120));
         try
@@ -36,6 +43,8 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
             if (root.TryGetProperty("error", out var error) && error.ValueKind != JsonValueKind.Null)
                 throw new IOException(error.GetString());
             string path = Path.GetFullPath(root.GetProperty("path").GetString() ?? throw new IOException("No speech file."));
+            if(root.TryGetProperty("cacheHit",out var hit)&&hit.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                LastCacheHit=hit.GetBoolean();
             string cacheRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.CacheDirectory)) + Path.DirectorySeparatorChar;
             var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             if (!path.StartsWith(cacheRoot, comparison) || Path.GetExtension(path) != ".wav")

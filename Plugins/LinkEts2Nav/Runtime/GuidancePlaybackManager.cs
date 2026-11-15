@@ -14,6 +14,8 @@ public sealed record QueuedGuidanceSpeech(string Source,string EventId,string Tr
     public string? SpeechSequenceId { get; init; }
     public bool IsNotification { get; init; }
     public bool AllowsStalePosition {get;init;}
+    public string? Stage {get;init;}
+    public string? EventDescription {get;init;}
     public string SequenceId => SpeechSequenceId ?? EventId;
 }
 
@@ -33,13 +35,15 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
     private long order,generation;
     private bool active=true,updateHeld;
     private bool positionIndependentPlayback;
+    private readonly SpeechUsageCollector? usage;
     public event Action<QueuedGuidanceSpeech>? Played;
     public IReadOnlyList<QueuedGuidanceSpeech> Pending
     {get{lock(gate)return pending.Values.OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order).Select(p=>p.Speech).ToArray();}}
 
     public GuidancePlaybackManager(SpeechAnnouncementQueue? cache,IGuidanceAudioPlayer player,
-        Func<string?> fallback,Action<string>? log=null,CancellationToken cancellationToken=default)
+        Func<string?> fallback,Action<string>? log=null,CancellationToken cancellationToken=default,SpeechUsageCollector? usage=null)
     {
+        this.usage=usage;
         this.cache=cache;this.player=player;this.fallback=fallback;this.log=log??(_=>{});
         stop=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if(cache is not null)cache.CacheChanged+=Wake;
@@ -58,13 +62,15 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                 if(result.Disposition==TriggerDisposition.Ended)
                 {
                     var key=(result.Source,result.Event.SequenceId);
-                    pending.Remove(key);latest.Remove(key);
+                    if(pending.Remove(key,out var removed))usage?.Withdrawn(removed.Speech.Text);latest.Remove(key);
                 }
                 else if(result.Disposition==TriggerDisposition.Queued)
                 {
                     var t=result.Trigger;
                     EnqueueLocked(new(result.Source,result.Event.Id,t.Id,t.SequenceOrder,t.Priority,t.Text)
-                        {SpeechSequenceId=result.Event.SequenceId});
+                        {SpeechSequenceId=result.Event.SequenceId,Stage=t.Kind.ToString(),
+                            EventDescription=result.Event.Description.StartsWith("uncalibrated-proximity:",StringComparison.Ordinal)
+                                ?"uncalibrated-proximity":result.Event.Description});
                 }
             }
             active=isActive;updateHeld=false;
@@ -79,7 +85,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(notification.Text);
         string id="notification:"+notification.Id;
         lock(gate)EnqueueLocked(new(source,id,id,0,notification.Priority,notification.Text)
-            {IsNotification=true,AllowsStalePosition=notification.AllowsStalePosition});
+            {IsNotification=true,AllowsStalePosition=notification.AllowsStalePosition,Stage="Notification"});
         PreparePending();Wake();
     }
     private void EnqueueLocked(QueuedGuidanceSpeech speech)
@@ -92,7 +98,9 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         else
         {
             if(previous is not null&&speech.SequenceOrder==previous.SequenceOrder)return;
+            if(existing.Speech is not null)usage?.Superseded(existing.Speech.Text);
             pending[key]=(speech,++order);
+            usage?.Enqueued(speech);
         }
         latest[key]=speech;
     }
@@ -105,7 +113,10 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
             {
                 var item=pending[key];
                 if(texts.TryGetValue(item.Speech.TriggerId,out var text)&&text.Length>0)
+                {
+                    if(item.Speech.Text!=text)usage?.Reworded(text);
                     pending[key]=(item.Speech with{Text=text},item.Order);
+                }
             }
         }
         PreparePending();Wake();
@@ -116,14 +127,15 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         var ids=eventIds.ToHashSet(StringComparer.Ordinal);
         lock(gate)
         {
-            foreach(var key in pending.Where(p=>p.Key.Item1==source&&ids.Contains(p.Value.Speech.EventId)).Select(p=>p.Key).ToArray())pending.Remove(key);
+            foreach(var key in pending.Where(p=>p.Key.Item1==source&&ids.Contains(p.Value.Speech.EventId)).Select(p=>p.Key).ToArray())
+            {usage?.Withdrawn(pending[key].Speech.Text);pending.Remove(key);}
             foreach(var key in latest.Where(p=>p.Key.Item1==source&&ids.Contains(p.Value.EventId)).Select(p=>p.Key).ToArray())latest.Remove(key);
         }
         PreparePending();Wake();
     }
     public void Reset()
     {
-        lock(gate){pending.Clear();latest.Clear();generation++;updateHeld=false;}
+        lock(gate){foreach(var item in pending.Values)usage?.Withdrawn(item.Speech.Text);pending.Clear();latest.Clear();generation++;updateHeld=false;}
         PreparePending();Wake();
     }
     private void PreparePending()=>cache?.UpdatePlan("guidance-playback",Pending.Select(p=>p.Text).ToArray(),-10);
@@ -137,30 +149,34 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                 while(changed.Reader.TryRead(out _)){}
                 while(!stop.IsCancellationRequested)
                 {
-                    (QueuedGuidanceSpeech Speech,long Generation,string File)? next=null;
+                    (QueuedGuidanceSpeech Speech,long Generation,string File,SpeechPlaybackOrigin Origin)? next=null;
                     lock(gate)
                     {
                         if(!active&&!positionIndependentPlayback)break;
                         foreach(var item in pending.Values.Where(p=>(active||positionIndependentPlayback&&p.Speech.IsNotification&&p.Speech.AllowsStalePosition)
                             &&(!updateHeld||p.Speech.IsNotification)).OrderBy(p=>p.Speech.Priority).ThenBy(p=>p.Order))
                         {
-                            string? file=null;
-                            if(cache?.TryGetAudio(item.Speech.Text,out var ready)==true)file=ready;
+                            string? file=null;var origin=SpeechPlaybackOrigin.Fallback;
+                            if(cache?.TryGetAudio(item.Speech.Text,out var ready,out bool exact)==true)
+                            {file=ready;origin=exact?SpeechPlaybackOrigin.ExactPack:SpeechPlaybackOrigin.Prepared;}
                             else if(cache is null||cache.HasFailed(item.Speech.Text))
                             {
                                 try{file=fallback();}
                                 catch(Exception ex){log("回退音频配置不可用，保留待播项："+ex.Message);}
                             }
                             if(file is null)continue;
-                            next=(item.Speech,generation,file);break;
+                            next=(item.Speech,generation,file,origin);break;
                         }
                         if(next is {} selected)pending.Remove((selected.Speech.Source,selected.Speech.SequenceId));
                     }
                     if(next is not {} job)break;
                     PreparePending();
+                    bool completed=false;
                     try
                     {
                         await player.PlayAsync(job.File,stop.Token).ConfigureAwait(false);
+                        completed=true;
+                        usage?.Played(job.Speech.Text,job.Origin);
                         bool current;lock(gate)current=job.Generation==generation;
                         if(current)
                         {
@@ -171,6 +187,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                     catch(OperationCanceledException)when(stop.IsCancellationRequested){return;}
                     catch(Exception ex)
                     {
+                        if(!completed)usage?.PlaybackFailed(job.Speech.Text);
                         log("语音播放失败，保留待播项："+ex.Message);
                         lock(gate)
                         {

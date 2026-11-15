@@ -18,8 +18,8 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
 
     public PlannedSpeechAnnouncer(ISpeechSynthesizer synthesizer, IWarningAnnouncer fallback,
         Action<string> play, Action<string>? log = null, CancellationToken cancellationToken = default,
-        IReadOnlyDictionary<string, string>? preGenerated = null)
-        : this(new SpeechAnnouncementQueue(synthesizer, play, log, cancellationToken, preGenerated), fallback, log)
+        IReadOnlyDictionary<string, string>? preGenerated = null,SpeechUsageCollector? usage=null)
+        : this(new SpeechAnnouncementQueue(synthesizer, play, log, cancellationToken, preGenerated,usage), fallback, log)
     { ownsQueue = true; }
 
     public PlannedSpeechAnnouncer(SpeechAnnouncementQueue queue, IWarningAnnouncer fallback, Action<string>? log = null)

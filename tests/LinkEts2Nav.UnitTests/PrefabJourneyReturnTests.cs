@@ -75,4 +75,17 @@ public sealed class PrefabJourneyReturnTests
             new NavCurve{StartPosition=Vector3.UnitZ,EndPosition=Vector3.Zero,Length=10}]};
         Assert.Equal(new[]{20d},PrefabPassageLengths.Read(s.Prefab,descriptor,s.Road.ForwardNode.Uid,s.Road.ForwardNode.Uid));
     }
+    [Fact]
+    public void AReturnThroughAnExplicitPlayerBanIsExcludedByTheSharedPermissionProjection()
+    {
+        var s=Return(20);
+        var descriptor=new PrefabDescriptor{Nodes=[new ControlNode{InputLines=[0],OutputLines=[1]}],NavCurves=[
+            new NavCurve{StartPosition=Vector3.Zero,EndPosition=Vector3.UnitZ,Length=10,NextLines={1},TrafficRule="closed"},
+            new NavCurve{StartPosition=Vector3.UnitZ,EndPosition=Vector3.Zero,Length=10}]};
+        var banned=PrefabPlayerAccess.Build(descriptor,[true],[true],rule=>rule=="closed"?false:null);
+        Assert.Empty(PrefabPassageLengths.Read(s.Prefab,banned.Descriptor,s.Road.ForwardNode.Uid,s.Road.ForwardNode.Uid));
+        var unknown=PrefabPlayerAccess.Build(descriptor,[null],[null],_=>null);
+        Assert.Equal(new[]{20d},PrefabPassageLengths.Read(s.Prefab,unknown.Descriptor,s.Road.ForwardNode.Uid,s.Road.ForwardNode.Uid));
+    }
+
 }

@@ -111,13 +111,17 @@ public sealed class GameDataManager:IDisposable
         var definition=World.Prefabs.GetValueOrDefault(prefab.Model.ToString());
         return new(prefab,definition,()=>definition is null?null:GetPrefabDescription(definition.Descriptor));
     }
-    /// <summary>Actual native passage candidates; no assumed straight connector, also valid for equal entry/exit UIDs.</summary>
+    /// <summary>Native passage lengths after the normal player-permission projection; unknown permissions retain native connectivity.</summary>
     public IReadOnlyList<double> GetPrefabPassageLengths(ulong prefabUid,ulong entry,ulong exit)
-        =>Projection("prefab-passage-lengths",$"{prefabUid:X16}:{entry:X16}:{exit:X16}",()=>
-        {
-            var prefab=GetPrefab(prefabUid);
-            return prefab?.Description is {} description?PrefabPassageLengths.Read(prefab.Instance,description,entry,exit):[];
-        });
+    {
+        var prefab=GetPrefab(prefabUid);
+        if(prefab?.Description is not {} description)return [];
+        SpeedLimitDefinitionReader definitions;
+        lock(preparation)definitions=speedLimits??=new(this);
+        var projected=PrefabPlayerAccessWindow.Build([new(prefab.Instance,description)],definitions,Map)[prefabUid];
+        return Projection("prefab-passage-lengths",$"{prefabUid:X16}:{entry:X16}:{exit:X16}:{projected.CacheKey}",
+            ()=>PrefabPassageLengths.Read(prefab.Instance,projected.Descriptor,entry,exit));
+    }
     public PrefabDescriptor GetPrefabDescription(string path)=>Projection("ppd",GameResourceStore.Key(path),()=>PrefabDescriptor.Open(path,resources));
     public TruckLib.Models.Model GetModelDescription(string path)=>Projection("model-description",GameResourceStore.Key(path),()=>TruckLib.Models.Model.Open(path,resources));
     /// <summary>All named model anchors and hookups, before instance variant visibility is applied.</summary>

@@ -4,6 +4,8 @@
 [submodule "dev-host/TruckLib.Sii"]
 	path = dev-host/TruckLib.Sii
 	url = https://github.com/OMG-link/TruckLib.Sii.git
+	branch = feat/sprache-parser-optimization
 [submodule "dev-host/TruckLib.HashFs"]
 	path = dev-host/TruckLib.HashFs
 	url = https://github.com/OMG-link/TruckLib.HashFs.git
+	branch = perf/constant-time-entry-validation

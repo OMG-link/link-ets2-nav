@@ -13,6 +13,9 @@ public sealed class RoundaboutMapIndex
     public IReadOnlyList<string> Diagnostics => diagnostics.ToArray();
     public RoundaboutMapIndex(SpecialRoundaboutCatalog? special=null) => this.special=special??SpecialRoundaboutCatalog.Default;
     private readonly HashSet<SectorCoordinate> built = [];
+    private readonly Dictionary<SectorCoordinate, HashSet<ulong>> waitingBoundaries = [];
+    public IReadOnlyDictionary<SectorCoordinate, IReadOnlySet<ulong>> UnresolvedBoundaryNodes =>
+        waitingBoundaries.ToDictionary(p => p.Key, p => (IReadOnlySet<ulong>)p.Value.ToHashSet());
     private readonly Dictionary<ulong, (SectorCoordinate Sector, RoundaboutCurve[] Curves, RoundaboutCurveKey[] Entrances,string Access)> prefabs = [];
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurve> curves = [];
     private readonly Dictionary<string, RoundaboutStructure> structures = [];
@@ -76,6 +79,7 @@ public sealed class RoundaboutMapIndex
         var sector = TruckLib.ScsMap.Map.GetSectorOfCoordinate(prefab.Nodes[0].Position);
         prefabs[prefab.Uid] = (sector, result.ToArray(), entry.Keys.Select(i => new RoundaboutCurveKey(prefab.Uid, i)).ToArray(),access);
         foreach (var curve in result) curves[curve.Key] = curve;
+        AttachmentsAdded(result.Select(c => c.EntryNode));
     }
 
     private static CubicPlaneCurve Native(Vector3 p,Vector3 q,Vector3 u,Vector3 v)
@@ -98,6 +102,21 @@ public sealed class RoundaboutMapIndex
         curves[new(road.Uid, -2)] = new(new(road.Uid, -2), null, road.LeftHandTraffic, points.Reverse().ToArray(), [], road.ForwardNode.Uid, road.Node.Uid)
             {NativeCurve=native.Reverse(),ProvenTraffic=traffic?.Reverse==true,TrafficKnown=traffic?.Reverse.HasValue==true,
                 RoadNormals=normals.Reverse().Select(n=>-n).ToArray()};
+        AttachmentsAdded([road.Node.Uid, road.ForwardNode.Uid]);
+    }
+
+    // Invalidate only searches that actually reached an attachment now supplied
+    // by new geometry. Loading an unrelated sector does not repeat old searches.
+    private void AttachmentsAdded(IEnumerable<ulong> nodes)
+    {
+        var added = nodes.Where(n => n != 0).ToHashSet();
+        foreach (var pending in waitingBoundaries.ToArray())
+            if (pending.Value.Overlaps(added))
+            {
+                built.Remove(pending.Key);
+                pending.Value.ExceptWith(added);
+                if (pending.Value.Count == 0) waitingBoundaries.Remove(pending.Key);
+            }
     }
 
     public void BuildNewSectors(IEnumerable<SectorCoordinate> sectors, CancellationToken token = default)
@@ -128,16 +147,20 @@ public sealed class RoundaboutMapIndex
             // All dictionaries used to memoize this sector's search die with this builder.
             var builder = new RoundaboutBuilder(graph);
             var additions = new List<RoundaboutStructure>();
+            var missing = new HashSet<ulong>();
             foreach (var pair in prefabs.Where(p => p.Value.Sector == sector).OrderBy(p => p.Key))
             {
                 if (structures.Values.Concat(additions).Any(r => r.PrefabUids.Contains(pair.Key))) continue;
                 var found = builder.Find(pair.Key, pair.Value.Entrances, token);
                 if (found is not null) additions.Add(found);
+                else missing.UnionWith(builder.UnresolvedBoundaryNodes);
             }
             foreach(var check in builder.DirectionChecks)diagnostics.Add(check.ToString());
             foreach(var geometry in builder.GeometryChecks)diagnostics.Add(geometry.ToString());
             token.ThrowIfCancellationRequested();
             foreach (var found in additions) structures.TryAdd(found.Id, found);
+            if (missing.Count == 0) waitingBoundaries.Remove(sector);
+            else waitingBoundaries[sector] = missing;
             built.Add(sector);
         }
     }

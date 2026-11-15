@@ -146,6 +146,47 @@ public sealed class RoundaboutBuilderTests
     }
 
     [Fact]
+    public void BoundaryGapIsReportedButAnInvalidInternalCurveIsNotASectorDependency()
+    {
+        var boundary = new RoundaboutCurve(new(1, 0), 1, false,
+            [new(0, 0, 0), new(10, 0, 0)], [], ExitNode: 99);
+        var incomplete = new RoundaboutBuilder([boundary]);
+        Assert.Null(incomplete.Find(1, [boundary.Key], TestContext.Current.CancellationToken));
+        Assert.Contains(99UL, incomplete.UnresolvedBoundaryNodes);
+        var malformed = new RoundaboutBuilder([boundary with { Next = [new(1, 42)] }]);
+        Assert.Null(malformed.Find(1, [boundary.Key], TestContext.Current.CancellationToken));
+        Assert.Empty(malformed.UnresolvedBoundaryNodes);
+    }
+
+    [Fact]
+    public void NewlyAvailableAttachmentRetriesAnAlreadyAttemptedSector()
+    {
+        var left = new Node { Uid = 10, Position = new(3990, 0, 0) };
+        var right = new Node { Uid = 20, Position = new(4010, 0, 0) };
+        PrefabDescriptor Half(Node start, Node end, float a, float b) => new()
+        {
+            Nodes = [new ControlNode { Position = start.Position, InputLines = [0], OutputLines = [] },
+                new ControlNode { Position = end.Position, InputLines = [], OutputLines = [0] }],
+            NavCurves = [new NavCurve { StartPosition = start.Position, EndPosition = end.Position,
+                StartRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, a),
+                EndRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, b), Length = 10 * MathF.PI }]
+        };
+        var index = new RoundaboutMapIndex();
+        var sectors = new[] { new SectorCoordinate(0, 0), new SectorCoordinate(1, 0) };
+        index.AddPrefab(new Prefab { Uid = 1, Nodes = [left, right] }, Half(left, right, MathF.PI, 0));
+        index.BuildNewSectors(sectors, TestContext.Current.CancellationToken);
+        Assert.Empty(index.Structures);
+        Assert.Equal(2, index.BuiltSectorCount);
+        Assert.Contains(20UL, index.UnresolvedBoundaryNodes[sectors[0]]);
+        index.AddPrefab(new Prefab { Uid = 2, Nodes = [right, left] }, Half(right, left, 0, MathF.PI));
+        Assert.Equal(1, index.BuiltSectorCount);
+        index.BuildNewSectors(sectors, TestContext.Current.CancellationToken);
+        Assert.Single(index.Structures);
+        Assert.Empty(index.UnresolvedBoundaryNodes);
+        Assert.Equal(2, index.BuiltSectorCount);
+    }
+
+    [Fact]
     public void LaterSectorCompletesRingWithoutRebuildingEarlierSector()
     {
         var left=new Node{Uid=10,Position=new(3990,0,0)};

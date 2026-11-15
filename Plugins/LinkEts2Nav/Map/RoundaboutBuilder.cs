@@ -40,6 +40,10 @@ public sealed class RoundaboutBuilder
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurve> graph;
     public List<RoundaboutDirectionResult> DirectionChecks { get; } = [];
     public List<RoundaboutLaneGeometryInfo> GeometryChecks { get; } = [];
+    // Only boundary attachment gaps can be completed by another map object.
+    // Missing indices inside an already-read PPD are not missing sectors.
+    public IReadOnlySet<ulong> UnresolvedBoundaryNodes => unresolvedBoundaryNodes;
+    private readonly HashSet<ulong> unresolvedBoundaryNodes = [];
     // Session-only memo 1: deterministic branch choice, including unresolved branches.
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurveKey?> successors = new();
     // Session-only memo 2: resolved suffix and ALL owners traversed to reach it.
@@ -52,6 +56,7 @@ public sealed class RoundaboutBuilder
     public RoundaboutStructure? Find(ulong initialPrefab, IEnumerable<RoundaboutCurveKey> entrances,
         CancellationToken cancellationToken = default)
     {
+        unresolvedBoundaryNodes.Clear();
         foreach (var entrance in entrances.Distinct())
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -127,8 +132,11 @@ public sealed class RoundaboutBuilder
                 successors[current] = next = Choose(curve);
             if (next is null)
             {
+                if (curve.Next.Count == 0 && curve.ExitNode != 0)
+                    unresolvedBoundaryNodes.Add(curve.ExitNode);
                 // A missing referenced curve is incomplete map data, not a permanent dead end.
-                cacheable = curve.Next.All(graph.ContainsKey); break;
+                cacheable = curve.Next.All(graph.ContainsKey)
+                    && !(curve.Next.Count == 0 && curve.ExitNode != 0); break;
             }
             current = next;
         }

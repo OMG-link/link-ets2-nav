@@ -210,6 +210,25 @@ public sealed class NavigationManeuverDetector
                 if (!connections.Any(g => g[0].EndNodeUid == current.EndNodeUid)) return result;
                 if (connections.Length == 1)
                 {
+                    // Native shared curves prove an immediate side-road join even
+                    // when the through entrance also has another legal outlet.
+                    var direct=DirectJunctionJoin.Find(current,prefabEnds.GetValueOrDefault((prefab,current.EndNodeUid))??[]);
+                    if(direct is not null&&NativeTangent(current,true) is {} directEntry
+                        &&NativeTangent(current,false) is {} directExit)
+                    {
+                        double angle=Angle(directEntry,directExit);
+                        var kind=Math.Abs(angle)>=150?ManeuverKind.UTurn:
+                            angle<=-TurnAngleDegrees?ManeuverKind.TurnLeft:angle>=TurnAngleDegrees?ManeuverKind.TurnRight:
+                            angle<=-MinimumForkSpreadDegrees?ManeuverKind.KeepLeft:angle>=MinimumForkSpreadDegrees?ManeuverKind.KeepRight:ManeuverKind.Straight;
+                        string? warning=direct.TrafficSide switch{NavigationSide.Left=>"注意左侧来车",NavigationSide.Right=>"注意右侧来车",_=>null};
+                        if(warning is null)forkIssues.Add(new(prefab,current.StartNodeUid,current.EndNodeUid,"直接合流已确认，但主路来车方向无法唯一确定"));
+                        result.Add(new($"direct-join:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",kind,
+                            offset-vehicleAlong,i>0?route[i-1].Id:current.Id,current.Id)
+                        {EndDistanceMeters=end-vehicleAlong,JunctionId="prefab:"+prefab,
+                            ExecutionInstruction=warning is null?null:NavigationPrompts.Action(kind)+"，"+warning,
+                            HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
+                        confirmedUntil=end;offset=end;continue;
+                    }
                     var merge = MergeDecision(current, prefab);
                     if (merge.Ambiguous)
                     { hasUnresolvedJoin = true; firstUnresolvedJoinAlong = Math.Min(firstUnresolvedJoinAlong, offset); unresolvedSpans.Add(new(offset,end)); }

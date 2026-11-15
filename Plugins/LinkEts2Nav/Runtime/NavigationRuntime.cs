@@ -64,7 +64,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         if (mapIdentity is null || !mapIdentity.Matches(nearby))
         {
             mapIdentity=new(nearby);map=nearby.Map;
-            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log,nearby.AuxiliaryLanes?.Graph);
+            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log,nearby.AuxiliaryLanes?.Graph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null);
             auxiliaryLanes=nearby.AuxiliaryLanes??AuxiliaryLaneIndex.Build(new NativeLaneGraph(paths.GetNavigationGraph()));
             structures.Clear();publishedStructure=null;routeBuildGeneration=0;
         }

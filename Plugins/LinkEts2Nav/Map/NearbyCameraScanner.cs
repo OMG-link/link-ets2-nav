@@ -37,7 +37,7 @@ public sealed class NearbyCameraScanner
     private AuxiliaryLaneIndex? auxiliaryLanes;
     private IReadOnlyList<FreeNavigationArea> freeNavigationAreas = [];
     private string[] junctionDiagnostics = [];
-    private Dictionary<ulong, (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
+    private Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
     private ScsMap? map;
     private SectorCoordinate[] loadedSectors = [];
     private SpeedLimitDefinitionReader speedReader=>data.SpeedLimits;
@@ -72,7 +72,7 @@ public sealed class NearbyCameraScanner
             var junctions = new List<DirectedRoad>();
             var areas = new List<FreeNavigationArea>();
             var issues = new List<string>();
-            var nextGeometry = new Dictionary<ulong, (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)>();
+            var nextGeometry = new Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)>();
             foreach (var prefab in nextMap.MapItems.Values.OfType<Prefab>())
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -83,10 +83,12 @@ public sealed class NearbyCameraScanner
                     var descriptor=data.GetPrefabDescription(resource);
                     if (descriptor is not null)
                     {
-                        roundaboutIndex.AddPrefab(prefab, descriptor, resource);
-                        if (!geometryCache.TryGetValue(prefab.Uid, out var geometry))
-                            geometry = (PrefabPathGeometry.Build(prefab, descriptor), FreeNavigationArea.Build(prefab,descriptor));
-                        nextGeometry[prefab.Uid] = geometry;
+                        var access=PrefabPlayerAccess.Build(prefab,descriptor,speedReader);
+                        var key=(prefab.Uid,access.CacheKey);
+                        roundaboutIndex.AddPrefab(prefab, access.Descriptor, resource);
+                        if (!geometryCache.TryGetValue(key, out var geometry))
+                            geometry = (PrefabPathGeometry.Build(prefab, access.Descriptor), FreeNavigationArea.Build(prefab,descriptor));
+                        nextGeometry[key] = geometry;
                         junctions.AddRange(geometry.Paths);
                         areas.AddRange(geometry.Areas);
                     }
@@ -105,7 +107,7 @@ public sealed class NearbyCameraScanner
                         .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),speedReader!,cancellationToken);
             var builtLimits = ProjectedSignBuilder.Build(data.ReadSpeedLimits(nextMap,regionData,cancellationToken),junctions,cancellationToken);
             // One annotated geometry graph per map version, shared with navigation consumers.
-            var navigation=new RoadPathSource(nextMap,junctions);
+            var navigation=new RoadPathSource(nextMap,junctions,playerAccess:speedReader.RoadPlayerAccess);
             var builtAuxiliary=AuxiliaryLaneIndex.Build(new NativeLaneGraph(navigation.GetNavigationGraph()),cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             geometryCache = nextGeometry;

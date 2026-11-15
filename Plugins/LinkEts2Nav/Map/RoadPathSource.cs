@@ -14,6 +14,7 @@ public sealed class RoadPathSource
     private readonly Dictionary<ulong, List<Road>> incidentRoads = new();
     private readonly HashSet<(ulong, ulong)> ambiguous = new();
     private readonly Road[] roads;
+    private readonly Func<Road,bool,bool?>? playerAccess;
     private readonly Dictionary<(ulong, ulong), DirectedRoad> junctionLinks = new();
     private readonly HashSet<ulong> boundaryNodes = new();
     private readonly DirectedPathMatcher matcher = new();
@@ -26,19 +27,20 @@ public sealed class RoadPathSource
     private IReadOnlyList<DirectedRoad>? navigationGraph;
     private readonly IReadOnlyDictionary<NativeRoadKey,DirectedRoad>? preparedEdges;
 
-    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null)
+    public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null,Func<Road,bool,bool?>? playerAccess=null)
     {
         diagnosticLog=log;
+        this.playerAccess=playerAccess;
         navigationGraph=native?.Edges;
         preparedEdges=native?.Edges.ToDictionary(NativeRoadKey.Of);
-        roads = map.MapItems.Values.OfType<Road>().ToArray();
+        roads = map.MapItems.Values.OfType<Road>().Where(r=>CanUse(r,true)||CanUse(r,false)).ToArray();
         foreach (var road in roads)
         {
             if (road.Node is null || road.ForwardNode is null) continue;
             AddIncidentRoad(road.Node.Uid, road);
             AddIncidentRoad(road.ForwardNode.Uid, road);
-            AddLink((road.Node.Uid, road.ForwardNode.Uid), road);
-            AddLink((road.ForwardNode.Uid, road.Node.Uid), road);
+            if(CanUse(road,true))AddLink((road.Node.Uid, road.ForwardNode.Uid), road);
+            if(CanUse(road,false))AddLink((road.ForwardNode.Uid, road.Node.Uid), road);
             boundaryNodes.Add(road.Node.Uid);
             boundaryNodes.Add(road.ForwardNode.Uid);
         }
@@ -52,6 +54,8 @@ public sealed class RoadPathSource
             else junctionLinks[group.Key] = group.First();
         }
     }
+
+    private bool CanUse(Road road,bool forward)=>playerAccess?.Invoke(road,forward)!=false;
 
     private void AddIncidentRoad(ulong uid, Road road)
     {
@@ -87,7 +91,8 @@ public sealed class RoadPathSource
     public IReadOnlyList<DirectedRoad> GetNavigationGraph()
         => navigationGraph ??= roads.Where(r => r.Node is not null && r.ForwardNode is not null
                 && !ambiguous.Contains((r.Node.Uid, r.ForwardNode.Uid)))
-            .SelectMany(r => new[] { Orient(r, r.Node.Uid), Orient(r, r.ForwardNode.Uid) })
+            .SelectMany(r => (CanUse(r,true)?new[]{Orient(r,r.Node.Uid)}:Array.Empty<DirectedRoad>())
+                .Concat(CanUse(r,false)?new[]{Orient(r,r.ForwardNode.Uid)}:Array.Empty<DirectedRoad>()))
             .Concat(junctionLinks.Values).ToArray();
     /// <summary>
     /// Road distance is available only within one continuous route chunk. Across an unknown
@@ -275,7 +280,7 @@ public sealed class RoadPathSource
             .OrderBy(p => SegmentDistance(position, p.First, p.Second)).First();
         var tangent = Vector3.Normalize(nearest.Second - nearest.First);
         var start = Vector3.Dot(tangent, heading) >= 0 ? candidate.Road.Node.Uid : candidate.Road.ForwardNode.Uid;
-        return Extend(Orient(candidate.Road, start), position);
+        return CanUse(candidate.Road,start==candidate.Road.Node.Uid)?Extend(Orient(candidate.Road,start),position):[];
     }
 
     private IReadOnlyList<DirectedRoad> Extend(DirectedRoad current, Vector3 position)
@@ -290,7 +295,8 @@ public sealed class RoadPathSource
         while (coveredAhead < 1000 && path.Count < 128)
         {
             incidentRoads.TryGetValue(current.EndNodeUid, out var connected);
-            var successors = (connected ?? []).Where(r => r.Uid.ToString("X16") != current.Id).ToArray();
+            var successors = (connected ?? []).Where(r => r.Uid.ToString("X16") != current.Id
+                &&CanUse(r,r.Node.Uid==current.EndNodeUid)).ToArray();
             if (successors.Length == 0)
             {
                 var exits = junctionLinks.Values.Where(p => p.StartNodeUid == current.EndNodeUid

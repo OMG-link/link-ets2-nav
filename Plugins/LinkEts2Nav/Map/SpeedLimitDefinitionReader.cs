@@ -17,6 +17,7 @@ public sealed class SpeedLimitDefinitionReader
     private readonly Dictionary<string,Unit> roadUnits=new(StringComparer.Ordinal);
     private readonly HashSet<string> singleTrackLanes=new(StringComparer.Ordinal);
     private readonly HashSet<string> playerForbiddenLanes=new(StringComparer.Ordinal);
+    private readonly Dictionary<string,bool?> lanePlayerAccess=new(StringComparer.Ordinal);
     private readonly PlayerAccessRules playerAccess;
     private readonly Dictionary<string,string> laneClasses=new(StringComparer.Ordinal);
     private readonly Dictionary<string,TruckSpeedLimit> limits=new(StringComparer.Ordinal);
@@ -44,7 +45,8 @@ public sealed class SpeedLimitDefinitionReader
             {
                 laneClasses[u.Name]=Text(u,"speed_class");
                 if(Values(u,"traffic_rules").Select(Link).Any(name=>HasSingleTrackRule(name,[])))singleTrackLanes.Add(u.Name);
-                if(playerAccess.Read(Values(u,"traffic_rules").Select(Link))==false)playerForbiddenLanes.Add(u.Name);
+                lanePlayerAccess[u.Name]=playerAccess.Read(Values(u,"traffic_rules").Select(Link));
+                if(lanePlayerAccess[u.Name]==false)playerForbiddenLanes.Add(u.Name);
             }
             foreach(var u in Files("/def/world/","road_look"))roadUnits[u.Name]=u;
             foreach(var u in roadUnits.Values.Where(u=>u.Class=="road_look"))
@@ -218,6 +220,23 @@ public sealed class SpeedLimitDefinitionReader
         }
         return (Known(road.LeftHandTraffic),Known(!road.LeftHandTraffic));
     }
+
+    /// <summary>Native permissions of the requested road direction. Missing evidence is not a prohibition.</summary>
+    public bool? RoadPlayerAccess(Road road,bool forward)
+    {
+        var configurations=RoadLanes(road,forward?road.LeftHandTraffic:!road.LeftHandTraffic);
+        if(configurations is null||configurations.Length==0)return null;
+        bool? Configuration(object[] lanes)
+        {
+            if(lanes.Length==0)return false;
+            var values=lanes.Select(l=>lanePlayerAccess.GetValueOrDefault(Link(l))).ToArray();
+            if(values.Any(v=>v==true))return true;
+            return values.All(v=>v==false)?false:null;
+        }
+        var states=configurations.Select(Configuration).Distinct().ToArray();
+        return states.Length==1?states[0]:null;
+    }
+    public bool? RulePlayerAccess(string name)=>playerAccess.Read(string.IsNullOrEmpty(name)||name.StartsWith("traffic_rule.",StringComparison.Ordinal)?name:"traffic_rule."+name);
 
     private bool HasSingleTrackRule(string name,HashSet<string> seen)
     {

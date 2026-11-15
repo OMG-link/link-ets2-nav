@@ -235,6 +235,52 @@ public sealed class SpeedLimitDefinitionTests
         Assert.Equal(expected,data.Roads[road.Uid].ClassFor(data.Roads[road.Uid].Geometry));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DedicatedTramAccessIsDirectionalAndUnknownNormalLanesRemainOpen(bool leftHand)
+    {
+        var fs=PlayerAccessDefinitions();
+        fs.Files["/def/world/road_look.sii"]="""SiiNunit { road_look : road.un11 { lanes_left[]: traffic_lane.tram lanes_right[]: traffic_lane.express } }""";
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(100,0,0),default);road.RoadType="un11";road.LeftHandTraffic=leftHand;
+        var reader=new SpeedLimitDefinitionReader(fs);
+        Assert.False(reader.RoadPlayerAccess(road,leftHand));
+        Assert.Null(reader.RoadPlayerAccess(road,!leftHand));
+        road.RoadType="not_defined";
+        Assert.Null(reader.RoadPlayerAccess(road,true));Assert.Null(reader.RoadPlayerAccess(road,false));
+    }
+    [Fact]
+    public void SharedTramAndNoAiRulesDoNotForbidPlayerTraffic()
+    {
+        var fs=PlayerAccessDefinitions();
+        fs.Files["/def/world/traffic_lane.sii"]="""SiiNunit { traffic_lane_data : traffic_lane.tram { speed_class: rail_tram traffic_rules[]: traffic_rule.tram } traffic_lane_data : traffic_lane.shared { speed_class: local_road traffic_rules[]: traffic_rule.player_unspecified } traffic_lane_data : traffic_lane.slow { speed_class: slow_road } }""";
+        fs.Files["/def/world/road_look.sii"]="""SiiNunit { road_look : road.un11 { lanes_left[]: traffic_lane.slow lanes_right[]: traffic_lane.tram lanes_right[]: traffic_lane.shared } }""";
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(100,0,0),default);road.RoadType="un11";
+        var reader=new SpeedLimitDefinitionReader(fs);
+        Assert.Null(reader.RoadPlayerAccess(road,true));Assert.Null(reader.RoadPlayerAccess(road,false));
+        Assert.Null(reader.RulePlayerAccess("player_unspecified"));Assert.False(reader.RulePlayerAccess("tram"));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void NativePrefabOriginKeepsTheForbiddenRoadOnItsOwnInterface(int origin)
+    {
+        var fs=PlayerAccessDefinitions();
+        fs.Files["/def/world/road_look.sii"]="""SiiNunit { road_look : road.un11 { lanes_left[]: traffic_lane.tram lanes_right[]: traffic_lane.tram } }""";
+        var map=new TruckLib.ScsMap.Map();var rail=Road.Add(map,new(10,0,-4),new(20,0,-4),default);rail.RoadType="un11";
+        var descriptor=new TruckLib.Models.Ppd.PrefabDescriptor
+        {
+            Nodes=[new(){InputLines=[0,1],OutputLines=[]},new(){InputLines=[],OutputLines=[0]},new(){InputLines=[],OutputLines=[1]}],
+            NavCurves=[new(){Length=10},new(){Length=10}]
+        };
+        var prefab=new Prefab{Nodes=[new Node{Uid=100},rail.Node,new Node{Uid=300}]};
+        if(origin>0)prefab.ChangeOrigin((ushort)origin);
+        var projection=PrefabPlayerAccess.Build(prefab,descriptor,new SpeedLimitDefinitionReader(fs));
+        Assert.Equal(0,projection.Descriptor.NavCurves[0].Length);Assert.Equal(10,projection.Descriptor.NavCurves[1].Length);
+    }
+
     private static Fs PlayerAccessDefinitions()
     {
         var fs=new Fs();

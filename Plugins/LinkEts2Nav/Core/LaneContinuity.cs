@@ -112,9 +112,11 @@ public static class LaneContinuity
         double angle=Math.Atan2(Math.Abs(cross),dx*sx+dz*sz)*180/Math.PI;
         if(angle<=1||angle>=179)
         {
-            // Mirror travel for a split, then restore its actual left/right sense.
+            // A merge is relative to its arriving lane's start ray. A split is
+            // relative to the common arriving ray, including a branch that ends
+            // backwards: its final heading must not invert the physical side.
             Vector3 offset=merge?origin-branch.Start:branch.End-origin;
-            cross=dx*offset.Z-dz*offset.X;
+            cross=merge?dx*offset.Z-dz*offset.X:sx*offset.Z-sz*offset.X;
         }
         if(cross==0)return LaneTurnKind.Unknown;
         bool right=cross>0;

@@ -170,12 +170,15 @@ public static class ComponentManeuverProjection
                     if(boundary.OffsetMeters<-.001||boundary.OffsetMeters>length+.001)return null;
                     return offsets[i]+Math.Clamp(boundary.OffsetMeters,0,length);
                 }
-            // A separation terminates at the shared entrance interface, before
-            // choosing either outlet. The static side passage may consequently
-            // differ from the selected main passage; the exact physical node
-            // and owning prefab still identify the same boundary.
-                if(Math.Abs(boundary.OffsetMeters)<=.001&&Owner(boundary.EdgeId) is {} owner
-                    &&route[i].StartNodeUid==boundary.StartNodeUid&&NativeLaneGraph.Prefab(route[i])==owner)return offsets[i];
+                // Only builder-proven interface endpoints may alias another
+                // passage of the same prefab. An internal point's shared end
+                // node is not evidence that the player traverses that point.
+                if(boundary.InterfaceNodeUid is {} node&&Owner(boundary.EdgeId) is {} owner
+                    &&NativeLaneGraph.Prefab(route[i])==owner)
+                {
+                    if(boundary.Interface==ComponentBoundaryInterface.Start&&route[i].StartNodeUid==node)return offsets[i];
+                    if(boundary.Interface==ComponentBoundaryInterface.End&&route[i].EndNodeUid==node)return offsets[i+1];
+                }
             }
             return null;
         }

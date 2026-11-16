@@ -71,13 +71,15 @@ public sealed class ComponentContinuityIndex
             if(point is null)return null;
             var original=originals[new(point.EdgeId,point.EndNodeUid,point.StartNodeUid)];
             return point with{OffsetMeters=Math.Max(0,RouteGeometry.Length(original)-point.OffsetMeters),
+                Interface=point.Interface switch{ComponentBoundaryInterface.Start=>ComponentBoundaryInterface.End,
+                    ComponentBoundaryInterface.End=>ComponentBoundaryInterface.Start,_=>ComponentBoundaryInterface.None},
                 StartNodeUid=original.StartNodeUid,EndNodeUid=original.EndNodeUid};
         }
         // A reverse search discovers the beginning of a deceleration lane. Its
         // spoken action is nevertheless measured in the actual travel direction.
         var start=Point(fact.IntervalEnd);var end=Point(fact.IntervalStart);
         ComponentBoundary? action=Point(fact.ActionPoint);
-        var exit=new ComponentBoundary(edge.Id,RouteGeometry.Length(edge),edge.Points[^1]){StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid};
+        var exit=new ComponentBoundary(edge.Id,RouteGeometry.Length(edge),edge.Points[^1]){StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid,Interface=ComponentBoundaryInterface.End};
         ComponentTurn? ActualTurn(ComponentLaneOutcome lane)
         {
             if(lane.TurnPrefabUid is {} uid&&lane.TurnSharedCurveIndex is {} shared&&lane.TurnBranchCurveIndex is {} branch)
@@ -337,7 +339,9 @@ public sealed class ComponentContinuityIndex
         private static ComponentBoundary At(DirectedRoad edge,PrefabLanePath? lane,double distance)
         {
             var line=new LanePolyline(lane?.Points??edge.Points);var point=line.At(distance);
-            return new(edge.Id,new LanePolyline(edge.Points).Project(point).Along,point){StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid};
+            var endpoint=distance==0?ComponentBoundaryInterface.Start:distance==line.Length?ComponentBoundaryInterface.End:ComponentBoundaryInterface.None;
+            double offset=endpoint==ComponentBoundaryInterface.Start?0:endpoint==ComponentBoundaryInterface.End?RouteGeometry.Length(edge):new LanePolyline(edge.Points).Project(point).Along;
+            return new(edge.Id,offset,point){StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid,Interface=endpoint};
         }
         private static ComponentBoundary At(IReadOnlyList<Segment> segments,double distance)
         {

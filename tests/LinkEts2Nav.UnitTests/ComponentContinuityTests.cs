@@ -276,6 +276,10 @@ public sealed class ComponentContinuityTests
         Assert.Equal(side.LanePaths[0].EntryOrder,lane.EntryOrder);Assert.Equal(side.LanePaths[0].ExitOrder,lane.ExitOrder);
         Assert.Equal(ComponentLaneFate.Born,lane.Fate);
         Assert.Equal(side.StartNodeUid,lane.InitialMidpoint.StartNodeUid);Assert.Equal(side.EndNodeUid,lane.InitialMidpoint.EndNodeUid);
+        Assert.Equal(ComponentBoundaryInterface.None,lane.InitialMidpoint.Interface);
+        Assert.Equal(ComponentBoundaryInterface.End,result.LifecycleEnd!.Interface);
+        Assert.Equal(side.EndNodeUid,result.LifecycleEnd.InterfaceNodeUid);
+        Assert.Equal(RouteGeometry.Length(side),result.LifecycleEnd.OffsetMeters);
     }
 
     [Fact]

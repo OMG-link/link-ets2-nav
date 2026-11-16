@@ -6,7 +6,8 @@ public sealed class ComponentManeuverProjectionTests
 {
     private static DirectedRoad Edge(string id,float start=0,float end=100)=>new(id,1,2,[new(0,0,start),new(0,0,end)]);
     private static ComponentBoundary At(DirectedRoad edge,double distance,Vector3 position)=>new(edge.Id,distance,position)
-        {StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid};
+        {StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid,
+            Interface=distance==0?ComponentBoundaryInterface.Start:distance==RouteGeometry.Length(edge)?ComponentBoundaryInterface.End:ComponentBoundaryInterface.None};
     private static ComponentPassageContinuity Fact(DirectedRoad edge,ComponentContinuityKind kind,
         ComponentTurn? turn=null,bool main=false)=>new(edge.Id,42,edge.StartNodeUid,edge.EndNodeUid,main,kind,
             At(edge,50,new(0,0,50)),At(edge,100,new(0,0,100)),null,null,[0],[0],2,3,1,turn,[]);

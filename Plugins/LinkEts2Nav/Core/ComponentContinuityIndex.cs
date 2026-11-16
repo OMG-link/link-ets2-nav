@@ -42,7 +42,9 @@ public sealed class ComponentContinuityIndex
         {
             if(original is null)return null;
             if(!geometry.TryGetValue(original,out var value))geometry[original]=value=new(original.PrefabUid,
-                original.Curves.Select(c=>new NativeLaneCurve(c.Index,c.End,c.Start,-c.EndTangent,-c.StartTangent,c.Previous,c.Next){MapIssue=c.MapIssue}).ToArray());
+                // This reverse merge represents an actual split, which deliberately ignores lamps.
+                original.Curves.Select(c=>new NativeLaneCurve(c.Index,c.End,c.Start,-c.EndTangent,-c.StartTangent,c.Previous,c.Next)
+                    {MapIssue=c.MapIssue,Blinker=LaneBlinker.NoBlinker}).ToArray());
             return value;
         }
         return edge with

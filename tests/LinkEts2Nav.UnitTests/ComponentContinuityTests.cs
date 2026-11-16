@@ -6,6 +6,25 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class ComponentContinuityTests
 {
+    [Fact]
+    public void ReverseDerivedSplitDoesNotReadAnyBlinkers()
+    {
+        var geometry=new NativeLaneGeometry(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
+            Curve(1,new(20,0,0),new(80,0,0),[3],[0]),
+            Curve(2,new(20,0,0),new(100,0,30),[],[0]),Curve(3,new(80,0,0),new(100,0,0),[],[1])]);
+        ComponentPassageContinuity Fact(NativeLaneGeometry g)
+        {
+            var main=Passage(1,10,20,0,0,[0,1,3],g) with{SplitPriority=new(20,[],[],8,"main outlet")};
+            var side=Passage(1,10,30,0,0,[0,2],g) with{SplitPriority=main.SplitPriority};
+            return ComponentContinuityIndex.Build(new([main,side])).ForExit(side.Id)!;
+        }
+        var marked=geometry with{Curves=geometry.Curves.Select(c=>c.Index==3?c with{Blinker=LaneBlinker.Left}:c).ToArray()};
+        var expected=Fact(geometry);var actual=Fact(marked);
+        Assert.Equal(ComponentContinuityKind.Hard,actual.Kind);Assert.Equal(expected.Kind,actual.Kind);
+        Assert.Equal(expected.Turn,actual.Turn);Assert.Equal(expected.ActionPoint,actual.ActionPoint);
+        Assert.Equal(expected.LifecycleEnd,actual.LifecycleEnd);
+        Assert.Equal(expected.ExitOrders,actual.ExitOrders);
+    }
     private static readonly RoadJoinPriority Priority=new(10,[],[],8,"test measured priority");
     private static NativeLaneCurve Curve(int id,Vector3 from,Vector3 to,int[] next,int[] previous)
         =>new(id,from,to,to-from,to-from,next,previous);

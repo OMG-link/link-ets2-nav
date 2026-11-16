@@ -7,6 +7,7 @@ public sealed record NativeLaneCurve(int Index,Vector3 Start,Vector3 End,Vector3
     IReadOnlyList<int> Next,IReadOnlyList<int> Previous)
 {
     public MapQueryIssue? MapIssue {get;init;}
+    public LaneBlinker Blinker {get;init;}
     public Vector3 Position(float t)
     {
         float t2=t*t,t3=t2*t;
@@ -23,6 +24,8 @@ public sealed record LaneContinuityBranch(int CurveIndex,LaneContinuityRole Role
     double? NormalizedAngle,LaneTurnKind Turn)
 {
     public MapQueryIssue? MapIssue {get;init;}
+    public int? BlinkerSourceCurveIndex {get;init;}
+    public bool VetoedByBlinker=>BlinkerSourceCurveIndex.HasValue;
 }
 public sealed record LaneContinuityPoint(ulong PrefabUid,LaneContinuityPointKind Kind,int SharedCurveIndex,
     Vector3 Origin,Vector3 StandardTangent,IReadOnlyList<LaneContinuityBranch> Branches)
@@ -59,23 +62,26 @@ public static class LaneContinuity
                     .Distinct().Order().ToArray();
                 if(indices.Length<2)continue;
                 foreach(int index in indices)involved.Add(index);
-                points.Add(Evaluate(geometry.PrefabUid,shared,kind,indices,curves));
+                points.Add(Evaluate(geometry.PrefabUid,shared,kind,indices,curves,incoming,outgoing));
             }
         }
         return new(points.ToArray(),geometry.Curves.Where(c=>c.MapIssue is null&&!involved.Contains(c.Index)).Select(c=>c.Index).Order().ToArray())
             {MapIssue=geometry.Curves.Select(c=>c.MapIssue).FirstOrDefault(issue=>issue is not null)};
     }
     private static LaneContinuityPoint Evaluate(ulong prefab,NativeLaneCurve shared,LaneContinuityPointKind kind,
-        int[] indices,IReadOnlyDictionary<int,NativeLaneCurve> curves)
+        int[] indices,IReadOnlyDictionary<int,NativeLaneCurve> curves,ILookup<int,int> incoming,ILookup<int,int> outgoing)
     {
         bool merge=kind==LaneContinuityPointKind.Merge;
         Vector3 origin=merge?shared.Start:shared.End,standard=merge?shared.StartTangent:shared.EndTangent;
+        var angles=new double?[indices.Length];var vetoes=new int?[indices.Length];
         LaneContinuityPoint Unknown(MapQueryIssue issue)=>new(prefab,kind,shared.Index,origin,standard,
-            indices.Select(i=>new LaneContinuityBranch(i,LaneContinuityRole.Unknown,null,null,LaneTurnKind.Unknown){MapIssue=issue}).ToArray()){MapIssue=issue};
+            indices.Select((id,i)=>vetoes[i] is {} source
+                ?new LaneContinuityBranch(id,LaneContinuityRole.Dead,null,null,DescribeTurn(curves[id],standard,origin,true)){BlinkerSourceCurveIndex=source}
+                :new LaneContinuityBranch(id,LaneContinuityRole.Unknown,null,null,LaneTurnKind.Unknown){MapIssue=issue}).ToArray()){MapIssue=issue};
         if(shared.MapIssue is {} sharedIssue)return Unknown(sharedIssue);
         if(!float.IsFinite(origin.X)||!float.IsFinite(origin.Y)||!float.IsFinite(origin.Z))return Unknown(Invalid($"Prefab {prefab:X16} curve {shared.Index}: nonfinite origin."));
         if(!Horizontal(standard,out var sx,out var sz))return Unknown(Invalid($"Prefab {prefab:X16} curve {shared.Index}: missing horizontal standard tangent."));
-        var angles=new double[indices.Length];
+        MapQueryIssue? eligibilityIssue=null;
         for(int i=0;i<indices.Length;i++)
         {
             if(!curves.TryGetValue(indices[i],out var branch))return Unknown(Invalid($"Prefab {prefab:X16}: native curve {indices[i]} is unavailable."));
@@ -83,11 +89,25 @@ public static class LaneContinuity
             if(!(merge?branch.Next:branch.Previous).Contains(shared.Index)
                 ||!(merge?shared.Previous:shared.Next).Contains(branch.Index))
                 return Unknown(Invalid($"Prefab {prefab:X16}: native link {indices[i]} / {shared.Index} is not reciprocal."));
-            if(!Horizontal(branch.Tangent(.5f),out var x,out var z))return Unknown(Invalid($"Prefab {prefab:X16} curve {branch.Index}: missing horizontal midpoint tangent."));
-            angles[i]=Math.Atan2(Math.Abs(x*sz-z*sx),x*sx+z*sz)*180/Math.PI;
+            if(merge)
+            {
+                var veto=FindMergeBlinker(branch,shared.Index,curves,incoming,outgoing);
+                eligibilityIssue??=veto.Issue;
+                vetoes[i]=veto.Source;
+            }
         }
-        double minimum=angles.Min();var zeros=angles.Select((angle,i)=>(angle,i)).Where(p=>p.angle<=ZeroAngle).Select(p=>p.i).ToArray();
-        var qualified=zeros.Length>0?zeros:Enumerable.Range(0,indices.Length).Where(i=>angles[i]/minimum<2).ToArray();
+        if(eligibilityIssue is not null)return Unknown(eligibilityIssue);
+        for(int i=0;i<indices.Length;i++)
+        {
+            if(vetoes[i] is not null)continue; // dead before any midpoint/normalization work
+            var branch=curves[indices[i]];
+            if(Horizontal(branch.Tangent(.5f),out var x,out var z))angles[i]=Math.Atan2(Math.Abs(x*sz-z*sx),x*sx+z*sz)*180/Math.PI;
+            else return Unknown(Invalid($"Prefab {prefab:X16} curve {branch.Index}: missing horizontal midpoint tangent."));
+        }
+        var candidates=Enumerable.Range(0,indices.Length).Where(i=>vetoes[i] is null).ToArray();
+        double? minimum=candidates.Length==0?null:candidates.Min(i=>angles[i]!.Value);
+        var zeros=candidates.Where(i=>angles[i]<=ZeroAngle).ToArray();
+        var qualified=zeros.Length>0?zeros:candidates.Where(i=>angles[i]/minimum<2).ToArray();
         int survivor=qualified.Length==1?qualified[0]:-1;
         var result=new List<LaneContinuityBranch>();
         for(int i=0;i<indices.Length;i++)
@@ -100,9 +120,45 @@ public static class LaneContinuity
                 if(turn==LaneTurnKind.Unknown)issue=Invalid($"Prefab {prefab:X16} curve {branch.Index}: turn side cannot be established from native tangent and origin.");
             }
             result.Add(new(branch.Index,alive?LaneContinuityRole.Survivor:merge?LaneContinuityRole.Dead:LaneContinuityRole.Newborn,
-                angles[i],minimum<=ZeroAngle?(angles[i]<=ZeroAngle?1:(double?)null):angles[i]/minimum,turn){MapIssue=issue});
+                angles[i],vetoes[i] is not null||minimum is null?null:minimum<=ZeroAngle?(angles[i]<=ZeroAngle?1:(double?)null):angles[i]/minimum,turn)
+                {MapIssue=issue,BlinkerSourceCurveIndex=vetoes[i]});
         }
         return new(prefab,kind,shared.Index,origin,standard,result.ToArray());
+    }
+    // Each native curve contains no internal topology origin. Walking backwards
+    // crosses its end first and its start last; lamps beyond either intervening
+    // split/merge belong to that earlier decision, not this merge.
+    private static (int? Source,MapQueryIssue? Issue) FindMergeBlinker(NativeLaneCurve branch,int target,
+        IReadOnlyDictionary<int,NativeLaneCurve> curves,ILookup<int,int> incoming,ILookup<int,int> outgoing)
+    {
+        var seen=new HashSet<int>();MapQueryIssue? unresolved=null;
+        MapQueryIssue? CheckOrigin(NativeLaneCurve curve,int[] links,bool forward)
+        {
+            foreach(int index in links)
+                if(!curves.TryGetValue(index,out var other)
+                    ||!(forward?curve.Next:curve.Previous).Contains(index)
+                    ||!(forward?other.Previous:other.Next).Contains(curve.Index))
+                    return Invalid($"Native curve {curve.Index}: intervening {(forward?"split":"merge")} link {index} is unavailable or not reciprocal.");
+            return null;
+        }
+        var current=branch;
+        while(true)
+        {
+            if(current.Index==target)return (null,unresolved);
+            if(!seen.Add(current.Index))return (null,Invalid($"Native merge predecessor chain cycles at curve {current.Index}."));
+            var next=current.Next.Concat(outgoing[current.Index]).Distinct().ToArray();
+            if(next.Length>1)return (null,CheckOrigin(current,next,true)??unresolved); // another origin at its end
+            if(current.Blinker is LaneBlinker.Left or LaneBlinker.Right)return (current.Index,null);
+            if(current.MapIssue is {} issue)unresolved??=issue;
+            if(current.Blinker is not (LaneBlinker.NoBlinker or LaneBlinker.NoBlinkerForced))
+                unresolved??=Invalid($"Native curve {current.Index}: unknown Blinker value {(int)current.Blinker}.");
+            var previous=current.Previous.Concat(incoming[current.Index]).Distinct().ToArray();
+            if(previous.Length!=1)return (null,CheckOrigin(current,previous,false)??unresolved); // entrance/merge at its start
+            if(!curves.TryGetValue(previous[0],out var predecessor)
+                ||!current.Previous.Contains(previous[0])||!predecessor.Next.Contains(current.Index))
+                return (null,unresolved??Invalid($"Native curve {current.Index}: predecessor {previous[0]} is unavailable or not reciprocal."));
+            current=predecessor;
+        }
     }
     /// <summary>Describes actual travel side against a supplied standard without changing lane qualification.</summary>
     public static LaneTurnKind DescribeTurn(NativeLaneCurve branch,Vector3 standard,Vector3 origin,bool merge)

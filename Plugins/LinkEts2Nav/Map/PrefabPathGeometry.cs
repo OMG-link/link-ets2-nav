@@ -96,7 +96,7 @@ public static class PrefabPathGeometry
             result.Add(new(i,placement.ToWorld(curve.StartPosition),placement.ToWorld(curve.EndPosition),
                 Derivative(curve.StartRotation,curve.Length),Derivative(curve.EndRotation,curve.Length),
                 curve.NextLines.Where(Allowed).Distinct().ToArray(),curve.PreviousLines.Where(Allowed).Distinct().ToArray())
-                {MapIssue=invalid.Length==0?null:new MapQueryFailure(MapQueryFailureKind.InvalidData,
+                {Blinker=(LaneBlinker)(int)curve.Blinker,MapIssue=invalid.Length==0?null:new MapQueryFailure(MapQueryFailureKind.InvalidData,
                     $"Prefab {prefabUid:X16} curve {i}: invalid used native references {string.Join(',',invalid)}.")});
         }
         return new(prefabUid,result.ToArray());

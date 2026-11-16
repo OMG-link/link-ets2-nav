@@ -62,7 +62,8 @@ public static class LaneContinuity
                 points.Add(Evaluate(geometry.PrefabUid,shared,kind,indices,curves));
             }
         }
-        return new(points.ToArray(),geometry.Curves.Select(c=>c.Index).Where(i=>!involved.Contains(i)).Order().ToArray());
+        return new(points.ToArray(),geometry.Curves.Where(c=>c.MapIssue is null&&!involved.Contains(c.Index)).Select(c=>c.Index).Order().ToArray())
+            {MapIssue=geometry.Curves.Select(c=>c.MapIssue).FirstOrDefault(issue=>issue is not null)};
     }
     private static LaneContinuityPoint Evaluate(ulong prefab,NativeLaneCurve shared,LaneContinuityPointKind kind,
         int[] indices,IReadOnlyDictionary<int,NativeLaneCurve> curves)

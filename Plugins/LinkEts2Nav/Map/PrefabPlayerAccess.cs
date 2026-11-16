@@ -73,14 +73,14 @@ public static class PrefabPlayerAccess
         {
             Nodes=source.Nodes.Select(n=>new ControlNode{Position=n.Position,Direction=n.Direction,TerrainPoints=n.TerrainPoints,
                 InputLines=n.InputLines.Select(i=>Keep(i)?i:-1).ToArray(),OutputLines=n.OutputLines.Select(i=>Keep(i)?i:-1).ToArray()}).ToList(),
-            NavCurves=source.NavCurves.Select((c,i)=>Copy(c,allowed[i],Keep)).ToList(),
+            NavCurves=source.NavCurves.Select((c,i)=>Copy(c,allowed[i],Keep,Valid)).ToList(),
             Signs=source.Signs,Semaphores=source.Semaphores,SpawnPoints=source.SpawnPoints,MapPoints=source.MapPoints,
             TriggerPoints=source.TriggerPoints,Intersections=source.Intersections,NavNodes=source.NavNodes
         };
         return new(projected,string.Concat(allowed.Select(a=>a?'1':'0')),excluded);
     }
 
-    private static NavCurve Copy(NavCurve c,bool allowed,Func<int,bool> keep)
+    private static NavCurve Copy(NavCurve c,bool allowed,Func<int,bool> keep,Func<int,bool> valid)
     {
         var result=new NavCurve{Name=c.Name,LeadsToNodes=c.LeadsToNodes,StartPosition=c.StartPosition,EndPosition=c.EndPosition,
             StartRotation=c.StartRotation,EndRotation=c.EndRotation,Length=allowed?c.Length:0,SemaphoreId=c.SemaphoreId,
@@ -88,8 +88,9 @@ public static class PrefabPlayerAccess
             LowProbability=c.LowProbability,LimitDisplacement=c.LimitDisplacement,AdditivePriority=c.AdditivePriority,PriorityModifier=c.PriorityModifier};
         if(allowed)
         {
-            foreach(int i in c.NextLines.Where(keep))result.NextLines.Add(i);
-            foreach(int i in c.PreviousLines.Where(keep))result.PreviousLines.Add(i);
+            // Used native lists contain no padding: preserve malformed references for typed diagnostics.
+            foreach(int i in c.NextLines.Where(i=>!valid(i)||keep(i)))result.NextLines.Add(i);
+            foreach(int i in c.PreviousLines.Where(i=>!valid(i)||keep(i)))result.PreviousLines.Add(i);
         }
         return result;
     }

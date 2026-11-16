@@ -92,9 +92,12 @@ public static class PrefabPathGeometry
         foreach(int i in Enumerable.Range(0,curves.Count).Where(Allowed))
         {
             var curve=curves[i];
+            var invalid=curve.NextLines.Concat(curve.PreviousLines).Where(n=>n<0||n>=curves.Count).Distinct().ToArray();
             result.Add(new(i,placement.ToWorld(curve.StartPosition),placement.ToWorld(curve.EndPosition),
                 Derivative(curve.StartRotation,curve.Length),Derivative(curve.EndRotation,curve.Length),
-                curve.NextLines.Where(Allowed).Distinct().ToArray(),curve.PreviousLines.Where(Allowed).Distinct().ToArray()));
+                curve.NextLines.Where(Allowed).Distinct().ToArray(),curve.PreviousLines.Where(Allowed).Distinct().ToArray())
+                {MapIssue=invalid.Length==0?null:new MapQueryFailure(MapQueryFailureKind.InvalidData,
+                    $"Prefab {prefabUid:X16} curve {i}: invalid used native references {string.Join(',',invalid)}.")});
         }
         return new(prefabUid,result.ToArray());
     }

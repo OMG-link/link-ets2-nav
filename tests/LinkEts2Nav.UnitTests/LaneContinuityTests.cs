@@ -150,8 +150,12 @@ public sealed class LaneContinuityTests
         Assert.Equal(curve.Tangent(.5f),moved.Tangent(.5f));
         Assert.Equal(curve.StartTangent,curve.Tangent(0));Assert.Equal(curve.EndTangent,curve.Tangent(1));
     }
-    [Fact]
-    public void ProductionGeometryPreservesCurveIndicesAndExcludesDisallowedTracks()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(-1)]
+    [InlineData(-2)]
+    [InlineData(99)]
+    public void ProductionGeometryPreservesCurveIndicesAndExcludesDisallowedTracks(int? invalidReference)
     {
         var rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,-MathF.PI/2);
         var descriptor=new PrefabDescriptor
@@ -163,13 +167,23 @@ public sealed class LaneContinuityTests
                 new NavCurve{StartPosition=new(-10,0,4),EndPosition=Vector3.Zero,Length=11,StartRotation=rotation,EndRotation=rotation,NextLines={2},TrafficRule="tram"},
                 new NavCurve{StartPosition=Vector3.Zero,EndPosition=new(10,0,0),Length=10,StartRotation=rotation,EndRotation=rotation,PreviousLines={0,1}}]
         };
+        if(invalidReference is {} bad)descriptor.NavCurves[0].NextLines.Add(bad);
         var prefab=new Prefab{Uid=9,Nodes=descriptor.Nodes.Select((n,i)=>(INode)new Node{Uid=(ulong)(10+i),Position=n.Position}).ToList()};
         var projected=PrefabPlayerAccess.Build(descriptor,[null,null,null],[null,null,null],rule=>rule=="tram"?false:null);
         var edges=PrefabPathGeometry.Build(prefab,projected.Descriptor);
         var path=Assert.Single(Assert.Single(edges).LanePaths);var geometry=Assert.IsType<NativeLaneGeometry>(path.NativeGeometry);
         Assert.Equal(new[]{0,2},geometry.Curves.Select(c=>c.Index));
         Assert.Equal(new[]{0},geometry.Curves.Single(c=>c.Index==2).Previous);
-        Assert.Empty(LaneContinuity.Analyze(geometry).Points);
+        var continuity=LaneContinuity.Analyze(geometry);
+        Assert.Empty(continuity.Points);
+        if(invalidReference is not null)
+        {
+            Assert.Equal(MapQueryFailureKind.InvalidData,Assert.IsType<MapQueryFailure>(geometry.Curves[0].MapIssue).Kind);
+            Assert.Equal(MapQueryFailureKind.InvalidData,Assert.IsType<MapQueryFailure>(continuity.MapIssue).Kind);
+            Assert.DoesNotContain(0,continuity.UnchangedCurveIndices);
+            Assert.Contains(invalidReference.Value,projected.Descriptor.NavCurves[0].NextLines);
+        }
+        else Assert.Null(continuity.MapIssue);
         Assert.All(geometry.Curves,c=>Assert.True(c.StartTangent.Length()>1));
     }
 }

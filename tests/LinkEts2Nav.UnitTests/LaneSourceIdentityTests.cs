@@ -83,4 +83,36 @@ public sealed class LaneSourceIdentityTests
         var split=Assert.Single(LaneContinuity.Analyze(geometry).Points);
         Assert.Equal(LaneContinuityRole.Newborn,split.Branches.Single(v=>v.CurveIndex==4).Role);
     }
+    [Fact]
+    public void MissingQueriedMappingReturnsTypedUnknownWithoutInventingCoverage()
+    {
+        var s=Scene();var graph=new NativeLaneGraph(s.Graph.Edges.Where(e=>NativeLaneGraph.Prefab(e)!="63").ToArray());
+        var result=new LaneMergeOriginClassifier(graph).Classify(s.Ending,10,s.Main,10);
+        Assert.Equal(LaneMergeKind.Uncertain,result.Kind);Assert.IsType<MapQueryFailure>(result.MapIssue);
+        Assert.Contains("mapping",result.Reason);
+    }
+    [Fact]
+    public void InvalidUnrelatedNativeCurveDoesNotBlockKnownSourcePair()
+    {
+        var s=Scene(unchanged:true);var graph=new NativeLaneGraph(s.Graph.Edges.Select(e=>e with
+        {LanePaths=e.LanePaths.Select(p=>p.NativeGeometry is {} geometry?p with{NativeGeometry=geometry with
+            {Curves=geometry.Curves.Append(new NativeLaneCurve(999,new(0,0,1000),new(1,0,1000),Vector3.UnitX,Vector3.UnitX,[],[])
+                {MapIssue=new MapQueryFailure(MapQueryFailureKind.InvalidData,"unrelated broken curve")}).ToArray()}}:p).ToArray()}).ToArray());
+        Assert.Equal(LaneMergeKind.LaneReduction,new LaneMergeOriginClassifier(graph).Classify(s.Ending,10,s.Main,10).Kind);
+    }
+    [Fact]
+    public void UnrelatedOutputLaneWithoutNativeDataDoesNotBlockPairOrInventItsApplicability()
+    {
+        var s=Scene();var edges=s.Graph.Edges.Select(e=>e with{LanePaths=e.LanePaths.Select(p=>p with
+            {EntryLaneCount=p.PrefabUid==99||p.EntryNodeUid==1?3:p.EntryLaneCount,ExitLaneCount=p.PrefabUid==42?3:p.ExitLaneCount}).ToArray()}).ToArray();
+        var source=edges.Single(e=>e.Id=="prefab:2A:1:100");var extra=source.LanePaths[0] with
+            {EntryLane=2,ExitLane=2,EntryOrder=2,ExitOrder=2,NativeGeometry=null,CurveIndices=[999]};
+        var seed=edges.Single(e=>NativeLaneGraph.Prefab(e)=="63");var seedExtra=seed.LanePaths[0] with
+            {EntryLane=2,EntryOrder=2,NativeGeometry=null,CurveIndices=[999]};
+        var graph=new NativeLaneGraph(edges.Select(e=>e==source?e with{LanePaths=e.LanePaths.Append(extra).ToArray()}:
+            e==seed?e with{LanePaths=e.LanePaths.Append(seedExtra).ToArray()}:e).ToArray());
+        var result=new LaneMergeOriginClassifier(graph).Classify(s.Ending with{EntryLaneCount=3},10,s.Main with{EntryLaneCount=3},10);
+        Assert.Equal(LaneMergeKind.LaneReduction,result.Kind);
+        Assert.DoesNotContain(2,result.ApplicableEntryLanes);
+    }
 }

@@ -46,11 +46,21 @@ public sealed class LaneMergeOriginClassifier
             =>(Identity.Unknown,new MapQueryFailure(kind,reason),[]);
         if(path.NativeGeometry is not {} geometry)return Unknown("Upstream lane lacks native continuity geometry.");
         if(!continuity.TryGetValue(geometry,out var result))continuity[geometry]=result=LaneContinuity.Analyze(geometry);
-        if(result.MapIssue is {} failure)return (Identity.Unknown,failure,[]);
+        if(geometry.Curves.Count==0||geometry.Curves.GroupBy(c=>c.Index).Any(g=>g.Count()!=1))
+            return (Identity.Unknown,result.MapIssue??new MapQueryFailure(MapQueryFailureKind.InvalidData,"Native curve index is not usable."),[]);
         if(path.CurveIndices.Count==0||path.CurveIndices.Any(i=>!geometry.Curves.Any(c=>c.Index==i)))
             return Unknown("Upstream lane references unavailable native curves.");
         var births=new List<LaneMergeSourceBirth>();bool dead=false;
         var line=new LanePolyline(path.Points);
+        foreach(var curve in geometry.Curves.Where(c=>path.CurveIndices.Contains(c.Index)&&c.MapIssue is not null))
+        {
+            int slot=path.CurveIndices.ToList().IndexOf(curve.Index);
+            if(path.CurveStartPointIndices.Count!=path.CurveIndices.Count)return (Identity.Unknown,curve.MapIssue,[]);
+            int end=slot+1<path.CurveIndices.Count?path.CurveStartPointIndices[slot+1]:path.Points.Count-1;
+            if(end<0||end>=path.Points.Count)return (Identity.Unknown,curve.MapIssue,[]);
+            double suffix=line.Length-path.Points.Take(end+1).Zip(path.Points.Skip(1).Take(end)).Sum(p=>(double)System.Numerics.Vector3.Distance(p.First,p.Second));
+            if(usedMin+suffix<=500)return (Identity.Unknown,curve.MapIssue,[]);
+        }
         for(int i=0;i<path.CurveIndices.Count;i++)
         foreach(var point in result.Points.Where(p=>p.SharedCurveIndex==path.CurveIndices[i]))
         {
@@ -123,6 +133,8 @@ public sealed class LaneMergeOriginClassifier
                 orders=projection.Where(p=>p.Value.Length>0&&p.Value.All(v=>v.EntryNodeUid==ending.EntryNodeUid)
                     &&p.Value.Select(v=>v.EntryOrder).Distinct().Count()==1)
                     .ToDictionary(p=>p.Key,p=>p.Value[0].EntryOrder);
+            if(!orders.Values.Contains(ending.EntryOrder)||!orders.Values.Contains(main.EntryOrder))
+                return Missing("Queried native lane mapping is unavailable; no earlier source is assumed.");
             // A identifies the nearest joining approach's original downstream lane group.
             // Older recursive sources affect classification, not this already established applicability.
             if(applicable is null&&joins.Contains((ending.PrefabUid,ending.ExitNodeUid)))
@@ -167,13 +179,14 @@ public sealed class LaneMergeOriginClassifier
                 .Select(p=>(Path:p,Evidence:IdentityOf(p,
                     p.ExitOrder==ending.EntryOrder?aMin:p.ExitOrder==main.EntryOrder?bMin:Math.Min(aMin,bMin),
                     p.ExitOrder==ending.EntryOrder?a:p.ExitOrder==main.EntryOrder?b:Math.Max(a,b)))).ToArray();
-            if(relevant.FirstOrDefault(p=>p.Evidence.Kind==Identity.Unknown) is var incomplete&&incomplete.Path is not null)
+            if(relevant.FirstOrDefault(p=>p.Evidence.Kind==Identity.Unknown
+                &&(p.Path.ExitOrder==ending.EntryOrder||p.Path.ExitOrder==main.EntryOrder)) is var incomplete&&incomplete.Path is not null)
                 return Missing("Upstream lane identity cannot be established from native continuity.",incomplete.Evidence.Issue);
             births.AddRange(relevant.Where(p=>p.Evidence.Kind==Identity.Continues).SelectMany(p=>p.Evidence.Births));
             source=relevant.Where(p=>p.Evidence.Kind==Identity.Continues).Select(p=>p.Path).ToArray();
             var side=source.Where(p=>p.ExitOrder==ending.EntryOrder&&p.ExitLaneCount==ending.EntryLaneCount).ToArray();
             var kept=source.Where(p=>p.ExitOrder==main.EntryOrder&&p.ExitLaneCount==main.EntryLaneCount).ToArray();
-            if(relevant.Length>0&&(side.Length==0||kept.Length==0))
+            if(side.Length==0||kept.Length==0)
                 return Missing("Upstream physical predecessors have no surviving native lane identity.");
             var sideLengths=side.Select(p=>new LanePolyline(p.Points).Length).ToArray();
             var keptLengths=kept.Select(p=>new LanePolyline(p.Points).Length).ToArray();

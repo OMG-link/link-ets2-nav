@@ -125,40 +125,20 @@ public static class LaneContinuity
         }
         return new(prefab,kind,shared.Index,origin,standard,result.ToArray());
     }
-    // Each native curve contains no internal topology origin. Walking backwards
-    // crosses its end first and its start last; lamps beyond either intervening
-    // split/merge belong to that earlier decision, not this merge.
     private static (int? Source,MapQueryIssue? Issue) FindMergeBlinker(NativeLaneCurve branch,int target,
         IReadOnlyDictionary<int,NativeLaneCurve> curves,ILookup<int,int> incoming,ILookup<int,int> outgoing)
     {
-        var seen=new HashSet<int>();MapQueryIssue? unresolved=null;
-        MapQueryIssue? CheckOrigin(NativeLaneCurve curve,int[] links,bool forward)
+        MapQueryIssue? unresolved=null;
+        foreach(var step in NativeLaneApproachTrace.Upstream(branch,target,curves,incoming,outgoing))
         {
-            foreach(int index in links)
-                if(!curves.TryGetValue(index,out var other)
-                    ||!(forward?curve.Next:curve.Previous).Contains(index)
-                    ||!(forward?other.Previous:other.Next).Contains(curve.Index))
-                    return Invalid($"Native curve {curve.Index}: intervening {(forward?"split":"merge")} link {index} is unavailable or not reciprocal.");
-            return null;
-        }
-        var current=branch;
-        while(true)
-        {
-            if(current.Index==target)return (null,unresolved);
-            if(!seen.Add(current.Index))return (null,Invalid($"Native merge predecessor chain cycles at curve {current.Index}."));
-            var next=current.Next.Concat(outgoing[current.Index]).Distinct().ToArray();
-            if(next.Length>1)return (null,CheckOrigin(current,next,true)??unresolved); // another origin at its end
+            if(step.Issue is {} traceIssue)return (null,traceIssue);
+            var current=step.Curve!;
             if(current.Blinker is LaneBlinker.Left or LaneBlinker.Right)return (current.Index,null);
-            if(current.MapIssue is {} issue)unresolved??=issue;
+            unresolved??=current.MapIssue;
             if(current.Blinker is not (LaneBlinker.NoBlinker or LaneBlinker.NoBlinkerForced))
                 unresolved??=Invalid($"Native curve {current.Index}: unknown Blinker value {(int)current.Blinker}.");
-            var previous=current.Previous.Concat(incoming[current.Index]).Distinct().ToArray();
-            if(previous.Length!=1)return (null,CheckOrigin(current,previous,false)??unresolved); // entrance/merge at its start
-            if(!curves.TryGetValue(previous[0],out var predecessor)
-                ||!current.Previous.Contains(previous[0])||!predecessor.Next.Contains(current.Index))
-                return (null,unresolved??Invalid($"Native curve {current.Index}: predecessor {previous[0]} is unavailable or not reciprocal."));
-            current=predecessor;
         }
+        return (null,unresolved);
     }
     /// <summary>Describes actual travel side against a supplied standard without changing lane qualification.</summary>
     public static LaneTurnKind DescribeTurn(NativeLaneCurve branch,Vector3 standard,Vector3 origin,bool merge)

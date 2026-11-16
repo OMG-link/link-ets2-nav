@@ -16,7 +16,7 @@ public sealed record RoadJoinPriority(ulong? MainEntry,IReadOnlyList<RoadJoinEnt
     public IReadOnlyList<MapQueryIssue> MapIssues {get;init;}=[];
 }
 
-/// <summary>Scores only independent lane additions; real shared-lane merges do not use this policy.</summary>
+/// <summary>Shared thirty-point priority scorer for component entrance and outlet candidates.</summary>
 public static class RoadJoinPriorityScorer
 {
     private const double SlopeEpsilonDegrees=.1,DirectionEpsilonDegrees=.5,RequiredMargin=5;

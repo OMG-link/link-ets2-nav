@@ -35,7 +35,7 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
             }
             var priority=RoadJoinPriorityScorer.Evaluate(measurements.ToArray()) with{MapIssues=dependencies.Distinct().ToArray()};
             foreach(var (edge,index) in group)result[index]=edge with{JoinPriority=priority};
-            log?.Invoke($"无冲突汇合主路评分：prefab:{group.Key.Prefab}，出口={group.Key.Exit:X16}，主路={priority.MainEntry?.ToString("X16")??"未知"}；{priority.Reason}；"+
+            log?.Invoke($"组件入口主路评分：prefab:{group.Key.Prefab}，出口={group.Key.Exit:X16}，主路={priority.MainEntry?.ToString("X16")??"未知"}；{priority.Reason}；"+
                 string.Join("；",priority.Scores.Select(s=>FormattableString.Invariant($"{s.Measurement.Entry:X16} 坡差={s.Measurement.SlopeDifferenceDegrees:F4}° 角差={s.Measurement.DirectionDifferenceDegrees:F4}° 车道={s.Measurement.LaneCount}，分数={s.SlopeScore:F3}+{s.DirectionScore:F3}+{s.LaneScore:F3}={s.Total:F3}"))));
         }
         foreach(var group in passages.GroupBy(p=>(Prefab:p.edge.Id.Split(':')[1],Entry:p.edge.StartNodeUid)))

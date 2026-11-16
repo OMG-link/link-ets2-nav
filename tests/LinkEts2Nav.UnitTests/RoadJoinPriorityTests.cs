@@ -157,4 +157,18 @@ public sealed class RoadJoinPriorityTests
         Assert.All(result,e=>Assert.NotNull(e.JoinPriority));
         Assert.All(result,e=>Assert.Equal(2,e.JoinPriority!.Measurements.Count));
     }
+    [Fact]
+    public void OutletCompetitionUsesTheSameThirtyPointScorerWithReversedTravelMeasurements()
+    {
+        var scene=Scene();var road=Road.Add(scene.Map,new(30,10,-30),new(2030,400,-430),default);
+        LaneConnection[] lanes=[new(scene.Main.StartNodeUid,0,scene.Main.EndNodeUid,0),
+            new(scene.Main.StartNodeUid,1,scene.Main.EndNodeUid,1),new(scene.Main.StartNodeUid,1,road.Node.Uid,0)];
+        var main=scene.Main with{LaneConnections=lanes};
+        var side=main with{Id="prefab:42:0:2",EndNodeUid=road.Node.Uid,
+            Points=[Vector3.Zero,new(30,10,-30)],NativeExitTangent=Vector3.Normalize(new(1,0,-.25f))};
+        var result=new RoadJoinPriorityBuilder(Index(scene.Map.MapItems.Values.OfType<Road>().ToArray())).Annotate([main,side]);
+        Assert.All(result,e=>Assert.Equal(main.EndNodeUid,e.SplitPriority!.MainEntry));
+        Assert.Equal(30,result[0].SplitPriority!.Scores.Sum(s=>s.Total),9);
+        Assert.Equal(2,result[0].SplitPriority!.Measurements.Count);
+    }
 }

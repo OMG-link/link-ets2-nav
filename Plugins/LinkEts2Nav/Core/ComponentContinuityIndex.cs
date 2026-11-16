@@ -23,10 +23,11 @@ public sealed class ComponentContinuityIndex
         var entries=forward.Build();
         var reverseGeometry=new Dictionary<NativeLaneGeometry,NativeLaneGeometry>(ReferenceEqualityComparer.Instance);
         var originals=graph.Edges.GroupBy(NativeRoadKey.Of).ToDictionary(g=>g.Key,g=>g.First());
-        var originalContinuity=graph.Edges.SelectMany(e=>e.LanePaths).Where(p=>p.NativeGeometry is not null)
-            .GroupBy(p=>p.PrefabUid).ToDictionary(g=>g.Key,g=>LaneContinuity.Analyze(g.First().NativeGeometry!));
+        var originalContinuity=forward.LocalContinuity;
+        var outletCounts=graph.Edges.Where(e=>e.LanePaths.Count>0).GroupBy(e=>(e.LanePaths[0].PrefabUid,e.StartNodeUid))
+            .ToDictionary(g=>g.Key,g=>g.Select(e=>e.EndNodeUid).Distinct().Count());
         var backward=new Builder(new NativeLaneGraph(graph.ThroughTraffic.Edges.Select(e=>Reverse(e,reverseGeometry)).ToArray()),missingConnection,true,cancellationToken);
-        var exits=backward.Build().ToDictionary(p=>p.Key,p=>Restore(p.Value,originals,originalContinuity));
+        var exits=backward.Build().ToDictionary(p=>p.Key,p=>Restore(p.Value,originals,originalContinuity,outletCounts));
         foreach(var fact in exits.Values.Where(f=>f.Kind==ComponentContinuityKind.Natural))
             foreach(var main in exits.Values.Where(f=>f.IsMain&&f.EntryNodeUid==fact.EntryNodeUid&&f.PrefabUid==fact.PrefabUid).ToArray())
                 exits[main.EdgeId]=main with{HasNaturalAlternative=true};
@@ -62,7 +63,7 @@ public sealed class ComponentContinuityIndex
     }
 
     private static ComponentPassageContinuity Restore(ComponentPassageContinuity fact,IReadOnlyDictionary<NativeRoadKey,DirectedRoad> originals,
-        IReadOnlyDictionary<ulong,LaneContinuityResult> continuity)
+        IReadOnlyDictionary<ulong,LaneContinuityResult> continuity,IReadOnlyDictionary<(ulong,ulong),int> outletCounts)
     {
         var edge=originals[new(fact.EdgeId,fact.ExitNodeUid,fact.EntryNodeUid)];
         ComponentBoundary? Point(ComponentBoundary? point)
@@ -103,7 +104,7 @@ public sealed class ComponentContinuityIndex
             EntryNodeUid=edge.StartNodeUid,ExitNodeUid=edge.EndNodeUid,
             EntryOrders=fact.ExitOrders,ExitOrders=fact.EntryOrders,
             EntryLaneCount=fact.ExitLaneCount,ExitLaneCount=fact.EntryLaneCount,
-            LegalExitCount=originals.Values.Where(e=>e.LanePaths.Any(p=>p.PrefabUid==fact.PrefabUid)&&e.StartNodeUid==edge.StartNodeUid).Select(e=>e.EndNodeUid).Distinct().Count(),
+            LegalExitCount=outletCounts.GetValueOrDefault((fact.PrefabUid,edge.StartNodeUid)),
             ActionPoint=action,LifecycleEnd=exit,IntervalStart=start,IntervalEnd=end,
             Turn=directions.Length>1?null:owner is null?null:ActualTurn(owner),Issue=issue,
             Lanes=fact.Lanes.Select((l,i)=>l with
@@ -133,6 +134,7 @@ public sealed class ComponentContinuityIndex
         private readonly bool reverse;
         private readonly CancellationToken token;
         private readonly Dictionary<ulong,LaneContinuityResult> continuity=[];
+        public IReadOnlyDictionary<ulong,LaneContinuityResult> LocalContinuity=>continuity;
         private readonly Dictionary<ulong,IReadOnlyList<DirectedRoad>> prefabs;
         private readonly Dictionary<ulong,IReadOnlyList<DirectedRoad>> starts;
         public List<MapQueryIssue> Issues {get;}=[];
@@ -336,12 +338,11 @@ public sealed class ComponentContinuityIndex
         }
         private static ComponentTurn Toward(PrefabLanePath side,PrefabLanePath main)
         {
-            var tangent=side.NativeGeometry?.Curves.FirstOrDefault(c=>c.Index==side.CurveIndices[0])?.StartTangent;
-            if(tangent is not {} direction)return new(NavigationSide.None,ComponentTurnKind.Unknown,"侧向并入缺少原生入口切线");
-            var delta=main.Points[0]-side.Points[0];
-            double cross=(double)direction.X*delta.Z-(double)direction.Z*delta.X;
-            return Math.Abs(cross)<=1e-10?new(NavigationSide.None,ComponentTurnKind.Unknown,"分离车道与最近主线的侧向不可判定")
-                :new(cross>0?NavigationSide.Right:NavigationSide.Left,ComponentTurnKind.Forward);
+            var curve=side.NativeGeometry?.Curves.FirstOrDefault(c=>c.Index==side.CurveIndices[0]);
+            var standard=main.NativeGeometry?.Curves.FirstOrDefault(c=>c.Index==main.CurveIndices[0]);
+            if(curve is null||standard is null)return new(NavigationSide.None,ComponentTurnKind.Unknown,"侧向并入缺少原生入口曲线");
+            var turn=ConvertTurn(LaneContinuity.DescribeTurn(curve,standard.StartTangent,standard.Start,true));
+            return turn.Kind==ComponentTurnKind.Unknown?turn:turn with{Kind=ComponentTurnKind.Forward};
         }
         private string Constraint(Local local,LaneContinuityBranch branch)
         {

@@ -281,4 +281,24 @@ public sealed class ComponentContinuityTests
         Assert.Equal(ComponentLaneFate.Dies,fact.Lanes.Single().Fate);
         Assert.Equal(ComponentContinuityKind.Hard,index.ForEntry(side.Id)!.Kind);
     }
+
+    [Fact]
+    public void DifferentLocalMergeOriginsInsideOnePrefabKeepDifferentConstraintIdentities()
+    {
+        var geometry=new NativeLaneGeometry(1,[Curve(0,Vector3.Zero,new(70,0,0),[4],[]),
+            Curve(1,new(0,0,4),new(90,0,4),[5],[]),Curve(2,new(0,0,-20),new(70,0,0),[4],[]),
+            Curve(3,new(0,0,-16),new(90,0,4),[5],[]),Curve(4,new(70,0,0),new(100,0,0),[],[0,2]),
+            Curve(5,new(90,0,4),new(100,0,4),[],[1,3])]);
+        var main=Passage(1,10,30,0,0,[0,4],geometry,2,2);
+        var main2=Passage(1,10,30,1,1,[1,5],geometry,2,2);
+        var side=Passage(1,20,30,0,0,[2,4],geometry,2,2);
+        var side2=Passage(1,20,30,1,1,[3,5],geometry,2,2);
+        main=main with{LanePaths=[main.LanePaths[0],main2.LanePaths[0]]};
+        side=side with{LanePaths=[side.LanePaths[0],side2.LanePaths[0]]};
+        var fact=ComponentContinuityIndex.Build(new([main,side])).ForEntry(side.Id)!;
+        Assert.Equal(ComponentContinuityKind.Hard,fact.Kind);Assert.Equal(2,fact.Lanes.Count);
+        Assert.Equal(70,fact.ActionPoint!.Position.X,3);Assert.Equal(100,fact.LifecycleEnd!.Position.X,3);
+        Assert.Equal(2,fact.Lanes.Select(l=>l.StructuralConstraintId).Distinct().Count());
+        Assert.Contains(":4",fact.StructuralConstraintId!);Assert.Contains(":5",fact.StructuralConstraintId!);
+    }
 }

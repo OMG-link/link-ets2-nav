@@ -176,7 +176,7 @@ public sealed class ComponentContinuityIndex
                     int exits=all.Where(e=>e.StartNodeUid==family.Key).Select(e=>e.EndNodeUid).Distinct().Count();
                     var rootLanes=all.Where(e=>e.StartNodeUid==family.Key).SelectMany(e=>e.LanePaths)
                         .Select(p=>p.EntryOrder).Distinct().Order().ToArray();
-                    var outcomes=rootLanes.Select(order=>Walk(first,order,mainPaths)).ToArray();
+                    var outcomes=rootLanes.Select(order=>Walk(first,order,mainPaths,family.Key==main)).ToArray();
                     foreach(var edge in family)
                     {
                         var fact=ComponentContinuity.Aggregate(edge,family.Key==main,outcomes,exits,reverse);
@@ -222,7 +222,7 @@ public sealed class ComponentContinuityIndex
             return new(edge,path,null,null,true,null);
         }
 
-        private ComponentLaneOutcome Walk(DirectedRoad initial,int order,Local[] mains)
+        private ComponentLaneOutcome Walk(DirectedRoad initial,int order,Local[] mains,bool mainEntrance)
         {
             var family=prefabs[initial.LanePaths[0].PrefabUid].Where(e=>e.StartNodeUid==initial.StartNodeUid)
                 .SelectMany(e=>e.LanePaths.Where(p=>p.EntryOrder==order).Select(p=>Inspect(e,p))).ToArray();
@@ -256,6 +256,11 @@ public sealed class ComponentContinuityIndex
                     ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason)) with{QueryAnchor=initial.Points[0]});
             if(chosen is null)return Missing("原生车道没有唯一身份延续",initial.StartNodeUid,
                 family.Select(p=>p.Issue).OfType<MapQueryIssue>().FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"原生车道没有唯一身份延续"));
+            // The scored main entrance needs only its local identity proof.
+            // Its downstream graph is a dependency of side-lane classification,
+            // not of the already confirmed main continuation in this component.
+            if(mainEntrance&&chosen.Death is null)
+                return Result(ComponentLaneFate.Continues,true,0);
             double distance=-initialLength;bool current=true;var visited=new HashSet<(string,int)>();
             while(true)
             {

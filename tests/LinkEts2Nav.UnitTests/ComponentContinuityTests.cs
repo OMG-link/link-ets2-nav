@@ -86,6 +86,18 @@ public sealed class ComponentContinuityTests
         Assert.IsType<MissingMapSectors>(side.Issue);
     }
     [Fact]
+    public void KnownLocalMainContinuationDoesNotDependOnTheSidesMissingFuture()
+    {
+        var edges=Join(false).Take(2).ToArray();
+        var missing=new MissingMapSectors([new(3,4)],"downstream fixture");
+        var index=ComponentContinuityIndex.Build(new(edges),_=>missing);
+        var main=index.ForEntry(edges[0].Id)!;
+        Assert.True(main.IsMain);Assert.Equal(ComponentContinuityKind.Main,main.Kind);
+        Assert.Null(main.Issue);Assert.Equal(ComponentLaneFate.Continues,Assert.Single(main.Lanes).Fate);
+        var side=index.ForEntry(edges[1].Id)!;
+        Assert.Equal(ComponentContinuityKind.Unknown,side.Kind);Assert.IsType<MissingMapSectors>(side.Issue);
+    }
+    [Fact]
     public void MissingNativeGeometryCannotBeReplacedByBlinkerEvidence()
     {
         var edges=Join(true).Select(e=>e with{LanePaths=e.LanePaths.Select(p=>p with{NativeGeometry=null,

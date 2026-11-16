@@ -15,6 +15,7 @@ public static class PrefabPathGeometry
         var control=placement.ControlNodes;var curves=descriptor.NavCurves;
         bool Valid(int i)=>i>=0&&i<curves.Count&&Finite(curves[i].StartPosition)&&Finite(curves[i].EndPosition)
             &&float.IsFinite(curves[i].Length)&&curves[i].Length>.001f;
+        var nativeGeometry=BuildNativeGeometry(prefab.Uid,descriptor,placement);
         var targets=control.SelectMany(n=>n.OutputLines).Where(Valid).ToHashSet();
         var searches=control.SelectMany(n=>n.InputLines).Where(Valid).Distinct()
             .ToDictionary(i=>i,i=>PrefabCurvePathfinder.FindEach(descriptor,i,targets));
@@ -62,7 +63,7 @@ public static class PrefabPathGeometry
                 candidates.Add(new(prefab.Uid,prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,input,output,
                     entryOrder[input],exitOrder[output],entryOrder.Count,exitOrder.Count,chain,lanePoints,
                     lanePoints.Zip(lanePoints.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)))
-                    {CurveStartPointIndices=Starts(chain),CurveBlinkers=chain.Select(i=>(LaneBlinker)(int)curves[i].Blinker).ToArray(),
+                    {NativeGeometry=nativeGeometry,CurveStartPointIndices=Starts(chain),CurveBlinkers=chain.Select(i=>(LaneBlinker)(int)curves[i].Blinker).ToArray(),
                         NativeBranchSignal=laneSignals.GetValueOrDefault((prefab.Nodes[from].Uid,input,prefab.Nodes[to].Uid,output))});
             }
             if(candidates.Count==0)continue;
@@ -79,6 +80,25 @@ public static class PrefabPathGeometry
         }
         return result;
     }
+    private static NativeLaneGeometry BuildNativeGeometry(ulong prefabUid,PrefabDescriptor descriptor,PrefabPlacement placement)
+    {
+        // Access-projected descriptors retain indices but give excluded curves zero length and no links.
+        var curves=descriptor.NavCurves;
+        bool Allowed(int i)=>i>=0&&i<curves.Count&&float.IsFinite(curves[i].Length)&&curves[i].Length>.001f;
+        var result=new List<NativeLaneCurve>();
+        Vector3 Derivative(Quaternion rotation,float length)
+            =>float.IsFinite(rotation.LengthSquared())&&rotation.LengthSquared()>1e-10f
+                ?placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,rotation))*length:Vector3.Zero;
+        foreach(int i in Enumerable.Range(0,curves.Count).Where(Allowed))
+        {
+            var curve=curves[i];
+            result.Add(new(i,placement.ToWorld(curve.StartPosition),placement.ToWorld(curve.EndPosition),
+                Derivative(curve.StartRotation,curve.Length),Derivative(curve.EndRotation,curve.Length),
+                curve.NextLines.Where(Allowed).Distinct().ToArray(),curve.PreviousLines.Where(Allowed).Distinct().ToArray()));
+        }
+        return new(prefabUid,result.ToArray());
+    }
+
     private static List<Vector3>? Sample(Prefab prefab,PrefabDescriptor descriptor,PrefabPlacement placement,
         int from,int to,IReadOnlyList<int> chain)
     {

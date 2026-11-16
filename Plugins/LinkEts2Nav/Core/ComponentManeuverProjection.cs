@@ -48,7 +48,7 @@ public static class ComponentManeuverProjection
                 if(outgoing&&entryFacts.Any(f=>Selected(f)&&f.Kind==ComponentContinuityKind.Main))return;
                 actions.Add(new($"component:{fact.EdgeId}:through",ManeuverKind.Straight,offsets[visit],edge.Id,edge.Id)
                 {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,
-                    EndDistanceMeters=offsets[visit+1],IsMainRoadContinuation=true});
+                    EndDistanceMeters=offsets[visit+1],IsMainRoadContinuation=true,StraightExitSides=PassageExitSides(fact)});
                 return;
             }
             var position=Locate(fact.ActionPoint,outgoing);var end=Locate(fact.LifecycleEnd,outgoing);
@@ -67,7 +67,7 @@ public static class ComponentManeuverProjection
                     {
                         actions.Add(new($"component:{fact.EdgeId}:through",ManeuverKind.Straight,offsets[visit],edge.Id,edge.Id)
                         {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,
-                            EndDistanceMeters=end,IsMainRoadContinuation=true});
+                            EndDistanceMeters=end,IsMainRoadContinuation=true,StraightExitSides=PassageExitSides(fact)});
                     }
                     else Fail(fact,"自然组件的有效车道集合尚未确定");
                     return;
@@ -119,6 +119,30 @@ public static class ComponentManeuverProjection
         }
         ComponentTurn? SelectedTurn(ComponentPassageContinuity fact)=>fact.Lanes.FirstOrDefault(l=>selectedPath is not null
             &&l.EntryOrder==selectedPath.EntryOrder&&l.ExitOrder==selectedPath.ExitOrder)?.Turn??fact.Turn;
+        NavigationSide PassageExitSides(ComponentPassageContinuity selected)
+        {
+            NavigationSide sides=NavigationSide.None;
+            var path=selectedPath??edge.LanePaths.FirstOrDefault();
+            var tangent=edge.NativeExitTangent??(path?.NativeGeometry is {} geometry&&path.CurveIndices.Count>0
+                ?geometry.Curves.FirstOrDefault(c=>c.Index==path.CurveIndices[^1])?.EndTangent:null);
+            foreach(var other in exitFacts.Where(f=>f.PrefabUid==selected.PrefabUid&&f.EntryNodeUid==edge.StartNodeUid
+                &&f.ExitNodeUid!=edge.EndNodeUid&&f.Kind is not (ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular)
+                &&f.Issue is null))
+            {
+                if(other.Turn is {Kind:not ComponentTurnKind.Unknown,Side:NavigationSide.Left or NavigationSide.Right} turn)
+                {sides|=turn.Side;continue;}
+                // Natural outlets have no turn instruction. Their actual prefab
+                // interface position still gives a side relative to this outlet's
+                // native tangent, including parallel interfaces with equal headings.
+                if(tangent is not {} direction||other.LifecycleEnd is not {} boundary||edge.Points.Count==0)continue;
+                var delta=boundary.Position-edge.Points[^1];
+                double cross=(double)direction.X*delta.Z-(double)direction.Z*delta.X;
+                if(!double.IsFinite(cross))continue;
+                if(cross>1e-6)sides|=NavigationSide.Right;
+                if(cross< -1e-6)sides|=NavigationSide.Left;
+            }
+            return sides;
+        }
         bool UsesOwnSideExit(ComponentPassageContinuity fact)
         {
             var relevant=fact.Lanes.Where(l=>selectedPath is null||l.EntryOrder==selectedPath.EntryOrder);

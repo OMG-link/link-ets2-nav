@@ -23,6 +23,20 @@ public sealed class ComponentNavigationIntegrationTests
         return [Path(0,10),Path(1,20)];
     }
     [Fact]
+    public void CompleteTwoWayOneToOnePassagesDoNotInventAMissingComponent()
+    {
+        DirectedRoad Edge(ulong a,ulong b,float start,float finish)
+        {
+            Vector3[] points=[new(0,0,start),new(0,0,finish)];
+            var geometry=new NativeLaneGeometry(42,[new(0,points[0],points[1],points[1]-points[0],points[1]-points[0],[],[])]);
+            var lane=new PrefabLanePath(42,a,b,0,0,0,0,1,1,[0],points,100){NativeGeometry=geometry};
+            return new($"prefab:2A:{a}:{b}",a,b,points){LanePaths=[lane]};
+        }
+        var forward=Edge(1,2,0,100);var reverse=Edge(2,1,100,0);var detector=new NavigationManeuverDetector();
+        Assert.Empty(detector.FindSequence([forward],0,[forward,reverse],out _,out bool unknown,out _));
+        Assert.False(unknown);Assert.Empty(detector.Components.Issues);
+    }
+    [Fact]
     public void SnapshotNativeGraphAndComponentFactsAreSharedWithoutLegacyAuxiliaryIndex()
     {
         var graph=new NativeLaneGraph(HardJoin());

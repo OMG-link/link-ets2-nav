@@ -28,7 +28,8 @@ public sealed class ComponentManeuverPlanner
             var entry=index!.ForEntry(edge.Id);var exit=index.ForExit(edge.Id);
             if(entry is null&&exit is null)
             {
-                if(NativeLaneGraph.Prefab(edge) is {} prefab&&(source.Where(e=>NativeLaneGraph.Prefab(e)==prefab&&!e.ReturnsToEntry)
+                if((edge.LanePaths.Count==0||edge.LanePaths.Any(p=>p.NativeGeometry is null||LaneContinuity.Analyze(p.NativeGeometry).MapIssue is not null))
+                    &&NativeLaneGraph.Prefab(edge) is {} prefab&&(source.Where(e=>NativeLaneGraph.Prefab(e)==prefab&&!e.ReturnsToEntry)
                     .Any(e=>e.StartNodeUid!=edge.StartNodeUid||e.EndNodeUid!=edge.EndNodeUid)
                     ||edge.LaneConnections?.Any(c=>c.EntryNode!=edge.StartNodeUid||c.ExitNode!=edge.EndNodeUid)==true))
                 {

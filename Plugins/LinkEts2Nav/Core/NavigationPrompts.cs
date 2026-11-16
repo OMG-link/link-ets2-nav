@@ -9,6 +9,7 @@ public static class NavigationPrompts
     {
         ManeuverKind.TurnLeft => "左转", ManeuverKind.TurnRight => "右转",
         ManeuverKind.KeepLeft => "向左前方行驶", ManeuverKind.KeepRight => "向右前方行驶",
+        ManeuverKind.RearLeft=>"向左后方行驶",ManeuverKind.RearRight=>"向右后方行驶",
         ManeuverKind.MergeLeft => "向左前方进入主路", ManeuverKind.MergeRight => "向右前方进入主路",
         ManeuverKind.EnterRoundabout => "进入环岛", ManeuverKind.ExitRoundabout => "驶出环岛", ManeuverKind.PassRoundaboutExit => "经过出口",
         ManeuverKind.Straight => "直行", ManeuverKind.UTurn => "掉头",

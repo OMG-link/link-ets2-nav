@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace LinkEts2Nav.Core;
 
-public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit, ChooseLanes, Destination, BoardFerry }
+public enum ManeuverKind { TurnLeft, TurnRight, KeepLeft, KeepRight, Straight, UTurn, MergeLeft, MergeRight, EnterRoundabout, ExitRoundabout, PassRoundaboutExit, ChooseLanes, Destination, BoardFerry, RearLeft, RearRight }
 
 public sealed record NavigationUnresolvedSpan(double StartMeters,double EndMeters);
 
@@ -19,8 +19,8 @@ public static class NavigationManeuverDirections
 
     public static NavigationSide Side(ManeuverKind kind) => kind switch
     {
-        ManeuverKind.TurnLeft or ManeuverKind.KeepLeft or ManeuverKind.MergeLeft => NavigationSide.Left,
-        ManeuverKind.TurnRight or ManeuverKind.KeepRight or ManeuverKind.MergeRight => NavigationSide.Right,
+        ManeuverKind.TurnLeft or ManeuverKind.KeepLeft or ManeuverKind.MergeLeft or ManeuverKind.RearLeft => NavigationSide.Left,
+        ManeuverKind.TurnRight or ManeuverKind.KeepRight or ManeuverKind.MergeRight or ManeuverKind.RearRight => NavigationSide.Right,
         _ => NavigationSide.None
     };
 }

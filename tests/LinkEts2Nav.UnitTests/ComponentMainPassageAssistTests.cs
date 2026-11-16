@@ -10,7 +10,8 @@ public sealed class ComponentMainPassageAssistTests
     {
         NativeLaneCurve C(int id,Vector3 a,Vector3 b,int[] next,int[] previous)=>new(id,a,b,b-a,b-a,next,previous);
         var native=new NativeLaneGeometry(42,[C(0,Vector3.Zero,new(0,0,50),[1,2],[]),
-            C(1,new(0,0,50),new(0,0,100),[],[0]),C(2,new(0,0,50),new(-50,0,100),[],[0])]);
+            C(1,new(0,0,50),new(0,0,100),[],[0]),C(2,new(0,0,50),new(-50,0,100),[],[0])])
+            {InputCurveIndices=[0],OutputCurveIndices=[1,2]};
         DirectedRoad Edge(int last,ulong output)
         {
             var points=new List<Vector3>();var starts=new List<int>();
@@ -74,16 +75,34 @@ public sealed class ComponentMainPassageAssistTests
         Assert.Equal(NavigationSide.Right,straight.StraightExitSides);
     }
     [Fact]
-    public void AllUsableLanesAndParallelInterfacesKeepTheirPassageMetadata()
+    public void AnOutletWithoutATurnDoesNotInventPassageSideFromItsPosition()
     {
         var scene=Fixture();
-        // Projection contract: a natural passage using every lane is transparent,
-        // while a resolved parallel port with no turn wording still has a side.
-        var selected=scene.MainFact with{Kind=ComponentContinuityKind.Natural,IsMain=false};
-        var other=scene.SideFact with{Kind=ComponentContinuityKind.Natural,Turn=null};
-        var straight=Assert.Single(ComponentManeuverProjection.Build([scene.Main],0,[],[selected,other],scene.Main.LanePaths[0]).Actions);
-        Assert.Equal(ManeuverKind.Straight,straight.Kind);Assert.Equal(NavigationSide.Right,straight.StraightExitSides);
-        Assert.Equal(scene.Straight.DistanceMeters,straight.DistanceMeters);
-        Assert.Equal(scene.Straight.EndDistanceMeters,straight.EndDistanceMeters);
+        // Projection-only contract: the producer's role is not reconstructed
+        // here, and a missing turn is not a statement about game reachability.
+        var other=scene.SideFact with{Turn=null};
+        var result=ComponentManeuverProjection.Build([scene.Main],0,[],[scene.MainFact,other],scene.Main.LanePaths[0]);
+        var straight=Assert.Single(result.Actions);
+        Assert.Equal(NavigationSide.None,straight.StraightExitSides);
+        Assert.Empty(result.Issues);
+        Assert.DoesNotContain(Plan(straight).Triggers,t=>t.Kind==SpeechTriggerKind.ActionAssist);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NaturalOutletsUseTheirLaneSetsWithoutATurnOrPassageFallback(bool selectedIsMain)
+    {
+        var scene=Fixture();
+        // Two disjoint input lane groups lead to the two outlets. Unlike the
+        // old all-lanes fixture, neither outlet represents the entire input.
+        // These are projection inputs, not evidence of an actual game prefab.
+        var selected=scene.MainFact with{Kind=selectedIsMain?ComponentContinuityKind.Main:ComponentContinuityKind.Natural,
+            IsMain=selectedIsMain,HasNaturalAlternative=selectedIsMain,EntryLaneCount=2,EntryOrders=[0],Turn=null};
+        var other=scene.SideFact with{Kind=ComponentContinuityKind.Natural,IsMain=false,EntryLaneCount=2,EntryOrders=[1],Turn=null};
+        var result=ComponentManeuverProjection.Build([scene.Main],0,[],[selected,other]);
+        var choice=Assert.Single(result.Actions);
+        Assert.Equal(ManeuverKind.ChooseLanes,choice.Kind);
+        Assert.Equal("分岔口靠左，走左侧车道",choice.Instruction);
+        Assert.Empty(result.Issues);Assert.Empty(result.Unresolved);
     }
 }

@@ -127,24 +127,12 @@ public static class ComponentManeuverProjection
         NavigationSide PassageExitSides(ComponentPassageContinuity selected)
         {
             NavigationSide sides=NavigationSide.None;
-            var path=selectedPath??edge.LanePaths.FirstOrDefault();
-            var tangent=edge.NativeExitTangent??(path?.NativeGeometry is {} geometry&&path.CurveIndices.Count>0
-                ?geometry.Curves.FirstOrDefault(c=>c.Index==path.CurveIndices[^1])?.EndTangent:null);
             foreach(var other in exitFacts.Where(f=>f.PrefabUid==selected.PrefabUid&&f.EntryNodeUid==edge.StartNodeUid
                 &&f.ExitNodeUid!=edge.EndNodeUid&&f.Kind is not (ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular)
                 &&f.Issue is null))
             {
                 if(other.Turn is {Kind:not ComponentTurnKind.Unknown,Side:NavigationSide.Left or NavigationSide.Right} turn)
-                {sides|=turn.Side;continue;}
-                // Natural outlets have no turn instruction. Their actual prefab
-                // interface position still gives a side relative to this outlet's
-                // native tangent, including parallel interfaces with equal headings.
-                if(tangent is not {} direction||other.LifecycleEnd is not {} boundary||edge.Points.Count==0)continue;
-                var delta=boundary.Position-edge.Points[^1];
-                double cross=(double)direction.X*delta.Z-(double)direction.Z*delta.X;
-                if(!double.IsFinite(cross))continue;
-                if(cross>1e-6)sides|=NavigationSide.Right;
-                if(cross< -1e-6)sides|=NavigationSide.Left;
+                    sides|=turn.Side;
             }
             return sides;
         }

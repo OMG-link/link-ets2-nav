@@ -4,6 +4,7 @@ namespace LinkEts2Nav.Core;
 internal sealed record NativeMergeContinuity(bool? FirstEnds,bool? MoveLeft,bool AllDead,
     IReadOnlyList<int> SurvivingOrders,string Reason)
 {
+    internal bool AllIncomingLanesDie {get;init;}
     internal static NativeMergeContinuity? Read(PrefabLanePath first,PrefabLanePath second,int common,
         LaneContinuityResult? analysis,IReadOnlyList<PrefabLanePath> all)
     {
@@ -27,12 +28,33 @@ internal sealed record NativeMergeContinuity(bool? FirstEnds,bool? MoveLeft,bool
             LaneTurnKind.ForwardRight or LaneTurnKind.Right or LaneTurnKind.RearRight=>false,
             _=>null
         };
-        var kept=all.Where(p=>p.PrefabUid==first.PrefabUid&&p.EntryNodeUid==first.EntryNodeUid)
-            .Where(p=>p.CurveIndices.Contains(shared)).Where(p=>
+        var known=analysis.UnchangedCurveIndices.Concat(analysis.Points.Select(p=>p.SharedCurveIndex))
+            .Concat(analysis.Points.SelectMany(p=>p.Branches).Where(b=>b.Role!=LaneContinuityRole.Unknown).Select(b=>b.CurveIndex)).ToHashSet();
+        (bool Survives,bool Dies) Continuation(PrefabLanePath path)
+        {
+            if(path.CurveIndices.Count==0||path.CurveIndices.Any(i=>!known.Contains(i)))return (false,false);
+            bool survives=true,dies=false;
+            for(int i=0;i<path.CurveIndices.Count;i++)
+            foreach(var site in analysis.Points.Where(p=>p.SharedCurveIndex==path.CurveIndices[i]))
             {
-                int index=p.CurveIndices.ToList().IndexOf(shared);
-                return index>0&&point.Branches.Any(branch=>branch.CurveIndex==p.CurveIndices[index-1]&&branch.Role==LaneContinuityRole.Survivor);
-            }).Select(p=>p.EntryOrder).Distinct().Order().ToArray();
-        return new(firstEnds,left,allDead,kept,allDead?"原生车道工具判定无唯一存活主线，全部支路均需并线":"原生车道工具确认死亡支及存活车道");
+                int at=site.Kind==LaneContinuityPointKind.Merge?i-1:i+1;
+                if(at<0||at>=path.CurveIndices.Count)continue;
+                var role=site.Branches.SingleOrDefault(b=>b.CurveIndex==path.CurveIndices[at])?.Role;
+                if(site.MapIssue is not null||role is null or LaneContinuityRole.Unknown){survives=false;continue;}
+                if(role!=LaneContinuityRole.Survivor)survives=false;
+                if(site.Kind==LaneContinuityPointKind.Merge&&role==LaneContinuityRole.Dead)dies=true;
+            }
+            return (survives,dies);
+        }
+        // All lanes continuing along this carriageway matter, including lanes
+        // untouched by this particular merge. Another outlet is a different choice.
+        var groups=all.Where(p=>p.PrefabUid==first.PrefabUid&&p.EntryNodeUid==first.EntryNodeUid&&p.ExitNodeUid==first.ExitNodeUid
+                &&p.EntryLaneCount==first.EntryLaneCount&&p.EntryOrder>=0&&p.EntryOrder<first.EntryLaneCount)
+            .Select(p=>(p.EntryOrder,Evidence:Continuation(p))).GroupBy(p=>p.EntryOrder).ToArray();
+        var kept=groups.Where(g=>g.Any(p=>p.Evidence.Survives)).Select(g=>g.Key).Order().ToArray();
+        bool everyLaneDies=first.EntryLaneCount>0&&groups.Select(g=>g.Key).ToHashSet().SetEquals(Enumerable.Range(0,first.EntryLaneCount))
+            &&groups.All(g=>g.All(p=>p.Evidence.Dies));
+        return new(firstEnds,left,allDead,kept,allDead?"原生车道工具判定局部合流无唯一存活主线，参与支路均需并线":"原生车道工具确认死亡支及存活车道")
+            {AllIncomingLanesDie=everyLaneDies};
     }
 }

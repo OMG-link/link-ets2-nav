@@ -26,7 +26,7 @@ public sealed class LaneMergeDetector
     private readonly HashSet<string> approaching=new(StringComparer.Ordinal);
     private sealed record Model(PrefabLanePath Ending,PrefabLanePath Main,Vector3 Position,bool? Left,int Count,
         double? Parallel,LaneMergeKind Kind,string Reason,LaneMergeOriginDecision Origin,
-        IReadOnlyList<int> SurvivingOrders,bool AllDead);
+        IReadOnlyList<int> SurvivingOrders,bool AllIncomingDie);
     public IReadOnlyList<LaneMergeObservation> Find(IReadOnlyList<DirectedRoad> route,IReadOnlyList<DirectedRoad> graph,
         LaneNavigationPlan plan,double vehicleAlong,Func<ulong,LinkEts2Nav.Map.MapQueryIssue>? missingConnection=null)
     {
@@ -54,7 +54,7 @@ public sealed class LaneMergeDetector
                     m.Left is null?null:m.Main.EntryNodeUid,m.Left is null?null:m.Main.EntryLane,
                     m.Position,m.Left,m.Count,m.Parallel,m.Kind,distance,m.Reason)
                     {EndDistanceMeters=distance,ApproachLaneCount=ApproachCount(m),Origin=m.Origin,JunctionId="prefab:"+NativeLaneGraph.Prefab(edge),
-                        SurvivingEntryOrders=m.SurvivingOrders,AllIncomingLanesDie=m.AllDead});
+                        SurvivingEntryOrders=m.SurvivingOrders,AllIncomingLanesDie=m.AllIncomingDie});
             }
             offset+=new LanePolyline(edge.Points).Length;
         }
@@ -72,7 +72,8 @@ public sealed class LaneMergeDetector
 
     private static IReadOnlyList<Model> Build(IReadOnlyList<DirectedRoad> graph,Func<ulong,LinkEts2Nav.Map.MapQueryIssue>? missingConnection)
     {
-        var lanes=graph.Where(e=>!e.ReturnsToEntry).SelectMany(e=>e.LanePaths).DistinctBy(p=>(p.PrefabUid,p.EntryNodeUid,p.EntryLane,p.ExitNodeUid,p.ExitLane)).ToArray();
+        var allPaths=graph.Where(e=>!e.ReturnsToEntry).SelectMany(e=>e.LanePaths).ToArray();
+        var lanes=allPaths.DistinctBy(p=>(p.PrefabUid,p.EntryNodeUid,p.EntryLane,p.ExitNodeUid,p.ExitLane)).ToArray();
         var result=new List<Model>();var origins=new LaneMergeOriginClassifier(new NativeLaneGraph(graph),missingConnection);
         var continuity=lanes.Where(p=>p.NativeGeometry is not null).GroupBy(p=>p.PrefabUid)
             .ToDictionary(g=>g.Key,g=>LaneContinuity.Analyze(g.First().NativeGeometry!));
@@ -90,7 +91,7 @@ public sealed class LaneMergeDetector
                 if(y.CurveStartPointIndices.Count==y.CurveIndices.Count)yi=y.CurveStartPointIndices[^common];
                 var xp=new LanePolyline(x.Points);var yp=new LanePolyline(y.Points);
                 double xa=xp.Along[xi],ya=yp.Along[yi];
-                var direction=NativeMergeContinuity.Read(x,y,common,continuity.GetValueOrDefault(x.PrefabUid),lanes);
+                var direction=NativeMergeContinuity.Read(x,y,common,continuity.GetValueOrDefault(x.PrefabUid),allPaths);
                 if(direction is null)continue;
                 bool xEnds=direction.FirstEnds??true;
                 var ending=xEnds?x:y;var main=xEnds?y:x;int ei=xEnds?xi:yi,mi=xEnds?yi:xi;
@@ -104,7 +105,7 @@ public sealed class LaneMergeDetector
                 int count=direction.SurvivingOrders.Count;
                 result.Add(new(ending,main,ending.Points[ei],left,count,parallel,kind,
                     reason+"；类别按累计500米原生来源窗口判定，不以旧并行测量覆盖",origin,
-                    direction.SurvivingOrders,direction.AllDead));
+                    direction.SurvivingOrders,direction.AllIncomingLanesDie));
             }
         }
         return result.DistinctBy(m=>(m.Ending.PrefabUid,m.Ending.EntryNodeUid,m.Ending.EntryLane,m.Ending.ExitNodeUid,m.Ending.ExitLane)).ToArray();

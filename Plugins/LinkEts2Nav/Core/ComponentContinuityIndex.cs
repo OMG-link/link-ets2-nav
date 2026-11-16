@@ -44,7 +44,8 @@ public sealed class ComponentContinuityIndex
             if(!geometry.TryGetValue(original,out var value))geometry[original]=value=new(original.PrefabUid,
                 // This reverse merge represents an actual split, which deliberately ignores lamps.
                 original.Curves.Select(c=>new NativeLaneCurve(c.Index,c.End,c.Start,-c.EndTangent,-c.StartTangent,c.Previous,c.Next)
-                    {MapIssue=c.MapIssue,Blinker=LaneBlinker.NoBlinker}).ToArray());
+                    {MapIssue=c.MapIssue,Blinker=LaneBlinker.NoBlinker}).ToArray())
+                {InputCurveIndices=original.OutputCurveIndices,OutputCurveIndices=original.InputCurveIndices};
             return value;
         }
         return edge with
@@ -284,9 +285,9 @@ public sealed class ComponentContinuityIndex
                 if(nearest.Length>0&&chosen.Lane.ExitNodeUid!=nearest[0].Main.Lane.ExitNodeUid)
                 {
                     var terminal=At(chosen.Edge,chosen.Lane,0);
-                    var direction=Toward(chosen.Lane,nearest[0].Main.Lane);
+                    var (direction,directionIssue)=Toward(chosen.Lane,nearest[0].Main.Lane);
                     return Result(ComponentLaneFate.Separates,current,distance,terminal,terminal,direction,
-                        direction.Kind==ComponentTurnKind.Unknown?new MapQueryFailure(MapQueryFailureKind.InvalidData,direction.Failure!):null);
+                        directionIssue);
                 }
                 if(chosen.Death is {} dead)
                 {
@@ -350,13 +351,16 @@ public sealed class ComponentContinuityIndex
             var segment=segments.FirstOrDefault(s=>distance<=s.Start+s.Length+.0001)??segments[^1];
             return At(segment.Edge,segment.Lane,Math.Clamp(distance-segment.Start,0,segment.Length));
         }
-        private static ComponentTurn Toward(PrefabLanePath side,PrefabLanePath main)
+        private static (ComponentTurn Turn,MapQueryIssue? Issue) Toward(PrefabLanePath side,PrefabLanePath main)
         {
             var curve=side.NativeGeometry?.Curves.FirstOrDefault(c=>c.Index==side.CurveIndices[0]);
             var standard=main.NativeGeometry?.Curves.FirstOrDefault(c=>c.Index==main.CurveIndices[0]);
-            if(curve is null||standard is null)return new(NavigationSide.None,ComponentTurnKind.Unknown,"侧向并入缺少原生入口曲线");
-            var turn=ConvertTurn(LaneContinuity.DescribeTurn(curve,standard.StartTangent,standard.Start,true));
-            return turn.Kind==ComponentTurnKind.Unknown?turn:turn with{Kind=ComponentTurnKind.Forward};
+            if(curve is null||standard is null)return (new(NavigationSide.None,ComponentTurnKind.Unknown,"侧向并入缺少原生入口曲线"),
+                new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,"侧向并入缺少原生入口曲线"));
+            var description=LaneContinuity.DescribeTurn(side.NativeGeometry!,curve.Index,standard.StartTangent,standard.Start,true);
+            if(description.MapIssue is {} issue)return (new(NavigationSide.None,ComponentTurnKind.Unknown,issue.Reason),issue);
+            var turn=ConvertTurn(description.Turn);
+            return (turn.Kind==ComponentTurnKind.Unknown?turn:turn with{Kind=ComponentTurnKind.Forward},null);
         }
         private string Constraint(Local local,LaneContinuityBranch branch)
         {

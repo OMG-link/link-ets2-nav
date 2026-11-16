@@ -7,9 +7,25 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class ComponentContinuityTests
 {
     [Fact]
+    public void ReverseDerivedSplitRestoresTheActualLastCurveEndRay()
+    {
+        var geometry=NativeLaneFixture.WithInterfaces(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
+            Curve(1,new(20,0,0),new(100,0,0),[],[0]),Curve(2,new(20,0,0),new(60,0,3),[3],[0]),
+            Curve(3,new(60,0,3),new(100,0,-3),[],[2]) with{EndTangent=new(40,0,0)}]);
+        var main=Passage(1,10,20,0,0,[0,1],geometry) with{SplitPriority=new(20,[],[],8,"main outlet")};
+        var side=Passage(1,10,30,0,0,[0,2,3],geometry) with{SplitPriority=main.SplitPriority};
+        var split=Assert.Single(LaneContinuity.Analyze(geometry).Points,p=>p.Kind==LaneContinuityPointKind.Split);
+        var branch=Assert.Single(split.Branches,b=>b.CurveIndex==2);
+        Assert.Equal(3,branch.TurnSourceCurveIndex);Assert.Equal(LaneTurnKind.ForwardLeft,branch.Turn);
+        var result=ComponentContinuityIndex.Build(new([main,side])).ForExit(side.Id)!;
+        Assert.Equal(ComponentContinuityKind.Hard,result.Kind);Assert.Equal(NavigationSide.Left,result.Turn!.Side);
+        Assert.Equal(NavigationSide.Left,Assert.Single(result.Lanes).Turn!.Side);
+        Assert.Equal(ComponentBoundaryInterface.End,result.LifecycleEnd!.Interface);
+    }
+    [Fact]
     public void ReverseDerivedSplitDoesNotReadAnyBlinkers()
     {
-        var geometry=new NativeLaneGeometry(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
+        var geometry=NativeLaneFixture.WithInterfaces(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
             Curve(1,new(20,0,0),new(80,0,0),[3],[0]),
             Curve(2,new(20,0,0),new(100,0,30),[],[0]),Curve(3,new(80,0,0),new(100,0,0),[],[1])]);
         ComponentPassageContinuity Fact(NativeLaneGeometry g)
@@ -44,11 +60,11 @@ public sealed class ComponentContinuityTests
     {
         if(hard)
         {
-            var geometry=new NativeLaneGeometry(1,[Curve(0,new(0,0,0),new(90,0,0),[2],[]),
+            var geometry=NativeLaneFixture.WithInterfaces(1,[Curve(0,new(0,0,0),new(90,0,0),[2],[]),
                 Curve(1,new(0,0,-30),new(90,0,0),[2],[]),Curve(2,new(90,0,0),new(100,0,0),[],[0,1])]);
             return [Passage(1,10,30,0,0,[0,2],geometry),Passage(1,20,30,0,0,[1,2],geometry)];
         }
-        var independent=new NativeLaneGeometry(1,[Curve(0,new(0,0,0),new(100,0,0),[],[]),
+        var independent=NativeLaneFixture.WithInterfaces(1,[Curve(0,new(0,0,0),new(100,0,0),[],[]),
             Curve(1,new(0,0,-4),new(100,0,-4),[],[])]);
         return [Passage(1,10,30,0,0,[0],independent,1,2),Passage(1,20,30,0,1,[1],independent,1,2),
             new("road",30,40,[new(100,0,0),new((float)(100+nextRoad),0,0)])];
@@ -56,7 +72,7 @@ public sealed class ComponentContinuityTests
     private static DirectedRoad[] Soft(double roadLength=50)
     {
         var first=Join(false,roadLength);float x=(float)(100+roadLength);
-        var geometry=new NativeLaneGeometry(2,[Curve(0,new(x,0,0),new(x+100,0,0),[2],[]),
+        var geometry=NativeLaneFixture.WithInterfaces(2,[Curve(0,new(x,0,0),new(x+100,0,0),[2],[]),
             Curve(1,new(x,0,-4),new(x+100,0,0),[2],[]),Curve(2,new(x+100,0,0),new(x+110,0,0),[],[0,1])]);
         return first.Concat([Passage(2,40,50,0,0,[0,2],geometry,2,1),Passage(2,40,50,1,0,[1,2],geometry,2,1)]).ToArray();
     }
@@ -152,7 +168,7 @@ public sealed class ComponentContinuityTests
     public void SeparationEndsAtTheSeparatingPrefabEntranceRatherThanItsExit()
     {
         var first=Join(false,50);
-        var geometry=new NativeLaneGeometry(2,[Curve(0,new(150,0,0),new(250,0,0),[],[]),
+        var geometry=NativeLaneFixture.WithInterfaces(2,[Curve(0,new(150,0,0),new(250,0,0),[],[]),
             Curve(1,new(150,0,-4),new(250,0,-20),[],[])]);
         var graph=first.Concat([Passage(2,40,50,0,0,[0],geometry,2,1),Passage(2,40,60,1,0,[1],geometry,2,1)]).ToArray();
         var side=ComponentContinuityIndex.Build(new(graph)).ForEntry(first[1].Id)!;
@@ -166,7 +182,7 @@ public sealed class ComponentContinuityTests
     [Fact]
     public void AllLanesSeparatingInTheInitialComponentIsSingular()
     {
-        var geometry=new NativeLaneGeometry(1,[Curve(0,new(0,0,0),new(50,0,0),[1,2],[]),
+        var geometry=NativeLaneFixture.WithInterfaces(1,[Curve(0,new(0,0,0),new(50,0,0),[1,2],[]),
             Curve(1,new(50,0,0),new(100,0,0),[],[0]),Curve(2,new(50,0,0),new(100,0,30),[],[0]),
             Curve(3,new(0,0,-4),new(100,0,34),[],[])]);
         var main=Passage(1,10,31,0,0,[0,1],geometry);
@@ -180,7 +196,7 @@ public sealed class ComponentContinuityTests
     [Fact]
     public void NaturalSideOutletAlsoMakesTheMainOutletRequireLaneSelectionFacts()
     {
-        var geometry=new NativeLaneGeometry(1,[Curve(0,new(0,0,0),new(100,0,0),[],[]),
+        var geometry=NativeLaneFixture.WithInterfaces(1,[Curve(0,new(0,0,0),new(100,0,0),[],[]),
             Curve(1,new(0,0,4),new(100,0,20),[],[])]);
         var main=Passage(1,10,20,0,0,[0],geometry,2,1) with{SplitPriority=new(20,[],[],9,"main outlet")};
         var side=Passage(1,10,30,1,0,[1],geometry,2,1) with{SplitPriority=main.SplitPriority};
@@ -211,13 +227,13 @@ public sealed class ComponentContinuityTests
     [Fact]
     public void SoftOutletMirrorsBirthButAdvancesItsActionInActualTravelDirection()
     {
-        var birth=new NativeLaneGeometry(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
+        var birth=NativeLaneFixture.WithInterfaces(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
             Curve(1,new(20,0,0),new(100,0,0),[],[0]),Curve(2,new(20,0,0),new(100,0,4),[],[0])]);
         var keep=Passage(1,10,30,0,0,[0,1],birth,1,2);
         var added=Passage(1,10,30,0,1,[0,2],birth,1,2);
         var before=keep with{LanePaths=[keep.LanePaths[0],added.LanePaths[0]]};
         var road=new DirectedRoad("parallel",30,40,[new(100,0,0),new(350,0,0)]);
-        var end=new NativeLaneGeometry(2,[Curve(0,new(350,0,0),new(450,0,0),[],[]),
+        var end=NativeLaneFixture.WithInterfaces(2,[Curve(0,new(350,0,0),new(450,0,0),[],[]),
             Curve(1,new(350,0,4),new(450,0,30),[],[])]);
         var main=Passage(2,40,50,0,0,[0],end,2,1) with{SplitPriority=new(50,[],[],8,"main outlet")};
         var side=Passage(2,40,60,1,0,[1],end,2,1) with{SplitPriority=main.SplitPriority};
@@ -234,7 +250,7 @@ public sealed class ComponentContinuityTests
     public void SeparationAtExactlyFiveHundredMetresIsStillInsideTheWindow()
     {
         var first=Join(false,500);
-        var geometry=new NativeLaneGeometry(2,[Curve(0,new(600,0,0),new(700,0,0),[],[]),
+        var geometry=NativeLaneFixture.WithInterfaces(2,[Curve(0,new(600,0,0),new(700,0,0),[],[]),
             Curve(1,new(600,0,-4),new(700,0,-20),[],[])]);
         var graph=first.Concat([Passage(2,40,50,0,0,[0],geometry,2,1),Passage(2,40,60,1,0,[1],geometry,2,1)]).ToArray();
         var side=ComponentContinuityIndex.Build(new(graph)).ForEntry(first[1].Id)!;
@@ -263,7 +279,7 @@ public sealed class ComponentContinuityTests
     [InlineData(true)]
     public void NearStraightSBranchUsesItsActualSplitSideRatherThanMirroringTheReverseMerge(bool soft)
     {
-        var geometry=new NativeLaneGeometry(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
+        var geometry=NativeLaneFixture.WithInterfaces(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
             Curve(1,new(20,0,0),new(100,0,0),[],[0]),
             new(2,new(20,0,0),new(100,0,3),new(80,0,0),new(80,0,0),[],[0])]);
         var main=Passage(1,10,20,0,0,[0,1],geometry);
@@ -280,7 +296,7 @@ public sealed class ComponentContinuityTests
             side=Passage(1,10,30,0,1,[0,2],geometry,1,2);
             var birth=main with{LanePaths=[main.LanePaths[0],side.LanePaths[0]]};
             var road=new DirectedRoad("parallel",30,40,[new(100,0,0),new(350,0,0)]);
-            var end=new NativeLaneGeometry(2,[Curve(0,new(350,0,0),new(450,0,0),[],[]),Curve(1,new(350,0,3),new(450,0,30),[],[])]);
+            var end=NativeLaneFixture.WithInterfaces(2,[Curve(0,new(350,0,0),new(450,0,0),[],[]),Curve(1,new(350,0,3),new(450,0,30),[],[])]);
             main=Passage(2,40,50,0,0,[0],end,2,1) with{SplitPriority=new(50,[],[],8,"main outlet")};
             side=Passage(2,40,60,1,0,[1],end,2,1) with{SplitPriority=main.SplitPriority};
             edges=[birth,road,main,side];
@@ -304,7 +320,7 @@ public sealed class ComponentContinuityTests
     [Fact]
     public void ThirtyPointMainEntranceIdentityDoesNotResurrectLocallyDeadLanes()
     {
-        var geometry=new NativeLaneGeometry(1,[
+        var geometry=NativeLaneFixture.WithInterfaces(1,[
             new(0,new(0,0,-3),new(90,0,0),new(90,0,9),new(90,0,9),[2],[]),
             new(1,new(0,0,3),new(90,0,0),new(90,0,-9),new(90,0,-9),[2],[]),
             Curve(2,new(90,0,0),new(100,0,0),[],[0,1])]);
@@ -320,7 +336,7 @@ public sealed class ComponentContinuityTests
     [Fact]
     public void DifferentLocalMergeOriginsInsideOnePrefabKeepDifferentConstraintIdentities()
     {
-        var geometry=new NativeLaneGeometry(1,[Curve(0,Vector3.Zero,new(70,0,0),[4],[]),
+        var geometry=NativeLaneFixture.WithInterfaces(1,[Curve(0,Vector3.Zero,new(70,0,0),[4],[]),
             Curve(1,new(0,0,4),new(90,0,4),[5],[]),Curve(2,new(0,0,-20),new(70,0,0),[4],[]),
             Curve(3,new(0,0,-16),new(90,0,4),[5],[]),Curve(4,new(70,0,0),new(100,0,0),[],[0,2]),
             Curve(5,new(90,0,4),new(100,0,4),[],[1,3])]);

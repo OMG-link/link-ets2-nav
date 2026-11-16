@@ -5,7 +5,7 @@ public sealed class NativeMergeSurvivingOrderTests
 {
     private static NativeLaneCurve Curve(int id,Vector3 start,Vector3 end,int[] next,int[] previous)
         =>new(id,start,end,new(end.X-start.X,0,0),new(end.X-start.X,0,0),next,previous);
-    private static NativeLaneGeometry Geometry(bool tie,params NativeLaneCurve[] extra)=>new(42,
+    private static NativeLaneGeometry Geometry(bool tie,params NativeLaneCurve[] extra)=>NativeLaneFixture.WithInterfaces(42,
         [Curve(0,new(-100,0,tie?-3:0),Vector3.Zero,[2],[]),
          Curve(1,new(-100,0,3),Vector3.Zero,[2],[]),
          Curve(2,Vector3.Zero,new(100,0,0),[],[0,1]),..extra]);

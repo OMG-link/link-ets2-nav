@@ -27,7 +27,7 @@ public sealed class LaneContinuityIndependentTurnTests
         // Start east, move monotonically to the south (right) or north (left),
         // then end west for a rear branch. This is not a reversed merge fixture.
         var branch=new NativeLaneCurve(2,Vector3.Zero,end,new(100,0,0),tangent,[],[0]);
-        var point=Assert.Single(LaneContinuity.Analyze(new(42,[shared,main,branch])).Points);
+        var point=Assert.Single(LaneContinuity.Analyze(NativeLaneFixture.WithInterfaces(42,[shared,main,branch])).Points);
         var decision=Assert.Single(point.Branches,b=>b.CurveIndex==2);
         Assert.Equal(LaneContinuityRole.Newborn,decision.Role);Assert.Equal(expected,decision.Turn);
     }

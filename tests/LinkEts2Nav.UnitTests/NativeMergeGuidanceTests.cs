@@ -9,7 +9,7 @@ public sealed class NativeMergeGuidanceTests
         var a=new NativeLaneCurve(0,new(-100,0,tie?-3:0),Vector3.Zero,new(100,0,0),new(100,0,0),[2],[]);
         var b=new NativeLaneCurve(1,new(-100,0,3),Vector3.Zero,new(100,0,0),new(100,0,0),[2],[]);
         var tail=new NativeLaneCurve(2,Vector3.Zero,new(100,0,0),new(100,0,0),new(100,0,0),[],[0,1]);
-        var native=new NativeLaneGeometry(42,[a,b,tail]);
+        var native=NativeLaneFixture.WithInterfaces(42,[a,b,tail]);
         PrefabLanePath Path(NativeLaneCurve c,int order)=>new(42,10,20,order,0,order,0,2,1,[c.Index,2],
             [c.Start,Vector3.Zero,tail.End],200){NativeGeometry=native,CurveBlinkers=[order==0?LaneBlinker.Right:LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]};
         return(Path(a,0),Path(b,1),LaneContinuity.Analyze(native));
@@ -49,7 +49,7 @@ public sealed class NativeMergeGuidanceTests
         var a=new NativeLaneCurve(0,new(0,0,allDie?-3:0),new(2,0,0),new(2,0,allDie?3:0),new(2,0,allDie?3:0),[2],[]);
         var b=new NativeLaneCurve(1,new(0,0,3),new(2,0,0),new(2,0,-3),new(2,0,-3),[2],[]);
         var tail=new NativeLaneCurve(2,new(2,0,0),new(2.5f,0,0),new(.5f,0,0),new(.5f,0,0),[],[0,1]);
-        var native=new NativeLaneGeometry(42,[a,b,tail]);
+        var native=NativeLaneFixture.WithInterfaces(42,[a,b,tail]);
         PrefabLanePath Path(NativeLaneCurve curve,int order)=>new(42,10,20,order,0,order,0,2,1,[curve.Index,2],
             [curve.Start,curve.End,tail.End],4){NativeGeometry=native,CurveStartPointIndices=[0,1]};
         var first=Path(a,0);var second=Path(b,1);

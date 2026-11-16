@@ -7,16 +7,16 @@ public sealed class LaneContinuityBlinkerTests
 {
     private static NativeLaneCurve C(int id,Vector3 start,Vector3 end,int[] next,int[] previous,
         LaneBlinker lamp=LaneBlinker.NoBlinker)=>new(id,start,end,end-start,end-start,next,previous){Blinker=lamp};
-    private static NativeLaneGeometry Merge()=>new(42,[
+    private static NativeLaneGeometry Merge()=>NativeLaneFixture.WithInterfaces(42,[
         C(0,new(-100,0,0),Vector3.Zero,[2],[]) with{StartTangent=new(100,0,3),EndTangent=new(100,0,-3)},
         C(1,new(-100,0,15),Vector3.Zero,[2],[]),C(2,Vector3.Zero,new(100,0,0),[],[0,1])]);
     private static NativeLaneGeometry Edit(NativeLaneGeometry g,int id,Func<NativeLaneCurve,NativeLaneCurve> edit)
-        =>g with{Curves=g.Curves.Select(c=>c.Index==id?edit(c):c).ToArray()};
+        =>NativeLaneFixture.WithInterfaces(g.PrefabUid,g.Curves.Select(c=>c.Index==id?edit(c):c).ToArray());
     private static LaneContinuityPoint Point(NativeLaneGeometry g)=>Assert.Single(LaneContinuity.Analyze(g).Points,
         p=>p.Kind==LaneContinuityPointKind.Merge&&p.SharedCurveIndex==2);
     private static LaneContinuityBranch Branch(LaneContinuityPoint p,int id)=>Assert.Single(p.Branches,b=>b.CurveIndex==id);
     private static NativeLaneGeometry Predecessors(NativeLaneGeometry g,params NativeLaneCurve[] curves)
-        =>g with{Curves=[..g.Curves,..curves]};
+        =>NativeLaneFixture.WithInterfaces(g.PrefabUid,[..g.Curves,..curves]);
 
     [Theory]
     [InlineData(LaneBlinker.Left)]
@@ -150,7 +150,8 @@ public sealed class LaneContinuityBlinkerTests
         Assert.Equal(LaneContinuityRole.Survivor,Branch(merge,4).Role);
         Assert.Equal(LaneContinuityRole.Dead,Branch(merge,5).Role);
         Assert.Equal(8,Branch(merge,5).BlinkerSourceCurveIndex);
-        Assert.Equal(LaneTurnKind.ForwardLeft,Branch(merge,5).Turn);
+        Assert.Equal(LaneTurnKind.ForwardRight,Branch(merge,5).Turn);
+        Assert.Equal(0,Branch(merge,5).TurnSourceCurveIndex);
         var unmarked=LaneContinuity.Analyze(geometry with{Curves=geometry.Curves.Select(c=>c with{Blinker=LaneBlinker.NoBlinker}).ToArray()});
         var split=Assert.Single(result.Points,p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==6);
         var other=Assert.Single(unmarked.Points,p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==6);
@@ -181,12 +182,13 @@ public sealed class LaneContinuityBlinkerTests
         var rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,-MathF.PI/2);
         var descriptor=new TruckLib.Models.Ppd.PrefabDescriptor
         {
-            Nodes=[new(){Position=Vector3.Zero,InputLines=[0],OutputLines=[]},new(){Position=new(100,0,0),InputLines=[],OutputLines=[0]}],
+            Nodes=[new(){Position=Vector3.Zero,InputLines=[0,-1,-2,99],OutputLines=[]},new(){Position=new(100,0,0),InputLines=[],OutputLines=[0,-1]}],
             NavCurves=[new(){StartPosition=Vector3.Zero,EndPosition=new(100,0,0),StartRotation=rotation,EndRotation=rotation,Length=100,
                 Blinker=(TruckLib.Models.Ppd.BlinkerType)raw}]
         };
         var prefab=new TruckLib.ScsMap.Prefab{Uid=42,Nodes=[new TruckLib.ScsMap.Node{Uid=10,Position=Vector3.Zero},new TruckLib.ScsMap.Node{Uid=20,Position=new(100,0,0)}]};
         var path=Assert.Single(Assert.Single(PrefabPathGeometry.Build(prefab,descriptor)).LanePaths);
         Assert.Equal(raw,(int)Assert.Single(path.NativeGeometry!.Curves).Blinker);
+        Assert.Equal([0],path.NativeGeometry.InputCurveIndices);Assert.Equal([0],path.NativeGeometry.OutputCurveIndices);
     }
 }

@@ -17,7 +17,7 @@ internal static class NativeBlinkerFixtures
         new(7,new(-1.7432145f,0f,-30.000029f),new(-1.75f,0f,-27.750029f),new(3.934114e-07f,0f,2.2500508f),new(3.934114e-07f,0f,2.2500508f),[4],[]){Blinker=LaneBlinker.NoBlinker},
         new(8,new(1.4321898f,5.0750355e-11f,-23.372137f),new(-1.5785984f,0f,-13.892191f),new(-3.157781f,0f,9.437615f),new(-1.673398f,0f,9.810194f),[5],[0]){Blinker=LaneBlinker.Right},
         new(9,new(4.120579f,0f,-18.356918f),new(8.73172f,0f,-27.525127f),new(2.6135314f,0f,-9.944179f),new(7.2703915f,0f,-7.2703977f),[],[1]){Blinker=LaneBlinker.Left},
-        new(10,new(10.315858f,0f,-22.752157f),new(11.913701f,0f,-24.343147f),new(1.594434f,0f,-1.5944355f),new(1.594434f,0f,-1.5944355f),[],[2]){Blinker=LaneBlinker.NoBlinker}]);
+        new(10,new(10.315858f,0f,-22.752157f),new(11.913701f,0f,-24.343147f),new(1.594434f,0f,-1.5944355f),new(1.594434f,0f,-1.5944355f),[],[2]){Blinker=LaneBlinker.NoBlinker}]){InputCurveIndices=[0,6,7],OutputCurveIndices=[3,9,10]};
     // /prefab2/fork_temp/un/un_fork_4m-1m_0-2_0-3_join_0-2_60m.ppd
     internal static NativeLaneGeometry UniversalJoin()=>new(43,[
         new(0,new(24424.115f,7.9804688f,-48278.906f),new(24423.342f,7.9804688f,-48277.62f),new(-0.7726201f,0f,1.2857128f),new(-0.7726201f,0f,1.2857128f),[],[12]){Blinker=LaneBlinker.NoBlinker},
@@ -32,5 +32,5 @@ internal static class NativeBlinkerFixtures
         new(9,new(24427.973f,7.9804688f,-48276.59f),new(24427.2f,7.9804688f,-48275.305f),new(-0.7726201f,0f,1.2857128f),new(-0.7726201f,0f,1.2857128f),[],[8]){Blinker=LaneBlinker.NoBlinker},
         new(10,new(24439.744f,7.9804688f,-48330.273f),new(24420.258f,7.9804688f,-48281.227f),new(-14.818061f,0f,50.664562f),new(-27.189558f,0f,45.246f),[4],[6]){Blinker=LaneBlinker.NoBlinker},
         new(11,new(24454.248f,7.9804688f,-48329.05f),new(24453.475f,7.9804688f,-48327.766f),new(-0.7726201f,0f,1.2857128f),new(-0.7726201f,0f,1.2857128f),[12],[]){Blinker=LaneBlinker.NoBlinker},
-        new(12,new(24453.475f,7.9804688f,-48327.766f),new(24424.115f,7.9804688f,-48278.906f),new(-29.359564f,0f,48.857094f),new(-29.359564f,0f,48.857094f),[0],[11]){Blinker=LaneBlinker.NoBlinker}]);
+        new(12,new(24453.475f,7.9804688f,-48327.766f),new(24424.115f,7.9804688f,-48278.906f),new(-29.359564f,0f,48.857094f),new(-29.359564f,0f,48.857094f),[0],[11]){Blinker=LaneBlinker.NoBlinker}]){InputCurveIndices=[1,5,7,11],OutputCurveIndices=[0,4,9]};
 }

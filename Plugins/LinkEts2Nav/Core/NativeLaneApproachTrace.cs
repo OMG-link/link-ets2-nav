@@ -6,8 +6,9 @@ internal sealed record NativeLaneTraceStep(NativeLaneCurve? Curve,MapQueryIssue?
 /// <summary>One native segment between topology origins; consumers may stop enumerating early.</summary>
 internal static class NativeLaneApproachTrace
 {
-    internal static IEnumerable<NativeLaneTraceStep> Upstream(NativeLaneCurve branch,int target,
-        IReadOnlyDictionary<int,NativeLaneCurve> curves,ILookup<int,int> incoming,ILookup<int,int> outgoing)
+    internal static IEnumerable<NativeLaneTraceStep> Walk(NativeLaneCurve branch,int? target,
+        IReadOnlyDictionary<int,NativeLaneCurve> curves,ILookup<int,int> incoming,ILookup<int,int> outgoing,
+        bool forward,IReadOnlyList<int> interfaces,bool requireBoundary)
     {
         MapQueryIssue Invalid(string reason)=>new MapQueryFailure(MapQueryFailureKind.InvalidData,reason);
         MapQueryIssue? CheckOrigin(NativeLaneCurve curve,int[] links,bool forward)
@@ -24,17 +25,25 @@ internal static class NativeLaneApproachTrace
         {
             if(!seen.Add(current.Index))
             {yield return new(null,Invalid($"Native merge predecessor chain cycles at curve {current.Index}."));yield break;}
-            var next=current.Next.Concat(outgoing[current.Index]).Distinct().ToArray();
-            if(next.Length>1)
-            {if(CheckOrigin(current,next,true) is {} issue)yield return new(null,issue);yield break;}
+            // Upstream crosses a curve's end before its start; downstream is the mirror.
+            var passed=(forward?current.Previous.Concat(incoming[current.Index]):current.Next.Concat(outgoing[current.Index])).Distinct().ToArray();
+            if(passed.Length>1)
+            {if(CheckOrigin(current,passed,!forward) is {} issue)yield return new(null,issue);yield break;}
             yield return new(current);
-            var previous=current.Previous.Concat(incoming[current.Index]).Distinct().ToArray();
-            if(previous.Length!=1)
-            {if(CheckOrigin(current,previous,false) is {} issue)yield return new(null,issue);yield break;}
-            if(!curves.TryGetValue(previous[0],out var predecessor)
-                ||!current.Previous.Contains(previous[0])||!predecessor.Next.Contains(current.Index))
-            {yield return new(null,Invalid($"Native curve {current.Index}: predecessor {previous[0]} is unavailable or not reciprocal."));yield break;}
-            current=predecessor;
+            if(interfaces.Contains(current.Index))yield break;
+            var next=(forward?current.Next.Concat(outgoing[current.Index]):current.Previous.Concat(incoming[current.Index])).Distinct().ToArray();
+            if(next.Length>1)
+            {if(CheckOrigin(current,next,forward) is {} issue)yield return new(null,issue);yield break;}
+            if(next.Length==0)
+            {
+                if(requireBoundary)yield return new(null,Invalid($"Native curve {current.Index}: chain ends without a confirmed prefab {(forward?"output":"input")} boundary."));
+                yield break;
+            }
+            if(!curves.TryGetValue(next[0],out var continuation)
+                ||!(forward?current.Next:current.Previous).Contains(next[0])||!(forward?continuation.Previous:continuation.Next).Contains(current.Index))
+            {yield return new(null,Invalid($"Native curve {current.Index}: {(forward?"successor":"predecessor")} {next[0]} is unavailable or not reciprocal."));yield break;}
+            current=continuation;
         }
+        if(requireBoundary)yield return new(null,Invalid($"Native approach returned to its target origin at curve {target}."));
     }
 }

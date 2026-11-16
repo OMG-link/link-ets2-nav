@@ -17,14 +17,14 @@ public sealed class LaneContinuityTests
         int shared=angles.Length;
         var branches=angles.Select((angle,i)=>new NativeLaneCurve(i,-Direction(angle)*10,Vector3.Zero,
             Direction(angle)*10,Direction(angle)*10,[shared],[]));
-        return new(123,branches.Append(new(shared,Vector3.Zero,new(10,0,0),new(10,0,0),new(10,0,0),[],Enumerable.Range(0,shared).ToArray())).ToArray());
+        return NativeLaneFixture.WithInterfaces(123,branches.Append(new(shared,Vector3.Zero,new(10,0,0),new(10,0,0),new(10,0,0),[],Enumerable.Range(0,shared).ToArray())).ToArray());
     }
     private static NativeLaneGeometry Split(params double[] angles)
     {
         int shared=angles.Length;
         var branches=angles.Select((angle,i)=>new NativeLaneCurve(i,Vector3.Zero,Direction(angle)*10,
             Direction(angle)*10,Direction(angle)*10,[],[shared]));
-        return new(123,branches.Append(new(shared,new(-10,0,0),Vector3.Zero,new(10,0,0),new(10,0,0),Enumerable.Range(0,shared).ToArray(),[])).ToArray());
+        return NativeLaneFixture.WithInterfaces(123,branches.Append(new(shared,new(-10,0,0),Vector3.Zero,new(10,0,0),new(10,0,0),Enumerable.Range(0,shared).ToArray(),[])).ToArray());
     }
     private static LaneContinuityPoint Point(NativeLaneGeometry geometry)=>Assert.Single(LaneContinuity.Analyze(geometry).Points);
 
@@ -180,6 +180,7 @@ public sealed class LaneContinuityTests
         var edges=PrefabPathGeometry.Build(prefab,projected.Descriptor);
         var path=Assert.Single(Assert.Single(edges).LanePaths);var geometry=Assert.IsType<NativeLaneGeometry>(path.NativeGeometry);
         Assert.Equal(new[]{0,2},geometry.Curves.Select(c=>c.Index));
+        Assert.Equal([0],geometry.InputCurveIndices);Assert.Equal([2],geometry.OutputCurveIndices);
         Assert.Equal(new[]{0},geometry.Curves.Single(c=>c.Index==2).Previous);
         var continuity=LaneContinuity.Analyze(geometry);
         Assert.Empty(continuity.Points);

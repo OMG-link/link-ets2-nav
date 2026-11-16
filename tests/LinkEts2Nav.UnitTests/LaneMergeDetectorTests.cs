@@ -65,7 +65,7 @@ public sealed class LaneMergeDetectorTests
 
     [Theory]
     [InlineData(false)] [InlineData(true)]
-    public void ShortSharedSuffixDoesNotReverseTheEndingLane(bool reverseOrder)
+    public void ShortSharedSuffixKeepsEndingIdentityAndUsesTheApproachStart(bool reverseOrder)
     {
         // Saved two-to-one road: left lane continues, right lane ends;
         // the common downstream curve is only about 1.5 metres long.
@@ -161,9 +161,13 @@ public sealed class LaneMergeDetectorTests
         var result=Assert.Single(new LaneMergeDetector().Find([edge],[edge],plan,0));
         Assert.Equal(1,result.EndingEntryLane);
         Assert.Equal(0,result.MainEntryLane);
-        // This sampled native fit has a rightward initial tangent relative
-        // to the common tail. Its old lamp-derived left word is superseded.
-        Assert.False(result.MoveLeft);
+        // Identity is unchanged. The new wording samples the approach's first
+        // curve4, rather than the last incoming curve6 immediately before merge.
+        var tail=native.Curves.Single(c=>c.Index==3);
+        Assert.Equal(LaneTurnKind.ForwardLeft,LaneContinuity.DescribeTurn(native.Curves.Single(c=>c.Index==4),tail.StartTangent,tail.Start,true));
+        Assert.Equal(LaneTurnKind.ForwardRight,LaneContinuity.DescribeTurn(native.Curves.Single(c=>c.Index==6),tail.StartTangent,tail.Start,true));
+        Assert.Equal(4,Assert.Single(Assert.Single(LaneContinuity.Analyze(native).Points).Branches,b=>b.CurveIndex==6).TurnSourceCurveIndex);
+        Assert.True(result.MoveLeft);
         Assert.Equal(1,result.RecommendedLaneCount);
     }
 
@@ -388,6 +392,10 @@ public sealed class LaneMergeDetectorTests
                 curves[index]=old with{Previous=[..old.Previous.Concat(previous).Distinct()],Next=[..old.Next.Concat(next).Distinct()]};
             else curves[index]=new(index,points[0],points[^1],tangentStart,tangentEnd,next,previous);
         }
-        return new(paths[0].PrefabUid,curves.Values.OrderBy(c=>c.Index).ToArray());
+        return new(paths[0].PrefabUid,curves.Values.OrderBy(c=>c.Index).ToArray())
+        {
+            InputCurveIndices=paths.Select(p=>p.CurveIndices[0]).Distinct().ToArray(),
+            OutputCurveIndices=paths.Select(p=>p.CurveIndices[^1]).Distinct().ToArray()
+        };
     }
 }

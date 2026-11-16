@@ -16,16 +16,22 @@ public sealed record NativeLaneCurve(int Index,Vector3 Start,Vector3 End,Vector3
     public Vector3 Tangent(float t)
         =>(6*t-6*t*t)*(End-Start)+(3*t*t-4*t+1)*StartTangent+(3*t*t-2*t)*EndTangent;
 }
-public sealed record NativeLaneGeometry(ulong PrefabUid,IReadOnlyList<NativeLaneCurve> Curves);
+public sealed record NativeLaneGeometry(ulong PrefabUid,IReadOnlyList<NativeLaneCurve> Curves)
+{
+    public IReadOnlyList<int> InputCurveIndices {get;init;}=[];
+    public IReadOnlyList<int> OutputCurveIndices {get;init;}=[];
+}
 public enum LaneContinuityPointKind { Merge,Split }
 public enum LaneContinuityRole { Survivor,Dead,Newborn,Unknown }
 public enum LaneTurnKind { Unknown,ForwardLeft,ForwardRight,Left,Right,RearLeft,RearRight }
+public sealed record LaneTurnDescription(LaneTurnKind Turn,int? SourceCurveIndex,MapQueryIssue? MapIssue=null);
 public sealed record LaneContinuityBranch(int CurveIndex,LaneContinuityRole Role,double? AngleDegrees,
     double? NormalizedAngle,LaneTurnKind Turn)
 {
     public MapQueryIssue? MapIssue {get;init;}
     public int? BlinkerSourceCurveIndex {get;init;}
     public bool VetoedByBlinker=>BlinkerSourceCurveIndex.HasValue;
+    public int? TurnSourceCurveIndex {get;init;}
 }
 public sealed record LaneContinuityPoint(ulong PrefabUid,LaneContinuityPointKind Kind,int SharedCurveIndex,
     Vector3 Origin,Vector3 StandardTangent,IReadOnlyList<LaneContinuityBranch> Branches)
@@ -62,21 +68,28 @@ public static class LaneContinuity
                     .Distinct().Order().ToArray();
                 if(indices.Length<2)continue;
                 foreach(int index in indices)involved.Add(index);
-                points.Add(Evaluate(geometry.PrefabUid,shared,kind,indices,curves,incoming,outgoing));
+                points.Add(Evaluate(geometry,shared,kind,indices,curves,incoming,outgoing));
             }
         }
         return new(points.ToArray(),geometry.Curves.Where(c=>c.MapIssue is null&&!involved.Contains(c.Index)).Select(c=>c.Index).Order().ToArray())
             {MapIssue=geometry.Curves.Select(c=>c.MapIssue).FirstOrDefault(issue=>issue is not null)};
     }
-    private static LaneContinuityPoint Evaluate(ulong prefab,NativeLaneCurve shared,LaneContinuityPointKind kind,
+    private static LaneContinuityPoint Evaluate(NativeLaneGeometry geometry,NativeLaneCurve shared,LaneContinuityPointKind kind,
         int[] indices,IReadOnlyDictionary<int,NativeLaneCurve> curves,ILookup<int,int> incoming,ILookup<int,int> outgoing)
     {
         bool merge=kind==LaneContinuityPointKind.Merge;
+        ulong prefab=geometry.PrefabUid;
         Vector3 origin=merge?shared.Start:shared.End,standard=merge?shared.StartTangent:shared.EndTangent;
         var angles=new double?[indices.Length];var vetoes=new int?[indices.Length];
+        LaneContinuityBranch KnownDead(int id,int source)
+        {
+            var direction=DescribeApproach(geometry,curves[id],shared.Index,standard,origin,true,curves,incoming,outgoing);
+            return new(id,LaneContinuityRole.Dead,null,null,direction.Turn)
+                {BlinkerSourceCurveIndex=source,TurnSourceCurveIndex=direction.SourceCurveIndex,MapIssue=direction.MapIssue};
+        }
         LaneContinuityPoint Unknown(MapQueryIssue issue)=>new(prefab,kind,shared.Index,origin,standard,
             indices.Select((id,i)=>vetoes[i] is {} source
-                ?new LaneContinuityBranch(id,LaneContinuityRole.Dead,null,null,DescribeTurn(curves[id],standard,origin,true)){BlinkerSourceCurveIndex=source}
+                ?KnownDead(id,source)
                 :new LaneContinuityBranch(id,LaneContinuityRole.Unknown,null,null,LaneTurnKind.Unknown){MapIssue=issue}).ToArray()){MapIssue=issue};
         if(shared.MapIssue is {} sharedIssue)return Unknown(sharedIssue);
         if(!float.IsFinite(origin.X)||!float.IsFinite(origin.Y)||!float.IsFinite(origin.Z))return Unknown(Invalid($"Prefab {prefab:X16} curve {shared.Index}: nonfinite origin."));
@@ -91,7 +104,7 @@ public static class LaneContinuity
                 return Unknown(Invalid($"Prefab {prefab:X16}: native link {indices[i]} / {shared.Index} is not reciprocal."));
             if(merge)
             {
-                var veto=FindMergeBlinker(branch,shared.Index,curves,incoming,outgoing);
+                var veto=FindMergeBlinker(branch,shared.Index,geometry.InputCurveIndices,curves,incoming,outgoing);
                 eligibilityIssue??=veto.Issue;
                 vetoes[i]=veto.Source;
             }
@@ -113,23 +126,23 @@ public static class LaneContinuity
         for(int i=0;i<indices.Length;i++)
         {
             var branch=curves[indices[i]];bool alive=i==survivor;
-            LaneTurnKind turn=LaneTurnKind.Unknown;MapQueryIssue? issue=null;
+            LaneTurnKind turn=LaneTurnKind.Unknown;MapQueryIssue? issue=null;int? turnSource=null;
             if(!alive)
             {
-                turn=DescribeTurn(branch,standard,origin,merge);
-                if(turn==LaneTurnKind.Unknown)issue=Invalid($"Prefab {prefab:X16} curve {branch.Index}: turn side cannot be established from native tangent and origin.");
+                var direction=DescribeApproach(geometry,branch,shared.Index,standard,origin,merge,curves,incoming,outgoing);
+                turn=direction.Turn;issue=direction.MapIssue;turnSource=direction.SourceCurveIndex;
             }
             result.Add(new(branch.Index,alive?LaneContinuityRole.Survivor:merge?LaneContinuityRole.Dead:LaneContinuityRole.Newborn,
                 angles[i],vetoes[i] is not null||minimum is null?null:minimum<=ZeroAngle?(angles[i]<=ZeroAngle?1:(double?)null):angles[i]/minimum,turn)
-                {MapIssue=issue,BlinkerSourceCurveIndex=vetoes[i]});
+                {MapIssue=issue,BlinkerSourceCurveIndex=vetoes[i],TurnSourceCurveIndex=turnSource});
         }
         return new(prefab,kind,shared.Index,origin,standard,result.ToArray());
     }
-    private static (int? Source,MapQueryIssue? Issue) FindMergeBlinker(NativeLaneCurve branch,int target,
+    private static (int? Source,MapQueryIssue? Issue) FindMergeBlinker(NativeLaneCurve branch,int target,IReadOnlyList<int> inputs,
         IReadOnlyDictionary<int,NativeLaneCurve> curves,ILookup<int,int> incoming,ILookup<int,int> outgoing)
     {
         MapQueryIssue? unresolved=null;
-        foreach(var step in NativeLaneApproachTrace.Upstream(branch,target,curves,incoming,outgoing))
+        foreach(var step in NativeLaneApproachTrace.Walk(branch,target,curves,incoming,outgoing,false,inputs,false))
         {
             if(step.Issue is {} traceIssue)return (null,traceIssue);
             var current=step.Curve!;
@@ -139,6 +152,31 @@ public static class LaneContinuity
                 unresolved??=Invalid($"Native curve {current.Index}: unknown Blinker value {(int)current.Blinker}.");
         }
         return (null,unresolved);
+    }
+    /// <summary>Describes a complete approach/departure segment without changing lane qualification.</summary>
+    public static LaneTurnDescription DescribeTurn(NativeLaneGeometry geometry,int branchCurveIndex,Vector3 standard,Vector3 origin,bool merge)
+    {
+        if(geometry.Curves.GroupBy(c=>c.Index).Any(g=>g.Count()!=1))return new(LaneTurnKind.Unknown,null,Invalid("Native turn geometry contains duplicate curve indices."));
+        var curves=geometry.Curves.ToDictionary(c=>c.Index);
+        if(!curves.TryGetValue(branchCurveIndex,out var branch))return new(LaneTurnKind.Unknown,null,Invalid($"Native turn curve {branchCurveIndex} is unavailable."));
+        var incoming=geometry.Curves.SelectMany(c=>c.Next.Select(next=>(next,c.Index))).ToLookup(p=>p.next,p=>p.Index);
+        var outgoing=geometry.Curves.SelectMany(c=>c.Previous.Select(previous=>(previous,c.Index))).ToLookup(p=>p.previous,p=>p.Index);
+        return DescribeApproach(geometry,branch,null,standard,origin,merge,curves,incoming,outgoing);
+    }
+    private static LaneTurnDescription DescribeApproach(NativeLaneGeometry geometry,NativeLaneCurve branch,int? target,
+        Vector3 standard,Vector3 origin,bool merge,IReadOnlyDictionary<int,NativeLaneCurve> curves,ILookup<int,int> incoming,ILookup<int,int> outgoing)
+    {
+        NativeLaneCurve? boundary=null;
+        foreach(var step in NativeLaneApproachTrace.Walk(branch,target,curves,incoming,outgoing,!merge,
+            merge?geometry.InputCurveIndices:geometry.OutputCurveIndices,true))
+        {
+            if(step.Issue is {} issue)return new(LaneTurnKind.Unknown,null,issue);
+            if(step.Curve!.MapIssue is {} curveIssue)return new(LaneTurnKind.Unknown,null,curveIssue);
+            boundary=step.Curve;
+        }
+        if(boundary is null)return new(LaneTurnKind.Unknown,null,Invalid($"Prefab {geometry.PrefabUid:X16} curve {branch.Index}: no complete segment between topology origins."));
+        var turn=DescribeTurn(boundary,standard,origin,merge);
+        return new(turn,boundary.Index,turn==LaneTurnKind.Unknown?Invalid($"Prefab {geometry.PrefabUid:X16} curve {boundary.Index}: turn side cannot be established from native tangent and origin."):null);
     }
     /// <summary>Describes actual travel side against a supplied standard without changing lane qualification.</summary>
     public static LaneTurnKind DescribeTurn(NativeLaneCurve branch,Vector3 standard,Vector3 origin,bool merge)

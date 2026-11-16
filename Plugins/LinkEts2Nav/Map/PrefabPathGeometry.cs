@@ -99,7 +99,11 @@ public static class PrefabPathGeometry
                 {Blinker=(LaneBlinker)(int)curve.Blinker,MapIssue=invalid.Length==0?null:new MapQueryFailure(MapQueryFailureKind.InvalidData,
                     $"Prefab {prefabUid:X16} curve {i}: invalid used native references {string.Join(',',invalid)}.")});
         }
-        return new(prefabUid,result.ToArray());
+        return new(prefabUid,result.ToArray())
+        {
+            InputCurveIndices=descriptor.Nodes.SelectMany(n=>n.InputLines).Where(Allowed).Distinct().Order().ToArray(),
+            OutputCurveIndices=descriptor.Nodes.SelectMany(n=>n.OutputLines).Where(Allowed).Distinct().Order().ToArray()
+        };
     }
 
     private static List<Vector3>? Sample(Prefab prefab,PrefabDescriptor descriptor,PrefabPlacement placement,

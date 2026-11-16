@@ -65,9 +65,8 @@ public sealed class RoadSlopeWindowSampler(IReadOnlyDictionary<ulong,List<Road>>
             return Result(null,reason,missingConnection?.Invoke(node)
                 ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason));
         }
-        // Distinct upstream/downstream ports are real route alternatives, not interchangeable lanes.
-        if(edges.Select(e=>incoming?e.StartNodeUid:e.EndNodeUid).Distinct().Count()!=1)
-            return Result(null,"20米预制件坡度窗口存在多个支路接口");
+        // Every legal port completes the same window independently. Different
+        // destinations do not make an otherwise agreed slope ambiguous.
         var paths=edges.SelectMany(e=>e.LanePaths).Where(p=>lane is null||(incoming?p.ExitOrder:p.EntryOrder)==lane)
             .DistinctBy(p=>(p.PrefabUid,p.EntryLane,p.ExitLane,string.Join(',',p.CurveIndices))).ToArray();
         var windows=new List<RoadSlopeWindow>();
@@ -92,7 +91,7 @@ public sealed class RoadSlopeWindowSampler(IReadOnlyDictionary<ulong,List<Road>>
         if(failed is not null)return failed;
         if(windows.Max(w=>w.AngleDegrees!.Value)-windows.Min(w=>w.AngleDegrees!.Value)>ParallelSlopeToleranceDegrees)
             return Result(null,"20米预制件坡度窗口存在不同坡度的车道候选");
-        // Parallel lane centers measure the same interface; average their independent native windows.
+        // Only complete, mutually consistent native windows may be averaged.
         return new(windows.Average(w=>w.AngleDegrees!.Value),WindowMeters,null,
             windows.SelectMany(w=>w.Roads).Distinct().ToArray())
             {Prefabs=windows.SelectMany(w=>w.Prefabs).Distinct().ToArray()};

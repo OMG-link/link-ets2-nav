@@ -16,6 +16,8 @@ public sealed class RoadSlopePrefabWindowTests
     private static Dictionary<ulong,List<Road>> Roads(params Road[] roads)
         =>roads.SelectMany(r=>new[]{(Node:r.Node.Uid,Road:r),(Node:r.ForwardNode.Uid,Road:r)})
             .GroupBy(p=>p.Node).ToDictionary(g=>g.Key,g=>g.Select(p=>p.Road).ToList());
+    private static DirectedRoad OtherPort(DirectedRoad edge,string id)=>edge with
+        {Id=id,LanePaths=edge.LanePaths.Select(p=>p with{CurveIndices=[8]}).ToArray()};
 
     [Theory]
     [InlineData(false,1)]
@@ -78,12 +80,49 @@ public sealed class RoadSlopePrefabWindowTests
     }
 
     [Fact]
-    public void DistinctUpstreamPortsRemainUnknownRatherThanSelectingAPlayerRoute()
+    public void DistinctUpstreamPortsWithDifferentSlopesRemainUnknown()
     {
         var left=Prefab(1,10,30,new(0,0,0),new(0,0,30));
-        var right=Prefab(1,20,30,new(10,4,0),new(0,0,30)) with{Id="prefab:0000000000000001:2:1"};
+        var right=OtherPort(Prefab(1,20,30,new(10,4,0),new(0,0,30)),"prefab:0000000000000001:2:1");
         var sample=new RoadSlopeWindowSampler(Roads(), [left,right]).Sample(30,true);
-        Assert.Null(sample.AngleDegrees);Assert.Contains("多个支路接口",sample.Failure);
+        Assert.Null(sample.AngleDegrees);Assert.Contains("不同坡度",sample.Failure);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DistinctPortsWithMatchingWindowsProvideOneSlopeWithoutChoosingARoute(bool incoming)
+    {
+        var left=incoming?Prefab(1,10,30,new(0,0,0),new(0,3,30)):Prefab(1,30,10,new(0,0,0),new(0,3,30));
+        var right=OtherPort(incoming?Prefab(1,20,30,new(10,0,0),new(10,3,30)):Prefab(1,30,20,new(10,0,0),new(10,3,30)),
+            "prefab:0000000000000001:2:1");
+        var sample=new RoadSlopeWindowSampler(Roads(),[left,right]).Sample(30,incoming);
+        Assert.Null(sample.MapIssue);Assert.Null(sample.Failure);Assert.Equal(20,sample.CoveredMeters);
+        Assert.Equal(Math.Atan(.1)*180/Math.PI,sample.AngleDegrees!.Value,6);
+    }
+
+    [Fact]
+    public void OneIncompletePortCannotBeDiscardedInFavorOfTheCompletePort()
+    {
+        var complete=Prefab(1,10,30,new(0,0,0),new(0,0,30));
+        var incomplete=OtherPort(Prefab(1,20,30,new(3,0,25),new(3,0,30)),"prefab:0000000000000001:2:1");
+        var missing=new MissingMapSectors([new(9,9)],"missing continuation");
+        var sample=new RoadSlopeWindowSampler(Roads(),[complete,incomplete],_=>missing).Sample(30,true);
+        Assert.Null(sample.AngleDegrees);Assert.Equal(5,sample.CoveredMeters);
+        var issue=Assert.IsType<MissingMapSectors>(sample.MapIssue);
+        Assert.Equal(missing.Sectors,issue.Sectors);Assert.Equal(missing.Reason,issue.Reason);Assert.NotNull(sample.Failure);
+    }
+
+    [Fact]
+    public void AlmostTwentyMeterRoadCompletesItsRemainingWindowOnBothFlatPorts()
+    {
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(0,0,19.9994f),default);
+        Assert.True(road.Length<20);
+        var left=Prefab(1,road.ForwardNode.Uid,30,new(0,0,19.9994f),new(0,0,50));
+        var right=OtherPort(Prefab(1,road.ForwardNode.Uid,40,new(3,0,19.9994f),new(3,0,50)),"prefab:0000000000000001:0:2");
+        var sample=new RoadSlopeWindowSampler(Roads(road),[left,right]).Sample(road.Node.Uid,false);
+        Assert.Null(sample.Failure);Assert.Equal(0,sample.AngleDegrees);Assert.Equal(20,sample.CoveredMeters);
+        Assert.Single(sample.Roads);Assert.Single(sample.Prefabs);
     }
 
     [Fact]

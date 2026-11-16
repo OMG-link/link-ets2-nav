@@ -90,6 +90,7 @@ public sealed class LaneSourceIdentityTests
         var result=new LaneMergeOriginClassifier(graph).Classify(s.Ending,10,s.Main,10);
         Assert.Equal(LaneMergeKind.Uncertain,result.Kind);Assert.IsType<MapQueryFailure>(result.MapIssue);
         Assert.Contains("mapping",result.Reason);
+        Assert.Equal(LaneMergeKind.Uncertain,new LaneMergeOriginClassifier(graph).Classify(s.Ending,600,s.Main,600).Kind);
     }
     [Fact]
     public void InvalidUnrelatedNativeCurveDoesNotBlockKnownSourcePair()

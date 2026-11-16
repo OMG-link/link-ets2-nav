@@ -114,6 +114,9 @@ public sealed class LaneMergeOriginClassifier
         LaneMergeOriginDecision Window()=>Decision(LaneMergeKind.LaneReduction,"原生来源累计已覆盖500米，窗口内未发现两线分属不同入口");
         LaneMergeOriginDecision? Budget()=>Math.Max(a,b)<=500?null:Math.Max(aMin,bMin)<=500
             ?Missing("原生曲线候选的累计里程跨越500米边界，来源未唯一确认"):Window();
+        if(ending.EntryNodeUid==main.EntryNodeUid
+            &&(!orders.Values.Contains(ending.EntryOrder)||!orders.Values.Contains(main.EntryOrder)))
+            return Missing("Queried native lane mapping is unavailable; no earlier source is assumed.");
         while(true)
         {
             if(!double.IsFinite(prefixA)||!double.IsFinite(prefixB)||!double.IsFinite(prefixMinA)||!double.IsFinite(prefixMinB)

@@ -83,8 +83,7 @@ public static class AuxiliaryLaneGuidance
             }
             if(terminal.Terminal.SideOnly)
             {
-                var signal=terminal.Terminal.Edge.ForkInfo?.Branches.FirstOrDefault(b=>b.ExitNode==terminal.Terminal.Edge.EndNodeUid)?.Signal;
-                bool left=signal is ForkSignal.Left or ForkSignal.Right?signal==ForkSignal.Left:corridor.SideIsLeft.Value;
+                bool left=corridor.SideIsLeft.Value;
                 var kind=left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight;
                 var action=existing??new NavigationManeuver("auxiliary-exit:"+corridor.Id+":"+terminal.Terminal.Edge.Id,kind,end,"lane",terminal.Terminal.Edge.Id){JunctionId=junction,JunctionKind=NavigationJunctionKind.Ramp};
                 result.Remove(action);

@@ -117,15 +117,17 @@ public sealed class StraightPassageSideTests
     }
 
     [Fact]
-    public void RampPassageUsesTheNativeSignalRatherThanAnOppositeGeometricBend()
+    public void LegacyForkSignalsCannotSupplyMissingNativeComponentGeometry()
     {
         var before=Road("before",1,2,P(0,100),P(0,0));
         var info=new RoadForkInfo(2,2,[new(3,ForkSignal.None,[0,1],[0,1],[],true),new(4,ForkSignal.Right,[1],[1],[],false)]);
-        var straight=Connection("0:1",2,3,P(0,-50)) with{Junction=new(2,2,0){InterfaceCount=3},ForkInfo=info};
-        var branch=Connection("0:2",2,4,P(-50,0)) with{Junction=straight.Junction,ForkInfo=info};
+        var straight=Connection("0:1",2,3,P(0,-50)) with{Id="prefab:0000000000000051:0:1",Junction=new(2,2,0){InterfaceCount=3},ForkInfo=info};
+        var branch=Connection("0:2",2,4,P(-50,0)) with{Id="prefab:0000000000000051:0:2",Junction=straight.Junction,ForkInfo=info};
         var after=Road("after",3,5,P(0,-50),P(0,-100));
-        var action=Assert.Single(new NavigationManeuverDetector().FindSequence([before,straight,after],0,[before,straight,branch,after]));
-        Assert.Equal(ManeuverKind.Straight,action.Kind);
-        Assert.Equal(NavigationSide.Right,action.StraightExitSides);
+        var detector=new NavigationManeuverDetector();
+        Assert.Empty(detector.FindSequence([before,straight,after],0,[before,straight,branch,after]));
+        Assert.Contains(detector.Components.Issues,issue=>issue is LinkEts2Nav.Map.MapQueryFailure
+            {Kind:LinkEts2Nav.Map.MapQueryFailureKind.DefinitionUnavailable});
+        Assert.NotEmpty(detector.UnresolvedSpans);
     }
 }

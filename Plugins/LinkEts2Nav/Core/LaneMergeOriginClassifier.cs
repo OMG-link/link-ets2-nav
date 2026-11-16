@@ -3,6 +3,7 @@ namespace LinkEts2Nav.Core;
 
 public sealed record LaneMergeSourceStep(ulong PrefabUid,ulong EndingEntrance,int EndingLane,
     ulong MainEntrance,int MainLane,double BackwardMeters,IReadOnlyList<int> ApplicableEntryLanes);
+public sealed record LaneMergeSourceBirth(ulong PrefabUid,int SharedCurve,int BranchCurve,int ExitOrder,double BackwardMeters);
 public sealed record LaneMergeOriginDecision(LaneMergeKind Kind,ulong? SourcePrefab,ulong? EndingEntrance,
     ulong? MainEntrance,double BackwardMeters,string Reason)
 {
@@ -12,6 +13,7 @@ public sealed record LaneMergeOriginDecision(LaneMergeKind Kind,ulong? SourcePre
     public ulong? SourceEntrance {get;init;}
     public IReadOnlyList<int> ApplicableEntryLanes {get;init;}=[];
     public IReadOnlyList<LaneMergeSourceStep> Steps {get;init;}=[];
+    public IReadOnlyList<LaneMergeSourceBirth> Births {get;init;}=[];
 }
 
 /// <summary>Follows a native lane pair through same-input structures within one total 500 m source window.</summary>
@@ -36,6 +38,45 @@ public sealed class LaneMergeOriginClassifier
             .Select(g=>g.Key).ToHashSet();
     }
 
+    private readonly Dictionary<NativeLaneGeometry,LaneContinuityResult> continuity=new(ReferenceEqualityComparer.Instance);
+    private enum Identity { Continues, Dead, Unknown }
+    private (Identity Kind,MapQueryIssue? Issue,IReadOnlyList<LaneMergeSourceBirth> Births) IdentityOf(PrefabLanePath path,double usedMin,double usedMax)
+    {
+        (Identity,MapQueryIssue?,IReadOnlyList<LaneMergeSourceBirth>) Unknown(string reason,MapQueryFailureKind kind=MapQueryFailureKind.DefinitionUnavailable)
+            =>(Identity.Unknown,new MapQueryFailure(kind,reason),[]);
+        if(path.NativeGeometry is not {} geometry)return Unknown("Upstream lane lacks native continuity geometry.");
+        if(!continuity.TryGetValue(geometry,out var result))continuity[geometry]=result=LaneContinuity.Analyze(geometry);
+        if(result.MapIssue is {} failure)return (Identity.Unknown,failure,[]);
+        if(path.CurveIndices.Count==0||path.CurveIndices.Any(i=>!geometry.Curves.Any(c=>c.Index==i)))
+            return Unknown("Upstream lane references unavailable native curves.");
+        var births=new List<LaneMergeSourceBirth>();bool dead=false;
+        var line=new LanePolyline(path.Points);
+        for(int i=0;i<path.CurveIndices.Count;i++)
+        foreach(var point in result.Points.Where(p=>p.SharedCurveIndex==path.CurveIndices[i]))
+        {
+            int at=point.Kind==LaneContinuityPointKind.Merge?i:i+1;
+            int branch=point.Kind==LaneContinuityPointKind.Merge?(i>0?path.CurveIndices[i-1]:-1)
+                :(i+1<path.CurveIndices.Count?path.CurveIndices[i+1]:-1);
+            if(branch<0)continue;
+            if(path.CurveStartPointIndices.Count!=path.CurveIndices.Count||at>=path.CurveStartPointIndices.Count)
+                return Unknown("Upstream native event lacks its measured path boundary.");
+            int index=path.CurveStartPointIndices[at];
+            if(index<0||index>=path.Points.Count)return Unknown("Upstream native event path boundary is invalid.",MapQueryFailureKind.InvalidData);
+            double prefix=path.Points.Take(index+1).Zip(path.Points.Skip(1).Take(index)).Sum(p=>(double)System.Numerics.Vector3.Distance(p.First,p.Second));
+            double suffix=line.Length-prefix;
+            // Qualification outside this query's 500m window cannot change its source.
+            if(usedMin+suffix>500)continue;
+            if(usedMax+suffix>500)return Unknown("Native lane event spans the cumulative 500m source boundary.",MapQueryFailureKind.Ambiguous);
+            var role=point.Branches.SingleOrDefault(b=>b.CurveIndex==branch)?.Role;
+            if(point.MapIssue is not null||role is null or LaneContinuityRole.Unknown)
+                return Unknown("Upstream native lane has no confirmed surviving source.",MapQueryFailureKind.Ambiguous);
+            if(point.Kind==LaneContinuityPointKind.Merge)dead|=role==LaneContinuityRole.Dead;
+            // A newborn loses main-lane qualification, not its known common input source.
+            else if(role==LaneContinuityRole.Newborn)births.Add(new(path.PrefabUid,point.SharedCurveIndex,branch,path.ExitOrder,usedMax+suffix));
+        }
+        return (dead?Identity.Dead:Identity.Continues,null,births);
+    }
+
     public LaneMergeOriginDecision Classify(PrefabLanePath ending,double endingPrefix,PrefabLanePath main,double mainPrefix)
     {
         double a=0,b=0,aMin=0,bMin=0,prefixA=endingPrefix,prefixB=mainPrefix,prefixMinA=endingPrefix,prefixMinB=mainPrefix;
@@ -45,7 +86,7 @@ public sealed class LaneMergeOriginClassifier
             .ToDictionary(g=>g.Key,g=>g.First().EntryOrder);
         Dictionary<int,PrefabLanePath[]>? projection=null;
         IReadOnlyList<int>? applicable=null;
-        var steps=new List<LaneMergeSourceStep>();
+        var steps=new List<LaneMergeSourceStep>();var births=new List<LaneMergeSourceBirth>();
         var seedLine=ending.Points.Count>1?new LanePolyline(ending.Points):null;
         System.Numerics.Vector3? queryAnchor=seedLine is not null&&double.IsFinite(endingPrefix)
             ?seedLine.At(Math.Clamp(endingPrefix,0,seedLine.Length)):null;
@@ -54,7 +95,7 @@ public sealed class LaneMergeOriginClassifier
         LaneMergeOriginDecision Decision(LaneMergeKind kind,string reason,ulong? source=null,ulong? fromA=null,ulong? fromB=null)
             =>new(kind,source,fromA,fromB,Math.Min(500,Math.Max(a,b)),reason)
             {ApplicableEntryNode=approach,ApplicabilitySourcePrefab=sourcePrefab,SourceEntrance=sourceEntrance??approach,
-                ApplicableEntryLanes=applicable??Array.AsReadOnly(orders.Keys.Order().ToArray()),Steps=Array.AsReadOnly(steps.ToArray()),MapIssue=mapIssue};
+                ApplicableEntryLanes=applicable??Array.AsReadOnly(orders.Keys.Order().ToArray()),Steps=Array.AsReadOnly(steps.ToArray()),Births=Array.AsReadOnly(births.Distinct().ToArray()),MapIssue=mapIssue};
         LaneMergeOriginDecision Missing(string reason,MapQueryIssue? issue=null)
         {
             mapIssue=(issue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason)) with{QueryAnchor=queryAnchor};
@@ -115,13 +156,33 @@ public sealed class LaneMergeOriginClassifier
                 if(Budget() is {} roadEnd)return roadEnd;
             }
             var source=(lanes.GetValueOrDefault(boundary)??[]).Where(p=>p.PrefabUid!=ending.PrefabUid).ToArray();
-            var side=source.Where(p=>p.ExitOrder==ending.EntryOrder&&p.ExitLaneCount==ending.EntryLaneCount).ToArray();
-            var kept=source.Where(p=>p.ExitOrder==main.EntryOrder&&p.ExitLaneCount==main.EntryLaneCount).ToArray();
-            if(side.Length==0||kept.Length==0)
+            if(!source.Any(p=>p.ExitOrder==ending.EntryOrder&&p.ExitLaneCount==ending.EntryLaneCount)
+                ||!source.Any(p=>p.ExitOrder==main.EntryOrder&&p.ExitLaneCount==main.EntryLaneCount))
             {
                 string reason=$"接口{boundary:X16}上游地图或原生车道继承未确认";
                 return Missing(reason,missingConnection?.Invoke(boundary)
                     ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason));
+            }
+            var relevant=source.Where(p=>p.ExitLaneCount==ending.EntryLaneCount&&orders.Values.Contains(p.ExitOrder))
+                .Select(p=>(Path:p,Evidence:IdentityOf(p,
+                    p.ExitOrder==ending.EntryOrder?aMin:p.ExitOrder==main.EntryOrder?bMin:Math.Min(aMin,bMin),
+                    p.ExitOrder==ending.EntryOrder?a:p.ExitOrder==main.EntryOrder?b:Math.Max(a,b)))).ToArray();
+            if(relevant.FirstOrDefault(p=>p.Evidence.Kind==Identity.Unknown) is var incomplete&&incomplete.Path is not null)
+                return Missing("Upstream lane identity cannot be established from native continuity.",incomplete.Evidence.Issue);
+            births.AddRange(relevant.Where(p=>p.Evidence.Kind==Identity.Continues).SelectMany(p=>p.Evidence.Births));
+            source=relevant.Where(p=>p.Evidence.Kind==Identity.Continues).Select(p=>p.Path).ToArray();
+            var side=source.Where(p=>p.ExitOrder==ending.EntryOrder&&p.ExitLaneCount==ending.EntryLaneCount).ToArray();
+            var kept=source.Where(p=>p.ExitOrder==main.EntryOrder&&p.ExitLaneCount==main.EntryLaneCount).ToArray();
+            if(relevant.Length>0&&(side.Length==0||kept.Length==0))
+                return Missing("Upstream physical predecessors have no surviving native lane identity.");
+            var sideLengths=side.Select(p=>new LanePolyline(p.Points).Length).ToArray();
+            var keptLengths=kept.Select(p=>new LanePolyline(p.Points).Length).ToArray();
+            double nextMax=Math.Max(a+sideLengths.Max(),b+keptLengths.Max());
+            double nextMin=Math.Max(aMin+sideLengths.Min(),bMin+keptLengths.Min());
+            if(nextMax>500)
+            {
+                if(nextMin<=500)return Missing("Native path candidates span the cumulative 500m source boundary.");
+                a=b=500;return Window();
             }
             if(side.Concat(kept).Select(p=>p.PrefabUid).Distinct().Count()!=1)return Missing("两线的上游预制件来源不唯一");
             var fromA=side.Select(p=>p.EntryNodeUid).Distinct().ToArray();var fromB=kept.Select(p=>p.EntryNodeUid).Distinct().ToArray();
@@ -129,8 +190,6 @@ public sealed class LaneMergeOriginClassifier
             // Different entrances are decisive after the known native prefixes fit the total budget.
             if(fromA[0]==fromB[0]&&(side.Select(p=>p.EntryLane).Distinct().Count()!=1||kept.Select(p=>p.EntryLane).Distinct().Count()!=1))
                 return Missing("同一来源入口内的上游车道槽尚未唯一确认");
-            var sideLengths=side.Select(p=>new LanePolyline(p.Points).Length).ToArray();
-            var keptLengths=kept.Select(p=>new LanePolyline(p.Points).Length).ToArray();
             projection=orders.ToDictionary(p=>p.Key,p=>source.Where(v=>v.ExitOrder==p.Value&&v.ExitLaneCount==ending.EntryLaneCount).ToArray());
             ending=side[0];main=kept[0];
             prefixA=sideLengths.Max();prefixB=keptLengths.Max();

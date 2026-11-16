@@ -57,6 +57,14 @@ public sealed class LaneContinuityTests
         Assert.Equal(LaneTurnKind.Unknown,multiple.Branches[0].Turn); // direction uncertainty does not erase a known death
     }
     [Fact]
+    public void SmallNonzeroAnglesAreNotRoundedIntoTheMultipleZeroCase()
+    {
+        var point=Point(Merge(1e-10,3e-10));
+        Assert.Equal(LaneContinuityRole.Survivor,point.Branches[0].Role);
+        Assert.True(point.Branches[0].AngleDegrees>0);
+        Assert.Equal(LaneContinuityRole.Dead,point.Branches[1].Role);
+    }
+    [Fact]
     public void SplitUsesTheSameQualificationButReportsActualTravelTurnDirection()
     {
         var merge=Point(Merge(0,45));var split=Point(Split(0,45));

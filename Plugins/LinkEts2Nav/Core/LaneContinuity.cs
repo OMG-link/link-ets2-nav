@@ -37,7 +37,7 @@ public sealed record LaneContinuityResult(IReadOnlyList<LaneContinuityPoint> Poi
 /// <summary>Local N-to-one continuity, and its one-to-N counterpart. Physical links are never removed.</summary>
 public static class LaneContinuity
 {
-    private const double ZeroAngle=1e-9;
+    private const double ZeroAngle=0;
     private static MapQueryFailure Invalid(string reason)=>new(MapQueryFailureKind.InvalidData,reason);
     public static LaneContinuityResult Analyze(NativeLaneGeometry geometry)
     {
@@ -115,7 +115,7 @@ public static class LaneContinuity
             Vector3 offset=merge?origin-branch.Start:branch.End-origin;
             cross=dx*offset.Z-dz*offset.X;
         }
-        if(Math.Abs(cross)<=1e-10)return LaneTurnKind.Unknown;
+        if(cross==0)return LaneTurnKind.Unknown;
         bool right=cross>0;
         if(angle<=45)return right?LaneTurnKind.ForwardRight:LaneTurnKind.ForwardLeft;
         if(angle<135)return right?LaneTurnKind.Right:LaneTurnKind.Left;
@@ -125,6 +125,6 @@ public static class LaneContinuity
     {
         x=value.X;z=value.Z;
         if(!float.IsFinite(value.X)||!float.IsFinite(value.Y)||!float.IsFinite(value.Z))return false;
-        double norm=Math.Sqrt(x*x+z*z);if(norm<=1e-10)return false;x/=norm;z/=norm;return true;
+        double norm=Math.Sqrt(x*x+z*z);if(norm==0)return false;x/=norm;z/=norm;return true;
     }
 }

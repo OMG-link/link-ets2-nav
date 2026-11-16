@@ -10,6 +10,7 @@ public sealed record PrefabLanePath(ulong PrefabUid,ulong EntryNodeUid,ulong Exi
     IReadOnlyList<int> CurveIndices,[property:JsonIgnore] IReadOnlyList<Vector3> Points,double LengthMeters)
 {
     /// <summary>Shared player-permitted native curve graph for local continuity tools.</summary>
+    [JsonIgnore]
     public NativeLaneGeometry? NativeGeometry {get;init;}
     public IReadOnlyList<int> CurveStartPointIndices { get; init; } = [];
     /// <summary>Native lamp command for each incoming PPD curve, aligned with CurveIndices.</summary>

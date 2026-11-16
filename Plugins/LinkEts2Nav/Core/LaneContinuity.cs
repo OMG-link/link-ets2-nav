@@ -44,11 +44,18 @@ public static class LaneContinuity
         var duplicate=geometry.Curves.GroupBy(c=>c.Index).FirstOrDefault(g=>g.Count()!=1);
         if(duplicate is not null)return new([],[]){MapIssue=Invalid($"Prefab {geometry.PrefabUid:X16}: duplicate native curve {duplicate.Key}.")};
         var curves=geometry.Curves.ToDictionary(c=>c.Index);var points=new List<LaneContinuityPoint>();var involved=new HashSet<int>();
+        var incoming=geometry.Curves.SelectMany(c=>c.Next.Select(next=>(next,c.Index))).ToLookup(p=>p.next,p=>p.Index);
+        var outgoing=geometry.Curves.SelectMany(c=>c.Previous.Select(previous=>(previous,c.Index))).ToLookup(p=>p.previous,p=>p.Index);
         foreach(var shared in geometry.Curves.OrderBy(c=>c.Index))
         {
             foreach(var kind in new[]{LaneContinuityPointKind.Merge,LaneContinuityPointKind.Split})
             {
-                var indices=(kind==LaneContinuityPointKind.Merge?shared.Previous:shared.Next).Distinct().Order().ToArray();
+                // Consider declarations on both ends. A missing reciprocal declaration must
+                // become Unknown, never silently erase a real N-way choice.
+                var indices=(kind==LaneContinuityPointKind.Merge
+                    ?shared.Previous.Concat(incoming[shared.Index])
+                    :shared.Next.Concat(outgoing[shared.Index]))
+                    .Distinct().Order().ToArray();
                 if(indices.Length<2)continue;
                 foreach(int index in indices)involved.Add(index);
                 points.Add(Evaluate(geometry.PrefabUid,shared,kind,indices,curves));
@@ -71,7 +78,8 @@ public static class LaneContinuity
         {
             if(!curves.TryGetValue(indices[i],out var branch))return Unknown(Invalid($"Prefab {prefab:X16}: native curve {indices[i]} is unavailable."));
             if(branch.MapIssue is {} issue)return Unknown(issue);
-            if(!(merge?branch.Next:branch.Previous).Contains(shared.Index))
+            if(!(merge?branch.Next:branch.Previous).Contains(shared.Index)
+                ||!(merge?shared.Previous:shared.Next).Contains(branch.Index))
                 return Unknown(Invalid($"Prefab {prefab:X16}: native link {indices[i]} / {shared.Index} is not reciprocal."));
             if(!Horizontal(branch.Tangent(.5f),out var x,out var z))return Unknown(Invalid($"Prefab {prefab:X16} curve {branch.Index}: missing horizontal midpoint tangent."));
             angles[i]=Math.Atan2(Math.Abs(x*sz-z*sx),x*sx+z*sz)*180/Math.PI;

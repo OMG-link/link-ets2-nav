@@ -96,6 +96,13 @@ public sealed class LaneContinuityTests
         Assert.Equal(expected,Point(geometry).Branches[1].Turn);
     }
     [Fact]
+    public void PublicDirectionDescriptionDoesNotInventASideFromNonfiniteGeometry()
+    {
+        var branch=Merge(0,30).Curves[1];
+        Assert.Equal(LaneTurnKind.Unknown,LaneContinuity.DescribeTurn(branch,Vector3.UnitX,new(float.NaN,0,0),true));
+        Assert.Equal(LaneTurnKind.Unknown,LaneContinuity.DescribeTurn(branch with{End=new(float.PositiveInfinity,0,0)},Vector3.UnitX,Vector3.Zero,false));
+    }
+    [Fact]
     public void CandidateUsesItsNativeMidpointTangentRatherThanStartOrWholePrefabChord()
     {
         var geometry=Merge(0,50);var curve=geometry.Curves[1];

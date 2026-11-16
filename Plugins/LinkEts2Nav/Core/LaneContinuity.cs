@@ -107,6 +107,8 @@ public static class LaneContinuity
     /// <summary>Describes actual travel side against a supplied standard without changing lane qualification.</summary>
     public static LaneTurnKind DescribeTurn(NativeLaneCurve branch,Vector3 standard,Vector3 origin,bool merge)
     {
+        static bool Finite(Vector3 value)=>float.IsFinite(value.X)&&float.IsFinite(value.Y)&&float.IsFinite(value.Z);
+        if(!Finite(origin)||!Finite(branch.Start)||!Finite(branch.End))return LaneTurnKind.Unknown;
         Vector3 direction=merge?branch.StartTangent:branch.EndTangent;
         if(!Horizontal(direction,out double dx,out double dz)||!Horizontal(standard,out double sx,out double sz))return LaneTurnKind.Unknown;
         double cross=merge?dx*sz-dz*sx:sx*dz-sz*dx;

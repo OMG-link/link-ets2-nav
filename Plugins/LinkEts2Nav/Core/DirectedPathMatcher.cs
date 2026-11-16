@@ -49,6 +49,8 @@ public sealed record DirectedRoad(
     public IReadOnlyList<LaneConnection>? LaneConnections { get; init; }
     /// <summary>Snapshot-local decision for independent entrance groups adding disjoint exit lanes.</summary>
     public RoadJoinPriority? JoinPriority { get; init; }
+    /// <summary>Snapshot-local continuity priority of competing outlets, measured in reverse travel.</summary>
+    public RoadJoinPriority? SplitPriority { get; init; }
     public RoadForkInfo? ForkInfo { get; init; }
 }
 

@@ -9,7 +9,11 @@ public enum ComponentTurnKind { Forward, Turn, Back, Unknown }
 public sealed record ComponentTurn(NavigationSide Side,ComponentTurnKind Kind,string? Failure=null);
 
 /// <summary>A point on a particular directed physical passage, not merely a prefab UID.</summary>
-public sealed record ComponentBoundary(string EdgeId,double OffsetMeters,Vector3 Position);
+public sealed record ComponentBoundary(string EdgeId,double OffsetMeters,Vector3 Position)
+{
+    public ulong StartNodeUid {get;init;}
+    public ulong EndNodeUid {get;init;}
+}
 
 /// <summary>One original lane's static fate, independent of the player's chosen route.</summary>
 public sealed record ComponentLaneOutcome(int EntryOrder,int ExitOrder,ComponentLaneFate Fate,
@@ -21,6 +25,7 @@ public sealed record ComponentLaneOutcome(int EntryOrder,int ExitOrder,Component
     public double MidpointDistanceFromExitMeters {get;init;}
     public double LifecycleDistanceFromExitMeters {get;init;}
     public double SoftActionDistanceFromExitMeters {get;init;}
+    public string? StructuralConstraintId {get;init;}
 }
 
 /// <summary>Static structure for one legal entry/exit passage. Consumers map its anchors onto the matching route visit.</summary>
@@ -34,6 +39,7 @@ public sealed record ComponentPassageContinuity(string EdgeId,ulong PrefabUid,ul
 {
     public double? ExitTurnRadians {get;init;}
     public bool HasNaturalAlternative {get;init;}
+    public string? StructuralConstraintId {get;init;}
 }
 
 /// <summary>Combines original lanes: action is the earliest, lifetime ends at the latest. No lane is removed from connectivity.</summary>
@@ -51,13 +57,22 @@ public static class ComponentContinuity
         var entry=lanes.Select(l=>l.EntryOrder).Distinct().Order().ToArray();
         var exit=lanes.Select(l=>l.ExitOrder).Distinct().Order().ToArray();
         ComponentPassageContinuity Result(ComponentContinuityKind kind,ComponentBoundary? action=null,
-            ComponentBoundary? end=null,ComponentBoundary? start=null,ComponentBoundary? finish=null,MapQueryIssue? issue=null)
-            =>new(edge.Id,uid,edge.StartNodeUid,edge.EndNodeUid,isMain,kind,action,end,start,finish,
+            ComponentBoundary? end=null,ComponentBoundary? start=null,ComponentBoundary? finish=null,MapQueryIssue? issue=null,ComponentTurn? turn=null)
+        {
+            var constraints=lanes.Select(l=>l.StructuralConstraintId).OfType<string>().Distinct().Order().ToArray();
+            var sides=lanes.Select(l=>l.Turn?.Side).Where(s=>s is NavigationSide.Left or NavigationSide.Right).Distinct().ToArray();
+            if(kind is ComponentContinuityKind.Hard or ComponentContinuityKind.Soft&&sides.Length>1)
+            {turn=null;issue=new MapQueryFailure(MapQueryFailureKind.Ambiguous,"同一组件入口的车道动作方向冲突");}
+            return new(edge.Id,uid,edge.StartNodeUid,edge.EndNodeUid,isMain,kind,action,end,start,finish,
                 entry,exit,input,output,legalExitCount,
-                lanes.Select(l=>l.Turn).OfType<ComponentTurn>().Distinct().Count()==1?lanes.First(l=>l.Turn is not null).Turn:null,
-                Array.AsReadOnly(lanes.ToArray()),issue);
+                turn,
+                Array.AsReadOnly(lanes.ToArray()),issue??lanes.Select(l=>l.Issue).OfType<MapQueryIssue>().FirstOrDefault())
+            {StructuralConstraintId=constraints.Length==0?null:string.Join('|',constraints)};
+        }
         if(lanes.Count==0)return Result(ComponentContinuityKind.Unknown,issue:new MapQueryFailure(MapQueryFailureKind.InvalidData,"组件没有原生车道结果"));
-        if(isMain)return Result(ComponentContinuityKind.Main);
+        if(isMain)return Result(ComponentContinuityKind.Main,
+            (outgoing?lanes.MaxBy(l=>l.MidpointDistanceFromExitMeters):lanes.MinBy(l=>l.MidpointDistanceFromExitMeters))!.InitialMidpoint,
+            lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!.InitialExit);
         if(lanes.All(l=>l.InComponent&&l.Fate==ComponentLaneFate.Separates))
             return Result(ComponentContinuityKind.Singular,issue:new MapQueryFailure(MapQueryFailureKind.Ambiguous,"奇异入口：全部车道在汇入组件内分离"));
         if(lanes.Any(l=>l.Fate==ComponentLaneFate.Unresolved))
@@ -68,20 +83,22 @@ public static class ComponentContinuity
             &&l.TerminalDistanceFromExitMeters<=WindowMeters);
         if(hard)
         {
-            var first=lanes.MinBy(l=>l.TerminalDistanceFromExitMeters)!;
+            var first=outgoing?lanes.MaxBy(l=>l.TerminalDistanceFromExitMeters)!:lanes.MinBy(l=>l.TerminalDistanceFromExitMeters)!;
             var last=lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!;
-            return Result(ComponentContinuityKind.Hard,first.Terminal,last.LifecycleEnd);
+            return Result(ComponentContinuityKind.Hard,first.Terminal,last.LifecycleEnd,turn:first.Turn);
         }
         if(soft)
         {
-            var first=lanes.MinBy(l=>l.SoftActionDistanceFromExitMeters)!;
+            double CandidateDistance(ComponentLaneOutcome lane)=>lane.InComponent&&lane.Fate==ComponentLaneFate.Dies
+                ?lane.TerminalDistanceFromExitMeters:lane.SoftActionDistanceFromExitMeters;
+            var first=outgoing?lanes.MaxBy(CandidateDistance)!:lanes.MinBy(CandidateDistance)!;
             var last=lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!;
             var terminal=lanes.MaxBy(l=>l.TerminalDistanceFromExitMeters)!;
-            return Result(ComponentContinuityKind.Soft,first.SoftAction,last.LifecycleEnd,
-                lanes.First().InitialExit,terminal.Terminal);
+            return Result(ComponentContinuityKind.Soft,first.InComponent&&first.Fate==ComponentLaneFate.Dies?first.Terminal:first.SoftAction,last.LifecycleEnd,
+                lanes.First().InitialExit,terminal.Terminal,turn:first.Turn);
         }
         return Result(ComponentContinuityKind.Natural,
-            lanes.MinBy(l=>l.MidpointDistanceFromExitMeters)!.InitialMidpoint,
+            (outgoing?lanes.MaxBy(l=>l.MidpointDistanceFromExitMeters):lanes.MinBy(l=>l.MidpointDistanceFromExitMeters))!.InitialMidpoint,
             lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!.InitialExit);
     }
 }

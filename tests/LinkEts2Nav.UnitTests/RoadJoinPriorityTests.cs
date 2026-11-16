@@ -148,4 +148,13 @@ public sealed class RoadJoinPriorityTests
         new NavigationManeuverDetector().FindSequence([approach,main,outgoing],0,graph,out _,out bool unknown,out double first);
         Assert.True(unknown);Assert.Equal(100,first,1);
     }
+    [Fact]
+    public void SharedExitSlotsStillParticipateInTheComponentPriorityCompetition()
+    {
+        var scene=Scene();var lanes=scene.Main.LaneConnections!.Select(c=>c with{ExitLane=0}).ToArray();
+        var edges=new[]{scene.Main with{LaneConnections=lanes},scene.Side with{LaneConnections=lanes}};
+        var result=new RoadJoinPriorityBuilder(Index(scene.Map.MapItems.Values.OfType<Road>().ToArray())).Annotate(edges);
+        Assert.All(result,e=>Assert.NotNull(e.JoinPriority));
+        Assert.All(result,e=>Assert.Equal(2,e.JoinPriority!.Measurements.Count));
+    }
 }

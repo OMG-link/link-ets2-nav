@@ -116,6 +116,9 @@ public sealed class LaneContinuityTests
         Assert.All(result.Points,p=>Assert.Single(p.Branches,b=>b.Role==LaneContinuityRole.Survivor));
     }
     [Fact]
+    public void MissingGeometryIsNotMistakenForAnEntirelySurvivingPrefab()
+        =>Assert.Equal(MapQueryFailureKind.DefinitionUnavailable,Assert.IsType<MapQueryFailure>(LaneContinuity.Analyze(new(1,[])).MapIssue).Kind);
+    [Fact]
     public void PlainCurvesDoNotRequireAnyJunctionClassification()
     {
         var curve=new NativeLaneCurve(0,Vector3.Zero,Vector3.UnitX,Vector3.UnitX,Vector3.UnitX,[],[]);

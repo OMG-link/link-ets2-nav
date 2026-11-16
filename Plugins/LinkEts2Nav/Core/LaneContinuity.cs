@@ -41,6 +41,7 @@ public static class LaneContinuity
     private static MapQueryFailure Invalid(string reason)=>new(MapQueryFailureKind.InvalidData,reason);
     public static LaneContinuityResult Analyze(NativeLaneGeometry geometry)
     {
+        if(geometry.Curves.Count==0)return new([],[]){MapIssue=new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,$"Prefab {geometry.PrefabUid:X16}: native lane geometry is unavailable.")};
         var duplicate=geometry.Curves.GroupBy(c=>c.Index).FirstOrDefault(g=>g.Count()!=1);
         if(duplicate is not null)return new([],[]){MapIssue=Invalid($"Prefab {geometry.PrefabUid:X16}: duplicate native curve {duplicate.Key}.")};
         var curves=geometry.Curves.ToDictionary(c=>c.Index);var points=new List<LaneContinuityPoint>();var involved=new HashSet<int>();

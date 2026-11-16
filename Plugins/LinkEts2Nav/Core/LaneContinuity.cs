@@ -96,7 +96,7 @@ public static class LaneContinuity
             LaneTurnKind turn=LaneTurnKind.Unknown;MapQueryIssue? issue=null;
             if(!alive)
             {
-                turn=Turn(branch,standard,origin,merge);
+                turn=DescribeTurn(branch,standard,origin,merge);
                 if(turn==LaneTurnKind.Unknown)issue=Invalid($"Prefab {prefab:X16} curve {branch.Index}: turn side cannot be established from native tangent and origin.");
             }
             result.Add(new(branch.Index,alive?LaneContinuityRole.Survivor:merge?LaneContinuityRole.Dead:LaneContinuityRole.Newborn,
@@ -104,7 +104,8 @@ public static class LaneContinuity
         }
         return new(prefab,kind,shared.Index,origin,standard,result.ToArray());
     }
-    private static LaneTurnKind Turn(NativeLaneCurve branch,Vector3 standard,Vector3 origin,bool merge)
+    /// <summary>Describes actual travel side against a supplied standard without changing lane qualification.</summary>
+    public static LaneTurnKind DescribeTurn(NativeLaneCurve branch,Vector3 standard,Vector3 origin,bool merge)
     {
         Vector3 direction=merge?branch.StartTangent:branch.EndTangent;
         if(!Horizontal(direction,out double dx,out double dz)||!Horizontal(standard,out double sx,out double sz))return LaneTurnKind.Unknown;

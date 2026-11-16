@@ -95,23 +95,21 @@ public static class LaneContractionGuidance
     {
         // Generic prefab entrance roles are not physical contraction positions.
         var result=actions.Where(a=>!a.Id.StartsWith("merge:",StringComparison.Ordinal)).ToList();
-        foreach(var merge in merges.Where(m=>m.MoveLeft is not null&&(m.Kind==LaneMergeKind.LaneReduction||m.EntranceBased)))
+        // Entrance/exit navigation belongs exclusively to ComponentContinuity.
+        // Only actual same-source lane reductions remain environment events.
+        foreach(var merge in merges.Where(m=>m.Kind==LaneMergeKind.LaneReduction)
+            .DistinctBy(m=>(m.PrefabUid,m.Position,m.Origin?.ApplicableEntryNode,
+                Orders:string.Join(',',m.Origin?.ApplicableEntryLanes??[]))))
         {
-            bool left=merge.MoveLeft!.Value;string group=merge.JunctionId??$"prefab:{merge.PrefabUid:X16}";
-            result.RemoveAll(a=>(merge.EntranceBased
-                ?a.JunctionId==merge.CompletionJunctionId&&SamePassageEnd(a.EndDistanceMeters,merge.EndDistanceMeters)
-                :a.JunctionId==group)&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
-            var action=new NavigationManeuver(merge.Id,left?ManeuverKind.MergeLeft:ManeuverKind.MergeRight,
-                merge.Kind==LaneMergeKind.Ramp&&merge.ApproachInterval is {} interval?AuxiliaryLaneTiming.ActionPoint(interval):merge.DistanceMeters,"lane","lane")
+            string group=merge.JunctionId??$"prefab:{merge.PrefabUid:X16}";
+            var action=new NavigationManeuver(merge.Id,merge.MoveLeft==false?ManeuverKind.MergeRight:ManeuverKind.MergeLeft,
+                merge.DistanceMeters,"lane","lane")
                 {EndDistanceMeters=merge.EndDistanceMeters,JunctionId=group,JunctionKind=NavigationJunctionKind.Ramp,
                     HasSeparateApproachRoad=false,ApproachInterval=merge.ApproachInterval};
-            if(merge.Kind==LaneMergeKind.LaneReduction)
-            {
-                string? selection=LaneInstructionFormatter.EdgeSelection(merge.ApproachLaneCount,left?NavigationSide.Left:NavigationSide.Right,merge.RecommendedLaneCount);
-                if(selection is null)continue;
-                action=action with{AnnouncementMode=NavigationAnnouncementMode.DistancePreview,
-                    Instruction="车道合并，建议提前"+selection};
-            }
+            string? selection=merge.ApproachLaneCount is {} count
+                ?LaneInstructionFormatter.Selection(count,merge.SurvivingEntryOrders):null;
+            action=action with{AnnouncementMode=NavigationAnnouncementMode.DistancePreview,
+                Instruction=selection is null?"车道合并，请注意观察":"车道合并，建议提前"+selection};
             result.Add(action);
         }
         return result.OrderBy(m=>m.DistanceMeters).ToArray();

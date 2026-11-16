@@ -4,7 +4,7 @@ using LinkEts2Nav.Map;
 namespace LinkEts2Nav.Core;
 
 public enum ComponentContinuityKind { Main, Hard, Soft, Natural, Singular, Unknown }
-public enum ComponentLaneFate { Continues, Dies, Separates, Unresolved }
+public enum ComponentLaneFate { Continues, Dies, Separates, Unresolved, Born, Joins }
 public enum ComponentTurnKind { Forward, Turn, Back, Unknown }
 public sealed record ComponentTurn(NavigationSide Side,ComponentTurnKind Kind,string? Failure=null);
 
@@ -26,6 +26,9 @@ public sealed record ComponentLaneOutcome(int EntryOrder,int ExitOrder,Component
     public double LifecycleDistanceFromExitMeters {get;init;}
     public double SoftActionDistanceFromExitMeters {get;init;}
     public string? StructuralConstraintId {get;init;}
+    public ulong? TurnPrefabUid {get;init;}
+    public int? TurnSharedCurveIndex {get;init;}
+    public int? TurnBranchCurveIndex {get;init;}
 }
 
 /// <summary>Static structure for one legal entry/exit passage. Consumers map its anchors onto the matching route visit.</summary>
@@ -70,9 +73,6 @@ public static class ComponentContinuity
             {StructuralConstraintId=constraints.Length==0?null:string.Join('|',constraints)};
         }
         if(lanes.Count==0)return Result(ComponentContinuityKind.Unknown,issue:new MapQueryFailure(MapQueryFailureKind.InvalidData,"组件没有原生车道结果"));
-        if(isMain)return Result(ComponentContinuityKind.Main,
-            (outgoing?lanes.MaxBy(l=>l.MidpointDistanceFromExitMeters):lanes.MinBy(l=>l.MidpointDistanceFromExitMeters))!.InitialMidpoint,
-            lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!.InitialExit);
         if(lanes.All(l=>l.InComponent&&l.Fate==ComponentLaneFate.Separates))
             return Result(ComponentContinuityKind.Singular,issue:new MapQueryFailure(MapQueryFailureKind.Ambiguous,"奇异入口：全部车道在汇入组件内分离"));
         if(lanes.Any(l=>l.Fate==ComponentLaneFate.Unresolved))
@@ -97,6 +97,9 @@ public static class ComponentContinuity
             return Result(ComponentContinuityKind.Soft,first.InComponent&&first.Fate==ComponentLaneFate.Dies?first.Terminal:first.SoftAction,last.LifecycleEnd,
                 lanes.First().InitialExit,terminal.Terminal,turn:first.Turn);
         }
+        if(isMain)return Result(ComponentContinuityKind.Main,
+            (outgoing?lanes.MaxBy(l=>l.MidpointDistanceFromExitMeters):lanes.MinBy(l=>l.MidpointDistanceFromExitMeters))!.InitialMidpoint,
+            lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!.InitialExit);
         return Result(ComponentContinuityKind.Natural,
             (outgoing?lanes.MaxBy(l=>l.MidpointDistanceFromExitMeters):lanes.MinBy(l=>l.MidpointDistanceFromExitMeters))!.InitialMidpoint,
             lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!.InitialExit);

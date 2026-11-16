@@ -226,4 +226,59 @@ public sealed class ComponentContinuityTests
         var conflicting=ComponentContinuity.Aggregate(edge,false,[a,b with{Turn=new(NavigationSide.Right,ComponentTurnKind.Turn)}],1);
         Assert.Null(conflicting.Turn);Assert.IsType<MapQueryFailure>(conflicting.Issue);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NearStraightSBranchUsesItsActualSplitSideRatherThanMirroringTheReverseMerge(bool soft)
+    {
+        var geometry=new NativeLaneGeometry(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
+            Curve(1,new(20,0,0),new(100,0,0),[],[0]),
+            new(2,new(20,0,0),new(100,0,3),new(80,0,0),new(80,0,0),[],[0])]);
+        var main=Passage(1,10,20,0,0,[0,1],geometry);
+        var side=Passage(1,10,30,0,0,[0,2],geometry);
+        DirectedRoad[] edges;
+        if(!soft)
+        {
+            main=main with{SplitPriority=new(20,[],[],8,"main outlet")};side=side with{SplitPriority=main.SplitPriority};
+            edges=[main,side];
+        }
+        else
+        {
+            main=Passage(1,10,30,0,0,[0,1],geometry,1,2);
+            side=Passage(1,10,30,0,1,[0,2],geometry,1,2);
+            var birth=main with{LanePaths=[main.LanePaths[0],side.LanePaths[0]]};
+            var road=new DirectedRoad("parallel",30,40,[new(100,0,0),new(350,0,0)]);
+            var end=new NativeLaneGeometry(2,[Curve(0,new(350,0,0),new(450,0,0),[],[]),Curve(1,new(350,0,3),new(450,0,30),[],[])]);
+            main=Passage(2,40,50,0,0,[0],end,2,1) with{SplitPriority=new(50,[],[],8,"main outlet")};
+            side=Passage(2,40,60,1,0,[1],end,2,1) with{SplitPriority=main.SplitPriority};
+            edges=[birth,road,main,side];
+        }
+        var actual=LaneContinuity.Analyze(geometry).Points.Single(p=>p.Kind==LaneContinuityPointKind.Split)
+            .Branches.Single(b=>b.CurveIndex==2);
+        Assert.Equal(LaneTurnKind.ForwardRight,actual.Turn);
+        var result=ComponentContinuityIndex.Build(new(edges)).ForExit(side.Id)!;
+        Assert.Equal(soft?ComponentContinuityKind.Soft:ComponentContinuityKind.Hard,result.Kind);
+        Assert.Equal(NavigationSide.Right,result.Turn!.Side);
+        var lane=Assert.Single(result.Lanes);Assert.Equal(NavigationSide.Right,lane.Turn!.Side);
+        Assert.Equal(side.LanePaths[0].EntryOrder,lane.EntryOrder);Assert.Equal(side.LanePaths[0].ExitOrder,lane.ExitOrder);
+        Assert.Equal(ComponentLaneFate.Born,lane.Fate);
+        Assert.Equal(side.StartNodeUid,lane.InitialMidpoint.StartNodeUid);Assert.Equal(side.EndNodeUid,lane.InitialMidpoint.EndNodeUid);
+    }
+
+    [Fact]
+    public void ThirtyPointMainEntranceIdentityDoesNotResurrectLocallyDeadLanes()
+    {
+        var geometry=new NativeLaneGeometry(1,[
+            new(0,new(0,0,-3),new(90,0,0),new(90,0,9),new(90,0,9),[2],[]),
+            new(1,new(0,0,3),new(90,0,0),new(90,0,-9),new(90,0,-9),[2],[]),
+            Curve(2,new(90,0,0),new(100,0,0),[],[0,1])]);
+        var main=Passage(1,10,30,0,0,[0,2],geometry);var side=Passage(1,20,30,0,0,[1,2],geometry);
+        Assert.All(LaneContinuity.Analyze(geometry).Points.Single().Branches,b=>Assert.Equal(LaneContinuityRole.Dead,b.Role));
+        var index=ComponentContinuityIndex.Build(new([main,side]));var fact=index.ForEntry(main.Id)!;
+        Assert.True(fact.IsMain);Assert.Equal(ComponentContinuityKind.Hard,fact.Kind);
+        Assert.NotNull(fact.ActionPoint);Assert.NotNull(fact.LifecycleEnd);
+        Assert.Equal(ComponentLaneFate.Dies,fact.Lanes.Single().Fate);
+        Assert.Equal(ComponentContinuityKind.Hard,index.ForEntry(side.Id)!.Kind);
+    }
 }

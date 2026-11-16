@@ -25,8 +25,9 @@ public sealed class LaneMergeDetectorTests
         for(int d=-1;d>=-10;d--){var common=Position(d,0);main.Add(common);ending.Add(common);}
         int mainLane=left?1:0;int endLane=left?0:1;
         PrefabLanePath Lane(int lane,int curve,List<Vector3> points)=>new(42,10,20,lane,0,lane,0,2,1,[curve,9],points,100)
-            {CurveBlinkers=[lane==mainLane?LaneBlinker.NoBlinker:left?LaneBlinker.Right:LaneBlinker.Left,LaneBlinker.NoBlinker]};
-        var m=Lane(mainLane,1,main);var e=Lane(endLane,2,ending);
+            {CurveStartPointIndices=[0,(int)length],CurveBlinkers=[lane==mainLane?LaneBlinker.NoBlinker:left?LaneBlinker.Right:LaneBlinker.Left,LaneBlinker.NoBlinker]};
+        var native=NativeGeometry([Lane(mainLane,1,main),Lane(endLane,2,ending)]);
+        var m=Lane(mainLane,1,main) with{NativeGeometry=native};var e=Lane(endLane,2,ending) with{NativeGeometry=native};
         var edge=new DirectedRoad("prefab:000000000000002A:0:1",10,20,main){LanePaths=[m,e]};
         var roadPoints=Enumerable.Range(0,(int)upstream+1).Select(i=>Position(length+upstream-i,0)).ToArray();
         var road=new DirectedRoad("road",5,10,roadPoints);
@@ -35,17 +36,18 @@ public sealed class LaneMergeDetectorTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void LongParallelApproachIsLaneReductionAndFindsCorrectSide(bool left)
+    public void FullSourceWindowIsLaneReductionAndFindsCorrectSide(bool left)
     {
         var scene=Scene(left:left);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
         Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);
-        Assert.True(observation.ParallelDistanceMeters>500);Assert.Equal(!left,observation.MoveLeft);
+        Assert.Null(observation.ParallelDistanceMeters);
+        Assert.True(observation.Origin!.BackwardMeters>=500);Assert.Equal(!left,observation.MoveLeft);
         Assert.Equal(1,observation.RecommendedLaneCount);
         Assert.Equal(observation.DistanceMeters,observation.EndDistanceMeters);
     }
     [Theory]
     [InlineData(false)] [InlineData(true)]
-    public void ConsecutiveRoadItemsDoNotTruncateParallelHistory(bool curved)
+    public void ConsecutiveRoadItemsDoNotTruncateSourceHistory(bool curved)
     {
         var scene=Scene(curved:curved);var source=scene.Graph[0];
         var sections=new List<DirectedRoad>();
@@ -58,7 +60,7 @@ public sealed class LaneMergeDetectorTests
         }
         var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..sections,scene.Edge],scene.Plan,0));
         Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);
-        Assert.True(observation.ParallelDistanceMeters>500);
+        Assert.Null(observation.ParallelDistanceMeters);Assert.True(observation.Origin!.BackwardMeters>=500);
     }
 
     [Theory]
@@ -151,18 +153,22 @@ public sealed class LaneMergeDetectorTests
             {CurveStartPointIndices=[0,5,10,35],CurveBlinkers=[LaneBlinker.NoBlinker,LaneBlinker.NoBlinker,LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]};
         var ending=new PrefabLanePath(42,10,20,1,0,1,0,2,1,[4,5,6,3],right,80)
             {CurveStartPointIndices=[0,5,10,35],CurveBlinkers=[LaneBlinker.NoBlinker,LaneBlinker.NoBlinker,LaneBlinker.Left,LaneBlinker.NoBlinker]};
+        var native=NativeGeometry([continuing,ending]);
+        continuing=continuing with{NativeGeometry=native};ending=ending with{NativeGeometry=native};
         var edge=new DirectedRoad("prefab:000000000000002A:0:1",10,20,left)
             {LanePaths=reverseOrder?[ending,continuing]:[continuing,ending]};
         var plan=new LaneNavigationPlan([new(edge.Id,ending)],[],true,null);
         var result=Assert.Single(new LaneMergeDetector().Find([edge],[edge],plan,0));
         Assert.Equal(1,result.EndingEntryLane);
         Assert.Equal(0,result.MainEntryLane);
-        Assert.True(result.MoveLeft);
+        // This sampled native fit has a rightward initial tangent relative
+        // to the common tail. Its old lamp-derived left word is superseded.
+        Assert.False(result.MoveLeft);
         Assert.Equal(1,result.RecommendedLaneCount);
     }
 
     [Fact]
-    public void AnUnresolvedSourceAtTheNearestJoinCannotBorrowAnOlderContinuingLane()
+    public void UnresolvedNativeUpstreamCannotBorrowAnOlderContinuingLane()
     {
         var scene=Scene(upstream:80);var road=scene.Graph[0];float z=road.Points[0].Z;
         PrefabLanePath Lane(int lane)=>new(43,30,5,lane,lane,lane,lane,2,2,[lane],
@@ -174,15 +180,16 @@ public sealed class LaneMergeDetectorTests
             new("prefab:000000000000002B:2:1",40,5,side.Points){LanePaths=[side]}];
         var result=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..upstream,..scene.Graph],scene.Plan,0));
         Assert.Equal(LaneMergeKind.Uncertain,result.Kind);
-        Assert.True(result.ParallelDistanceMeters>500);
-        Assert.Contains("未唯一",result.Reason);
+        Assert.Null(result.ParallelDistanceMeters);
+        Assert.NotNull(result.Origin!.MapIssue);
     }
 
     [Fact]
     public void AFullFiveHundredMetreSourceWindowIsSameOriginDespiteShortParallelShape()
     {
         var scene=Scene(shortApproach:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
-        Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);Assert.InRange(observation.ParallelDistanceMeters!.Value,70,110);
+        Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);Assert.Null(observation.ParallelDistanceMeters);
+        Assert.True(observation.Origin!.BackwardMeters>=500);
     }
     [Fact]
     public void SharedSuffixAndDistinctNativeEntrancesProveShortRamp()
@@ -196,7 +203,7 @@ public sealed class LaneMergeDetectorTests
             Points=scene.Graph[0].Points.Select(p=>p+new Vector3(side.Points[0].X,0,0)).ToArray()};
         var plan=new LaneNavigationPlan([new(sideEdge.Id,side)],[],true,null);
         var observation=Assert.Single(new LaneMergeDetector().Find([sideEdge],[scene.Graph[0],sideRoad,mainEdge,sideEdge],plan,0));
-        Assert.Equal(LaneMergeKind.Ramp,observation.Kind);Assert.True(observation.MoveLeft);
+        Assert.Equal(LaneMergeKind.Ramp,observation.Kind);Assert.False(observation.MoveLeft);
     }
     [Fact]
     public void MissingUpstreamCoverageDoesNotTurnLongUnknownRoadIntoRamp()
@@ -205,10 +212,12 @@ public sealed class LaneMergeDetectorTests
         Assert.Equal(LaneMergeKind.Uncertain,observation.Kind);Assert.Null(observation.ParallelDistanceMeters);
     }
     [Fact]
-    public void NativeBlinkerStillSelectsContinuingLaneOnCurvedRoad()
+    public void NativeTangentsSelectContinuingLaneOnCurvedRoad()
     {
         var scene=Scene(curved:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
-        Assert.Equal(0,observation.MainEntryLane);Assert.True(observation.MoveLeft);
+        // The curved fixture starts west of the shared curve heading; native
+        // start-tangent direction now takes precedence over a lamp-based left cue.
+        Assert.Equal(0,observation.MainEntryLane);Assert.False(observation.MoveLeft);
     }
     [Fact]
     public void SameOriginReductionAlsoWarnsTheContinuingLane()
@@ -231,12 +240,16 @@ public sealed class LaneMergeDetectorTests
         PrefabLanePath Other(int lane)=>continuing with{EntryLane=lane,EntryOrder=lane,ExitLane=lane,ExitOrder=lane,CurveIndices=[20+lane]};
         var edge=shape.Edge with{LanePaths=[Other(0),Other(1),continuing,ending]};
         if(reverseIds)edge=edge with{LanePaths=[..edge.LanePaths.Select(p=>p with{EntryLane=3-p.EntryLane})]};
+        var native=NativeGeometry(edge.LanePaths);edge=edge with{LanePaths=[..edge.LanePaths.Select(p=>p with{NativeGeometry=native})]};
         float sourceZ=inputRoad.Points[0].Z;
         PrefabLanePath Source(ulong entrance,int input,int output)=>new(43,entrance,5,input,output,input,output,entrance==100?sourceCount:4-sourceCount,4,[100+output],
             [new((output-2)*4.5f,0,sourceZ+20),new((output-2)*4.5f,0,sourceZ)],20);
         var sourceA=new DirectedRoad("prefab:43:0:1",100,5,[new(0,0,sourceZ+20),new(0,0,sourceZ)])
             {LanePaths=[..Enumerable.Range(0,sourceCount).Select(i=>Source(100,i,4-sourceCount+i))]};
         var sourceB=sourceA with{Id="prefab:43:2:1",StartNodeUid=200,LanePaths=[..Enumerable.Range(0,4-sourceCount).Select(i=>Source(200,i,i))]};
+        var sourceNative=NativeGeometry([..sourceA.LanePaths,..sourceB.LanePaths]);
+        sourceA=sourceA with{LanePaths=[..sourceA.LanePaths.Select(p=>p with{NativeGeometry=sourceNative})]};
+        sourceB=sourceB with{LanePaths=[..sourceB.LanePaths.Select(p=>p with{NativeGeometry=sourceNative})]};
         var coveredA=new DirectedRoad("source-A-road",300,100,[new(0,0,sourceZ+670),new(0,0,sourceZ+20)]);
         var coveredB=coveredA with{Id="source-B-road",StartNodeUid=400,EndNodeUid=200};
         DirectedRoad[] graph=[coveredA,coveredB,sourceA,sourceB,inputRoad,edge];
@@ -321,7 +334,7 @@ public sealed class LaneMergeDetectorTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void UnknownOrContradictoryLampsDoNotGuessUsingCurvature(bool contradictory)
+    public void UnknownOrContradictoryLampsDoNotOverrideNativeContinuity(bool contradictory)
     {
         var scene=Scene();
         var lanes=scene.Edge.LanePaths.Select(p=>p with
@@ -329,25 +342,52 @@ public sealed class LaneMergeDetectorTests
         var edge=scene.Edge with{LanePaths=lanes};
         var plan=scene.Plan with{Sections=[new(edge.Id,lanes[1])]};
         var merge=Assert.Single(new LaneMergeDetector().Find([edge],[scene.Graph[0],edge],plan,0));
-        Assert.Equal(LaneMergeKind.Uncertain,merge.Kind);
-        Assert.Null(merge.MoveLeft);Assert.Null(merge.EndingEntryLane);Assert.Null(merge.MainEntryLane);
-        Assert.Equal(0,merge.RecommendedLaneCount);
+        Assert.Equal(LaneMergeKind.LaneReduction,merge.Kind);
+        Assert.True(merge.MoveLeft);Assert.Equal(1,merge.EndingEntryLane);Assert.Equal(0,merge.MainEntryLane);
+        Assert.Equal(1,merge.RecommendedLaneCount);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void LeftLaneRightBlinkerOverridesTheOldCurvaturePreference(bool reverseOrder)
+    public void LeftLaneRightBlinkerCannotOverrideNativeSurvival(bool reverseOrder)
     {
-        // Regression pattern observed in un_fork_4m-1m_0-2_0-3_join_0-2_60m:
-        // the left competing incoming curve signals right; the right one does not.
+        // Lamp commands are deliberately contrary to this fixture's native
+        // tangents. Latest local tools decide survival without consulting lamps.
         var scene=Scene();
         var left=scene.Edge.LanePaths[0] with{CurveBlinkers=[LaneBlinker.Right,LaneBlinker.NoBlinker]};
         var right=scene.Edge.LanePaths[1] with{CurveBlinkers=[LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]};
         var edge=scene.Edge with{LanePaths=reverseOrder?[right,left]:[left,right]};
         var plan=new LaneNavigationPlan([new(edge.Id,left)],[],true,null);
         var merge=Assert.Single(new LaneMergeDetector().Find([edge],[scene.Graph[0],edge],plan,0));
-        Assert.Equal(0,merge.EndingEntryLane);Assert.Equal(1,merge.MainEntryLane);
-        Assert.False(merge.MoveLeft);Assert.Equal(1,merge.RecommendedLaneCount);
+        Assert.Equal(1,merge.EndingEntryLane);Assert.Equal(0,merge.MainEntryLane);
+        Assert.True(merge.MoveLeft);Assert.Equal(1,merge.RecommendedLaneCount);
+    }
+
+    // Synthetic curve geometry for these polyline fixtures. Explicit segment
+    // boundaries retain shared suffix identity; endpoint derivatives are fitted
+    // from the adjacent distinct samples, rather than copied from blinkers.
+    private static NativeLaneGeometry NativeGeometry(IReadOnlyList<PrefabLanePath> paths)
+    {
+        var curves=new Dictionary<int,NativeLaneCurve>();
+        foreach(var path in paths)
+        for(int i=0;i<path.CurveIndices.Count;i++)
+        {
+            int start=path.CurveStartPointIndices.Count==path.CurveIndices.Count?path.CurveStartPointIndices[i]:0;
+            int end=i+1<path.CurveIndices.Count&&path.CurveStartPointIndices.Count==path.CurveIndices.Count
+                ?path.CurveStartPointIndices[i+1]:path.Points.Count-1;
+            var points=path.Points.Skip(start).Take(end-start+1).Distinct().ToArray();
+            Assert.True(points.Length>=2,"Native test segments need two distinct control positions.");
+            float length=(float)new LanePolyline(points).Length;
+            Vector3 tangentStart=Vector3.Normalize(points[1]-points[0])*length;
+            Vector3 tangentEnd=Vector3.Normalize(points[^1]-points[^2])*length;
+            int index=path.CurveIndices[i];
+            int[] previous=i>0?[path.CurveIndices[i-1]]:[];
+            int[] next=i+1<path.CurveIndices.Count?[path.CurveIndices[i+1]]:[];
+            if(curves.TryGetValue(index,out var old))
+                curves[index]=old with{Previous=[..old.Previous.Concat(previous).Distinct()],Next=[..old.Next.Concat(next).Distinct()]};
+            else curves[index]=new(index,points[0],points[^1],tangentStart,tangentEnd,next,previous);
+        }
+        return new(paths[0].PrefabUid,curves.Values.OrderBy(c=>c.Index).ToArray());
     }
 }

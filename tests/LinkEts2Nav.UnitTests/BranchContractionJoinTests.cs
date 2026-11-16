@@ -6,7 +6,7 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class BranchContractionJoinTests
 {
     [Theory] [InlineData(false)] [InlineData(true)]
-    public void ABranchNarrowingToItsOwnAddedLaneStillNeedsMainEntranceScoring(bool left)
+    public void ABranchNarrowingNeverBecomesAMainMergeWithoutNativeGeometry(bool left)
     {
         int side=left?0:3;int first=left?1:0;
         LaneConnection[] lanes=[new(1,0,4,first),new(1,1,4,first+1),new(1,2,4,first+2),new(2,0,4,side),new(2,1,4,side)];
@@ -21,7 +21,10 @@ public sealed class BranchContractionJoinTests
         var before=new DirectedRoad("before",10,2,[new(10,0,0),new(10,0,100)]);
         var after=new DirectedRoad("after",4,20,[new(0,0,140),new(0,0,500)]);
         var result=new NavigationManeuverDetector().FindSequence([before,selected,after],0,[before,selected,main,after],out _,out bool unknown);
-        Assert.False(unknown);Assert.DoesNotContain(result,m=>m.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
+        // LaneConnections establishes independent output groups, but this
+        // fixture intentionally has no native curves. New component tools must
+        // preserve Unknown rather than manufacture a resolved no-action path.
+        Assert.True(unknown);Assert.DoesNotContain(result,m=>m.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);
     }
 
     [Fact]

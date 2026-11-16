@@ -73,8 +73,6 @@ public sealed class LaneMergeDetector
     private static IReadOnlyList<Model> Build(IReadOnlyList<DirectedRoad> graph,Func<ulong,LinkEts2Nav.Map.MapQueryIssue>? missingConnection)
     {
         var lanes=graph.Where(e=>!e.ReturnsToEntry).SelectMany(e=>e.LanePaths).DistinctBy(p=>(p.PrefabUid,p.EntryNodeUid,p.EntryLane,p.ExitNodeUid,p.ExitLane)).ToArray();
-        var roads=graph.Where(e=>!e.Id.StartsWith("prefab:",StringComparison.Ordinal)).GroupBy(e=>e.EndNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
-        var laneEnds=lanes.GroupBy(p=>p.ExitNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
         var result=new List<Model>();var origins=new LaneMergeOriginClassifier(new NativeLaneGraph(graph),missingConnection);
         var continuity=lanes.Where(p=>p.NativeGeometry is not null).GroupBy(p=>p.PrefabUid)
             .ToDictionary(g=>g.Key,g=>LaneContinuity.Analyze(g.First().NativeGeometry!));
@@ -91,86 +89,25 @@ public sealed class LaneMergeDetector
                 if(x.CurveStartPointIndices.Count==x.CurveIndices.Count)xi=x.CurveStartPointIndices[^common];
                 if(y.CurveStartPointIndices.Count==y.CurveIndices.Count)yi=y.CurveStartPointIndices[^common];
                 var xp=new LanePolyline(x.Points);var yp=new LanePolyline(y.Points);
-                double xa=xp.Along[xi],ya=yp.Along[yi];if(xa<6||ya<6||xp.Length-xa<1)continue;
+                double xa=xp.Along[xi],ya=yp.Along[yi];
                 var direction=NativeMergeContinuity.Read(x,y,common,continuity.GetValueOrDefault(x.PrefabUid),lanes);
                 if(direction is null)continue;
                 bool xEnds=direction.FirstEnds??true;
                 var ending=xEnds?x:y;var main=xEnds?y:x;int ei=xEnds?xi:yi,mi=xEnds?yi:xi;
-                var endTrace=Trace(ending,ei,roads,laneEnds);var mainTrace=Trace(main,mi,roads,laneEnds);
-                var measured=MeasureParallel(endTrace,mainTrace);
-                if(!measured.Observed)continue;
-                double? parallel=measured.Distance;
+                // The local primitive proves the merge. Classification uses
+                // native lane-source mileage, not a geometric parallel trace.
+                double? parallel=null;
                 var origin=origins.Classify(ending,xEnds?xa:ya,main,xEnds?ya:xa);
                 var kind=direction.FirstEnds is null&&!direction.AllDead?LaneMergeKind.Uncertain:origin.Kind;
                 bool? left=direction.FirstEnds is null?null:direction.MoveLeft;
                 string reason=direction.Reason+"；"+origin.Reason;
                 int count=direction.SurvivingOrders.Count;
                 result.Add(new(ending,main,ending.Points[ei],left,count,parallel,kind,
-                    reason+(parallel is null?"；上游平行段超出已加载或唯一连接范围":parallel>500?"；已证实平行接近超过500 m（测量下界）":$"；合并前平行接近区间约 {parallel:F0} m"),origin,
+                    reason+"；类别按累计500米原生来源窗口判定，不以旧并行测量覆盖",origin,
                     direction.SurvivingOrders,direction.AllDead));
             }
         }
         return result.DistinctBy(m=>(m.Ending.PrefabUid,m.Ending.EntryNodeUid,m.Ending.EntryLane,m.Ending.ExitNodeUid,m.Ending.ExitLane)).ToArray();
-    }
-    private static LanePolyline Trace(PrefabLanePath current,int endIndex,IReadOnlyDictionary<ulong,DirectedRoad[]> roadEnds,IReadOnlyDictionary<ulong,PrefabLanePath[]> laneEnds)
-    {
-        var points=current.Points.Take(endIndex+1).Reverse().ToList();double length=new LanePolyline(points).Length;
-        var visited=new HashSet<(ulong,ulong,int,ulong,int)>();
-        var visitedRoads=new HashSet<(string,ulong,ulong)>();
-        void Add(IEnumerable<Vector3> source)
-        {
-            foreach(var p in source){if(points.Count>0){double gap=Vector3.Distance(points[^1],p);if(gap<.001)continue;length+=gap;}points.Add(p);if(length>=550)break;}
-        }
-        while(length<550&&visited.Add((current.PrefabUid,current.EntryNodeUid,current.EntryLane,current.ExitNodeUid,current.ExitLane)))
-        {
-            var currentLine=new LanePolyline(current.Points);var heading=currentLine.Heading(0);
-            ulong boundary=current.EntryNodeUid;Vector3 expected=current.Points[0];bool blocked=false;
-            // Several ordinary road items can connect directly without a prefab between them.
-            while(length<550)
-            {
-                var roads=(roadEnds.GetValueOrDefault(boundary)??[]).Where(e=>Vector3.Dot(new LanePolyline(e.Points).Heading(new LanePolyline(e.Points).Length),heading)>.7).ToArray();
-                if(roads.Length==0)break;
-                if(roads.Length>1){blocked=true;break;}
-                var road=roads[0];
-                if(!visitedRoads.Add((road.Id,road.StartNodeUid,road.EndNodeUid))){blocked=true;break;}
-                var line=new LanePolyline(road.Points);var h=line.Heading(line.Length);var right=new Vector3(-h.Z,0,h.X);
-                float lateral=Vector3.Dot(expected-road.Points[^1],right);
-                var shifted=road.Points.Select((p,i)=>{var t=line.Heading(line.Along[i]);return p+new Vector3(-t.Z,0,t.X)*lateral;}).ToArray();
-                if(Vector3.Distance(shifted[^1],expected)>1){blocked=true;break;}
-                Add(shifted.Reverse());boundary=road.StartNodeUid;expected=shifted[0];heading=line.Heading(0);
-            }
-            if(blocked||length>=550)break;
-            var prior=(laneEnds.GetValueOrDefault(boundary)??[]).Where(p=>p.ExitOrder==current.EntryOrder&&p.ExitLaneCount==current.EntryLaneCount
-                &&Vector3.Distance(p.Points[^1],expected)<1).ToArray();
-            if(prior.Length>1)
-            {
-                // Side roads can join this exit lane. Prefer the unique upstream
-                // lane preserving the corridor's lane count, order and direction.
-                prior=prior.Where(p=>p.EntryLaneCount==current.EntryLaneCount&&p.EntryOrder==current.EntryOrder
-                    &&Vector3.Dot(new LanePolyline(p.Points).Heading(0),heading)>.7).ToArray();
-            }
-            if(prior.Length!=1)break;
-            current=prior[0];Add(current.Points.Reverse());
-        }
-        return new(points);
-    }
-    private static (bool Observed,double? Distance) MeasureParallel(LanePolyline ending,LanePolyline main)
-    {
-        bool observed=false;int stable=0;
-        for(double d=2;d<=Math.Min(550,ending.Length);d+=2)
-        {
-            var p=ending.At(d);var projection=main.Project(p,Math.Max(0,d-Math.Max(15,d*.1)),Math.Min(main.Length,d+Math.Max(15,d*.1)));
-            bool covered=projection.Along<main.Length-1;
-            bool parallel=covered&&projection.Error is >=2 and <=6.5&&Math.Abs(p.Y-main.At(projection.Along).Y)<2
-                &&Vector3.Dot(ending.Heading(d),main.Heading(projection.Along))>=Math.Cos(Math.PI/180);
-            if(parallel){stable++;if(stable>=3)observed=true;}
-            else if(observed&&covered)return(true,Math.Max(0,d-2));
-            else stable=0;
-            // 500 m remains inclusive. Only a sample strictly beyond it proves
-            // a long reduction; never reuse a 500 m lower bound as a short ramp.
-            if(observed&&d>500&&parallel)return(true,d);
-        }
-        return(observed,null);
     }
     private static float Horizontal(Vector3 p)=>new Vector2(p.X,p.Z).Length();
 }

@@ -64,6 +64,9 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
 /// </summary>
 public sealed class NavigationManeuverDetector
 {
+    internal ComponentManeuverPlanner Components {get;}=new();
+    internal Func<ulong,LinkEts2Nav.Map.MapQueryIssue>? MissingConnection {get;set;}
+    internal IReadOnlyList<NavigationUnresolvedSpan> OrdinaryUnresolvedSpans=>UnresolvedSpans.Except(Components.Unresolved).ToArray();
     public IReadOnlyList<RoadForkDiagnostic> ForkDiagnostics { get; private set; }=[];
     public IReadOnlyList<NavigationUnresolvedSpan> UnresolvedSpans { get; private set; }=[];
     private const double TurnAngleDegrees = 45;
@@ -100,7 +103,7 @@ public sealed class NavigationManeuverDetector
     /// <summary>Unresolved join position is an absolute route distance, or infinity when none is ahead.</summary>
     public IReadOnlyList<NavigationManeuver> FindSequence(IReadOnlyList<DirectedRoad> route, double vehicleAlong,
         IReadOnlyList<DirectedRoad> graph, out double confirmedUntil, out bool hasUnresolvedJoin,
-        out double firstUnresolvedJoinAlong)
+        out double firstUnresolvedJoinAlong,LaneNavigationPlan? selectedLanes=null)
     {
         confirmedUntil = 0;
         hasUnresolvedJoin = false;
@@ -114,12 +117,16 @@ public sealed class NavigationManeuverDetector
         if (route.Any(r => !Valid(r))) return result;
         for (int i = 1; i < route.Count; i++)
             if (!Connected(route[i - 1], route[i])) return result;
-        if (route.Count == 1 && !route[0].ReturnsToEntry&&route[0].Roundabout is null && route[0].ForkInfo is null&&route[0].Junction?.IsAnyJunction!=true)
+        if (route.Count == 1 && PrefabKey(route[0]) is null&&route[0].Roundabout is null)
         {
             if (PrefabKey(route[0]) is null) confirmedUntil = Length(route[0]);
             return result;
         }
         Index(graph);
+        var componentActions=Components.Build(route,graph,selectedLanes,MissingConnection);
+        foreach(var issue in Components.Unresolved)
+        {hasUnresolvedJoin=true;firstUnresolvedJoinAlong=Math.Min(firstUnresolvedJoinAlong,issue.StartMeters);unresolvedSpans.Add(issue);}
+        foreach(var issue in Components.Issues)forkIssues.Add(new("component",0,0,issue.Reason));
 
         double offset = 0;
         for (int i = 0; i < route.Count; i++)
@@ -159,6 +166,18 @@ public sealed class NavigationManeuverDetector
                         {JunctionId="prefab:"+PrefabKey(current),EndDistanceMeters=end-vehicleAlong});
                 confirmedUntil=end;offset=end;continue;
             }
+            // Non-crossing components have one authority for roles, lane fate,
+            // wording and action/lifetime anchors. Legacy lamps and auxiliary
+            // timing must never override these structural results.
+            if(PrefabKey(current) is not null&&current.Junction?.IsJunction!=true)
+            {
+                if(end>=vehicleAlong)
+                    foreach(var action in componentActions.GetValueOrDefault(i)??[])
+                        result.Add(action with{DistanceMeters=action.DistanceMeters-vehicleAlong,
+                            EndDistanceMeters=action.EndDistanceMeters-vehicleAlong,
+                            SpeechSequenceStartDistanceMeters=action.SpeechSequenceStartDistanceMeters-vehicleAlong});
+                confirmedUntil=end;offset=end;continue;
+            }
             // A road is known up to its exit even if the choice beyond it is unknown.
             // A prefab requires its connection to be validated before advancing.
             if (PrefabKey(current) is null) confirmedUntil = end;
@@ -171,29 +190,6 @@ public sealed class NavigationManeuverDetector
                 bool anyJunction=current.Junction?.IsJunction==true||rampJunction;
                 bool structuralSingle=connections.Length==1&&anyJunction;
                 if(!structuralSingle&&current.ForkInfo is null&&ComplexInternalBend(current))return result;
-                // Crossing junction angles retain their own rules. Ordinary road
-                // splits need no crossing, extra entrance or IsJunction marker.
-                if(current.Junction?.IsJunction!=true&&(connections.Length>=2||current.ForkInfo?.Branches.Count>1))
-                {
-                    var instruction=current.ForkInfo is {} info?RoadForkRules.Decide(info,current.EndNodeUid)
-                        :new RoadForkInstruction(ManeuverKind.Straight,true,null,[],[],"分流的完整原生灯光与入口车道数据不可用");
-                    if(instruction.Failure is {} reason)
-                    {
-                        forkIssues.Add(new(prefab,current.StartNodeUid,current.EndNodeUid,reason));
-                        hasUnresolvedJoin=true;firstUnresolvedJoinAlong=Math.Min(firstUnresolvedJoinAlong,offset);unresolvedSpans.Add(new(offset,end));
-                    }
-                    else if((!instruction.Silent||instruction.Kind==ManeuverKind.Straight&&rampJunction)&&offset>=vehicleAlong)
-                    {
-                        result.Add(new($"fork:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",instruction.Kind,
-                            offset-vehicleAlong,i>0?route[i-1].Id:current.Id,current.Id)
-                        {JunctionId="prefab:"+prefab,EndDistanceMeters=end-vehicleAlong,ForkInstruction=instruction,
-                            JunctionKind=NavigationJunctionKind.Ramp,IsMinorStraight=false,
-                            IsMainRoadContinuation=instruction.Kind==ManeuverKind.Straight,
-                            StraightExitSides=AlternativeExitSides(current,connections),
-                            Instruction=instruction.Text,HasSeparateApproachRoad=i>0&&PrefabKey(route[i-1]) is null});
-                    }
-                    confirmedUntil=end;offset=end;continue;
-                }
                 if (!structuralSingle&&ComplexInternalBend(current)) return result;
                 if (offset < vehicleAlong)
                 {
@@ -317,7 +313,7 @@ public sealed class NavigationManeuverDetector
             confirmedUntil = end;
             offset = end;
         }
-        return result;
+        return result.OrderBy(a=>a.DistanceMeters).ToArray();
     }
 
     private void Index(IReadOnlyList<DirectedRoad> graph)

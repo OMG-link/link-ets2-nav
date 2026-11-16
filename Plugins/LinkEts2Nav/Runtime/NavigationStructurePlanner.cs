@@ -13,6 +13,7 @@ internal sealed record NavigationStructurePlan(IReadOnlyList<DirectedRoad> Route
     public AuxiliaryLaneIndex? Auxiliaries {get;init;}
     public LaneContractionView? Contractions {get;init;}
     public IReadOnlyList<NavigationUnresolvedSpan> UnresolvedSpans {get;init;}=[];
+    public IReadOnlyList<NavigationUnresolvedSpan> OrdinaryUnresolvedSpans {get;init;}=[];
     /// <summary>Past ambiguity does not erase a later confirmed stretch. Active or future ambiguity remains a boundary.</summary>
     public double ConfirmationEndAfter(double boundary)
         =>Math.Min(ConfirmedUntil,UnresolvedSpans.FirstOrDefault(s=>s.EndMeters>boundary)?.StartMeters??double.PositiveInfinity);
@@ -32,7 +33,8 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
     public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes,AuxiliaryLaneIndex auxiliaries)
     {
         var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
-        IReadOnlyList<NavigationManeuver> upcoming=detector.FindSequence(instructionRoute,0,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong);
+        detector.MissingConnection=paths.DescribeMissingConnection;
+        IReadOnlyList<NavigationManeuver> upcoming=detector.FindSequence(instructionRoute,0,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong,lanes);
         if(NavigationDestination.Find(sdkRoute,instructionRoute,0,confirmedUntil,unresolvedJoin) is {} destination)
         {
             var terminal=sdkRoute.Nodes.MinBy(n=>n.DistanceToEndMeters)!;
@@ -61,66 +63,29 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
             }).OrderBy(m=>m.DistanceMeters).ToArray();
         }
         var plan=new NavigationStructurePlan(route,instructionRoute,upcoming,lanes,[],detector.ForkDiagnostics.ToArray(),confirmedUntil,
-            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming,Auxiliaries=auxiliaries,Contractions=LaneContractionView.Build(instructionRoute,auxiliaries),UnresolvedSpans=detector.UnresolvedSpans.ToArray()};
+            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming,Auxiliaries=auxiliaries,
+                UnresolvedSpans=detector.UnresolvedSpans.ToArray(),OrdinaryUnresolvedSpans=detector.OrdinaryUnresolvedSpans};
         return SelectLanes(plan,lanes,nearby,paths);
     }
 
     /// <summary>Selection changes reuse all junction/ramp facts; only already indexed lane-merge membership is selected again.</summary>
     public NavigationStructurePlan SelectLanes(NavigationStructurePlan plan,LaneNavigationPlan lanes,NearbyMapSnapshot nearby,RoadPathSource paths)
     {
-        IReadOnlyList<NavigationManeuver> upcoming=plan.Auxiliaries is {} auxiliaries
-            ?AuxiliaryLaneGuidance.Apply(plan.BaseActions,plan.InstructionRoute,lanes,auxiliaries):plan.BaseActions;
-        upcoming=SelectedStraightPassages(upcoming,plan.Route,lanes,nearby,paths.GetNavigationGraph());
+        var projected=detector.Components.Build(plan.InstructionRoute,paths.GetNavigationGraph(),lanes,paths.DescribeMissingConnection);
+        IReadOnlyList<NavigationManeuver> upcoming=plan.BaseActions.Where(a=>!a.Id.StartsWith("component:",StringComparison.Ordinal))
+            .Concat(projected.Values.SelectMany(a=>a)).OrderBy(a=>a.DistanceMeters).ToArray();
+        foreach(var issue in detector.Components.Issues)paths.ReportMapIssue(issue);
         var physical=mergeDetector.Find(plan.Route,paths.GetNavigationGraph(),lanes,0,paths.DescribeMissingConnection)
             .Where(m=>!nearby.RoadStructures.ContainsKey(m.PrefabUid)).ToArray();
         foreach(var issue in physical.Select(m=>m.Origin?.MapIssue).OfType<MapQueryIssue>())paths.ReportMapIssue(issue);
-        var merges=plan.Contractions?.Select(physical,lanes)??physical;
+        var merges=physical;
         upcoming=LaneContractionGuidance.Apply(upcoming,merges);
         upcoming=ActionPointConstraints.Apply(upcoming);
         var issues=plan.Forks.Concat(merges.Where(m=>m.Kind==LaneMergeKind.Uncertain)
             .Select(m=>new RoadForkDiagnostic($"prefab:{m.PrefabUid:X16}",m.EndingEntryNode??0,0,m.Reason))).ToList();
-        return plan with{Actions=upcoming,Lanes=lanes,Merges=merges,Forks=issues.Distinct().ToArray()};
-    }
-
-    // An outlet may combine a lane that needs a signal with a lane that continues
-    // without one. Keep that outlet-level diagnostic, while retaining the selected
-    // native lane's straight passage for junction counting and side reminders.
-    private static IReadOnlyList<NavigationManeuver> SelectedStraightPassages(IReadOnlyList<NavigationManeuver> actions,
-        IReadOnlyList<DirectedRoad> route,LaneNavigationPlan lanes,NearbyMapSnapshot nearby,IReadOnlyList<DirectedRoad> graph)
-    {
-        // Selected layers describe the unpassed suffix, including repeated visits.
-        var selections=new Dictionary<int,PrefabLanePath>();int cursor=route.Count-1;
-        foreach(var section in lanes.Sections.Reverse())
-        {
-            while(cursor>=0&&route[cursor].Id!=section.EdgeId)cursor--;
-            if(cursor<0)break;
-            selections[cursor--]=section.Path;
-        }
-        var result=actions.ToList();double offset=0;
-        for(int i=0;i<route.Count;i++)
-        {
-            var edge=route[i];double end=offset+RouteGeometry.Length(edge);
-            if(selections.GetValueOrDefault(i) is {NativeBranchSignal:ForkSignal.None} lane
-                &&lane.EntryNodeUid==edge.StartNodeUid&&lane.ExitNodeUid==edge.EndNodeUid&&edge.ForkInfo is {Branches.Count:>1}
-                &&edge.Junction?.IsJunction!=true&&!nearby.RoadStructures.ContainsKey(lane.PrefabUid))
-            {
-                string group=$"prefab:{lane.PrefabUid:X16}";
-                if(!result.Any(a=>a.JunctionId==group&&a.EndDistanceMeters is {} exit&&Math.Abs(exit-end)<=.001))
-                {
-                    var connections=graph.Where(e=>e.StartNodeUid==edge.StartNodeUid&&e.Id.StartsWith(group+":",StringComparison.Ordinal))
-                        .GroupBy(e=>e.EndNodeUid).Select(g=>g.ToArray()).ToArray();
-                    result.Add(new($"fork:{lane.PrefabUid:X16}:{edge.StartNodeUid:X16}:{edge.EndNodeUid:X16}",
-                        ManeuverKind.Straight,offset,i>0?route[i-1].Id:edge.Id,edge.Id)
-                    {
-                        JunctionId=group,JunctionKind=NavigationJunctionKind.Ramp,EndDistanceMeters=end,IsMainRoadContinuation=true,
-                        StraightExitSides=NavigationManeuverDetector.AlternativeExitSides(edge,connections),
-                        HasSeparateApproachRoad=i>0&&!route[i-1].Id.StartsWith("prefab:",StringComparison.Ordinal)
-                    });
-                }
-            }
-            offset=end;
-        }
-        return result.OrderBy(a=>a.DistanceMeters).ToArray();
+        var unresolved=plan.OrdinaryUnresolvedSpans.Concat(detector.Components.Unresolved).Distinct().OrderBy(s=>s.StartMeters).ToArray();
+        return plan with{Actions=upcoming,Lanes=lanes,Merges=merges,Forks=issues.Distinct().ToArray(),UnresolvedSpans=unresolved,
+            Unresolved=unresolved.Length>0,UnresolvedAlong=unresolved.Select(s=>s.StartMeters).DefaultIfEmpty(double.PositiveInfinity).Min()};
     }
 
     public static bool SelectionChanged(LaneNavigationPlan before,LaneNavigationPlan after)

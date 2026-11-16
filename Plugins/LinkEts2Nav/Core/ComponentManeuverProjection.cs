@@ -10,7 +10,7 @@ public sealed record ComponentManeuverProjectionResult(IReadOnlyList<NavigationM
 public static class ComponentManeuverProjection
 {
     public static ComponentManeuverProjectionResult Build(IReadOnlyList<DirectedRoad> route,int visit,
-        IReadOnlyList<ComponentPassageContinuity> entryFacts,IReadOnlyList<ComponentPassageContinuity> exitFacts)
+        IReadOnlyList<ComponentPassageContinuity> entryFacts,IReadOnlyList<ComponentPassageContinuity> exitFacts,PrefabLanePath? selectedPath=null)
     {
         var actions=new List<NavigationManeuver>();var issues=new List<MapQueryIssue>();var unresolved=new List<NavigationUnresolvedSpan>();
         var offsets=new double[route.Count+1];for(int i=0;i<route.Count;i++)offsets[i+1]=offsets[i]+RouteGeometry.Length(route[i]);
@@ -18,7 +18,11 @@ public static class ComponentManeuverProjection
         bool Selected(ComponentPassageContinuity fact)=>fact.EdgeId==edge.Id&&fact.EntryNodeUid==edge.StartNodeUid&&fact.ExitNodeUid==edge.EndNodeUid;
         foreach(var fact in entryFacts.Where(Selected))Add(fact,false);
         foreach(var fact in exitFacts.Where(Selected))Add(fact,true);
-        return new(actions.OrderBy(a=>a.DistanceMeters).ToArray(),issues,unresolved);
+        var projected=actions.GroupBy(a=>(Series:a.SpeechSequenceId??a.Id,Start:a.SpeechSequenceStartDistanceMeters))
+            .Select(group=>group.OrderBy(a=>a.DistanceMeters).First() with
+            {DistanceMeters=group.Min(a=>a.DistanceMeters),EndDistanceMeters=group.Max(a=>a.EndDistanceMeters)})
+            .OrderBy(a=>a.DistanceMeters).ToArray();
+        return new(projected,issues,unresolved);
 
         void Fail(ComponentPassageContinuity fact,string reason)
         {
@@ -30,10 +34,11 @@ public static class ComponentManeuverProjection
         {
             if(fact.Kind is ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular)
             {Fail(fact,"组件主侧关系或车道终点尚未确定");return;}
-            bool choose=fact.Kind==ComponentContinuityKind.Natural||fact.IsMain&&outgoing&&fact.HasNaturalAlternative;
-            if(fact.IsMain&&!choose)
+            if(!outgoing&&fact.Kind==ComponentContinuityKind.Soft&&UsesOwnSideExit(fact))return;
+            bool choose=fact.Kind==ComponentContinuityKind.Natural||fact.Kind==ComponentContinuityKind.Main&&outgoing&&fact.HasNaturalAlternative;
+            if(fact.Kind==ComponentContinuityKind.Main&&!choose)
             {
-                if(outgoing||entryFacts.Count==0)return;
+                if(outgoing&&entryFacts.Any(f=>Selected(f)&&f.Kind==ComponentContinuityKind.Main))return;
                 actions.Add(new($"component:{fact.EdgeId}:through",ManeuverKind.Straight,offsets[visit],edge.Id,edge.Id)
                 {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,
                     EndDistanceMeters=offsets[visit+1],IsMainRoadContinuation=true});
@@ -77,7 +82,8 @@ public static class ComponentManeuverProjection
             }
             else
             {
-                if(fact.Turn is not {Side:NavigationSide.Left or NavigationSide.Right} turn||turn.Kind==ComponentTurnKind.Unknown)
+                var selectedTurn=SelectedTurn(fact);
+                if(selectedTurn is not {Side:NavigationSide.Left or NavigationSide.Right} turn||turn.Kind==ComponentTurnKind.Unknown)
                 {Fail(fact,"组件转向侧无法判定，不能推测播报方向");return;}
                 bool left=turn.Side==NavigationSide.Left;
                 kind=fact.Kind==ComponentContinuityKind.Soft||turn.Kind==ComponentTurnKind.Forward
@@ -95,12 +101,28 @@ public static class ComponentManeuverProjection
                 interval=new(start.Value,finish.Value);
             }
             string id=$"component:{fact.EdgeId}:{(outgoing?"exit":"entry")}:{fact.Kind}";
-            string? execution=!outgoing&&fact.Kind==ComponentContinuityKind.Hard&&fact.Turn is {} approach
+            var actualTurn=SelectedTurn(fact);
+            string? execution=!outgoing&&fact.Kind==ComponentContinuityKind.Hard&&actualTurn is {} approach
                 ?text+"，注意"+(approach.Side==NavigationSide.Left?"右":"左")+"侧来车":null;
             actions.Add(new(id,kind,position.Value,edge.Id,edge.Id)
             {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,EndDistanceMeters=end,
                 Instruction=text,ExecutionInstruction=execution,ForkInstruction=fork,ApproachInterval=interval,
+                SpeechSequenceId=fact.StructuralConstraintId,SpeechSequenceStartDistanceMeters=fact.StructuralConstraintId is null?null:offsets[visit],
                 HasSeparateApproachRoad=visit>0&&NativeLaneGraph.Prefab(route[visit-1]) is null});
+        }
+        ComponentTurn? SelectedTurn(ComponentPassageContinuity fact)=>fact.Lanes.FirstOrDefault(l=>selectedPath is not null
+            &&l.EntryOrder==selectedPath.EntryOrder&&l.ExitOrder==selectedPath.ExitOrder)?.Turn??fact.Turn;
+        bool UsesOwnSideExit(ComponentPassageContinuity fact)
+        {
+            var relevant=fact.Lanes.Where(l=>selectedPath is null||l.EntryOrder==selectedPath.EntryOrder);
+            return relevant.Where(l=>l.Fate==ComponentLaneFate.Separates&&l.Terminal is not null)
+                .Any(l=>
+                {
+                    var terminal=l.Terminal!;
+                    var first=route.Skip(visit).FirstOrDefault(e=>e.StartNodeUid==terminal.StartNodeUid
+                        &&NativeLaneGraph.Prefab(e)==Owner(terminal.EdgeId));
+                    return first is not null&&first.Id==terminal.EdgeId&&first.EndNodeUid==terminal.EndNodeUid;
+                });
         }
         double? Locate(ComponentBoundary? boundary,bool outgoing)
         {
@@ -110,15 +132,24 @@ public static class ComponentManeuverProjection
             var indices=outgoing?Enumerable.Range(0,visit+1).Reverse().Concat(Enumerable.Range(visit+1,route.Count-visit-1))
                 :Enumerable.Range(visit,route.Count-visit).Concat(Enumerable.Range(0,visit).Reverse());
             foreach(int i in indices)
-                if(route[i].Id==boundary.EdgeId)
+            {
+                if(route[i].Id==boundary.EdgeId&&route[i].StartNodeUid==boundary.StartNodeUid&&route[i].EndNodeUid==boundary.EndNodeUid)
                 {
                     double length=RouteGeometry.Length(route[i]);
                     if(boundary.OffsetMeters<-.001||boundary.OffsetMeters>length+.001)return null;
                     return offsets[i]+Math.Clamp(boundary.OffsetMeters,0,length);
                 }
+            // A separation terminates at the shared entrance interface, before
+            // choosing either outlet. The static side passage may consequently
+            // differ from the selected main passage; the exact physical node
+            // and owning prefab still identify the same boundary.
+                if(Math.Abs(boundary.OffsetMeters)<=.001&&Owner(boundary.EdgeId) is {} owner
+                    &&route[i].StartNodeUid==boundary.StartNodeUid&&NativeLaneGraph.Prefab(route[i])==owner)return offsets[i];
+            }
             return null;
         }
     }
+    private static string? Owner(string edgeId)=>edgeId.StartsWith("prefab:",StringComparison.Ordinal)?edgeId.Split(':')[1]:null;
     private static NavigationSide ExitSide(ComponentPassageContinuity selected,IReadOnlyList<ComponentPassageContinuity> exits)
     {
         var other=exits.Where(f=>f.ExitNodeUid!=selected.ExitNodeUid).DistinctBy(f=>f.ExitNodeUid).ToArray();

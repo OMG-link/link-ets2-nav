@@ -8,15 +8,16 @@ public enum ComponentLaneFate { Continues, Dies, Separates, Unresolved, Born, Jo
 public enum ComponentTurnKind { Forward, Turn, Back, Unknown }
 public sealed record ComponentTurn(NavigationSide Side,ComponentTurnKind Kind,string? Failure=null);
 
-/// <summary>A point on a particular directed physical passage, not merely a prefab UID.</summary>
 public enum ComponentBoundaryInterface { None, Start, End }
+/// <summary>A point on a particular directed physical passage, with optional proven interface identity.</summary>
 public sealed record ComponentBoundary(string EdgeId,double OffsetMeters,Vector3 Position)
 {
     public ulong StartNodeUid {get;init;}
     public ulong EndNodeUid {get;init;}
     public ComponentBoundaryInterface Interface {get;init;}
     public ulong? InterfaceNodeUid=>Interface switch
-    {ComponentBoundaryInterface.Start=>StartNodeUid,ComponentBoundaryInterface.End=>EndNodeUid,_=>null};
+    {ComponentBoundaryInterface.Start when StartNodeUid!=0=>StartNodeUid,
+        ComponentBoundaryInterface.End when EndNodeUid!=0=>EndNodeUid,_=>null};
 }
 
 /// <summary>One original lane's static fate, independent of the player's chosen route.</summary>

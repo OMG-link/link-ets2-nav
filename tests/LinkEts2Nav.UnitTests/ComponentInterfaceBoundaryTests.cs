@@ -48,4 +48,12 @@ public sealed class ComponentInterfaceBoundaryTests
         var result=ComponentManeuverProjection.Build([Side,Fork],1,[],[Fact(Point(Side,50))]);
         var action=Assert.Single(result.Actions);Assert.Equal(50,action.DistanceMeters);Assert.Equal(150,action.EndDistanceMeters);
     }
+    [Fact]
+    public void UnknownZeroInterfaceUidCannotAliasAnotherUnknownEndpoint()
+    {
+        var boundary=Point(Side with{EndNodeUid=0},100,ComponentBoundaryInterface.End);
+        Assert.Null(boundary.InterfaceNodeUid);
+        var result=ComponentManeuverProjection.Build([Main with{EndNodeUid=0},Fork],1,[],[Fact(boundary)]);
+        Assert.Empty(result.Actions);Assert.NotEmpty(result.Issues);
+    }
 }

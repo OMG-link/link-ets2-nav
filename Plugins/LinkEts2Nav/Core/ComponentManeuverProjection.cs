@@ -46,9 +46,7 @@ public static class ComponentManeuverProjection
             if(fact.Kind==ComponentContinuityKind.Main&&!choose)
             {
                 if(outgoing&&entryFacts.Any(f=>Selected(f)&&f.Kind==ComponentContinuityKind.Main))return;
-                actions.Add(new($"component:{fact.EdgeId}:through",ManeuverKind.Straight,offsets[visit],edge.Id,edge.Id)
-                {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,
-                    EndDistanceMeters=offsets[visit+1],IsMainRoadContinuation=true,StraightExitSides=PassageExitSides(fact)});
+                AddPassage(fact,offsets[visit+1]);
                 return;
             }
             var position=Locate(fact.ActionPoint,outgoing);var end=Locate(fact.LifecycleEnd,outgoing);
@@ -65,9 +63,7 @@ public static class ComponentManeuverProjection
                     // All lanes constitute continuation, not a fabricated instruction to use every lane.
                     if(orders.Distinct().Count()==count&&count>0)
                     {
-                        actions.Add(new($"component:{fact.EdgeId}:through",ManeuverKind.Straight,offsets[visit],edge.Id,edge.Id)
-                        {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,
-                            EndDistanceMeters=end,IsMainRoadContinuation=true,StraightExitSides=PassageExitSides(fact)});
+                        AddPassage(fact,end.Value);
                     }
                     else Fail(fact,"自然组件的有效车道集合尚未确定");
                     return;
@@ -119,6 +115,15 @@ public static class ComponentManeuverProjection
         }
         ComponentTurn? SelectedTurn(ComponentPassageContinuity fact)=>fact.Lanes.FirstOrDefault(l=>selectedPath is not null
             &&l.EntryOrder==selectedPath.EntryOrder&&l.ExitOrder==selectedPath.ExitOrder)?.Turn??fact.Turn;
+        void AddPassage(ComponentPassageContinuity fact,double end)
+        {
+            // A sole legal outlet is a merge/transition, not a ramp junction
+            // to count or remind the driver to pass straight through.
+            if(fact.LegalExitCount<2)return;
+            actions.Add(new($"component:{fact.EdgeId}:through",ManeuverKind.Straight,offsets[visit],edge.Id,edge.Id)
+            {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,
+                EndDistanceMeters=end,IsMainRoadContinuation=true,StraightExitSides=PassageExitSides(fact)});
+        }
         NavigationSide PassageExitSides(ComponentPassageContinuity selected)
         {
             NavigationSide sides=NavigationSide.None;

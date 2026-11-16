@@ -80,11 +80,47 @@ public sealed class ComponentManeuverProjectionTests
         Assert.Contains(result.Actions,a=>a.Instruction=="分岔口靠左，走左侧两车道");
     }
     [Fact]
-    public void WholeRoadNaturalContinuationDoesNotInventAnAllLanesInstruction()
+    public void WholeRoadNaturalContinuationWithoutAnOutletChoiceIsNotAJunctionSite()
     {
         var edge=Edge("prefab:2A:1:2");var fact=Fact(edge,ComponentContinuityKind.Natural) with{ExitOrders=[0,1,2]};
+        Assert.Empty(ComponentManeuverProjection.Build([edge],0,[fact],[]).Actions);
+    }
+    [Fact]
+    public void AWholeRoadNaturalContinuationWithAnOutletChoiceKeepsItsTransparentSite()
+    {
+        var edge=Edge("prefab:2A:1:2");
+        var fact=Fact(edge,ComponentContinuityKind.Natural) with{ExitOrders=[0,1,2],LegalExitCount=2};
         var action=Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[]).Actions);
         Assert.Equal(ManeuverKind.Straight,action.Kind);Assert.True(action.IsMainRoadContinuation);Assert.Null(action.Instruction);
+    }
+    [Fact]
+    public void MainMergeWithOnlyOneReachableOutletDoesNotBecomeAnOrdinalJunction()
+    {
+        var before=Edge("road",0,350);var merge=Edge("prefab:2A:1:2",350,390);
+        var fact=Fact(merge,ComponentContinuityKind.Main,main:true) with{LegalExitCount=1};
+        var passage=ComponentManeuverProjection.Build([before,merge],1,[fact],[]);
+        Assert.Empty(passage.Actions);Assert.Empty(passage.Issues);
+        var target=new NavigationManeuver("target",ManeuverKind.TurnRight,500,"in","out")
+            {JunctionId="target",EndDistanceMeters=540};
+        var plan=new LinkEts2Nav.Core.Guidance.NavigationEventPlanner().Build("s","r",DateTimeOffset.UtcNow,0,
+            [..passage.Actions,target],true,false,false,new());
+        Assert.Equal("两百米后，右转。",Assert.Single(plan.Triggers,t=>t.Id.EndsWith(":200")).Text);
+        Assert.DoesNotContain(plan.Triggers,t=>t.Kind==LinkEts2Nav.Core.Guidance.SpeechTriggerKind.ActionAssist);
+        var fork=ComponentManeuverProjection.Build([before,merge],1,[fact with{LegalExitCount=2}],[]);
+        Assert.Single(fork.Actions);
+        var counted=new LinkEts2Nav.Core.Guidance.NavigationEventPlanner().Build("s","r",DateTimeOffset.UtcNow,0,
+            [..fork.Actions,target],true,false,false,new());
+        Assert.Equal("两百米后，在第二个路口右转。",Assert.Single(counted.Triggers,t=>t.Id.EndsWith(":200")).Text);
+    }
+    [Theory]
+    [InlineData(ComponentContinuityKind.Hard)]
+    [InlineData(ComponentContinuityKind.Soft)]
+    public void AUniqueOutletDoesNotSuppressAnActualSideEntranceAction(ComponentContinuityKind kind)
+    {
+        var edge=Edge("prefab:2A:1:2");var fact=Fact(edge,kind,new(NavigationSide.Right,ComponentTurnKind.Forward));
+        if(kind==ComponentContinuityKind.Soft)fact=fact with{IntervalStart=At(edge,0,Vector3.Zero),IntervalEnd=At(edge,100,new(0,0,100))};
+        var action=Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[]).Actions);
+        Assert.Equal(ManeuverKind.KeepRight,action.Kind);Assert.False(action.IsMainRoadContinuation);
     }
     [Fact]
     public void CollinearUnknownSideIsDiagnosedWithoutInventingATurnOrCallingItSingular()

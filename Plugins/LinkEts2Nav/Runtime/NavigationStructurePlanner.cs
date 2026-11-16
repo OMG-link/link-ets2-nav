@@ -30,10 +30,11 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
     {
         mergeDetector.Reset();
     }
-    public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes,AuxiliaryLaneIndex auxiliaries)
+    public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes,AuxiliaryLaneIndex? auxiliaries=null)
     {
         var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
         detector.MissingConnection=paths.DescribeMissingConnection;
+        if(nearby.Components is {} components)detector.Components.UseIndex(paths.GetNavigationGraph(),components);
         IReadOnlyList<NavigationManeuver> upcoming=detector.FindSequence(instructionRoute,0,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong,lanes);
         if(NavigationDestination.Find(sdkRoute,instructionRoute,0,confirmedUntil,unresolvedJoin) is {} destination)
         {

@@ -23,6 +23,8 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     public IReadOnlyList<MapQueryIssue> MapIssues {get;init;}=[];
     public IReadOnlyList<DirectedRoad> PrefabPaths { get; init; } = [];
     public AuxiliaryLaneIndex? AuxiliaryLanes {get;init;}
+    public NativeLaneGraph? NativeGraph {get;init;}
+    public ComponentContinuityIndex? Components {get;init;}
     public IReadOnlyList<RoundaboutStructure> Roundabouts { get; init; } = [];
     public IReadOnlyDictionary<ulong, RoundaboutStructure> RoadStructures { get; init; } = new Dictionary<ulong, RoundaboutStructure>();
     public RoadNameIndex? RoadNames {get;init;}
@@ -43,7 +45,8 @@ public sealed class NearbyCameraScanner
     private readonly GameDataManager data;
     public GameDataManager Data=>data;
     private IReadOnlyList<DirectedRoad> junctionGeometry = [];
-    private AuxiliaryLaneIndex? auxiliaryLanes;
+    private NativeLaneGraph? nativeGraph;
+    private ComponentContinuityIndex? components;
     private IReadOnlyList<FreeNavigationArea> freeNavigationAreas = [];
     private TrafficSignalMap trafficSignals=TrafficSignalMap.Empty;
     private string[] junctionDiagnostics = [];
@@ -130,16 +133,17 @@ public sealed class NearbyCameraScanner
             trafficSignals=new(signalPrefabs.SelectMany(p=>TrafficSignalMap.Build(p.Prefab,p.Descriptor,data.TrafficSignals,builtLimits)));
             // One annotated geometry graph per map version, shared with navigation consumers.
             var navigation=new RoadPathSource(nextMap,junctions,playerAccess:speedReader.RoadPlayerAccess,roadHalfWidth:speedReader.ReferenceHalfWidth,missingConnection:need,reportMapIssue:typedIssues.Add);
-            var builtAuxiliary=AuxiliaryLaneIndex.Build(new NativeLaneGraph(navigation.GetNavigationGraph()),cancellationToken,need);
+            var builtGraph=new NativeLaneGraph(navigation.GetNavigationGraph());
+            var builtComponents=ComponentContinuityIndex.Build(builtGraph,need,cancellationToken:cancellationToken);
             typedIssues.AddRange(navigation.MapIssues);
-            typedIssues.AddRange(builtAuxiliary.MapIssues);
+            typedIssues.AddRange(builtComponents.Issues);
             cancellationToken.ThrowIfCancellationRequested();
             geometryCache = nextGeometry;
             junctionGeometry = junctions;
             freeNavigationAreas = areas;
             junctionDiagnostics = issues.Distinct().ToArray();
             speedLimits = builtLimits;
-            auxiliaryLanes=builtAuxiliary;
+            nativeGraph=builtGraph;components=builtComponents;
             map = nextMap;
             loadedSectors = sectors;
             emptySectors=data.WindowReadiness(nextMap).Empty;
@@ -158,7 +162,7 @@ public sealed class NearbyCameraScanner
         diagnostics.AddRange(junctionDiagnostics);
         diagnostics.AddRange(roundaboutIndex.Diagnostics);
         diagnostics.AddRange(speedLimits.Diagnostics);
-        if(auxiliaryLanes is not null)diagnostics.AddRange(auxiliaryLanes.Diagnostics);
+
         if(speedLimits.Error is not null) diagnostics.Add(speedLimits.Error);
         var cameras = new List<CameraObservation>();
         foreach (var item in LoadedMapItems.Enumerate(map.MapItems.Values))
@@ -222,7 +226,7 @@ public sealed class NearbyCameraScanner
                 diagnostics.Add(message);
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { ReadySectors=loadedSectors,EmptySectors=emptySectors,Coverage=coverage,MissingConnection=missingConnection,MapIssues=mapIssues,Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, AuxiliaryLanes=auxiliaryLanes,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { ReadySectors=loadedSectors,EmptySectors=emptySectors,Coverage=coverage,MissingConnection=missingConnection,MapIssues=mapIssues,Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, NativeGraph=nativeGraph,Components=components,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)

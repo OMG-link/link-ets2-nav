@@ -23,6 +23,21 @@ public sealed class ComponentNavigationIntegrationTests
         return [Path(0,10),Path(1,20)];
     }
     [Fact]
+    public void SnapshotNativeGraphAndComponentFactsAreSharedWithoutLegacyAuxiliaryIndex()
+    {
+        var graph=new NativeLaneGraph(HardJoin());
+        var components=ComponentContinuityIndex.Build(graph);
+        var snapshot=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[])
+            {PrefabPaths=graph.Edges,NativeGraph=graph,Components=components};
+        Assert.Null(snapshot.AuxiliaryLanes);
+        var paths=new RoadPathSource(snapshot.Map,snapshot.PrefabPaths,native:snapshot.NativeGraph);
+        Assert.Same(graph.Edges,paths.GetNavigationGraph());
+        var planner=new ComponentManeuverPlanner();planner.UseIndex(graph.Edges,components);
+        var selected=graph.Edges[1];var actions=planner.Build([selected],paths.GetNavigationGraph());
+        Assert.Equal(ManeuverKind.KeepRight,Assert.Single(actions[0]).Kind);
+        Assert.Empty(planner.Issues);
+    }
+    [Fact]
     public void ProductionDetectorConsumesHardComponentWithoutCrossingOrBlinkerFallback()
     {
         var graph=HardJoin();var detector=new NavigationManeuverDetector();

@@ -12,6 +12,19 @@ public sealed class ComponentManeuverProjectionTests
             At(edge,50,new(0,0,50)),At(edge,100,new(0,0,100)),null,null,[0],[0],2,3,1,turn,[]);
 
     [Fact]
+    public void SelectedLocalDeadLaneIsNotHiddenBySurvivingMainEntranceGroup()
+    {
+        var edge=Edge("prefab:2A:1:2");var turn=new ComponentTurn(NavigationSide.Left,ComponentTurnKind.Forward);
+        var lane=new ComponentLaneOutcome(1,0,ComponentLaneFate.Dies,true,-20,
+            At(edge,50,new(0,0,50)),At(edge,100,new(0,0,100)),At(edge,80,new(0,0,80)),
+            At(edge,100,new(0,0,100)),null,turn){StructuralConstraintId="native-merge:42:3"};
+        var fact=Fact(edge,ComponentContinuityKind.Main,main:true) with{Lanes=[lane]};
+        var selected=new PrefabLanePath(42,1,2,1,0,1,0,2,1,[1,3],edge.Points,100);
+        var action=Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[],selected).Actions);
+        Assert.Equal(ManeuverKind.KeepLeft,action.Kind);Assert.Equal(80,action.DistanceMeters);
+        Assert.Equal(100,action.EndDistanceMeters);Assert.False(action.IsMainRoadContinuation);
+    }
+    [Fact]
     public void HardEntryUsesPrimitiveTurnAndOppositeTrafficSide()
     {
         var edge=Edge("prefab:2A:1:2");var fact=Fact(edge,ComponentContinuityKind.Hard,new(NavigationSide.Right,ComponentTurnKind.Turn));

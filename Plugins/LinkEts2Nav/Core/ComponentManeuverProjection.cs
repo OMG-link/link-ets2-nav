@@ -32,6 +32,13 @@ public static class ComponentManeuverProjection
         }
         void Add(ComponentPassageContinuity fact,bool outgoing)
         {
+            // Group priority does not overwrite the selected lane's local death.
+            // This is a projection of primitive facts, not another main-road decision.
+            var local=selectedPath is null?null:fact.Lanes.FirstOrDefault(l=>l.EntryOrder==selectedPath.EntryOrder
+                &&l.ExitOrder==selectedPath.ExitOrder&&l.InComponent&&l.Fate==ComponentLaneFate.Dies);
+            if(fact.Kind==ComponentContinuityKind.Main&&local is not null)
+                fact=fact with{Kind=ComponentContinuityKind.Hard,ActionPoint=local.Terminal,LifecycleEnd=local.LifecycleEnd,
+                    Turn=local.Turn,StructuralConstraintId=local.StructuralConstraintId,Lanes=[local]};
             if(fact.Kind is ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular)
             {Fail(fact,"组件主侧关系或车道终点尚未确定");return;}
             if(!outgoing&&fact.Kind==ComponentContinuityKind.Soft&&UsesOwnSideExit(fact))return;

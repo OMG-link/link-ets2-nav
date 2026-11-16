@@ -72,9 +72,9 @@ public sealed class TrafficSignalBinder
     {
         if(ReferenceEquals(previousMap,nearby.Map)&&ReferenceEquals(previousPaths,nearby.PrefabPaths))return;
         previousMap=nearby.Map;previousPaths=nearby.PrefabPaths;
-        throughTraffic=(nearby.AuxiliaryLanes?.Graph??new NativeLaneGraph(nearby.PrefabPaths)).ThroughTraffic;
-        paths=new(nearby.Map,nearby.PrefabPaths,native:nearby.AuxiliaryLanes?.Graph,
+        paths=new(nearby.Map,nearby.PrefabPaths,native:nearby.NativeGraph,
             playerAccess:nearby.Data is {} data?data.SpeedLimits.RoadPlayerAccess:null);
+        throughTraffic=(nearby.NativeGraph??new NativeLaneGraph(paths.GetNavigationGraph())).ThroughTraffic;
     }
     private static TrafficSignalControl? First(PrefabLanePath path,TrafficSignalMap controls)
         =>path.CurveIndices.Select(i=>controls.Find(path.PrefabUid,i)).FirstOrDefault(c=>c is not null);

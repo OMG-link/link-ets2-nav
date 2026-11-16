@@ -31,7 +31,7 @@ public sealed class WarningPipeline(IWarningPlanner? planner = null,GuidanceCoor
         {
             previousMap = nearby.Map;
             mapRequestScope=long.MinValue;
-            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths,native:nearby.AuxiliaryLanes?.Graph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null,
+            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths,native:nearby.NativeGraph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null,
                 missingConnection:nearby.MissingConnection,reportMapIssue:issue=>nearby.Retries?.Report(issue));
             speedLimits = new SpeedLimitResolver(nearby.SpeedLimits, paths);
         }

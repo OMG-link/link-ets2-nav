@@ -47,7 +47,6 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
     private long mapRequestScope=long.MinValue;
-    private AuxiliaryLaneIndex? auxiliaryLanes;
     private string? lastSpoken, signature;
     private string? connectionFailureSignature;
     private DateTimeOffset reportedAt;
@@ -68,9 +67,8 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         {
             mapIdentity=new(nearby);map=nearby.Map;
             mapRequestScope=long.MinValue;
-            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log,nearby.AuxiliaryLanes?.Graph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null,
+            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log,nearby.NativeGraph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null,
                 missingConnection:nearby.MissingConnection,reportMapIssue:issue=>nearby.Retries?.Report(issue));
-            auxiliaryLanes=nearby.AuxiliaryLanes??AuxiliaryLaneIndex.Build(new NativeLaneGraph(paths.GetNavigationGraph()));
             structures.Clear();publishedStructure=null;routeBuildGeneration=0;
         }
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
@@ -104,7 +102,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         var laneRoute=lanePlanner.Build(route,position,along.Value,paths.GetNavigationGraph());
         if(!structures.TryGetValue(route,out var structure))
         {
-            structure=structurePlanner.Build(route,data.Route,nearby,paths,laneRoute,auxiliaryLanes!);
+            structure=structurePlanner.Build(route,data.Route,nearby,paths,laneRoute);
             structures.Add(route,structure);StructureBuildCount++;
             ReportConnectionFailure(structure.InstructionRoute,structure.ConfirmedUntil,structure.Unresolved,structure.UnresolvedAlong);
             foreach(var issue in structure.Forks)
@@ -302,7 +300,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         connectionFailureSignature=null;
         speech?.ClearPlan("navigation");
         map = null;
-        paths = null;auxiliaryLanes=null;
+        paths = null;
         lastSpoken = signature = null;
     }
 }

@@ -107,7 +107,7 @@ public sealed class RoadJoinPriorityTests
         return(map,main,side,before,after);
     }
     [Fact]
-    public void LoadedGraphAnnotationIsSharedWithOfficialRouteAndRestoresStraightConfirmation()
+    public void LoadedPriorityAnnotationDoesNotReplaceMissingNativeLaneContinuity()
     {
         var scene=Scene();var paths=new RoadPathSource(scene.Map,[scene.Main,scene.Side]);
         var graph=paths.GetNavigationGraph();var main=graph.Single(e=>e.Id==scene.Main.Id);
@@ -117,7 +117,8 @@ public sealed class RoadJoinPriorityTests
         var selected=paths.GetPath(new(0,0,50),-Vector3.UnitZ,route,RouteAvailability.Available);
         Assert.Same(main.JoinPriority,selected.Single(e=>e.Id==main.Id).JoinPriority);
         var detector=new NavigationManeuverDetector();detector.FindSequence(selected,50,graph,out double end,out bool unknown,out double first);
-        Assert.False(unknown);Assert.True(double.IsPositiveInfinity(first));Assert.True(end-50>800);
+        Assert.True(unknown);Assert.Equal(100,first,1);
+        Assert.Contains(detector.Components.Issues,i=>i is MapQueryFailure {Kind:MapQueryFailureKind.DefinitionUnavailable});
     }
     [Fact]
     public void AdjacentPrefabProvidesTheMissingEntranceWindowBeforeMainRoadScoring()

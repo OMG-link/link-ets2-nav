@@ -57,14 +57,16 @@ public static class ComponentContinuity
         ulong uid=edge.LanePaths.FirstOrDefault()?.PrefabUid??0;
         int input=edge.LanePaths.Select(p=>p.EntryLaneCount).DefaultIfEmpty(0).Max();
         int output=edge.LanePaths.Select(p=>p.ExitLaneCount).DefaultIfEmpty(0).Max();
-        var entry=lanes.Select(l=>l.EntryOrder).Distinct().Order().ToArray();
-        var exit=lanes.Select(l=>l.ExitOrder).Distinct().Order().ToArray();
         ComponentPassageContinuity Result(ComponentContinuityKind kind,ComponentBoundary? action=null,
             ComponentBoundary? end=null,ComponentBoundary? start=null,ComponentBoundary? finish=null,MapQueryIssue? issue=null,ComponentTurn? turn=null)
         {
             var constraints=lanes.Select(l=>l.StructuralConstraintId).OfType<string>().Distinct().Order().ToArray();
             var sides=lanes.Select(l=>l.Turn?.Side).Where(s=>s is NavigationSide.Left or NavigationSide.Right).Distinct().ToArray();
-            if(kind is ComponentContinuityKind.Hard or ComponentContinuityKind.Soft&&sides.Length>1)
+            var offered=kind is ComponentContinuityKind.Main or ComponentContinuityKind.Natural
+                ?lanes.Where(l=>l.Fate==ComponentLaneFate.Continues):lanes;
+            var entry=offered.Select(l=>l.EntryOrder).Distinct().Order().ToArray();
+            var exit=offered.Select(l=>l.ExitOrder).Distinct().Order().ToArray();
+            if((kind is ComponentContinuityKind.Hard or ComponentContinuityKind.Soft)&&sides.Length>1)
             {turn=null;issue=new MapQueryFailure(MapQueryFailureKind.Ambiguous,"同一组件入口的车道动作方向冲突");}
             return new(edge.Id,uid,edge.StartNodeUid,edge.EndNodeUid,isMain,kind,action,end,start,finish,
                 entry,exit,input,output,legalExitCount,
@@ -79,7 +81,7 @@ public static class ComponentContinuity
             return Result(ComponentContinuityKind.Unknown,issue:lanes.Select(l=>l.Issue).OfType<MapQueryIssue>().FirstOrDefault()
                 ??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"组件车道来源或主线资格未确认"));
         bool hard=lanes.All(l=>l.InComponent&&l.Fate==ComponentLaneFate.Dies);
-        bool soft=!hard&&lanes.All(l=>l.Fate is ComponentLaneFate.Dies or ComponentLaneFate.Separates
+        bool soft=!hard&&lanes.All(l=>(l.Fate is ComponentLaneFate.Dies or ComponentLaneFate.Separates)
             &&l.TerminalDistanceFromExitMeters<=WindowMeters);
         if(hard)
         {

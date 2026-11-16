@@ -301,4 +301,18 @@ public sealed class ComponentContinuityTests
         Assert.Equal(2,fact.Lanes.Select(l=>l.StructuralConstraintId).Distinct().Count());
         Assert.Contains(":4",fact.StructuralConstraintId!);Assert.Contains(":5",fact.StructuralConstraintId!);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NaturalRecommendationsExcludeDeadOriginalLanesWithoutDeletingTheirPhysicalFacts(bool main)
+    {
+        var edge=Join(false)[1];ComponentBoundary P(float x)=>new(edge.Id,x,new(x,0,0));
+        var dead=new ComponentLaneOutcome(0,1,ComponentLaneFate.Dies,false,100,P(50),P(100),P(200),P(210),P(100));
+        var alive=new ComponentLaneOutcome(1,2,ComponentLaneFate.Continues,false,600,P(50),P(100),null,null,null);
+        var fact=ComponentContinuity.Aggregate(edge,main,[dead,alive],1);
+        Assert.Equal(main?ComponentContinuityKind.Main:ComponentContinuityKind.Natural,fact.Kind);
+        Assert.Equal([1],fact.EntryOrders);Assert.Equal([2],fact.ExitOrders);
+        Assert.Equal(2,fact.Lanes.Count);Assert.Equal(ComponentLaneFate.Dies,fact.Lanes[0].Fate);
+    }
 }

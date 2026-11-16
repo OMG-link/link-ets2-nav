@@ -44,6 +44,7 @@ public sealed class RoadPathSource
         foreach(var issue in mapIssues)reportMapIssue?.Invoke(issue);
     }
     private readonly HashSet<(ulong,ulong)> reportedAmbiguities = new();
+    private readonly HashSet<(ulong,ulong)> reportedLoadedConnectionFailures = new();
     private ulong[]? cachedNodes;
     private (bool Truncated,ulong? Terminal) cachedRouteMeaning;
     public int RouteStructureBuildCount { get; private set; }
@@ -213,11 +214,16 @@ public sealed class RoadPathSource
                 else
                 {
                     var firstIssue=DescribeMissingConnection(key.Item1);
+                    var secondIssue=key.Item2==key.Item1?firstIssue:DescribeMissingConnection(key.Item2);
                     // The unified provider can know a host node outside this
                     // active geometry window. Preserve its exact start anchor.
                     Vector3? anchor=sourceMap.Nodes.TryGetValue(key.Item1,out var seed)?seed.Position:firstIssue.QueryAnchor;
                     ReportMapIssue(firstIssue with{QueryAnchor=anchor});
-                    if(key.Item2!=key.Item1)ReportMapIssue(DescribeMissingConnection(key.Item2) with{QueryAnchor=anchor});
+                    if(key.Item2!=key.Item1)ReportMapIssue(secondIssue with{QueryAnchor=anchor});
+                    if(firstIssue is not MissingMapSectors&&secondIssue is not MissingMapSectors
+                        &&sourceMap.Nodes.ContainsKey(key.Item1)&&sourceMap.Nodes.ContainsKey(key.Item2)
+                        &&reportedLoadedConnectionFailures.Add(key))
+                        diagnosticLog?.Invoke($"导航连接解析错误：已加载的 SDK 相邻节点 {key.Item1:X16} → {key.Item2:X16} 无可验证的行驶连接；起点：{firstIssue.Reason}；终点：{secondIssue.Reason}");
                 }
                 chunk = null; continue;
             }

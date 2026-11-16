@@ -186,11 +186,12 @@ public sealed class GameDataManager:IDisposable
     {
         if(Map.GetNode(boundaryUid) is not Node node)
             return new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"Boundary {boundaryUid:X16} has no known native node.");
-        var missing=new HashSet<SectorCoordinate>();var unknown=new List<ulong>();
+        var missing=new HashSet<SectorCoordinate>();var unknown=new List<ulong>();var prefabs=new HashSet<ulong>();
         foreach(var reference in new[]{node.BackwardItem,node.ForwardItem}.Where(i=>i is not null).DistinctBy(i=>i.Uid))
         {
-            if(representedItemUids.Contains(reference.Uid))continue;
             var item=Map.GetItem(reference.Uid)??reference as MapItem;
+            if(item is Prefab)prefabs.Add(reference.Uid);
+            if(representedItemUids.Contains(reference.Uid))continue;
             System.Numerics.Vector3? center=item switch
             {
                 Road r when r.Node is Node from&&r.ForwardNode is Node to=>(from.Position+to.Position)/2,
@@ -203,9 +204,24 @@ public sealed class GameDataManager:IDisposable
             if(!publishedSectors.Contains(owner))missing.Add(owner);
         }
         if(missing.Count>0)return new MissingMapSectors(missing,$"Boundary {boundaryUid:X16} needs connected native item owners."){QueryAnchor=node.Position};
+        var details=new List<string>();
+        foreach(var uid in prefabs)
+        {
+            var prefab=GetPrefab(uid);
+            if(prefab?.Definition is not {} definition)continue;
+            if(!FileExists(definition.Descriptor))
+            {details.Add($"Prefab {uid:X16} definition {definition.Descriptor} is missing.");continue;}
+            try
+            {
+                if(prefab.Description is {} description&&description.NavCurves.Count==0)
+                    details.Add($"Prefab {uid:X16} ({definition.Descriptor}) has no native navigation curves (NavCurves=0; SpawnPoints={description.SpawnPoints.Count}).");
+            }
+            catch(IOException error){details.Add($"Prefab {uid:X16} descriptor could not be read: {error.Message}");}
+        }
         return new MapQueryFailure(unknown.Count>0?MapQueryFailureKind.UnresolvedReference:MapQueryFailureKind.DefinitionUnavailable,
-            unknown.Count>0?$"Boundary {boundaryUid:X16} has unlocated references: {string.Join(',',unknown.Select(u=>u.ToString("X16")))}."
-                :$"Boundary {boundaryUid:X16} is inside published sectors; loading cannot establish this connection."){QueryAnchor=node.Position};
+            (unknown.Count>0?$"Boundary {boundaryUid:X16} has unlocated references: {string.Join(',',unknown.Select(u=>u.ToString("X16")))}."
+                :$"Boundary {boundaryUid:X16} is inside published sectors; loading cannot establish this connection.")
+                +(details.Count==0?"":" "+string.Join(' ',details))){QueryAnchor=node.Position};
     }
     private sealed class SupplementMap(NativeMap? basis,SectorReadEvidence evidence):NativeMap
     {

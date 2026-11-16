@@ -9,6 +9,23 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class GameDataManagerTests
 {
     [Fact]
+    public void LoadedPrefabWithoutNavigationCurvesExplainsTheConnectionFailure()
+    {
+        var fs=new Files();
+        fs.Content["/def/world/prefab.test.sii"]="SiiNunit { prefab_model : prefab.test { prefab_desc: \"/prefab/port.ppd\" } }";
+        fs.Content["/prefab/port.ppd"]="cached binary descriptor";
+        var map=new TruckLib.ScsMap.Map();var node=new Node{Uid=10,Position=Vector3.Zero};
+        var prefab=new Prefab{Uid=42,Model=new Token("test"),Nodes=[node]};node.ForwardItem=prefab;
+        map.Nodes.Add(node.Uid,node);map.MapItems.Add(prefab.Uid,prefab);
+        using var data=new GameDataManager(fs,map:map);
+        data.Projection("ppd","/prefab/port.ppd",()=>new TruckLib.Models.Ppd.PrefabDescriptor{NavCurves=[]});
+        var failure=Assert.IsType<MapQueryFailure>(data.DescribeMissingConnection(node.Uid,new HashSet<ulong>{42},new HashSet<SectorCoordinate>{new(0,0)}));
+        Assert.Equal(MapQueryFailureKind.DefinitionUnavailable,failure.Kind);
+        Assert.Contains("000000000000002A",failure.Reason);Assert.Contains("/prefab/port.ppd",failure.Reason);
+        Assert.Contains("NavCurves=0",failure.Reason);
+    }
+
+    [Fact]
     public async Task SharedSiiAndIncludesAreReadAndParsedOnceAcrossConcurrentQueries()
     {
         var fs=new Files();

@@ -72,7 +72,7 @@ public sealed class RoadPathSource
             boundaryNodes.Add(road.ForwardNode.Uid);
         }
         var annotated=native?.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null).ToArray()
-            ??new RoadJoinPriorityBuilder(incidentRoads,log,DescribeMissingConnection,ReportMapIssue).Annotate(junctions??[]);
+            ??new RoadJoinPriorityBuilder(incidentRoads,log,DescribeMissingConnection).Annotate(junctions??[]);
         foreach (var group in annotated.GroupBy(p => (p.StartNodeUid, p.EndNodeUid)))
         {
             boundaryNodes.Add(group.Key.StartNodeUid);

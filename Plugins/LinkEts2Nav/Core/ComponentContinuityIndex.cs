@@ -164,7 +164,7 @@ public sealed class ComponentContinuityIndex
                 var priority=group.Select(e=>e.JoinPriority).OfType<RoadJoinPriority>().FirstOrDefault();
                 if(priority?.MainEntry is not {} main)
                 {
-                    foreach(var edge in group)result[edge.Id]=Unknown(edge,priority?.Reason??"组件缺少完整主入口评分");
+                    foreach(var edge in group)result[edge.Id]=Unknown(edge,priority,priority?.Reason??"组件缺少完整主入口评分");
                     continue;
                 }
                 var all=prefabs[group.Key.PrefabUid];
@@ -187,9 +187,12 @@ public sealed class ComponentContinuityIndex
             }
             return result;
         }
-        private ComponentPassageContinuity Unknown(DirectedRoad edge,string reason)
+        private ComponentPassageContinuity Unknown(DirectedRoad edge,RoadJoinPriority? priority,string reason)
         {
-            var issue=new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason){QueryAnchor=edge.Points.FirstOrDefault()};Issues.Add(issue);
+            var missingSectors=(priority?.MapIssues??[]).OfType<MissingMapSectors>().SelectMany(i=>i.Sectors).Distinct().ToArray();
+            MapQueryIssue issue=missingSectors.Length>0?new MissingMapSectors(missingSectors,reason)
+                :priority?.MapIssues.FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason);
+            issue=issue with{QueryAnchor=edge.Points.FirstOrDefault()};Issues.Add(issue);
             return new(edge.Id,edge.LanePaths[0].PrefabUid,edge.StartNodeUid,edge.EndNodeUid,false,ComponentContinuityKind.Unknown,
                 null,null,null,null,edge.LanePaths.Select(p=>p.EntryOrder).Distinct().Order().ToArray(),
                 edge.LanePaths.Select(p=>p.ExitOrder).Distinct().Order().ToArray(),edge.LanePaths.Max(p=>p.EntryLaneCount),

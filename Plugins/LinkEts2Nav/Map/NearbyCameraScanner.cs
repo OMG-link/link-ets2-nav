@@ -136,7 +136,8 @@ public sealed class NearbyCameraScanner
             var builtGraph=new NativeLaneGraph(navigation.GetNavigationGraph());
             var builtComponents=ComponentContinuityIndex.Build(builtGraph,need,cancellationToken:cancellationToken);
             typedIssues.AddRange(navigation.MapIssues);
-            typedIssues.AddRange(builtComponents.Issues);
+            // Static index diagnostics are not load demands. Only a queried route
+            // passage reports its component dependencies through RoadPathSource.
             cancellationToken.ThrowIfCancellationRequested();
             geometryCache = nextGeometry;
             junctionGeometry = junctions;

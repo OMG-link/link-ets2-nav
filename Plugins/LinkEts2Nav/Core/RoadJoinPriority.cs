@@ -1,3 +1,4 @@
+using LinkEts2Nav.Map;
 namespace LinkEts2Nav.Core;
 
 public sealed record RoadJoinEntryMeasurement(ulong Entry,int LaneCount,double? IncomingSlopeDegrees,
@@ -10,7 +11,10 @@ public sealed record RoadJoinEntryScore(RoadJoinEntryMeasurement Measurement,dou
     public double Total=>SlopeScore+DirectionScore+LaneScore;
 }
 public sealed record RoadJoinPriority(ulong? MainEntry,IReadOnlyList<RoadJoinEntryMeasurement> Measurements,
-    IReadOnlyList<RoadJoinEntryScore> Scores,double? WinningMargin,string Reason);
+    IReadOnlyList<RoadJoinEntryScore> Scores,double? WinningMargin,string Reason)
+{
+    public IReadOnlyList<MapQueryIssue> MapIssues {get;init;}=[];
+}
 
 /// <summary>Scores only independent lane additions; real shared-lane merges do not use this policy.</summary>
 public static class RoadJoinPriorityScorer

@@ -269,12 +269,12 @@ public sealed class ComponentContinuityIndex
             // not of the already confirmed main continuation in this component.
             if(mainEntrance&&chosen.Death is null)
                 return Result(ComponentLaneFate.Continues,true,0);
-            double distance=-initialLength;bool current=true;var visited=new HashSet<(string,int)>();
+            double distance=-initialLength;bool current=true;
+            // A repeated edge is another measured occurrence. Positive lengths
+            // make the finite-graph traversal advance to its distance budget.
             while(true)
             {
                 token.ThrowIfCancellationRequested();
-                if(!visited.Add((chosen.Edge.Id,chosen.Lane.EntryOrder)))
-                    return Result(ComponentLaneFate.Continues,false,ComponentContinuity.WindowMeters);
                 if(mains.Length==0&&chosen.Death is null)return Missing("主线资格已丢失，无法确认最近主线",chosen.Edge.StartNodeUid,
                     new MapQueryFailure(MapQueryFailureKind.Ambiguous,"主线资格已丢失，无法确认最近主线"));
                 var nearest=mains.Select(m=>(Main:m,Distance:Vector3.DistanceSquared(chosen.Lane.Points[0],m.Lane.Points[0])))
@@ -297,7 +297,7 @@ public sealed class ComponentContinuityIndex
                     return Result(ComponentLaneFate.Dies,current,at,At(chosen.Edge,chosen.Lane,local),
                         At(chosen.Edge,chosen.Lane,Length(chosen.Lane)),ConvertTurn(dead.Turn),dead.MapIssue);
                 }
-                distance+=Length(chosen.Lane);
+                distance=LaneTraceDistance.Advance(distance,Length(chosen.Lane));
                 if(distance>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,distance);
                 ulong node=chosen.Edge.EndNodeUid;int lane=chosen.Lane.ExitOrder;
                 var mainOrders=mains.Where(m=>m.Lane.ExitNodeUid==node).Select(m=>m.Lane.ExitOrder).ToHashSet();
@@ -308,9 +308,8 @@ public sealed class ComponentContinuityIndex
                     var roads=next.Where(e=>NativeLaneGraph.Prefab(e) is null).ToArray();
                     if(roads.Length==0)break;
                     if(roads.Length!=1||next.Length!=1)return Missing("相接普通道路不唯一",node,new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接普通道路不唯一"));
-                    var road=roads[0];double length=RouteGeometry.Length(road);
-                    if(!double.IsFinite(length)||length<=0)return Missing("普通道路长度无效",node,new MapQueryFailure(MapQueryFailureKind.InvalidData,"普通道路长度无效"));
-                    trace.Add(new(road,null,distance,length));distance+=length;node=road.EndNodeUid;previousRoad=road.Id;
+                    var road=roads[0];double length=LaneTraceDistance.Positive(RouteGeometry.Length(road),$"Road {road.Id}");
+                    trace.Add(new(road,null,distance,length));distance=LaneTraceDistance.Advance(distance,length);node=road.EndNodeUid;previousRoad=road.Id;
                     if(distance>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,distance);
                 }
                 var component=(starts.GetValueOrDefault(node)??[]).Where(e=>NativeLaneGraph.Prefab(e) is not null&&NativeLaneGraph.Prefab(e)!=previousPrefab).ToArray();
@@ -338,7 +337,7 @@ public sealed class ComponentContinuityIndex
             // not permission to select whichever sampled path is shortest.
             return options.Length==1?options[0]:null;
         }
-        private static double Length(PrefabLanePath path)=>new LanePolyline(path.Points).Length;
+        private static double Length(PrefabLanePath path)=>LaneTraceDistance.Positive(new LanePolyline(path.Points).Length,$"Native lane {path.PrefabUid:X16}:{path.EntryOrder}->{path.ExitOrder}");
         private static ComponentBoundary At(DirectedRoad edge,PrefabLanePath? lane,double distance)
         {
             var line=new LanePolyline(lane?.Points??edge.Points);var point=line.At(distance);

@@ -40,10 +40,39 @@ public sealed class LaneNavigationTests
         Assert.False(plan.Complete);Assert.Empty(plan.Sections);
     }
     [Fact]
-    public void MissingLaneGraphAndWrongOfficialBoundaryAreNotInvented()
+    public void MissingLaneGraphIsNotInvented()
     {
         Assert.False(new LaneRoutePlanner().Build([Edge("prefab:A:0:1",10,20)]).Complete);
-        Assert.False(new LaneRoutePlanner().Build([Edge("prefab:A:0:1",10,20,Lane(10,99,0,0,1))]).Complete);
+    }
+#if DEBUG
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WrongLaneBoundaryViolatesTheEntryContractBeforePositionOrCacheProcessing(bool wrongEntry)
+    {
+        var planner=new LaneRoutePlanner();var edge=Edge("prefab:A:0:1",10,20,Lane(10,20,0,0,1));
+        DirectedRoad[] route=[edge];Assert.True(planner.Build(route).Complete);
+        route[0]=edge with{LanePaths=[Lane(wrongEntry?99UL:10UL,wrongEntry?20UL:99UL,0,0,1)]};
+        var failure=Assert.Throws<NavigationContractException>(()=>planner.Build(route));
+        Assert.Contains("prefab:A:0:1",failure.Message);
+    }
+#endif
+    [Fact]
+    public void DiscontinuousRouteIsInvalidInputRatherThanAnIncompletePlan()
+    {
+        var planner=new LaneRoutePlanner();
+        var failure=Assert.Throws<ArgumentException>(()=>planner.Build([Edge("a",1,2),Edge("b",3,4)]));
+        Assert.Equal("route",failure.ParamName);
+    }
+    [Fact]
+    public void DiscontinuousHistoryIsRejectedBeforeUsingTheCachedPlanOrPositionAnchor()
+    {
+        var planner=new LaneRoutePlanner();
+        DirectedRoad[] route=[Edge("roadA",1,2),Edge("roadB",2,3),Edge("prefab:A:0:1",3,4,Lane(3,4,0,0,1))];
+        Assert.True(planner.Build(route).Complete);
+        route[1]=route[1] with{StartNodeUid=99};
+        Assert.Throws<ArgumentException>(()=>planner.Build(route));
+        Assert.Throws<ArgumentException>(()=>planner.Build(route,new(0,0,20),1000));
     }
     [Fact]
     public void BuildsAllLaneChainsWithExactNativeCurveIndices()

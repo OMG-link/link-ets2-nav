@@ -38,8 +38,17 @@ public sealed class LaneRoutePlanner
     private IReadOnlyList<DirectedRoad>? previous;
     private LaneNavigationPlan? cached;
     private (int Edge,int Lane) previousAnchor=(-1,-1);
+    /// <summary>Requires a continuous directed route; each lane path must belong to its edge's entry and exit UIDs.</summary>
     public LaneNavigationPlan Build(IReadOnlyList<DirectedRoad> route,Vector3? position=null,double vehicleAlong=0,IReadOnlyList<DirectedRoad>? graph=null)
     {
+#if DEBUG
+        foreach(var edge in route)
+        foreach(var lane in edge.LanePaths)
+            if(lane.EntryNodeUid!=edge.StartNodeUid||lane.ExitNodeUid!=edge.EndNodeUid)
+                throw new NavigationContractException($"Lane path {lane.PrefabUid:X16}:{lane.EntryNodeUid:X16}->{lane.ExitNodeUid:X16} does not belong to edge {edge.Id}:{edge.StartNodeUid:X16}->{edge.EndNodeUid:X16}.");
+#endif
+        if(route.Zip(route.Skip(1)).Any(p=>p.First.EndNodeUid!=p.Second.StartNodeUid))
+            throw new ArgumentException("Lane planning requires a continuous directed route.",nameof(route));
         int currentEdge=0;double passed=0;
         if(position is not null)
             while(currentEdge<route.Count-1&&passed+new LanePolyline(route[currentEdge].Points).Length<vehicleAlong)
@@ -67,8 +76,6 @@ public sealed class LaneRoutePlanner
         if(ReferenceEquals(previous,route)&&previousAnchor==(currentEdge,anchorLane)&&cached is not null)return cached;
         previousAnchor=(currentEdge,anchorLane);
         previous=route;
-        if(route.Zip(route.Skip(1)).Any(p=>p.First.EndNodeUid!=p.Second.StartNodeUid))
-            return cached=new([],[],false,"路线节点不连续");
         var layers=route.Select((edge,index)=>(edge,index)).Where(p=>p.index>=currentEdge&&p.edge.Id.StartsWith("prefab:",StringComparison.Ordinal)).ToArray();
         if(layers.Length==0)return cached=new([],[],false,"当前路线没有可选择的预制件车道路径");
         if(layers.Any(p=>p.edge.LanePaths.Count==0))return cached=new([],[],false,"预制件车道图缺失，未虚构车道路径");
@@ -81,7 +88,6 @@ public sealed class LaneRoutePlanner
             for(int j=0;j<choices.Count;j++)
             {
                 var choice=choices[j];
-                if(choice.EntryNodeUid!=layers[layer].edge.StartNodeUid||choice.ExitNodeUid!=layers[layer].edge.EndNodeUid)continue;
                 if(layer==0)
                 {
                     int shift=anchorLane<0?0:Math.Abs(anchorLane-choice.EntryOrder);

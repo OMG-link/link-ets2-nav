@@ -79,11 +79,11 @@ public sealed class PrefabPlayerAccessWindowTests
         Assert.Equal(0,Build([source],RoadAt(10,0),[false,null])[1].ExcludedCurves);
     }
     [Fact]
-    public void AWindowBoundaryWithoutEvidenceDoesNotCloseADisconnectedCycle()
+    public void ADescriptorWithoutControlNodesCannotBePlacedAsAWindowPrefab()
     {
         var source=Straight(1,0,10,20);source.Descriptor.Nodes=[];source.Prefab.Nodes=[];
         source.Descriptor.NavCurves[0].NextLines.Add(1);source.Descriptor.NavCurves[1].NextLines.Add(0);
-        Assert.Same(source.Descriptor,Build([source],RoadAt(40,0),[false,null])[1].Descriptor);
+        Assert.Throws<InvalidDataException>(()=>Build([source],RoadAt(40,0),[false,null]));
     }
     [Fact]
     public void AnExplicitRuleBlocksItsCurveEvenWithoutRoadBinding()

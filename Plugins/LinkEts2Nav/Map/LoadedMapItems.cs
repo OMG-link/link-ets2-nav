@@ -33,7 +33,7 @@ public static class LoadedMapItems
         var visited=new HashSet<Compound>(ReferenceEqualityComparer.Instance);
         bool Trim(Compound current)
         {
-            if(!visited.Add(current))return false;
+            if(!visited.Add(current))throw new InvalidDataException($"Compound {current.Uid:X16}: repeated object reference in the supplement hierarchy.");
             foreach(var item in current.MapItems.Values.ToArray())
             {
                 bool keep=item is Sign||item is Compound nested&&Trim(nested);

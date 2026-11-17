@@ -8,7 +8,7 @@ public static class PrefabLaneTopology
 {
     public static IReadOnlyList<LaneConnection>? Build(Prefab prefab, PrefabDescriptor descriptor)
     {
-        if (prefab.Nodes.Count != descriptor.Nodes.Count || prefab.Origin >= descriptor.Nodes.Count) return null;
+        PrefabPlacement.ValidateTopology(prefab,descriptor);
         var nodes=Enumerable.Range(0,prefab.Nodes.Count)
             .Select(i=>descriptor.Nodes[(i+prefab.Origin)%descriptor.Nodes.Count]).ToArray();
         int count=descriptor.NavCurves.Count;

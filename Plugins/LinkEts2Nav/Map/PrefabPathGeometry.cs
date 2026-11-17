@@ -10,7 +10,8 @@ public static class PrefabPathGeometry
     public static IReadOnlyList<DirectedRoad> Build(Prefab prefab,PrefabDescriptor descriptor)
     {
         int count=descriptor.Nodes.Count;
-        if(count<1||prefab.Nodes.Count!=count||prefab.Origin>=count||descriptor.NavCurves.Count==0)return [];
+        PrefabPlacement.ValidateTopology(prefab,descriptor);
+        if(descriptor.NavCurves.Count==0)return [];
         if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return [];
         var control=placement.ControlNodes;var curves=descriptor.NavCurves;
         bool Valid(int i)=>i>=0&&i<curves.Count&&Finite(curves[i].StartPosition)&&Finite(curves[i].EndPosition)
@@ -119,8 +120,6 @@ public static class PrefabPathGeometry
                 var endDirection = Vector3.Transform(-Vector3.UnitZ, curve.EndRotation);
                 if (!Finite(startDirection) || !Finite(endDirection)) { valid = false; break; }
                 int samples = Math.Clamp((int)Math.Ceiling(curve.Length / 3), 4, 256);
-                double measured = 0;
-                Vector3 last = default;
                 for (int i = 0; i <= samples; i++)
                 {
                     float t = (float)i / samples, t2 = t * t, t3 = t2 * t;
@@ -129,11 +128,8 @@ public static class PrefabPathGeometry
                         + (-2*t3 + 3*t2)*curve.EndPosition
                         + (t3 - t2)*endDirection*curve.Length;
                     if (!Finite(position)) { valid = false; break; }
-                    if (i > 0) measured += Vector3.Distance(last, position);
-                    last = position;
                     points.Add(placement.ToWorld(position));
                 }
-                if (Math.Abs(measured - curve.Length) > Math.Max(2, curve.Length * .25)) valid = false;
                 if (!valid) break;
             }
             if (!valid || points.Count < 3) return null;
@@ -152,8 +148,6 @@ public static class PrefabPathGeometry
                 point.Y += startHeight + (endHeight - startHeight) * (float)(along[i] / total);
                 points[i] = point;
             }
-            if (Vector3.Distance(points[0], points[1]) > 20
-                || Vector3.Distance(points[^1], prefab.Nodes[to].Position) > 20) return null;
             // Short lane-to-reference joins only connect the actual PPD lane endpoints
             // to the map control-node centers; the junction itself follows its curves.
             points.Add(prefab.Nodes[to].Position);

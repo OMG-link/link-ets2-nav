@@ -37,33 +37,6 @@ public static class AuxiliaryLaneGuidance
             bool mainEntry=corridor.StartKind==AuxiliaryBoundaryKind.IndependentEntrance
                 ?route.Any(e=>NativeLaneGraph.Prefab(e)==NativeLaneGraph.Prefab(corridor.Origin)&&e.StartNodeUid==corridor.MainEntrance)
                 :originSelection is {} kept&&!corridor.OriginSideOrders.Contains(kept.ExitOrder);
-            // A mid-corridor initialization can use the selected native lane or the explicit initial planning transfer.
-            if(!sideEntry&&!mainEntry)
-            {
-                var initial=lanes.InitialTransfer;
-                var first=corridor.Sections.FirstOrDefault(s=>Find(s.Edge)>=0);
-                if(first is not null)
-                {
-                    int? order=initial?.FromLane;
-                    if(order is null&&NativeLaneGraph.Prefab(first.Edge) is not null)
-                        order=lanes.Sections.FirstOrDefault(s=>s.EdgeId==first.Edge.Id)?.Path.EntryOrder;
-                    sideEntry=order is {} n&&first.SideOrders.Contains(n);
-                    mainEntry=order is {} m&&first.MainOrders.Contains(m);
-                    if(order is null)
-                    {
-                        // No initial transfer means the chosen future native chain is already reachable in the current lane.
-                        foreach(var selection in lanes.Sections.Where(s=>route.Any(e=>e.Id==s.EdgeId)))
-                        {
-                            var section=corridor.Sections.FirstOrDefault(s=>s.Edge.Id==selection.EdgeId);
-                            var boundary=corridor.Terminals.FirstOrDefault(t=>t.Edge.Id==selection.EdgeId);
-                            if(section is null&&boundary is null)continue;
-                            var sideOrders=section?.SideOrders??boundary!.SideOrders;
-                            var mainOrders=section?.MainOrders??boundary!.MainOrders;
-                            sideEntry=sideOrders.Contains(selection.Path.EntryOrder);mainEntry=mainOrders.Contains(selection.Path.EntryOrder);break;
-                        }
-                    }
-                }
-            }
             var existing=result.FirstOrDefault(a=>a.JunctionId==junction&&a.Kind is ManeuverKind.ChooseLanes or ManeuverKind.KeepLeft or ManeuverKind.KeepRight);
             // A locally inherited terminal lane can still have been newly added
             // at this corridor's origin. Its verified birth outranks terminal-only

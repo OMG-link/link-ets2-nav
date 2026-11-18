@@ -3,7 +3,7 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class EntranceActionPointIntegrationTests
 {
  [Fact]
- public void SelectLanesClampsTheGeneratedEntranceMergeAtThePreviousPhysicalEnd()
+ public void StaticActionsClampTheGeneratedEntranceMergeAtThePreviousPhysicalEnd()
  {
   PrefabLanePath Lane(ulong uid,ulong from,ulong to,int input,int output,int inputs,int outputs,int order)=>
    new(uid,from,to,input,output,input,order,inputs,outputs,[input*10+output],
@@ -17,16 +17,15 @@ public sealed class EntranceActionPointIntegrationTests
   var sideExit=mainExit with{Id="prefab:2:0:2",EndNodeUid=41,LanePaths=[leaving]};
   DirectedRoad[] graph=[main,side,road,mainExit,sideExit];DirectedRoad[] route=[side,road,mainExit];
   var native=new NativeLaneGraph(graph);var auxiliaries=AuxiliaryLaneIndex.Build(native,TestContext.Current.CancellationToken);
-  var lanes=new LaneRoutePlanner().Build(route,graph:graph);var view=LaneContractionView.Build(route,auxiliaries);
+  var lanes=new LaneRoutePlanner().Build(route);var view=LaneContractionView.Build(route,auxiliaries);
   var raw=Assert.Single(LaneContractionGuidance.Apply([],view.Select([],lanes)));
   var priorEnd=raw.DistanceMeters+30;
   var preceding=new NavigationManeuver("preceding",ManeuverKind.TurnRight,0,"in","out")
    {JunctionId="previous-real-junction",EndDistanceMeters=priorEnd};
   var scene=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=graph,AuxiliaryLanes=auxiliaries};
   var source=new RoadPathSource(scene.Map,graph,native:native);
-  var plan=new NavigationStructurePlan(route,route,[preceding],lanes,[],[],route.Sum(RouteGeometry.Length),false,double.PositiveInfinity)
-   {BaseActions=[preceding],Auxiliaries=auxiliaries,Contractions=view};
-  var selected=new NavigationStructurePlanner().SelectLanes(plan,lanes,scene,source);
+  var staticPlan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),scene,source,lanes);
+  var selected=staticPlan with{Actions=ActionPointConstraints.Apply([preceding,..staticPlan.Actions])};
   var final=Assert.Single(selected.Actions,a=>a.Id==raw.Id);
   Assert.Equal(priorEnd,final.DistanceMeters);Assert.Equal(raw.ApproachInterval,final.ApproachInterval);
   Assert.Equal(raw.EndDistanceMeters,final.EndDistanceMeters);Assert.True(final.EndDistanceMeters>final.ApproachInterval!.EndMeters);

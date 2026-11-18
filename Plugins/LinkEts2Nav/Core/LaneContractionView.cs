@@ -73,13 +73,6 @@ public sealed class LaneContractionView
             var origin=lanes.Sections.FirstOrDefault(s=>s.EdgeId==corridor.Origin.Id)?.Path;
             bool ending=corridor.StartKind==AuxiliaryBoundaryKind.IndependentEntrance
                 ?route.Any(e=>e.Id==corridor.Origin.Id):origin is {} p&&corridor.OriginSideOrders.Contains(p.ExitOrder);
-            if(!ending&&origin is null)
-            {
-                var first=corridor.Sections.FirstOrDefault(s=>LaneCorridorRoute.Find(route,s.Edge)>=0);
-                int? lane=lanes.InitialTransfer?.FromLane;
-                if(lane is null&&first is not null)lane=lanes.Sections.FirstOrDefault(s=>s.EdgeId==first.Edge.Id)?.Path.EntryOrder;
-                ending=lane is {} order&&first?.SideOrders.Contains(order)==true;
-            }
             if(ending)result.Add(candidate.Merge);
         }
         return result.DistinctBy(m=>m.Id).OrderBy(m=>m.DistanceMeters).ToArray();
@@ -98,7 +91,7 @@ public static class LaneContractionGuidance
         // Entrance/exit navigation belongs exclusively to ComponentContinuity.
         // Only actual same-source lane reductions remain environment events.
         foreach(var merge in merges.Where(m=>m.Kind==LaneMergeKind.LaneReduction)
-            .DistinctBy(m=>(m.PrefabUid,m.Position,m.Origin?.ApplicableEntryNode,
+            .DistinctBy(m=>(m.SourceVisitIndex,m.PrefabUid,m.Position,m.Origin?.ApplicableEntryNode,
                 Orders:string.Join(',',m.Origin?.ApplicableEntryLanes??[]))))
         {
             string group=merge.JunctionId??$"prefab:{merge.PrefabUid:X16}";

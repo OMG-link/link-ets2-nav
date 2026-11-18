@@ -28,19 +28,15 @@ public sealed record LaneRouteTransfer(string FromEdgeId,string ToEdgeId,IReadOn
     public bool AllowedLaneChange { get; init; }
 }
 public sealed record LaneNavigationPlan(IReadOnlyList<LaneRouteSection> Sections,IReadOnlyList<LaneRouteTransfer> Transfers,
-    bool Complete,string? Failure)
-{
-    public LaneRouteTransfer? InitialTransfer { get; init; }
-}
+    bool Complete,string? Failure);
 
 /// <summary>Selects concrete lane chains subject to every official entry/exit pair, preferring continuous lanes.</summary>
 public sealed class LaneRoutePlanner
 {
     private IReadOnlyList<DirectedRoad>? previous;
     private LaneNavigationPlan? cached;
-    private (int Edge,int Lane) previousAnchor=(-1,-1);
     /// <summary>Requires a continuous directed route; each lane path must belong to its edge's entry and exit UIDs.</summary>
-    public LaneNavigationPlan Build(IReadOnlyList<DirectedRoad> route,Vector3? position=null,double vehicleAlong=0,IReadOnlyList<DirectedRoad>? graph=null)
+    public LaneNavigationPlan Build(IReadOnlyList<DirectedRoad> route)
     {
 #if DEBUG
         foreach(var edge in route)
@@ -50,34 +46,9 @@ public sealed class LaneRoutePlanner
 #endif
         if(route.Zip(route.Skip(1)).Any(p=>p.First.EndNodeUid!=p.Second.StartNodeUid))
             throw new ArgumentException("Lane planning requires a continuous directed route.",nameof(route));
-        int currentEdge=0;double passed=0;
-        if(position is not null)
-            while(currentEdge<route.Count-1&&passed+new LanePolyline(route[currentEdge].Points).Length<vehicleAlong)
-                passed+=new LanePolyline(route[currentEdge++].Points).Length;
-        int anchorLane=-1;
-        if(position is {} pose&&route.Count>0&&!route[currentEdge].Id.StartsWith("prefab:",StringComparison.Ordinal))
-        {
-            var next=route.Skip(currentEdge+1).FirstOrDefault(e=>e.Id.StartsWith("prefab:",StringComparison.Ordinal));
-            if(next is not null&&next.LanePaths.Count>0)
-            {
-                var road=new LanePolyline(route[currentEdge].Points);var projection=road.Project(pose);var h=road.Heading(projection.Along);
-                double offset=Vector3.Dot(pose-road.At(projection.Along),new(-h.Z,0,h.X));
-                var approach=route.TakeWhile(e=>!ReferenceEquals(e,next)).Last();var endLine=new LanePolyline(approach.Points);
-                var endHeading=endLine.Heading(endLine.Length);var right=new Vector3(-endHeading.Z,0,endHeading.X);
-                anchorLane=next.LanePaths.OrderBy(p=>Math.Abs(Vector3.Dot(p.Points[0]-approach.Points[^1],right)-offset)).First().EntryOrder;
-            }
-        }
-        if(position is {} prefabPose&&route.Count>0&&route[currentEdge].Id.StartsWith("prefab:",StringComparison.Ordinal))
-        {
-            var edge=route[currentEdge];
-            var candidates=(graph??route).Where(e=>e.StartNodeUid==edge.StartNodeUid&&e.Id.StartsWith("prefab:",StringComparison.Ordinal))
-                .SelectMany(e=>e.LanePaths).Where(p=>edge.LanePaths.Any(q=>q.PrefabUid==p.PrefabUid)).ToArray();
-            if(candidates.Length>0)anchorLane=candidates.OrderBy(p=>new LanePolyline(p.Points).Project(prefabPose).Error).First().EntryOrder;
-        }
-        if(ReferenceEquals(previous,route)&&previousAnchor==(currentEdge,anchorLane)&&cached is not null)return cached;
-        previousAnchor=(currentEdge,anchorLane);
+        if(ReferenceEquals(previous,route)&&cached is not null)return cached;
         previous=route;
-        var layers=route.Select((edge,index)=>(edge,index)).Where(p=>p.index>=currentEdge&&p.edge.Id.StartsWith("prefab:",StringComparison.Ordinal)).ToArray();
+        var layers=route.Select((edge,index)=>(edge,index)).Where(p=>p.edge.Id.StartsWith("prefab:",StringComparison.Ordinal)).ToArray();
         if(layers.Length==0)return cached=new([],[],false,"当前路线没有可选择的预制件车道路径");
         if(layers.Any(p=>p.edge.LanePaths.Count==0))return cached=new([],[],false,"预制件车道图缺失，未虚构车道路径");
         var costs=new List<(int Changes,double Length)[]>();var parents=new List<int[]>();
@@ -91,8 +62,7 @@ public sealed class LaneRoutePlanner
                 var choice=choices[j];
                 if(layer==0)
                 {
-                    int shift=anchorLane<0?0:Math.Abs(anchorLane-choice.EntryOrder);
-                    values[j]=(shift,choice.LengthMeters);continue;
+                    values[j]=(0,choice.LengthMeters);continue;
                 }
                 var prior=layers[layer-1].edge.LanePaths;
                 bool adjacent=layers[layer].index==layers[layer-1].index+1;
@@ -123,16 +93,8 @@ public sealed class LaneRoutePlanner
             transfers.Add(new(a.EdgeId,b.EdgeId,route.Skip(layers[i-1].index+1).Take(layers[i].index-layers[i-1].index-1).Select(e=>e.Id).ToArray(),
                 a.Path.ExitOrder,b.Path.EntryOrder,same){AllowedLaneChange=connection.Allowed});
         }
-        LaneRouteTransfer? initial=null;
-        if(anchorLane>=0&&sections[0].Path.EntryOrder!=anchorLane)
-        {
-            bool roadApproach=!route[currentEdge].Id.StartsWith("prefab:",StringComparison.Ordinal);
-            var path=new LanePolyline(sections[0].Path.Points);var projection=path.Project(position!.Value);
-            bool parallel=roadApproach||Vector3.Dot(path.Heading(projection.Along),new LanePolyline(route[currentEdge].Points).Heading(Math.Max(0,vehicleAlong-passed)))>=Math.Cos(Math.PI/180);
-            initial=new("vehicle",sections[0].EdgeId,roadApproach?[route[currentEdge].Id]:[],anchorLane,sections[0].Path.EntryOrder,false){AllowedLaneChange=parallel};
-        }
-        bool complete=transfers.All(t=>t.SameLaneVerified||t.AllowedLaneChange)&&(initial is null||initial.AllowedLaneChange);
-        return cached=new(sections,transfers,complete,complete?null:"存在需要变道或车道数变化的道路连接；尚未验证该道路上的变道许可"){InitialTransfer=initial};
+        bool complete=transfers.All(t=>t.SameLaneVerified||t.AllowedLaneChange);
+        return cached=new(sections,transfers,complete,complete?null:"存在需要变道或车道数变化的道路连接；尚未验证该道路上的变道许可");
     }
 
 

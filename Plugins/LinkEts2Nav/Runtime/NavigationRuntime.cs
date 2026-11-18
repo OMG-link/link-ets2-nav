@@ -74,6 +74,21 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
         if(nearby.Retries is {} retries&&mapRequestScope!=retries.ScopeRevision)
         {mapRequestScope=retries.ScopeRevision;paths!.ReconsiderMapIssues();}
+        var components=paths!.GetRouteComponents(data.Route);
+        if(routeBuildGeneration!=paths.RouteStructureBuildCount)
+        {
+            structures.Clear();publishedStructure=null;routeBuildGeneration=paths.RouteStructureBuildCount;
+        }
+        // Every known SDK component is planned in full before position matching.
+        // Unknown map gaps keep their separate coordinate frames; they are never
+        // bridged by a player-dependent route or a fabricated distance.
+        foreach(var component in components)
+        {
+            if(structures.ContainsKey(component))continue;
+            var selectedLanes=lanePlanner.Build(component);
+            structures.Add(component,structurePlanner.Build(component,data.Route,nearby,paths,selectedLanes));
+            StructureBuildCount++;
+        }
         var route = paths!.GetPath(position, vehicle.ForwardDirection, data.Route, data.RouteAvailability);
         var along = matcher.ProjectDistance(position, vehicle.ForwardDirection, route);
         bool yardApproach=false;double exitDistance=0;
@@ -95,34 +110,24 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             }
         }
         if (along is null) return Suspend("当前位置未唯一匹配连续导航道路，暂不提示转向。", now);
-        if(routeBuildGeneration!=paths!.RouteStructureBuildCount)
+        var structure=structures[route];
+        if(!ReferenceEquals(publishedStructure,structure))
         {
-            structures.Clear();publishedStructure=null;routeBuildGeneration=paths.RouteStructureBuildCount;
-        }
-        var laneRoute=lanePlanner.Build(route,position,along.Value,paths.GetNavigationGraph());
-        if(!structures.TryGetValue(route,out var structure))
-        {
-            structure=structurePlanner.Build(route,data.Route,nearby,paths,laneRoute);
-            structures.Add(route,structure);StructureBuildCount++;
-            ReportConnectionFailure(structure.InstructionRoute,structure.ConfirmedUntil,structure.Unresolved,structure.UnresolvedAlong);
+            ReportConnectionFailure(structure.Route,structure.ConfirmedUntil,structure.Unresolved,structure.UnresolvedAlong);
             foreach(var issue in structure.Forks)
                 log?.Invoke($"道路分流未定：{issue.Prefab}，入口={issue.EntryNode:X16}，出口={issue.ExitNode:X16}；{issue.Reason}");
         }
-        else if(NavigationStructurePlanner.SelectionChanged(structure.Lanes,laneRoute))
-        {
-            structure=structurePlanner.SelectLanes(structure,laneRoute,nearby,paths);structures[route]=structure;
-        }
+        var laneRoute=structure.Lanes;
         bool structuralUpdate=!ReferenceEquals(publishedStructure,structure)||planningSession!=data.SessionId;
         if(structuralUpdate)routeOrigin=progress.Update(data.SessionId,route,0);
         double playerAlong=routeOrigin+along.Value;
-        var instructionRoute=structure.InstructionRoute;
         var upcoming=structure.Actions.Select(m=>Relative(m,along.Value)).Where(m=>m.DistanceMeters>=0).ToArray();
         var merges=structure.Merges.Select(m=>m with{DistanceMeters=m.DistanceMeters-along.Value,
             EndDistanceMeters=m.EndDistanceMeters-along.Value}).Where(m=>m.DistanceMeters>=0).ToArray();
         bool confirmedContinuation=!yardApproach&&!upcoming.Any(NavigationEventPlanner.IsNavigationAction);
         double confirmedAhead=Math.Max(0,structure.ConfirmationEndAfter(along.Value)-along.Value);
         var next=upcoming.FirstOrDefault(NavigationEventPlanner.IsNavigationAction);
-        var currentJunction=yardApproach?null:CurrentJunction(instructionRoute,along.Value);
+        var currentJunction=yardApproach?null:CurrentJunction(structure,along.Value);
         double? lastActionEnd=structure.Actions.LastOrDefault(NavigationEventPlanner.IsNavigationAction)?.EndDistanceMeters;
         double continuationEnd=structure.ConfirmationEndAfter(lastActionEnd??along.Value);
         double? componentEnd=structure.Actions.Where(NavigationEventPlanner.IsNavigationAction)
@@ -243,28 +248,16 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         connectionFailureSignature=failure;
     }
 
-    private static double? CurrentComponentStart(IReadOnlyList<DirectedRoad> route,double along)
+    private static string? CurrentJunction(NavigationStructurePlan plan,double along)
     {
+        var ring=plan.RoundaboutRanges.SingleOrDefault(r=>along>r.StartMeters&&along<r.EndMeters);
+        if(ring is not null)return "roundabout:"+ring.RingId;
         double offset=0;
-        foreach(var edge in route)
-        {
-            double end=offset+RouteGeometry.Length(edge);
-            if(along>=offset&&along<end)
-                return edge.Roundabout is not null||edge.Id.StartsWith("prefab:",StringComparison.Ordinal)?offset:null;
-            offset=end;
-        }
-        return null;
-    }
-
-    private static string? CurrentJunction(IReadOnlyList<DirectedRoad> route,double along)
-    {
-        double offset=0;
-        foreach(var edge in route)
+        foreach(var edge in plan.Route)
         {
             double end=offset+RouteGeometry.Length(edge);
             if(along>offset && along<end)
             {
-                if(edge.Roundabout is {} ring)return "roundabout:"+ring.Id;
                 if(!edge.Id.StartsWith("prefab:",StringComparison.Ordinal))return null;
                 var parts=edge.Id.Split(':');
                 return parts.Length==4 ? "prefab:"+parts[1] : null;
@@ -293,7 +286,6 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
 
     public void Reset()
     {
-        structurePlanner.Reset();
         ferryProgress.Reset();
         analysisTimeline.Reset();analysisScheduler.Reset();analysisRoute=null;planningSession=null;eventPlanner.Reset();progress.Reset();narrowPlanner.Reset();cityPlanner.Reset();cityEntries.Reset();citySession=null;cityFrame=null;guidance?.Suspend("navigation");guidance?.Suspend(CityEntryEventBuilder.Kind);guidance?.Suspend(NarrowRoadEventBuilder.Kind);
         structures.Clear();publishedStructure=null;mapIdentity=null;routeBuildGeneration=0;

@@ -38,7 +38,7 @@ public sealed class LaneMergeDetectorTests
     [InlineData(true)]
     public void FullSourceWindowIsLaneReductionAndFindsCorrectSide(bool left)
     {
-        var scene=Scene(left:left);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
+        var scene=Scene(left:left);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan));
         Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);
         Assert.Null(observation.ParallelDistanceMeters);
         Assert.True(observation.Origin!.BackwardMeters>=500);Assert.Equal(!left,observation.MoveLeft);
@@ -58,7 +58,7 @@ public sealed class LaneMergeDetectorTests
             ulong to=end==source.Points.Count-1?source.EndNodeUid:(ulong)(1000+end);
             sections.Add(new("road-"+start,from,to,source.Points.Skip(start).Take(end-start+1).ToArray()));
         }
-        var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..sections,scene.Edge],scene.Plan,0));
+        var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..sections,scene.Edge],scene.Plan));
         Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);
         Assert.Null(observation.ParallelDistanceMeters);Assert.True(observation.Origin!.BackwardMeters>=500);
     }
@@ -158,7 +158,7 @@ public sealed class LaneMergeDetectorTests
         var edge=new DirectedRoad("prefab:000000000000002A:0:1",10,20,left)
             {LanePaths=reverseOrder?[ending,continuing]:[continuing,ending]};
         var plan=new LaneNavigationPlan([new(edge.Id,ending,0)],[],true,null);
-        var result=Assert.Single(new LaneMergeDetector().Find([edge],[edge],plan,0));
+        var result=Assert.Single(new LaneMergeDetector().Find([edge],[edge],plan));
         Assert.Equal(1,result.EndingEntryLane);
         Assert.Equal(0,result.MainEntryLane);
         // Identity is unchanged. The new wording samples the approach's first
@@ -182,7 +182,7 @@ public sealed class LaneMergeDetectorTests
             [new(100,0,z+50),new(4.5f,0,z)],120);
         DirectedRoad[] upstream=[new("prefab:000000000000002B:0:1",30,5,left.Points){LanePaths=[left,right]},
             new("prefab:000000000000002B:2:1",40,5,side.Points){LanePaths=[side]}];
-        var result=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..upstream,..scene.Graph],scene.Plan,0));
+        var result=Assert.Single(new LaneMergeDetector().Find([scene.Edge],[..upstream,..scene.Graph],scene.Plan));
         Assert.Equal(LaneMergeKind.Uncertain,result.Kind);
         Assert.Null(result.ParallelDistanceMeters);
         Assert.NotNull(result.Origin!.MapIssue);
@@ -191,7 +191,7 @@ public sealed class LaneMergeDetectorTests
     [Fact]
     public void AFullFiveHundredMetreSourceWindowIsSameOriginDespiteShortParallelShape()
     {
-        var scene=Scene(shortApproach:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
+        var scene=Scene(shortApproach:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan));
         Assert.Equal(LaneMergeKind.LaneReduction,observation.Kind);Assert.Null(observation.ParallelDistanceMeters);
         Assert.True(observation.Origin!.BackwardMeters>=500);
     }
@@ -206,19 +206,19 @@ public sealed class LaneMergeDetectorTests
         var sideRoad=scene.Graph[0] with{Id="side-road",StartNodeUid=6,EndNodeUid=99,
             Points=scene.Graph[0].Points.Select(p=>p+new Vector3(side.Points[0].X,0,0)).ToArray()};
         var plan=new LaneNavigationPlan([new(sideEdge.Id,side,0)],[],true,null);
-        var observation=Assert.Single(new LaneMergeDetector().Find([sideEdge],[scene.Graph[0],sideRoad,mainEdge,sideEdge],plan,0));
+        var observation=Assert.Single(new LaneMergeDetector().Find([sideEdge],[scene.Graph[0],sideRoad,mainEdge,sideEdge],plan));
         Assert.Equal(LaneMergeKind.Ramp,observation.Kind);Assert.False(observation.MoveLeft);
     }
     [Fact]
     public void MissingUpstreamCoverageDoesNotTurnLongUnknownRoadIntoRamp()
     {
-        var scene=Scene(upstream:80);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
+        var scene=Scene(upstream:80);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan));
         Assert.Equal(LaneMergeKind.Uncertain,observation.Kind);Assert.Null(observation.ParallelDistanceMeters);
     }
     [Fact]
     public void NativeTangentsSelectContinuingLaneOnCurvedRoad()
     {
-        var scene=Scene(curved:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,0));
+        var scene=Scene(curved:true);var observation=Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan));
         // The curved fixture starts west of the shared curve heading; native
         // start-tangent direction now takes precedence over a lamp-based left cue.
         Assert.Equal(0,observation.MainEntryLane);Assert.False(observation.MoveLeft);
@@ -228,7 +228,7 @@ public sealed class LaneMergeDetectorTests
     {
         var scene=Scene(shortApproach:true);var main=scene.Edge.LanePaths[0];
         var plan=new LaneNavigationPlan([new(scene.Edge.Id,main,0)],[],true,null);
-        Assert.Equal(LaneMergeKind.LaneReduction,Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,plan,0)).Kind);
+        Assert.Equal(LaneMergeKind.LaneReduction,Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,plan)).Kind);
     }
 
     [Theory]
@@ -258,7 +258,7 @@ public sealed class LaneMergeDetectorTests
         var coveredB=coveredA with{Id="source-B-road",StartNodeUid=400,EndNodeUid=200};
         DirectedRoad[] graph=[coveredA,coveredB,sourceA,sourceB,inputRoad,edge];
         var selected=edge.LanePaths.Single(p=>p.EntryOrder==selectedLane);
-        var observations=new LaneMergeDetector().Find([edge],graph,new([new(edge.Id,selected,0)],[],true,null),0);
+        var observations=new LaneMergeDetector().Find([edge],graph,new([new(edge.Id,selected,0)],[],true,null));
         Assert.Equal(expected,observations.Count==1);
         if(expected)
         {
@@ -268,14 +268,14 @@ public sealed class LaneMergeDetectorTests
         }
     }
     [Fact]
-    public void ReductionRemainsVisibleWhenLaneSelectionChanges()
+    public void ReductionIsAStaticRouteEventIndependentOfEarlierDetectorCalls()
     {
         var scene=Scene(shortApproach:true);var detector=new LaneMergeDetector();
-        Assert.Single(detector.Find([scene.Edge],scene.Graph,scene.Plan,0));
+        Assert.Single(detector.Find([scene.Edge],scene.Graph,scene.Plan));
         var main=new LaneNavigationPlan([new(scene.Edge.Id,scene.Edge.LanePaths[0],0)],[],true,null);
-        Assert.Single(detector.Find([scene.Edge],scene.Graph,main,10));
-        Assert.Empty(detector.Find([scene.Edge],scene.Graph,main,1000));
-        Assert.Single(detector.Find([scene.Edge],scene.Graph,main,0));
+        Assert.Single(detector.Find([scene.Edge],scene.Graph,main));
+        Assert.Single(detector.Find([scene.Edge],scene.Graph,main));
+        Assert.Single(detector.Find([scene.Edge],scene.Graph,main));
     }
     [Theory]
     [InlineData(true)]
@@ -330,9 +330,9 @@ public sealed class LaneMergeDetectorTests
         Assert.DoesNotContain(diagnostic.Upcoming,a=>a.AnnouncementMode==NavigationAnnouncementMode.DistancePreview);
     }
     [Fact]
-    public void PassingMergeRemovesItsAction()
+    public void RebuildingAStaticPlanKeepsTheCompleteMergeEvent()
     {
-        var scene=Scene();Assert.Empty(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan,1000));
+        var scene=Scene();Assert.Single(new LaneMergeDetector().Find([scene.Edge],scene.Graph,scene.Plan));
     }
 
     [Theory]
@@ -345,7 +345,7 @@ public sealed class LaneMergeDetectorTests
         {CurveBlinkers=[p.EntryLane==1&&contradictory?LaneBlinker.Right:LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]}).ToArray();
         var edge=scene.Edge with{LanePaths=lanes};
         var plan=scene.Plan with{Sections=[new(edge.Id,lanes[1],0)]};
-        var merge=Assert.Single(new LaneMergeDetector().Find([edge],[scene.Graph[0],edge],plan,0));
+        var merge=Assert.Single(new LaneMergeDetector().Find([edge],[scene.Graph[0],edge],plan));
         Assert.Equal(LaneMergeKind.LaneReduction,merge.Kind);
         Assert.True(merge.MoveLeft);Assert.Equal(1,merge.EndingEntryLane);Assert.Equal(0,merge.MainEntryLane);
         Assert.Equal(1,merge.RecommendedLaneCount);
@@ -363,7 +363,7 @@ public sealed class LaneMergeDetectorTests
         var right=scene.Edge.LanePaths[1] with{CurveBlinkers=[LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]};
         var edge=scene.Edge with{LanePaths=reverseOrder?[right,left]:[left,right]};
         var plan=new LaneNavigationPlan([new(edge.Id,left,0)],[],true,null);
-        var merge=Assert.Single(new LaneMergeDetector().Find([edge],[scene.Graph[0],edge],plan,0));
+        var merge=Assert.Single(new LaneMergeDetector().Find([edge],[scene.Graph[0],edge],plan));
         Assert.Equal(1,merge.EndingEntryLane);Assert.Equal(0,merge.MainEntryLane);
         Assert.True(merge.MoveLeft);Assert.Equal(1,merge.RecommendedLaneCount);
     }

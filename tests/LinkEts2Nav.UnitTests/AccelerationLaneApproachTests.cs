@@ -49,7 +49,7 @@ public sealed class AccelerationLaneApproachTests
         var selected=new[]{graph.Single(e=>e.Id=="prefab:1:2:1"),graph.Single(e=>e.Id==body.Uid.ToString("X16")&&e.StartNodeUid==body.Node.Uid),graph.Single(e=>e.Id=="prefab:2:0:1")};
         var ending=selected[^1].LanePaths.Single(p=>p.EntryLane==2);
         var plan=new LaneNavigationPlan([new(selected[^1].Id,ending,2)],[],true,null);
-        var weak=Assert.Single(new LaneMergeDetector().Find(selected,graph,plan,0));
+        var weak=Assert.Single(new LaneMergeDetector().Find(selected,graph,plan));
         Assert.Equal(LaneMergeKind.LaneReduction,weak.Kind);Assert.True(weak.ParallelDistanceMeters>500);
         Assert.NotNull(index.NativeMerge(weak));
         var now=DateTimeOffset.UtcNow;
@@ -112,14 +112,10 @@ public sealed class AccelerationLaneApproachTests
         Assert.Equal(62,action.DistanceMeters);Assert.Equal(260,action.EndDistanceMeters);
     }
     [Fact]
-    public void MiddleInitializationUsesPhysicalIndexAndExplicitLaneSelectionInsteadOfPriorRouteHistory()
+    public void MissingSdkOriginDoesNotInventAnInitialPlayerLane()
     {
         var s=Scene(false);var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(s.Graph),TestContext.Current.CancellationToken);
-        var lanes=new LaneNavigationPlan([],[],true,null){InitialTransfer=new("road",s.Route[^1].Id,["road"],2,1,false){AllowedLaneChange=true}};
-        var trimmed=Assert.Single(AuxiliaryLaneGuidance.Apply([],s.Route.Skip(1).ToArray(),lanes,index));
-        Assert.Equal(20,trimmed.DistanceMeters);Assert.Equal(200,trimmed.EndDistanceMeters);
-        var fresh=AuxiliaryLaneIndex.Build(new NativeLaneGraph(s.Graph),TestContext.Current.CancellationToken);
-        Assert.Equal(trimmed,Assert.Single(AuxiliaryLaneGuidance.Apply([],s.Route.Skip(1).ToArray(),lanes,fresh)));
+        Assert.Empty(AuxiliaryLaneGuidance.Apply([],s.Route.Skip(1).ToArray(),new([],[],true,null),index));
     }
     [Fact]
     public void PermanentLaneAdditionAndDriverOnOriginalMainRoadNeedNoMergeInstruction()

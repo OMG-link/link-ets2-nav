@@ -271,7 +271,11 @@ public sealed class NavigationRuntimeTests
             new(outgoing.Node.Uid,3550,175),new(outgoing.ForwardNode.Uid,0,0)],Now);
         int calls = 0;
         var runtime = ObserveDiagnostics(()=>calls++);
-        var result = runtime.Process(Data(route,100),new(map,[],[],[]),Now);
+        // The SDK gap is a known not-yet-loaded dependency, not an unexplained
+        // pair of already loaded disconnected roads (which is invalid input).
+        var nearby=new NearbyMapSnapshot(map,[],[],[])
+        {MissingConnection=_=>new MissingMapSectors([new(1,0)],"fixture missing junction sector")};
+        var result = runtime.Process(Data(route,100),nearby,Now);
         Assert.Equal(NavigationPrompts.Continue(),result.LastSpoken);
         Assert.Equal(300,result.ConfirmedAheadMeters!.Value,1);
         Assert.Equal(1,calls);

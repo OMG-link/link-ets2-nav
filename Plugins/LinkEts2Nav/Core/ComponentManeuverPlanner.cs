@@ -25,7 +25,7 @@ public sealed class ComponentManeuverPlanner
         for(int i=0;i<route.Count;i++)
         {
             if(excludeVisit?.Invoke(i)==true)continue;
-            var edge=route[i];if(edge.Junction?.IsJunction==true||edge.Roundabout is not null||edge.ReturnsToEntry)continue;
+            var edge=route[i];if(edge.Junction?.IsJunction==true||edge.ReturnsToEntry)continue;
             var entry=index!.ForEntry(edge.Id);var exit=index.ForExit(edge.Id);
             if(entry is null&&exit is null)
             {

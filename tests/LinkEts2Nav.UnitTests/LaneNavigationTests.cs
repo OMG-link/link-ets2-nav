@@ -109,15 +109,17 @@ public sealed class LaneNavigationTests
         Assert.Equal(new[]{LaneBlinker.Right,LaneBlinker.NoBlinkerForced},rotated.LanePaths.Single(p=>p.EntryLane==0).CurveBlinkers);
     }
     [Fact]
-    public void VehicleRoadLaneAnchorsPlanAndChangingLaneInvalidatesCachedChoice()
+    public void RouteSelectionHasNoVehicleAnchorAndReusesTheSameCompletePlan()
     {
         var left=Lane(10,20,0,0,1,10) with {Points=[new(0,0,20),new(0,0,40)]};
         var right=Lane(10,20,1,0,2,30) with {Points=[new(3.5f,0,20),new(0,0,40)]};
         var road=new DirectedRoad("road",5,10,[new(0,0,0),new(0,0,20)]);
         var edge=Edge("prefab:A:0:1",10,20,left,right);
         DirectedRoad[] route=[road,edge];var planner=new LaneRoutePlanner();
-        Assert.Equal(1,Assert.Single(planner.Build(route,new(3.5f,0,10),10).Sections).Path.EntryLane);
-        Assert.Equal(0,Assert.Single(planner.Build(route,new(0,0,10),10).Sections).Path.EntryLane);
+        var chosen=planner.Build(route);
+        Assert.Equal(0,Assert.Single(chosen.Sections).Path.EntryLane);
+        Assert.Same(chosen,planner.Build(route));
+        Assert.Equal(1,chosen.Sections[0].SourceVisitIndex);
     }
     [Fact]
     public void AdjacentParallelLaneChangeIsExplicitVirtualConnection()

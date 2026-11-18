@@ -26,11 +26,10 @@ public sealed class SelectedStraightPassageTests
         var lanes=new LaneNavigationPlan([new(main.Id,chosen,0)],[],true,null);
         var target=new NavigationManeuver("merge",ManeuverKind.MergeLeft,400,"a","b")
             {EndDistanceMeters=450,JunctionId="merge-target",AnnouncementMode=targetMode};
-        var source=new NavigationStructurePlan(route,route,[target],lanes,[],[new("42",10,20,"mixed outlet signals")],500,true,0)
-            {BaseActions=[target]};
         var paths=new RoadPathSource(new TruckLib.ScsMap.Map(),[main],native:new NativeLaneGraph(graph));
         var nearby=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=graph};
-        return new NavigationStructurePlanner().SelectLanes(source,lanes,nearby,paths);
+        var plan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),nearby,paths,lanes);
+        return plan with{Actions=ActionPointConstraints.Apply([..plan.Actions,target])};
     }
     private static GuidanceSourcePlan Speech(NavigationStructurePlan structure)
         =>new NavigationEventPlanner().Build("s","r",DateTimeOffset.UtcNow,0,structure.Actions,true,false,false,new());
@@ -74,12 +73,12 @@ public sealed class SelectedStraightPassageTests
         var keep=new NavigationManeuver("early-fork",ManeuverKind.KeepRight,laterAction?50:-50,"approach",main.Id)
             {JunctionId="prefab:000000000000002A",EndDistanceMeters=laterAction?180:60,
                 ApproachInterval=interval?laterAction?new(40,120):new(-60,0):null};
-        var target=original.BaseActions.Single();
-        var source=original with{Route=route,InstructionRoute=route,Lanes=lanes,Actions=[keep,target],BaseActions=[keep,target]};
+        var target=original.Actions.Single(a=>a.Id=="merge");
         var graph=new NativeLaneGraph([main,loop]);
         var paths=new RoadPathSource(new TruckLib.ScsMap.Map(),[main],native:graph);
         var nearby=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=[main]};
-        return new NavigationStructurePlanner().SelectLanes(source,lanes,nearby,paths);
+        var plan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),nearby,paths,lanes);
+        return plan with{Actions=ActionPointConstraints.Apply([keep,..plan.Actions,target])};
     }
 
     [Theory]

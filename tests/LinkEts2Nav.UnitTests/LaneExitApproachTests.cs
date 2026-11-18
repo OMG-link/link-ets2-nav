@@ -81,8 +81,9 @@ public sealed class LaneExitApproachTests
     public void RecognizedRoundaboutDoesNotGainDedicatedExitLaneGuidance()
     {
         var s=Scene();
-        var route=s.Route.Select(e=>e.Id==s.Route[^1].Id?e with{Roundabout=new("ring",1,0)}:e).ToArray();
-        Assert.Empty(new LaneExitApproach().Apply([],route,s.Graph,0));
+        var range=new RoundaboutRouteRange("ring",0,s.Route.Length,0,s.Route.Sum(RouteGeometry.Length),[]);
+        Assert.Empty(new NavigationManeuverDetector().FindSequence(s.Route,0,s.Graph,out _,out _,out _,
+            new LaneRoutePlanner().Build(s.Route),[range]));
     }
 
     [Fact]

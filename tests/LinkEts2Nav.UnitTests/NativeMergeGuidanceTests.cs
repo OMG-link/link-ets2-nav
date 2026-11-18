@@ -56,7 +56,7 @@ public sealed class NativeMergeGuidanceTests
         var edge=new DirectedRoad("prefab:000000000000002A:000000000000000A:0000000000000014",10,20,first.Points){LanePaths=[first,second]};
         var road=new DirectedRoad("road:up",5,10,[new(-600,0,0),Vector3.Zero]);
         var plan=new LaneNavigationPlan([new(edge.Id,second,0)],[],true,null);
-        var observations=new LaneMergeDetector().Find([edge],[road,edge],plan,0);
+        var observations=new LaneMergeDetector().Find([edge],[road,edge],plan);
         Assert.Contains(observations,m=>m.Kind==LaneMergeKind.LaneReduction);
         Assert.All(observations,m=>Assert.Null(m.ParallelDistanceMeters));
         if(allDie)Assert.All(observations,m=>{Assert.True(m.AllIncomingLanesDie);Assert.Empty(m.SurvivingEntryOrders);});

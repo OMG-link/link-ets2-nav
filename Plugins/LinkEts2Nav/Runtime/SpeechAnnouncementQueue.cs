@@ -14,7 +14,6 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
     { SingleReader = true, FullMode = BoundedChannelFullMode.DropWrite });
     private readonly object gate = new();
     private readonly Dictionary<string, string> ready = new(StringComparer.Ordinal);
-    private readonly HashSet<string> failed = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (int Priority, string[] Texts)> plans = new(StringComparer.Ordinal);
     private readonly Task worker;
     private long audioVersion;
@@ -37,10 +36,16 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
         stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         worker = Task.Run(PrepareAsync);
     }
+    /// <summary>Preparation faults are worker failures, not ordinary failed-text results.</summary>
+    public void ThrowIfFaulted()
+    {
+        if(worker.IsCompleted)worker.GetAwaiter().GetResult();
+    }
 
     public void UpdatePlan(string channel, IReadOnlyList<string> texts, int priority = 0)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(channel);
+        ThrowIfFaulted();
         if (IsStopped) return;
         string[] ordered = texts.Distinct(StringComparer.Ordinal).ToArray();
         bool updated;
@@ -62,9 +67,10 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
     public void ClearPlan(string channel) { lock (gate) plans.Remove(channel); }
     public void ReplacePreparedAudio(IReadOnlyDictionary<string,string> files,Action replaceSynthesizer)
     {
+        ThrowIfFaulted();
         lock(gate)
         {
-            replaceSynthesizer();audioVersion++;ready.Clear();failed.Clear();exactPack.Clear();
+            replaceSynthesizer();audioVersion++;ready.Clear();exactPack.Clear();
             foreach(var entry in files){ready[entry.Key]=entry.Value;exactPack.Add(entry.Key);}
             usage?.SetExactPack(exactPack);
         }
@@ -72,6 +78,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
     }
     public bool IsReady(string text)
     {
+        ThrowIfFaulted();
         lock (gate) return ready.TryGetValue(text, out string? file) && File.Exists(file);
     }
 
@@ -79,6 +86,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
         =>TryGetAudio(text,out file,out _);
     public bool TryGetAudio(string text,out string file,out bool isExactPack)
     {
+        ThrowIfFaulted();
         lock(gate)
         {
             if(ready.TryGetValue(text,out var candidate)&&File.Exists(candidate)){file=candidate;isExactPack=exactPack.Contains(text);return true;}
@@ -86,23 +94,18 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
         file="";isExactPack=false;return false;
     }
 
-    public bool HasFailed(string text) { lock (gate) return failed.Contains(text); }
-
     public bool TryAnnounce(string text, string context = "预警")
     {
+        ThrowIfFaulted();
         if (IsStopped) return false;
         string? file;
         lock (gate) ready.TryGetValue(text, out file);
         if (file is not null && File.Exists(file))
         {
-            try
-            {
-                if (IsStopped) return false;
-                play(file);
-                log("TTS " + context + "已提交播放：" + text + " 文件=" + file);
-                return true;
-            }
-            catch (Exception ex) { log("TTS 音频提交失败，使用现有提示音：" + ex.Message); }
+            if (IsStopped) return false;
+            play(file);
+            log("TTS " + context + "已提交播放：" + text + " 文件=" + file);
+            return true;
         }
         if (file is not null && !File.Exists(file))
         {
@@ -122,43 +125,48 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
                 while (!stop.IsCancellationRequested)
                 {
                     string? text;long version;
-                    lock (gate){version=audioVersion;text = plans.OrderBy(p => p.Value.Priority).ThenBy(p => p.Key, StringComparer.Ordinal).SelectMany(p => p.Value.Texts).FirstOrDefault(p => !ready.ContainsKey(p) && !failed.Contains(p));}
+                    lock (gate){version=audioVersion;text = plans.OrderBy(p => p.Value.Priority).ThenBy(p => p.Key, StringComparer.Ordinal).SelectMany(p => p.Value.Texts).FirstOrDefault(p => !ready.ContainsKey(p));}
                     if (text is null) break;
                     var preparation=Stopwatch.StartNew();
+                    log("开始准备 TTS 音频：" + text);
+                    string file;bool synthesized=false,cancelled=false;
                     try
                     {
-                        log("开始准备 TTS 音频：" + text);
-                        string file = await synthesizer.SynthesizeAsync(text, stop.Token);
-                        if (stop.IsCancellationRequested)
-                        {usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,null,cancelled:true);break;}
-                        bool stale;lock (gate){stale=version!=audioVersion;if(!stale){ready[text] = file;exactPack.Remove(text);}}
-                        usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,stale?null:(synthesizer as ISpeechSynthesisDiagnostics)?.LastCacheHit,cancelled:stale);
-                        if(stale)continue;
-                        log("TTS 文件缓存已就绪：" + text + " 文件=" + file);
-                        CacheChanged?.Invoke();
+                        file = await synthesizer.SynthesizeAsync(text, stop.Token);
+                        synthesized=true;
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested)
-                    {usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,null,cancelled:true);break;}
-                    catch (Exception ex)
+                    {cancelled=true;usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,null,cancelled:true);break;}
+                    finally
                     {
-                        bool stale;lock (gate){stale=version!=audioVersion;if(!stale)failed.Add(text);}
-                        usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,null,failed:!stale,cancelled:stale);
-                        if(stale)continue;
-                        log("TTS 合成失败，本次启用期间使用现有提示音：" + ex.Message);
-                        CacheChanged?.Invoke();
+                        // Telemetry does not turn an exception into a normal failed-text result.
+                        if(!synthesized&&!cancelled)usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,null,failed:true);
                     }
+                    if (stop.IsCancellationRequested)
+                    {usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,null,cancelled:true);break;}
+                    bool stale;lock (gate){stale=version!=audioVersion;if(!stale){ready[text] = file;exactPack.Remove(text);}}
+                    usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,stale?null:(synthesizer as ISpeechSynthesisDiagnostics)?.LastCacheHit,cancelled:stale);
+                    if(stale)continue;
+                    log("TTS 文件缓存已就绪：" + text + " 文件=" + file);
+                    CacheChanged?.Invoke();
                 }
             }
         }
-        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        catch (OperationCanceledException error) when (stop.IsCancellationRequested&&error.CancellationToken==stop.Token) { }
     }
 
     public async ValueTask DisposeAsync()
     {
-        stop.Cancel();
-        changed.Writer.TryComplete();
-        await worker.ConfigureAwait(false);
-        await synthesizer.DisposeAsync();
-        stop.Dispose();
+        try{stop.Cancel();}
+        finally
+        {
+            changed.Writer.TryComplete();
+            try{await worker.ConfigureAwait(false);}
+            finally
+            {
+                try{await synthesizer.DisposeAsync();}
+                finally{stop.Dispose();}
+            }
+        }
     }
 }

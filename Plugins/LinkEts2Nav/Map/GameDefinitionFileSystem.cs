@@ -57,16 +57,9 @@ internal sealed class GameDefinitionFileSystem(IFileSystem original, Dictionary<
             }
             else
             {
-                try
-                {
-                    using var zip=ZipFile.OpenRead(mod);
-                    foreach(var entry in zip.Entries.Where(e=>e.FullName.Replace('\\','/').StartsWith("def/",StringComparison.Ordinal)))
-                    { using var stream=entry.Open(); Add(entry.FullName,stream); }
-                }
-                catch(InvalidDataException)
-                {
-                    throw new NotSupportedException("暂不支持该模组归档的定义覆盖："+Path.GetFileName(mod));
-                }
+                using var zip=ZipFile.OpenRead(mod);
+                foreach(var entry in zip.Entries.Where(e=>e.FullName.Replace('\\','/').StartsWith("def/",StringComparison.Ordinal)))
+                { using var stream=entry.Open(); Add(entry.FullName,stream); }
             }
         }
         return new GameDefinitionFileSystem(original,files);

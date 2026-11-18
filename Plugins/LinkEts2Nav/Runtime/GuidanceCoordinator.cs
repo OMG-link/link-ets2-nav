@@ -79,8 +79,6 @@ public sealed class GuidanceCoordinator
     public void Publish(GuidanceSourcePlan plan)
     {
         EnsureSession(plan.SessionId);playback?.BeginUpdate();
-        try
-        {
         var previous=Timeline.Sources.FirstOrDefault(p=>p.Source==plan.Source);
         if(previous is not null&&replacementRevision==plan.RouteRevision&&replacementApplied.Add(plan.Source))
         {
@@ -99,13 +97,6 @@ public sealed class GuidanceCoordinator
             playback?.Withdraw(plan.Source,previous.Sequences.Where(s=>replaced.Contains(s.Id)).SelectMany(s=>s.Events).Select(e=>e.Id));
         }
         playback?.Refresh(plan.Source,plan.Triggers);
-        }
-        catch(Exception ex)
-        {
-            playback?.ApplyBatch([],false);
-            log("Invalid speech series: "+ex.Message);
-            throw;
-        }
     }
     public void PublishLandmarks(WarningSnapshot snapshot,IReadOnlyList<PlannedCameraWarning> plans,
         IReadOnlyList<CameraPassage>? passages=null,double? cameraPlayerAlong=null,string? cameraFrame=null,

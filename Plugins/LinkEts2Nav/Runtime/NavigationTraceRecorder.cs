@@ -21,29 +21,48 @@ public sealed class NavigationTraceRecorder : IAsyncDisposable
         worker = Task.Run(async () =>
         {
             try { await WriteAsync(directory, maximumBytes).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                queue.Writer.TryComplete();
-                onError?.Invoke("运动采样已停止：" + ex.GetType().Name);
+                onError?.Invoke("运动采样已停止：" + ex);
             }
+            finally { queue.Writer.TryComplete(); }
         });
     }
 
     public bool Record(GameDataSnapshot data, NearbyMapSnapshot map, NavDiagnosticSnapshot diagnostic,
         string resourceId, string gamePath)
-        => queue.Writer.TryWrite(new Frame(Interlocked.Increment(ref sequence), data, map, diagnostic, resourceId, gamePath));
+    {
+        ThrowIfFaulted();
+        return queue.Writer.TryWrite(new Frame(Interlocked.Increment(ref sequence), data, map, diagnostic, resourceId, gamePath));
+    }
+
+    /// <summary>The owning plugin driver observes unknown worker errors at its outer FATAL boundary.</summary>
+    public void ThrowIfFaulted()
+    {
+        if(worker.IsCompleted)worker.GetAwaiter().GetResult();
+    }
 
     private sealed record SnapshotRequest(string Directory, TaskCompletionSource<int> Completion);
 
     public async Task<int> SaveSnapshotAsync(string directory, CancellationToken cancellationToken = default)
     {
         var completion = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await queue.Writer.WriteAsync(new SnapshotRequest(directory, completion), cancellationToken);
+        ThrowIfFaulted();
+        try { await queue.Writer.WriteAsync(new SnapshotRequest(directory, completion), cancellationToken); }
+        catch(ChannelClosedException) { return await StoppedAsync().ConfigureAwait(false); }
         // If recording has failed or stopped, never leave a queued save waiting forever.
         var finished = await Task.WhenAny(completion.Task, worker);
         if (finished == worker && !completion.Task.IsCompleted)
-            throw new IOException("运动记录已停止，无法固定保存回放。");
+            return await StoppedAsync().ConfigureAwait(false);
         return await completion.Task;
+    }
+
+    private async Task<int> StoppedAsync()
+    {
+        // A failed worker must retain its original type and throw site. Only a
+        // normally completed recorder has the known "recording stopped" outcome.
+        await worker.ConfigureAwait(false);
+        throw new IOException("运动记录已停止，无法固定保存回放。");
     }
 
     private async Task WriteAsync(string directory, long maximumBytes)
@@ -72,7 +91,8 @@ public sealed class NavigationTraceRecorder : IAsyncDisposable
                             }
                         request.Completion.TrySetResult(count);
                     }
-                    catch (Exception ex) { request.Completion.TrySetException(ex); }
+                    catch (Exception ex) when(ex is IOException or UnauthorizedAccessException)
+                    { request.Completion.TrySetException(ex); }
                     continue;
                 }
                 var frame = (Frame)work;

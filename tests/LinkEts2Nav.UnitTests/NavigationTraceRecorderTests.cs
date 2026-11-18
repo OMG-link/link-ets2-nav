@@ -97,6 +97,44 @@ public sealed class NavigationTraceRecorderTests : IDisposable
     }
 
     [Fact]
+    public async Task InvalidFrameSerializationReachesTheDriverAndKeepsItsOriginalException()
+    {
+        var errors=new List<string>();var writer=new NavigationTraceRecorder(root,errors.Add);
+        var data=Data();data=data with{Vehicle=data.Vehicle! with{X=double.NaN}};
+        Assert.True(writer.Record(data,Map(),Diagnostic(),"resource","game"));
+        string saved=Path.Combine(root,"saved");Directory.CreateDirectory(saved);
+        var original=await Assert.ThrowsAsync<ArgumentException>(()=>writer.SaveSnapshotAsync(saved)
+            .WaitAsync(TimeSpan.FromSeconds(5),TestContext.Current.CancellationToken));
+        Assert.Contains("Json",original.StackTrace,StringComparison.OrdinalIgnoreCase);
+        Assert.Same(original,Assert.Throws<ArgumentException>(writer.ThrowIfFaulted));
+        Assert.Same(original,Assert.Throws<ArgumentException>(()=>writer.Record(Data(),Map(),Diagnostic(),"resource","game")));
+        Assert.Empty(errors);
+        Assert.Same(original,await Assert.ThrowsAsync<ArgumentException>(async()=>await writer.DisposeAsync()));
+    }
+
+    [Fact]
+    public async Task KnownStoppedRecorderSaveFinishesWithoutHangingOnItsClosedQueue()
+    {
+        Directory.CreateDirectory(root);string occupied=Path.Combine(root,"occupied");File.WriteAllText(occupied,"file");
+        var writer=new NavigationTraceRecorder(occupied);
+        await writer.DisposeAsync(); // known output IO failure is handled by the recorder
+        var error=await Assert.ThrowsAsync<IOException>(()=>writer.SaveSnapshotAsync(Path.Combine(root,"save"))
+            .WaitAsync(TimeSpan.FromSeconds(5),TestContext.Current.CancellationToken));
+        Assert.Contains("运动记录已停止",error.Message);
+    }
+
+    [Fact]
+    public async Task InvalidSnapshotRequestFaultsTheWorkerInsteadOfOnlyReturningAUiError()
+    {
+        var writer=new NavigationTraceRecorder(root);
+        Assert.True(writer.Record(Data(),Map(),Diagnostic(),"resource","game"));
+        var original=await Assert.ThrowsAsync<ArgumentException>(()=>writer.SaveSnapshotAsync("\0")
+            .WaitAsync(TimeSpan.FromSeconds(5),TestContext.Current.CancellationToken));
+        Assert.Same(original,Assert.Throws<ArgumentException>(writer.ThrowIfFaulted));
+        Assert.Same(original,await Assert.ThrowsAsync<ArgumentException>(async()=>await writer.DisposeAsync()));
+    }
+
+    [Fact]
     public async Task SaveIncludesUserCommentAndDiagnosticMetadata()
     {
         await using var writer=new NavigationTraceRecorder(root);

@@ -10,6 +10,7 @@ internal sealed record NavigationStructurePlan(IReadOnlyList<DirectedRoad> Route
     IReadOnlyList<RoadForkDiagnostic> Forks,double ConfirmedUntil,bool Unresolved,double UnresolvedAlong)
 {
     public IReadOnlyList<NavigationManeuver> BaseActions {get;init;}=[];
+    public IReadOnlyList<RoundaboutRouteRange> RoundaboutRanges {get;init;}=[];
     public AuxiliaryLaneIndex? Auxiliaries {get;init;}
     public LaneContractionView? Contractions {get;init;}
     public IReadOnlyList<NavigationUnresolvedSpan> UnresolvedSpans {get;init;}=[];
@@ -32,10 +33,11 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
     }
     public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes,AuxiliaryLaneIndex? auxiliaries=null)
     {
-        var instructionRoute=RoundaboutRouteAdapter.Apply(route,nearby.RoadStructures);
+        var ranges=RoundaboutRouteAdapter.Build(route,nearby.RoadStructures);
+        var instructionRoute=route;
         detector.MissingConnection=paths.DescribeMissingConnection;
         if(nearby.Components is {} components)detector.Components.UseIndex(paths.GetNavigationGraph(),components);
-        IReadOnlyList<NavigationManeuver> upcoming=detector.FindSequence(instructionRoute,0,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong,lanes);
+        IReadOnlyList<NavigationManeuver> upcoming=detector.FindSequence(instructionRoute,0,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong,lanes,ranges);
         if(NavigationDestination.Find(sdkRoute,instructionRoute,0,confirmedUntil,unresolvedJoin) is {} destination)
         {
             var terminal=sdkRoute.Nodes.MinBy(n=>n.DistanceToEndMeters)!;
@@ -64,7 +66,7 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
             }).OrderBy(m=>m.DistanceMeters).ToArray();
         }
         var plan=new NavigationStructurePlan(route,instructionRoute,upcoming,lanes,[],detector.ForkDiagnostics.ToArray(),confirmedUntil,
-            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming,Auxiliaries=auxiliaries,
+            unresolvedJoin,firstUnresolvedJoinAlong){BaseActions=upcoming,RoundaboutRanges=ranges,Auxiliaries=auxiliaries,
                 UnresolvedSpans=detector.UnresolvedSpans.ToArray(),OrdinaryUnresolvedSpans=detector.OrdinaryUnresolvedSpans};
         return SelectLanes(plan,lanes,nearby,paths);
     }
@@ -72,7 +74,7 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
     /// <summary>Selection changes reuse all junction/ramp facts; only already indexed lane-merge membership is selected again.</summary>
     public NavigationStructurePlan SelectLanes(NavigationStructurePlan plan,LaneNavigationPlan lanes,NearbyMapSnapshot nearby,RoadPathSource paths)
     {
-        var projected=detector.Components.Build(plan.InstructionRoute,paths.GetNavigationGraph(),lanes,paths.DescribeMissingConnection);
+        var projected=detector.Components.Build(plan.InstructionRoute,paths.GetNavigationGraph(),lanes,paths.DescribeMissingConnection,visit=>plan.RoundaboutRanges.Any(range=>range.ContainsVisit(visit)));
         IReadOnlyList<NavigationManeuver> upcoming=plan.BaseActions.Where(a=>!a.Id.StartsWith("component:",StringComparison.Ordinal))
             .Concat(projected.Values.SelectMany(a=>a)).OrderBy(a=>a.DistanceMeters).ToArray();
         foreach(var issue in detector.Components.Issues)paths.ReportMapIssue(issue);

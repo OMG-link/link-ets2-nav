@@ -232,6 +232,28 @@ public sealed class RoundaboutNavigationTests
         Assert.Single(actions,a=>a.Kind==ManeuverKind.ExitRoundabout);
     }
 
+    [Fact]
+    public void MarkedRangeIsExcludedBeforeOrdinaryComponentSelectionIsRequired()
+    {
+        NativeLaneCurve C(int i,Vector3 a,Vector3 b,int[] next,int[] previous)=>new(i,a,b,b-a,b-a,next,previous);
+        var geometry=new NativeLaneGeometry(42,
+            [C(0,Vector3.Zero,new(90,0,0),[2],[]),C(1,new(0,0,30),new(90,0,0),[2],[]),C(2,new(90,0,0),new(100,0,0),[],[0,1])])
+            {InputCurveIndices=[0,1],OutputCurveIndices=[2]};
+        DirectedRoad Passage(int branch,ulong start)
+        {
+            Vector3[] points=[geometry.Curves[branch].Start,new(90,0,0),new(100,0,0)];
+            var lane=new PrefabLanePath(42,start,30,0,0,0,0,1,1,[branch,2],points,RouteGeometry.Length(new("measure",start,30,points)))
+                {NativeGeometry=geometry,CurveStartPointIndices=[0,1]};
+            return new($"prefab:2A:{start}:30",start,30,points)
+                {LanePaths=[lane],JoinPriority=new(10,[],[],8,"fixture main entrance")};
+        }
+        var main=Passage(0,10);var selected=Passage(1,20);
+        var detector=new NavigationManeuverDetector();var range=FixtureRange(selected,[70]);
+        var actions=detector.FindSequence([selected],0,[main,selected],out _,out _,out _,roundaboutRanges:[range]);
+        Assert.Equal(new[]{ManeuverKind.EnterRoundabout,ManeuverKind.ExitRoundabout},actions.Select(a=>a.Kind));
+        Assert.Empty(detector.Components.Unresolved);Assert.Empty(detector.Components.Issues);
+    }
+
     internal static IReadOnlyList<NavigationManeuver> Detect(IReadOnlyList<DirectedRoad> route,
         IReadOnlyList<RoundaboutRouteRange> ranges,double player=0)
         =>new NavigationManeuverDetector().FindSequence(route,player,[],out _,out _,out _,roundaboutRanges:ranges);
@@ -244,11 +266,11 @@ public sealed class RoundaboutNavigationTests
         var actions=new List<NavigationManeuver>
         {
             new("entry",ManeuverKind.EnterRoundabout,0,road.Id,road.Id)
-                {EndDistanceMeters=end,SpeechSequenceId=series,SpeechSequenceStartDistanceMeters=0}
+                {EndDistanceMeters=end,JunctionId="roundabout:ring",SpeechSequenceId=series,SpeechSequenceStartDistanceMeters=0}
         };
         actions.AddRange(exits.Select((along,i)=>new NavigationManeuver("exit:"+i,
             i==exits.Length-1?ManeuverKind.ExitRoundabout:ManeuverKind.PassRoundaboutExit,along,road.Id,road.Id)
-            {EndDistanceMeters=end,SpeechSequenceId=series,SpeechSequenceStartDistanceMeters=0,
+            {EndDistanceMeters=end,JunctionId="roundabout:ring",SpeechSequenceId=series,SpeechSequenceStartDistanceMeters=0,
                 ExecutionOnly=true,SpeechSequenceOrder=i+1,
                 Instruction=i==exits.Length-1?"驶出环岛":"经过第"+NavigationPrompts.Number(i+1)+"出口"}));
         return new("ring",0,1,0,end,actions);

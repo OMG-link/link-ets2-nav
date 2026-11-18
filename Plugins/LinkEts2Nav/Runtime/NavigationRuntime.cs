@@ -195,7 +195,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 var pending=analysisTimeline.Sources.Single(p=>p.Source=="navigation");
                 analysisTimeline.Publish(pending with{Sequences=pending.Sequences.Select(sequence=>sequence.MapTriggers(t=>t with
                 {Enabled=t.Silent||t.SkipAtSpeedKph is {} threshold&&vehicle.SpeedMetersPerSecond*3.6>=threshold
-                    ||speech.IsReady(t.Text)||speech.HasFailed(t.Text)})).ToArray()});
+                    ||speech.IsReady(t.Text)})).ToArray()});
             }
             foreach(var due in analysisScheduler.Update(analysisTimeline,now,vehicle.SpeedMetersPerSecond)
                 .Where(r=>r.Disposition==TriggerDisposition.Queued).OrderBy(r=>r.Trigger.Priority))

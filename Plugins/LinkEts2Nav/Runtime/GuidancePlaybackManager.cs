@@ -58,6 +58,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
     /// <summary>The owning driver observes unexpected playback or callback failures.</summary>
     public void ThrowIfFaulted()
     {
+        cache?.ThrowIfFaulted();
         if(worker.IsCompleted)worker.GetAwaiter().GetResult();
     }
     public void SetActive(bool value){lock(gate)active=value;Wake();}
@@ -174,7 +175,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                             string? file=null;var origin=SpeechPlaybackOrigin.Fallback;
                             if(cache?.TryGetAudio(speech.Text,out var ready,out bool exact)==true)
                             {file=ready;origin=exact?SpeechPlaybackOrigin.ExactPack:SpeechPlaybackOrigin.Prepared;}
-                            else if(cache is null||cache.HasFailed(speech.Text))
+                            else if(cache is null)
                             {
                                 file=fallback();
                             }

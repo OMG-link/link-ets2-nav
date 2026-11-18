@@ -69,7 +69,7 @@ public sealed class SpeechPackSettingsTests:IDisposable
         Assert.True(workers[0].Disposed);Assert.Same(nameReference,resources.Names);Assert.Contains("Paris",nameReference);
         workers[0].Finish.TrySetResult(Path.Combine(root,"stale.wav"));
         await workers[1].Started.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
-        Assert.False(queue.IsReady("等待合成"));Assert.False(queue.HasFailed("等待合成"));
+        Assert.False(queue.IsReady("等待合成"));queue.ThrowIfFaulted();
         Assert.True(queue.IsReady("左转。"));Assert.Equal(next,service.Read().ActiveDirectory);
         workers[1].Finish.TrySetResult(Path.Combine(root,"new.wav"));
     }

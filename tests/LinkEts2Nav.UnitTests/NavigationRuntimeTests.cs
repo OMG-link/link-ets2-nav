@@ -127,8 +127,11 @@ public sealed class NavigationRuntimeTests
 
     private sealed class FailedSynth : ISpeechSynthesizer
     {
+        public readonly IOException Failure=new("test synthesis failure");
+        public readonly TaskCompletionSource Started=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource<string> Result=new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<string> SynthesizeAsync(string text, CancellationToken token)
-            => Task.FromException<string>(new IOException("test synthesis failure"));
+        {Started.TrySetResult();return Result.Task.WaitAsync(token);}
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
@@ -275,23 +278,38 @@ public sealed class NavigationRuntimeTests
     }
 
     [Fact]
-    public async Task FailedSynthesisFallsBackOnceRatherThanWaitingForever()
+    public async Task FailedSynthesisReachesTheDriverWithoutPlayingATone()
     {
         var scene = Scene();
-        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var queue = new SpeechAnnouncementQueue(new FailedSynth(), _ => {},
-            message => { if (message.StartsWith("TTS 合成失败")) failed.TrySetResult(); });
+        var synth=new FailedSynth();
+        var queue = new SpeechAnnouncementQueue(synth, _ => {});
         int beeps = 0;
-        var played=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var playback=new GuidancePlaybackManager(queue,new CallbackPlayer(_=>{beeps++;played.TrySetResult();}),()=>"beep.wav");
+        var playback=new GuidancePlaybackManager(queue,new CallbackPlayer(_=>beeps++),()=>"beep.wav");
         var guidance=new GuidanceCoordinator(queue,playback);
         var runtime = new NavigationRuntime(queue,guidance:guidance);
         void Step(float z){var data=Data(scene.Route,z,speed:10);guidance.Observe(data,Now);runtime.Process(data,scene.Map,Now);guidance.Tick(data,Now);}
-        Step(621);
-        await failed.Task.WaitAsync(TestContext.Current.CancellationToken);
-        await played.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
-        Step(621);Step(622);
-        Assert.Equal(1, beeps);
+        try
+        {
+            Step(621);
+            await synth.Started.Task.WaitAsync(TimeSpan.FromSeconds(4),TestContext.Current.CancellationToken);
+            synth.Result.SetException(synth.Failure);
+            using var timeout=CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(4));
+            while(true)
+            {
+                try{playback.ThrowIfFaulted();}
+                catch(IOException error){Assert.Same(synth.Failure,error);break;}
+                await Task.Delay(5,timeout.Token);
+            }
+            Assert.Same(synth.Failure,await Assert.ThrowsAsync<IOException>(()=>queue.DisposeAsync().AsTask()));
+            Assert.Same(synth.Failure,Assert.Throws<IOException>(playback.ThrowIfFaulted));
+            Assert.Equal(0,beeps);
+        }
+        finally
+        {
+            try{await playback.DisposeAsync();}
+            catch(IOException error){Assert.Same(synth.Failure,error);}
+        }
     }
 
     [Fact]
@@ -342,7 +360,7 @@ public sealed class NavigationRuntimeTests
         try
         {
             const string text="五十米后，右转。";
-            await using var queue=new SpeechAnnouncementQueue(new FailedSynth(),_=>directPlayback++,
+            await using var queue=new SpeechAnnouncementQueue(new DelayedSynth(),_=>directPlayback++,
                 preGenerated:new Dictionary<string,string>{{text,file}});
             Assert.True(queue.IsReady(text));
             var runtime=new NavigationRuntime(queue);

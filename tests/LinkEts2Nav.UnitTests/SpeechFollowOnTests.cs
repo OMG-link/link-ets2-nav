@@ -144,7 +144,7 @@ public sealed class SpeechFollowOnTests
     private sealed class Harness:IAsyncDisposable
     {
         private readonly string directory=Path.Combine(Path.GetTempPath(),"follow-on-"+Guid.NewGuid());
-        private readonly SpeechAnnouncementQueue cache;
+        private readonly SpeechAnnouncementQueue? cache;
         private readonly Channel<string> completed=Channel.CreateUnbounded<string>();
         public readonly Player Player=new();
         public readonly GuidancePlaybackManager Manager;
@@ -153,7 +153,7 @@ public sealed class SpeechFollowOnTests
             Directory.CreateDirectory(directory);var files=new Dictionary<string,string>();
             foreach(string text in new[]{"turn","straight","turn then straight"})
             {string file=Path.Combine(directory,text+".wav");File.WriteAllText(file,"test");if(!fallback)files[text]=file;}
-            cache=new(new Synth(),_=>{},preGenerated:files);
+            cache=fallback?null:new(new Synth(),_=>{},preGenerated:files);
             Manager=new(cache,Player,()=>fallback?"beep.wav":null);
             Manager.Played+=speech=>completed.Writer.TryWrite(speech.Text);
         }
@@ -164,7 +164,7 @@ public sealed class SpeechFollowOnTests
         public async ValueTask DisposeAsync()
         {
             try{await Manager.DisposeAsync();}
-            finally{await cache.DisposeAsync();Directory.Delete(directory,true);}
+            finally{if(cache is not null)await cache.DisposeAsync();Directory.Delete(directory,true);}
         }
     }
 }

@@ -99,27 +99,19 @@ public sealed class NearbyCameraScanner
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if(!data.World.Prefabs.TryGetValue(prefab.Model.ToString(),out var definition))continue;
-                try
-                {
-                    var descriptor=data.GetPrefabDescription(definition.Descriptor);
-                    if(descriptor is not null){prefabSources.Add(new(prefab,descriptor));prefabResources[prefab.Uid]=definition.Descriptor;}
-                }
-                catch(Exception ex) when(ex is not OperationCanceledException){issues.Add($"Prefab {definition.Descriptor}: {ex.Message}");}
+                var descriptor=data.GetPrefabDescription(definition.Descriptor);
+                prefabSources.Add(new(prefab,descriptor));prefabResources[prefab.Uid]=definition.Descriptor;
             }
             var permissions=PrefabPlayerAccessWindow.Build(prefabSources,speedReader,data.Map,issues.Add,cancellationToken);
             foreach(var source in prefabSources)
             {
                 cancellationToken.ThrowIfCancellationRequested();var prefab=source.Prefab;string resource=prefabResources[prefab.Uid];
-                try
-                {
-                    var access=permissions[prefab.Uid];var key=(prefab.Uid,access.CacheKey);
-                    signalPrefabs.Add((prefab,access.Descriptor));
-                    roundaboutIndex.AddPrefab(prefab,access.Descriptor,resource,access.CacheKey);
-                    if(!geometryCache.TryGetValue(key,out var geometry))
-                        geometry=(PrefabPathGeometry.Build(prefab,access.Descriptor),FreeNavigationArea.Build(prefab,source.Descriptor));
-                    nextGeometry[key]=geometry;junctions.AddRange(geometry.Paths);areas.AddRange(geometry.Areas);
-                }
-                catch(Exception ex) when(ex is not OperationCanceledException){issues.Add($"Prefab {resource}: {ex.Message}");}
+                var access=permissions[prefab.Uid];var key=(prefab.Uid,access.CacheKey);
+                signalPrefabs.Add((prefab,access.Descriptor));
+                roundaboutIndex.AddPrefab(prefab,access.Descriptor,resource,access.CacheKey);
+                if(!geometryCache.TryGetValue(key,out var geometry))
+                    geometry=(PrefabPathGeometry.Build(prefab,access.Descriptor),FreeNavigationArea.Build(prefab,source.Descriptor));
+                nextGeometry[key]=geometry;junctions.AddRange(geometry.Paths);areas.AddRange(geometry.Areas);
             }
             foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road,speedReader);
             roundaboutIndex.BuildNewSectors(sectors,cancellationToken,need);
@@ -193,38 +185,30 @@ public sealed class NearbyCameraScanner
             }
             if (descriptor == null) continue;
             if (string.IsNullOrEmpty(variant)) variant = "default";
-            try
+            var locators = data.GetModelLocators(descriptor);
+            if (locators.Count == 0) continue;
+            var active = data.GetModelVariant(descriptor, variant);
+            foreach (var locator in locators)
             {
-                var locators = data.GetModelLocators(descriptor);
-                if (locators.Count == 0) continue;
-                var active = data.GetModelVariant(descriptor, variant);
-                foreach (var locator in locators)
+                if (!active.Visible.Contains(locator.PartIndex)) continue;
+                Vector3 worldPosition = node.Position + Vector3.Transform(locator.Position * scale, node.Rotation);
+                if (!coverage.Contains(worldPosition)) continue;
+                var worldRotation = Quaternion.Normalize(node.Rotation * locator.Rotation);
+                // Axis sign is deliberately unverified until in-game calibration.
+                Vector3 direction = Vector3.Transform(-Vector3.UnitZ, worldRotation);
+                if (locator.ReverseDirection) direction = -direction;
+                cameras.Add(new CameraObservation($"{item.Uid:x}:{locator.Name}", worldPosition,
+                    worldPosition, direction, false, descriptor, locator.Hookup)
                 {
-                    if (!active.Visible.Contains(locator.PartIndex)) continue;
-                    Vector3 worldPosition = node.Position + Vector3.Transform(locator.Position * scale, node.Rotation);
-                    if (!coverage.Contains(worldPosition)) continue;
-                    var worldRotation = Quaternion.Normalize(node.Rotation * locator.Rotation);
-                    // Axis sign is deliberately unverified until in-game calibration.
-                    Vector3 direction = Vector3.Transform(-Vector3.UnitZ, worldRotation);
-                    if (locator.ReverseDirection) direction = -direction;
-                    cameras.Add(new CameraObservation($"{item.Uid:x}:{locator.Name}", worldPosition,
-                        worldPosition, direction, false, descriptor, locator.Hookup)
-                    {
-                        LocatorName = locator.Name,
-                        ModelVariant = variant,
-                        ActivePartVerified = true,
-                        MetadataFingerprint = Fingerprint(descriptor, variant, locator, active.Fingerprint),
-                        LocalToWorld = Matrix4x4.CreateScale(locator.Scale) * Matrix4x4.CreateFromQuaternion(locator.Rotation) * Matrix4x4.CreateScale(scale) * Matrix4x4.CreateFromQuaternion(node.Rotation),
-                        MeasurementDistanceMeters = locator.MeasurementDistance,
-                        ReverseDirection = locator.ReverseDirection,
-                        LocatorRotation = worldRotation
-                    });
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                string message = $"{descriptor}: {ex.Message}";
-                diagnostics.Add(message);
+                    LocatorName = locator.Name,
+                    ModelVariant = variant,
+                    ActivePartVerified = true,
+                    MetadataFingerprint = Fingerprint(descriptor, variant, locator, active.Fingerprint),
+                    LocalToWorld = Matrix4x4.CreateScale(locator.Scale) * Matrix4x4.CreateFromQuaternion(locator.Rotation) * Matrix4x4.CreateScale(scale) * Matrix4x4.CreateFromQuaternion(node.Rotation),
+                    MeasurementDistanceMeters = locator.MeasurementDistance,
+                    ReverseDirection = locator.ReverseDirection,
+                    LocatorRotation = worldRotation
+                });
             }
         }
         return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { ReadySectors=loadedSectors,EmptySectors=emptySectors,Coverage=coverage,MissingConnection=missingConnection,MapIssues=mapIssues,Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, NativeGraph=nativeGraph,Components=components,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };

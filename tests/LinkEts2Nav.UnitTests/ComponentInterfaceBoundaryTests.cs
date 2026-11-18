@@ -9,14 +9,20 @@ public sealed class ComponentInterfaceBoundaryTests
     private static readonly DirectedRoad Fork=Edge("prefab:2B:3:4",3,4,50);
     private static ComponentBoundary Point(DirectedRoad e,double at,ComponentBoundaryInterface endpoint=ComponentBoundaryInterface.None)
         =>new(e.Id,at,new(0,0,(float)at)){StartNodeUid=e.StartNodeUid,EndNodeUid=e.EndNodeUid,Interface=endpoint};
-    private static ComponentPassageContinuity Fact(ComponentBoundary start)=>new(Fork.Id,43,3,4,false,ComponentContinuityKind.Soft,
-        start,Point(Fork,50,ComponentBoundaryInterface.End),start,Point(Fork,0,ComponentBoundaryInterface.Start),
-        [2],[0],3,1,2,new(NavigationSide.Right,ComponentTurnKind.Forward),[]);
+    private static readonly PrefabLanePath Selected=new(43,3,4,2,0,2,0,3,1,[0],Fork.Points,50);
+    private static ComponentPassageContinuity Fact(ComponentBoundary start)
+    {
+        var turn=new ComponentTurn(NavigationSide.Right,ComponentTurnKind.Forward);
+        var end=Point(Fork,50,ComponentBoundaryInterface.End);var split=Point(Fork,0,ComponentBoundaryInterface.Start);
+        var lane=new ComponentLaneOutcome(2,0,ComponentLaneFate.Born,false,50,start,split,split,end,start,turn);
+        return new(Fork.Id,43,3,4,false,ComponentContinuityKind.Soft,start,end,start,split,
+            [2],[0],3,1,2,turn,[lane]);
+    }
     [Fact]
     public void CommonOutputInterfaceMapsAcrossDifferentEntrancePassages()
     {
         var boundary=Point(Side,100,ComponentBoundaryInterface.End);
-        var result=ComponentManeuverProjection.Build([Main,Fork],1,[],[Fact(boundary)]);
+        var result=ComponentManeuverProjection.Build([Main,Fork],1,[],[Fact(boundary)],Selected);
         var action=Assert.Single(result.Actions);
         Assert.Equal(ManeuverKind.KeepRight,action.Kind);Assert.Equal(120,action.DistanceMeters);
         Assert.Equal(170,action.EndDistanceMeters);Assert.Equal(new LaneActionInterval(120,120),action.ApproachInterval);
@@ -25,27 +31,27 @@ public sealed class ComponentInterfaceBoundaryTests
     [Fact]
     public void InternalPointDoesNotAliasJustBecauseItsPassageHasTheSameExit()
     {
-        var result=ComponentManeuverProjection.Build([Main,Fork],1,[],[Fact(Point(Side,50))]);
+        var result=ComponentManeuverProjection.Build([Main,Fork],1,[],[Fact(Point(Side,50))],Selected);
         Assert.Empty(result.Actions);Assert.NotEmpty(result.Issues);
     }
     [Fact]
     public void OppositeDirectionDoesNotAliasAnExitToItsEntrance()
     {
         var reverse=Main with{StartNodeUid=3,EndNodeUid=2};
-        var result=ComponentManeuverProjection.Build([reverse,Fork],1,[],[Fact(Point(Side,100,ComponentBoundaryInterface.End))]);
+        var result=ComponentManeuverProjection.Build([reverse,Fork],1,[],[Fact(Point(Side,100,ComponentBoundaryInterface.End))],Selected);
         Assert.Empty(result.Actions);Assert.NotEmpty(result.Issues);
     }
     [Fact]
     public void RepeatedInterfaceUsesThisVisitInsteadOfTheEarlierOccurrence()
     {
         var back=Edge("return",4,2,30);
-        var result=ComponentManeuverProjection.Build([Main,Fork,back,Main,Fork],4,[],[Fact(Point(Side,100,ComponentBoundaryInterface.End))]);
+        var result=ComponentManeuverProjection.Build([Main,Fork,back,Main,Fork],4,[],[Fact(Point(Side,100,ComponentBoundaryInterface.End))],Selected);
         var action=Assert.Single(result.Actions);Assert.Equal(320,action.DistanceMeters);Assert.Equal(370,action.EndDistanceMeters);
     }
     [Fact]
     public void ExactDirectedPassageRetainsAnInternalPoint()
     {
-        var result=ComponentManeuverProjection.Build([Side,Fork],1,[],[Fact(Point(Side,50))]);
+        var result=ComponentManeuverProjection.Build([Side,Fork],1,[],[Fact(Point(Side,50))],Selected);
         var action=Assert.Single(result.Actions);Assert.Equal(50,action.DistanceMeters);Assert.Equal(150,action.EndDistanceMeters);
     }
     [Fact]
@@ -53,7 +59,7 @@ public sealed class ComponentInterfaceBoundaryTests
     {
         var boundary=Point(Side with{EndNodeUid=0},100,ComponentBoundaryInterface.End);
         Assert.Null(boundary.InterfaceNodeUid);
-        var result=ComponentManeuverProjection.Build([Main with{EndNodeUid=0},Fork],1,[],[Fact(boundary)]);
+        var result=ComponentManeuverProjection.Build([Main with{EndNodeUid=0},Fork],1,[],[Fact(boundary)],Selected);
         Assert.Empty(result.Actions);Assert.NotEmpty(result.Issues);
     }
 }

@@ -8,10 +8,18 @@ public sealed class ComponentManeuverProjectionTests
     private static ComponentBoundary At(DirectedRoad edge,double distance,Vector3 position)=>new(edge.Id,distance,position)
         {StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid,
             Interface=distance==0?ComponentBoundaryInterface.Start:distance==RouteGeometry.Length(edge)?ComponentBoundaryInterface.End:ComponentBoundaryInterface.None};
+    private static PrefabLanePath Selected(DirectedRoad edge)=>new(42,edge.StartNodeUid,edge.EndNodeUid,
+        0,0,0,0,2,3,[0],edge.Points,RouteGeometry.Length(edge));
     private static ComponentPassageContinuity Fact(DirectedRoad edge,ComponentContinuityKind kind,
-        ComponentTurn? turn=null,bool main=false)=>new(edge.Id,42,edge.StartNodeUid,edge.EndNodeUid,main,kind,
-            At(edge,50,new(0,0,50)),At(edge,100,new(0,0,100)),null,null,[0],[0],2,3,1,turn,[]);
-
+        ComponentTurn? turn=null,bool main=false)
+    {
+        var action=At(edge,50,new(0,0,50));var end=At(edge,100,new(0,0,100));
+        var fate=kind is ComponentContinuityKind.Hard or ComponentContinuityKind.Soft
+            ?ComponentLaneFate.Dies:ComponentLaneFate.Continues;
+        var lane=new ComponentLaneOutcome(0,0,fate,kind==ComponentContinuityKind.Hard,50,action,end,action,end,action,turn);
+        return new(edge.Id,42,edge.StartNodeUid,edge.EndNodeUid,main,kind,action,end,null,null,
+            [0],[0],2,3,1,turn,[lane]);
+    }
     [Fact]
     public void SelectedLocalDeadLaneIsNotHiddenBySurvivingMainEntranceGroup()
     {
@@ -29,7 +37,7 @@ public sealed class ComponentManeuverProjectionTests
     public void HardEntryUsesPrimitiveTurnAndOppositeTrafficSide()
     {
         var edge=Edge("prefab:2A:1:2");var fact=Fact(edge,ComponentContinuityKind.Hard,new(NavigationSide.Right,ComponentTurnKind.Turn));
-        var result=ComponentManeuverProjection.Build([edge],0,[fact],[]);
+        var result=ComponentManeuverProjection.Build([edge],0,[fact],[],Selected(edge));
         var action=Assert.Single(result.Actions);
         Assert.Equal(ManeuverKind.TurnRight,action.Kind);
         Assert.Equal("右转，注意左侧来车",action.ExecutionInstruction);
@@ -42,7 +50,7 @@ public sealed class ComponentManeuverProjectionTests
         var fact=Fact(first,ComponentContinuityKind.Soft,new(NavigationSide.Left,ComponentTurnKind.Back)) with
         {ActionPoint=At(later,50,new(0,0,150)),IntervalStart=At(first,100,new(0,0,100)),
             IntervalEnd=At(later,250,new(0,0,350)),LifecycleEnd=At(later,400,new(0,0,500))};
-        var action=Assert.Single(ComponentManeuverProjection.Build([first,later],0,[fact],[]).Actions);
+        var action=Assert.Single(ComponentManeuverProjection.Build([first,later],0,[fact],[],Selected(first)).Actions);
         Assert.Equal(ManeuverKind.KeepLeft,action.Kind);
         Assert.Equal("向左前方行驶",action.Instruction);
         Assert.Equal(150,action.DistanceMeters);
@@ -56,7 +64,7 @@ public sealed class ComponentManeuverProjectionTests
         var fact=Fact(fork,ComponentContinuityKind.Soft,new(NavigationSide.Right,ComponentTurnKind.Turn)) with
         {ActionPoint=At(approach,70,new(0,0,70)),IntervalStart=At(approach,0,Vector3.Zero),
             IntervalEnd=At(fork,0,new(0,0,100))};
-        var action=Assert.Single(ComponentManeuverProjection.Build([approach,fork],1,[],[fact]).Actions);
+        var action=Assert.Single(ComponentManeuverProjection.Build([approach,fork],1,[],[fact],Selected(fork)).Actions);
         Assert.Equal(70,action.DistanceMeters);
         Assert.Equal(200,action.EndDistanceMeters);
     }
@@ -65,7 +73,7 @@ public sealed class ComponentManeuverProjectionTests
     {
         var edge=Edge("prefab:2A:1:2");var loop=Edge("road:loop",100,0);
         var fact=Fact(edge,ComponentContinuityKind.Hard,new(NavigationSide.Left,ComponentTurnKind.Forward));
-        var action=Assert.Single(ComponentManeuverProjection.Build([edge,loop,edge],2,[fact],[]).Actions);
+        var action=Assert.Single(ComponentManeuverProjection.Build([edge,loop,edge],2,[fact],[],Selected(edge)).Actions);
         Assert.Equal(250,action.DistanceMeters);Assert.Equal(300,action.EndDistanceMeters);
     }
     [Fact]
@@ -109,14 +117,14 @@ public sealed class ComponentManeuverProjectionTests
     public void NaturalEntryWithoutAnOutletChoiceStillAnnouncesMerge()
     {
         var edge=Edge("prefab:2A:1:2");var fact=Fact(edge,ComponentContinuityKind.Natural) with{ExitOrders=[0,1,2]};
-        Assert.Equal(ManeuverKind.Merge,Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[]).Actions).Kind);
+        Assert.Equal(ManeuverKind.Merge,Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[],Selected(edge)).Actions).Kind);
     }
     [Fact]
     public void NaturalEntryWithAllLanesRetainedStillAnnouncesMerge()
     {
         var edge=Edge("prefab:2A:1:2");
         var fact=Fact(edge,ComponentContinuityKind.Natural) with{ExitOrders=[0,1,2],LegalExitCount=2};
-        var action=Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[]).Actions);
+        var action=Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[],Selected(edge)).Actions);
         Assert.Equal(ManeuverKind.Merge,action.Kind);Assert.False(action.IsMainRoadContinuation);
         Assert.Equal("汇入主路",action.Instruction);
     }
@@ -146,14 +154,14 @@ public sealed class ComponentManeuverProjectionTests
     {
         var edge=Edge("prefab:2A:1:2");var fact=Fact(edge,kind,new(NavigationSide.Right,ComponentTurnKind.Forward));
         if(kind==ComponentContinuityKind.Soft)fact=fact with{IntervalStart=At(edge,0,Vector3.Zero),IntervalEnd=At(edge,100,new(0,0,100))};
-        var action=Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[]).Actions);
+        var action=Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[],Selected(edge)).Actions);
         Assert.Equal(ManeuverKind.KeepRight,action.Kind);Assert.False(action.IsMainRoadContinuation);
     }
     [Fact]
     public void CollinearUnknownSideIsDiagnosedWithoutInventingATurnOrCallingItSingular()
     {
         var edge=Edge("prefab:2A:1:2");var fact=Fact(edge,ComponentContinuityKind.Hard,new(NavigationSide.None,ComponentTurnKind.Unknown));
-        var result=ComponentManeuverProjection.Build([edge],0,[fact],[]);
+        var result=ComponentManeuverProjection.Build([edge],0,[fact],[],Selected(edge));
         Assert.Empty(result.Actions);Assert.Single(result.Issues);Assert.Single(result.Unresolved);
     }
     [Fact]
@@ -171,10 +179,10 @@ public sealed class ComponentManeuverProjectionTests
     {
         var edge=Edge("prefab:2A:1:2");var first=Fact(edge,ComponentContinuityKind.Hard,new(NavigationSide.Left,ComponentTurnKind.Forward)) with{StructuralConstraintId="merge:2A:7"};
         var duplicate=first with{ActionPoint=At(edge,60,new(0,0,60))};
-        var single=ComponentManeuverProjection.Build([edge],0,[first],[duplicate]);
+        var single=ComponentManeuverProjection.Build([edge],0,[first],[duplicate],Selected(edge));
         Assert.Single(single.Actions);Assert.Equal(50,single.Actions[0].DistanceMeters);
         var next=duplicate with{StructuralConstraintId="split:2A:9"};
-        Assert.Equal(2,ComponentManeuverProjection.Build([edge],0,[first],[next]).Actions.Count);
+        Assert.Equal(2,ComponentManeuverProjection.Build([edge],0,[first],[next],Selected(edge)).Actions.Count);
     }
     [Fact]
     public void SameStaticSoftEntranceIsRequiredOnlyWhenTheRouteLeavesItsSideOutlet()
@@ -187,13 +195,13 @@ public sealed class ComponentManeuverProjectionTests
             At(initial,50,new(0,0,50)),At(initial,100,new(0,0,100)),terminal,terminal,At(road,0,new(0,0,100)),new(NavigationSide.Left,ComponentTurnKind.Forward));
         var fact=Fact(initial,ComponentContinuityKind.Soft,new(NavigationSide.Left,ComponentTurnKind.Forward)) with
         {ActionPoint=lane.SoftAction,LifecycleEnd=terminal,IntervalStart=lane.InitialExit,IntervalEnd=terminal,Lanes=[lane]};
-        Assert.Empty(ComponentManeuverProjection.Build([initial,road,side],0,[fact],[]).Actions);
+        Assert.Empty(ComponentManeuverProjection.Build([initial,road,side],0,[fact],[],Selected(initial)).Actions);
         // The boundary node is common to both outgoing passages, but its typed
         // identity still names the static side outlet. Main selection requires
         // the same physical entry point, not pretending the side path was removed.
-        Assert.Single(ComponentManeuverProjection.Build([initial,road,main],0,[fact],[]).Actions);
+        Assert.Single(ComponentManeuverProjection.Build([initial,road,main],0,[fact],[],Selected(initial)).Actions);
         var loop=road with{Id="road:return",StartNodeUid=5,EndNodeUid=3,Points=[new(0,0,300),new(0,0,200)]};
-        var laterSide=Assert.Single(ComponentManeuverProjection.Build([initial,road,main,loop,side],0,[fact],[]).Actions);
+        var laterSide=Assert.Single(ComponentManeuverProjection.Build([initial,road,main,loop,side],0,[fact],[],Selected(initial)).Actions);
         Assert.Equal(200,laterSide.EndDistanceMeters); // first terminal visit, not the later matching side edge
         Assert.Equal(ComponentContinuityKind.Soft,fact.Kind);
     }

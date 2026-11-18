@@ -9,6 +9,7 @@ public sealed record ComponentManeuverProjectionResult(IReadOnlyList<NavigationM
 /// <summary>Maps static component facts onto one concrete route visit. It never reclassifies priority or lane survival.</summary>
 public static class ComponentManeuverProjection
 {
+    /// <summary>Direction-bearing actions require the actual selected lane outcome. Main and Natural actions do not consume a turn.</summary>
     public static ComponentManeuverProjectionResult Build(IReadOnlyList<DirectedRoad> route,int visit,
         IReadOnlyList<ComponentPassageContinuity> entryFacts,IReadOnlyList<ComponentPassageContinuity> exitFacts,PrefabLanePath? selectedPath=null)
     {
@@ -53,7 +54,7 @@ public static class ComponentManeuverProjection
             var position=Locate(fact.ActionPoint,outgoing);var end=Locate(fact.LifecycleEnd,outgoing);
             if(position is null||end is null||end<position-.001)
             {Fail(fact,"组件动作点或真实结束点不在本次导航访问中");return;}
-            string? text;ManeuverKind kind;RoadForkInstruction? fork=null;
+            string? text;ManeuverKind kind;RoadForkInstruction? fork=null;ComponentTurn? actualTurn=null;
             if(!outgoing&&fact.Kind==ComponentContinuityKind.Natural)
             {
                 kind=ManeuverKind.Merge;
@@ -92,6 +93,7 @@ public static class ComponentManeuverProjection
             else
             {
                 var selectedTurn=SelectedTurn(fact);
+                actualTurn=selectedTurn;
                 if(selectedTurn is not {Side:NavigationSide.Left or NavigationSide.Right} turn||turn.Kind==ComponentTurnKind.Unknown)
                 {Fail(fact,"组件转向侧无法判定，不能推测播报方向");return;}
                 bool left=turn.Side==NavigationSide.Left;
@@ -110,16 +112,24 @@ public static class ComponentManeuverProjection
                 interval=new(start.Value,finish.Value);
             }
             string id=$"component:{fact.EdgeId}:{(outgoing?"exit":"entry")}:{fact.Kind}";
-            string? execution=!outgoing&&fact.Kind==ComponentContinuityKind.Hard&&SelectedTurn(fact) is {} approach
-                ?text+"，注意"+(approach.Side==NavigationSide.Left?"右":"左")+"侧来车":null;
+            string? execution=!outgoing&&fact.Kind==ComponentContinuityKind.Hard
+                ?text+"，注意"+(actualTurn!.Side==NavigationSide.Left?"右":"左")+"侧来车":null;
             actions.Add(new(id,kind,position.Value,edge.Id,edge.Id)
             {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,EndDistanceMeters=end,
                 Instruction=text,ExecutionInstruction=execution,ForkInstruction=fork,ApproachInterval=interval,
                 SpeechSequenceId=fact.StructuralConstraintId,SpeechSequenceStartDistanceMeters=fact.StructuralConstraintId is null?null:offsets[visit],
                 HasSeparateApproachRoad=visit>0&&NativeLaneGraph.Prefab(route[visit-1]) is null});
         }
-        ComponentTurn? SelectedTurn(ComponentPassageContinuity fact)=>fact.Lanes.FirstOrDefault(l=>selectedPath is not null
-            &&l.EntryOrder==selectedPath.EntryOrder&&l.ExitOrder==selectedPath.ExitOrder)?.Turn??fact.Turn;
+        // Only a direction-bearing action requires a selected lane. Natural
+        // choices and transparent passages have no turn to consume here.
+        ComponentTurn SelectedTurn(ComponentPassageContinuity fact)
+        {
+            if(selectedPath is null)
+                throw new ArgumentNullException(nameof(selectedPath),$"Component {fact.EdgeId} ({fact.Kind}) requires the selected lane to describe its turn.");
+            var lane=fact.Lanes.FirstOrDefault(l=>l.EntryOrder==selectedPath.EntryOrder&&l.ExitOrder==selectedPath.ExitOrder)
+                ??throw new ArgumentException($"Component {fact.EdgeId} ({fact.Kind}) has no outcome for selected lane {selectedPath.EntryOrder}->{selectedPath.ExitOrder}.",nameof(selectedPath));
+            return lane.Turn??throw new ArgumentException($"Component {fact.EdgeId} ({fact.Kind}) selected lane {selectedPath.EntryOrder}->{selectedPath.ExitOrder} has no turn result.",nameof(fact));
+        }
         void AddPassage(ComponentPassageContinuity fact,double end)
         {
             // A sole legal outlet is a merge/transition, not a ramp junction

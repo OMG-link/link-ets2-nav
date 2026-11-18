@@ -87,23 +87,20 @@ public sealed class GuidancePlaybackManagerTests
     }
 
     [Fact]
-    public async Task InvalidFallbackKeepsPendingSpeechAndTheWorkerCanResume()
+    public async Task InvalidFallbackPropagatesToTheOwningDriver()
     {
         var attempted=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        bool repaired=false;
+        var failure=new InvalidDataException("Broken fallback configuration.");
         var player=new Player();
-        await using var manager=new GuidancePlaybackManager(null,player,()=>
+        var manager=new GuidancePlaybackManager(null,player,()=>
         {
-            if(!repaired){attempted.TrySetResult();throw new InvalidDataException("Broken fallback configuration.");}
-            return "repaired.wav";
+            attempted.TrySetResult();throw failure;
         });
         manager.ApplyBatch(GuidanceTestSeries.Due(new("route","turn","execution",0,0,"turn")),true);
         await attempted.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
-        Assert.Single(manager.Pending);
-        repaired=true;manager.SetActive(true);
-        var next=await player.Started.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask()
-            .WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
-        Assert.Equal("repaired.wav",next.File);next.Done.SetResult();
+        Assert.Same(failure,await Assert.ThrowsAsync<InvalidDataException>(()=>manager.DisposeAsync().AsTask()));
+        Assert.Same(failure,Assert.Throws<InvalidDataException>(manager.ThrowIfFaulted));
+        Assert.False(player.Started.Reader.TryRead(out _));
     }
 
     [Fact]

@@ -103,19 +103,20 @@ public sealed class SpeechFollowOnTests
     {
         await using var harness=new Harness(fallback);harness.Manager.ApplyBatch(Due(First()),true);
         var first=await harness.Next();harness.Manager.ApplyBatch(Due(Helper()),true);
-        if(fallback)first.Done.SetResult();else first.Done.SetException(new IOException("device unavailable"));
+        if(fallback)first.Done.SetResult();else first.Done.SetException(new TimeoutException("host completion callback timed out"));
         // Expiry prevents the failed primary from retrying ahead of the independent helper.
         harness.Manager.ApplyBatch(End("first"),true);
         var helper=await harness.Next();Assert.Equal(fallback?"beep":"straight",helper.Text);helper.Done.SetResult();
     }
 
     [Fact]
-    public async Task CancelledPlaybackDoesNotConfirmTheHelper()
+    public async Task UnrequestedCanceledPlaybackStopsBeforeTheUnconfirmedHelper()
     {
-        await using var harness=new Harness();harness.Manager.ApplyBatch(Due(First()),true);
+        var harness=new Harness();harness.Manager.ApplyBatch(Due(First()),true);
         var first=await harness.Next();harness.Manager.ApplyBatch(Due(Helper()),true);
         first.Done.SetCanceled(TestContext.Current.CancellationToken);harness.Manager.ApplyBatch(End("first"),true);
-        var helper=await harness.Next();Assert.Equal("straight",helper.Text);helper.Done.SetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>harness.DisposeAsync().AsTask());
+        Assert.Equal("straight",Assert.Single(harness.Manager.Pending).Text);
     }
 
     [Fact]
@@ -161,6 +162,9 @@ public sealed class SpeechFollowOnTests
         public async Task Played(string text)
             =>Assert.Equal(text,await completed.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
         public async ValueTask DisposeAsync()
-        {await Manager.DisposeAsync();await cache.DisposeAsync();Directory.Delete(directory,true);}
+        {
+            try{await Manager.DisposeAsync();}
+            finally{await cache.DisposeAsync();Directory.Delete(directory,true);}
+        }
     }
 }

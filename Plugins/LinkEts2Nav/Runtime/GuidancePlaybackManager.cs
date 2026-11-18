@@ -55,6 +55,11 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         if(cache is not null)cache.CacheChanged+=Wake;
         worker=Task.Run(RunAsync);
     }
+    /// <summary>The owning driver observes unexpected playback or callback failures.</summary>
+    public void ThrowIfFaulted()
+    {
+        if(worker.IsCompleted)worker.GetAwaiter().GetResult();
+    }
     public void SetActive(bool value){lock(gate)active=value;Wake();}
     public void SetPositionIndependentPlayback(bool value){lock(gate)positionIndependentPlayback=value;Wake();}
     /// <summary>Prevent the playback worker from starting a stale item while a sample is being planned.</summary>
@@ -171,8 +176,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                             {file=ready;origin=exact?SpeechPlaybackOrigin.ExactPack:SpeechPlaybackOrigin.Prepared;}
                             else if(cache is null||cache.HasFailed(speech.Text))
                             {
-                                try{file=fallback();}
-                                catch(Exception ex){log("回退音频配置不可用，保留待播项："+ex.Message);}
+                                file=fallback();
                             }
                             if(file is null)continue;
                             next=(speech,generation,file,origin);break;
@@ -181,39 +185,17 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                     }
                     if(next is not {} job)break;
                     PreparePending();
-                    bool completed=false;
                     try
                     {
                         await player.PlayAsync(job.File,stop.Token).ConfigureAwait(false);
-                        completed=true;
-                        usage?.Played(job.Speech.Text,job.Origin);
-                        bool current;
-                        lock(gate)
-                        {
-                            current=job.Generation==generation;
-                            if(current&&job.Origin!=SpeechPlaybackOrigin.Fallback)
-                            {
-                                // Confirm and remove under the selection gate, before the worker can start another cue.
-                                coverage.Confirm(job.Speech);
-                                if(job.Speech.FollowOn is {} follow)
-                                {
-                                    var key=(job.Speech.Source,follow.SequenceId);
-                                    if(pending.TryGetValue(key,out var covered)&&covered.Speech.TriggerId==follow.TriggerId)
-                                    {pending.Remove(key);usage?.Withdrawn(covered.Speech.Text);}
-                                }
-                            }
-                        }
-                        if(current)
-                        {
-                            log("语音播放完成："+job.Speech.Text+" 事件="+job.Speech.EventId);
-                            Played?.Invoke(job.Speech);
-                        }
                     }
-                    catch(OperationCanceledException)when(stop.IsCancellationRequested){return;}
-                    catch(Exception ex)
+                    catch(TimeoutException ex)
                     {
-                        if(!completed)usage?.PlaybackFailed(job.Speech.Text);
-                        log("语音播放失败，保留待播项："+ex.Message);
+                        // The host does not report backend errors through its
+                        // completion callback. A missing callback times out in
+                        // Ets2LaGuidanceAudioPlayer; device recovery can retry it.
+                        usage?.PlaybackFailed(job.Speech.Text);
+                        log("语音播放超时，保留待播项："+ex.Message);
                         lock(gate)
                         {
                             var key=(job.Speech.Source,job.Speech.SequenceId);
@@ -221,16 +203,48 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                                 pending[key]=(job.Speech,++order);
                         }
                         await Task.Delay(500,stop.Token).ConfigureAwait(false);
+                        continue;
+                    }
+                    usage?.Played(job.Speech.Text,job.Origin);
+                    bool current;
+                    lock(gate)
+                    {
+                        current=job.Generation==generation;
+                        if(current&&job.Origin!=SpeechPlaybackOrigin.Fallback)
+                        {
+                            // Confirm and remove under the selection gate, before the worker can start another cue.
+                            coverage.Confirm(job.Speech);
+                            if(job.Speech.FollowOn is {} follow)
+                            {
+                                var key=(job.Speech.Source,follow.SequenceId);
+                                if(pending.TryGetValue(key,out var covered)&&covered.Speech.TriggerId==follow.TriggerId)
+                                {pending.Remove(key);usage?.Withdrawn(covered.Speech.Text);}
+                            }
+                        }
+                    }
+                    if(current)
+                    {
+                        log("语音播放完成："+job.Speech.Text+" 事件="+job.Speech.EventId);
+                        Played?.Invoke(job.Speech);
                     }
                 }
             }
         }
-        catch(OperationCanceledException)when(stop.IsCancellationRequested){}
+        catch(OperationCanceledException error)when(stop.IsCancellationRequested&&error.CancellationToken==stop.Token){}
     }
     public async ValueTask DisposeAsync()
     {
         if(cache is not null)cache.CacheChanged-=Wake;
-        stop.Cancel();changed.Writer.TryComplete();await worker.ConfigureAwait(false);
-        cache?.ClearPlan("guidance-playback");stop.Dispose();
+        try{stop.Cancel();}
+        finally
+        {
+            changed.Writer.TryComplete();
+            try{await worker.ConfigureAwait(false);}
+            finally
+            {
+                try{cache?.ClearPlan("guidance-playback");}
+                finally{stop.Dispose();}
+            }
+        }
     }
 }

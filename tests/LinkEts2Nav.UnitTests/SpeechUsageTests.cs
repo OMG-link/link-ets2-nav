@@ -40,7 +40,7 @@ public sealed class SpeechUsageTests:IDisposable
         Assert.All(usage.Capture().Entries,e=>Assert.Equal(0,e.PlayedCount));
     }
     [Fact]
-    public async Task PlaybackFailureRetryDoesNotCreateAnotherEnqueueAndBeepIsNotSpeech()
+    public async Task PlaybackTimeoutRetryDoesNotCreateAnotherEnqueueAndBeepIsNotSpeech()
     {
         var usage=new SpeechUsageCollector();var player=new Player{FailFirst=true};
         await using var manager=new GuidancePlaybackManager(null,player,()=>"fallback.wav",usage:usage);
@@ -126,7 +126,7 @@ public sealed class SpeechUsageTests:IDisposable
     {
         public bool FailFirst;public Channel<(string File,TaskCompletionSource Done)> Started=Channel.CreateUnbounded<(string,TaskCompletionSource)>();
         public async Task PlayAsync(string file,CancellationToken token)
-        {if(FailFirst){FailFirst=false;throw new IOException("test failure");}var done=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);Started.Writer.TryWrite((file,done));await done.Task.WaitAsync(token);}
+        {if(FailFirst){FailFirst=false;throw new TimeoutException("host completion callback timed out");}var done=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);Started.Writer.TryWrite((file,done));await done.Task.WaitAsync(token);}
     }
     public void Dispose(){if(Directory.Exists(directory))Directory.Delete(directory,true);}
 }

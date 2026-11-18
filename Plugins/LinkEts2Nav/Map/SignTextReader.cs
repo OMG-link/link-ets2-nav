@@ -22,52 +22,43 @@ public sealed class SignTextReader(GameDataManager data)
     {
         diagnostics.Clear();
         if(string.IsNullOrWhiteSpace(sign.SignTemplate)){diagnostics.Add(new("NoTextTemplate",sign.Model.ToString()));return [];}
-        try
+        templates??=Index("templates");boards??=Index("boards");
+        if(!templates.TryGetValue(sign.SignTemplate,out var path)){diagnostics.Add(new("TemplateNotIndexed",sign.SignTemplate));return [];}
+        var units=data.GetSii(path);var names=new HashSet<string>(StringComparer.Ordinal);
+        foreach(var binding in units.OfClass("sign_template_board_binding"))
         {
-            templates??=Index("templates");boards??=Index("boards");
-            if(!templates.TryGetValue(sign.SignTemplate,out var path)){diagnostics.Add(new("TemplateNotIndexed",sign.SignTemplate));return [];}
-            var units=data.GetSii(path);var names=new HashSet<string>(StringComparer.Ordinal);
-            foreach(var binding in units.OfClass("sign_template_board_binding"))
+            string area=Text(binding,"area_name"),board=Text(binding,"linked_board");
+            var replacement=sign.BoardOverrides?.LastOrDefault(o=>o.AreaName.ToString()==area&&!string.IsNullOrEmpty(o.Board.ToString()));
+            if(replacement is not null)board="sign_board."+replacement.Board;
+            if(!boards.TryGetValue(board,out var boardPath)){diagnostics.Add(new("BoardNotIndexed",board,area));continue;}
+            foreach(var text in data.GetSii(boardPath).Units.Where(u=>u.Class=="sign_template_text"||mileage&&u.Class=="sign_template_mileage"))
             {
-                string area=Text(binding,"area_name"),board=Text(binding,"linked_board");
-                var replacement=sign.BoardOverrides?.LastOrDefault(o=>o.AreaName.ToString()==area&&!string.IsNullOrEmpty(o.Board.ToString()));
-                if(replacement is not null)board="sign_board."+replacement.Board;
-                if(!boards.TryGetValue(board,out var boardPath)){diagnostics.Add(new("BoardNotIndexed",board,area));continue;}
-                foreach(var text in data.GetSii(boardPath).Units.Where(u=>u.Class=="sign_template_text"||mileage&&u.Class=="sign_template_mileage"))
-                {
-                    if(!uint.TryParse(Text(text,"id"),out uint id))continue;
-                    string value=Text(text,"text");
-                    foreach(var over in sign.SignOverrides??[])
-                        if(over.Id==id&&over.AreaName.ToString()==area)
-                            foreach(var attribute in over.Attributes.Where(a=>a.Index==0&&a.Type==typeof(string)))
-                                value=(string)attribute.GetValue();
-                    if(!raw&&text.Class=="sign_template_text"&&!VisibleText(text,sign,area,id))continue;
-                    value=Regex.Replace(value.Trim(),@"\s+"," ").Normalize();
-                    if(!raw&&(value.Length is <1 or >128||value is "Name" or "City" or "Text"||value.StartsWith("@@",StringComparison.Ordinal)
-                        ||!value.Any(char.IsLetter)||value.Any(c=>char.IsControl(c)||c is '<' or '>' or '[' or ']' or '{' or '}')))continue;
-                    names.Add(value);
-                }
+                if(!uint.TryParse(Text(text,"id"),out uint id))continue;
+                string value=Text(text,"text");
+                foreach(var over in sign.SignOverrides??[])
+                    if(over.Id==id&&over.AreaName.ToString()==area)
+                        foreach(var attribute in over.Attributes.Where(a=>a.Index==0&&a.Type==typeof(string)))
+                            value=(string)attribute.GetValue();
+                if(!raw&&text.Class=="sign_template_text"&&!VisibleText(text,sign,area,id))continue;
+                value=Regex.Replace(value.Trim(),@"\s+"," ").Normalize();
+                if(!raw&&(value.Length is <1 or >128||value is "Name" or "City" or "Text"||value.StartsWith("@@",StringComparison.Ordinal)
+                    ||!value.Any(char.IsLetter)||value.Any(c=>char.IsControl(c)||c is '<' or '>' or '[' or ']' or '{' or '}')))continue;
+                names.Add(value);
             }
-            if(names.Count==0)diagnostics.Add(new("NoReadableTextObjects",path));
-            return names.Order(StringComparer.Ordinal).ToArray();
         }
-        catch(Exception e) when(e is IOException or InvalidDataException or FormatException or ArgumentException)
-        {diagnostics.Add(new("TemplateReadFailure",sign.SignTemplate,e.GetType().Name+": "+e.Message));return [];}
+        if(names.Count==0)diagnostics.Add(new("NoReadableTextObjects",path));
+        return names.Order(StringComparer.Ordinal).ToArray();
     }
+
     /// <summary>A fixed template rule can corroborate a combined city-end/numeric model rule.</summary>
     public string? TrafficRule(Sign sign)
     {
         if(string.IsNullOrWhiteSpace(sign.SignTemplate))return null;
-        try
-        {
-            templates??=Index("templates");
-            if(!templates.TryGetValue(sign.SignTemplate,out var path))return null;
-            var root=data.GetSii(path).OfClass("sign_template").ToArray();
-            if(root.Length!=1||Text(root[0],"dynamic_attributes") is not ("" or "0"))return null;
-            return Text(root[0],"traffic_rule");
-        }
-        catch(Exception e) when(e is IOException or InvalidDataException or FormatException or ArgumentException)
-        {return null;}
+        templates??=Index("templates");
+        if(!templates.TryGetValue(sign.SignTemplate,out var path))return null;
+        var root=data.GetSii(path).OfClass("sign_template").ToArray();
+        if(root.Length!=1||Text(root[0],"dynamic_attributes") is not ("" or "0"))return null;
+        return Text(root[0],"traffic_rule");
     }
 
     // Native sign_template_text overrides use: text=0, face=1, size=2, color=3,

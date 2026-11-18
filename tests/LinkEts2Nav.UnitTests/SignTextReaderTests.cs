@@ -6,6 +6,50 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class SignTextReaderTests
 {
     [Fact]
+    public void NoTemplateOrNoTextObjectsRemainExplicitlyUnavailable()
+    {
+        var fs=new Fs();var map=new TruckLib.ScsMap.Map();var sign=Sign.Add(map,System.Numerics.Vector3.Zero,default);
+        var reader=new SignTextReader(fs);
+        Assert.Empty(reader.ReadTexts(sign));Assert.Null(reader.TrafficRule(sign));
+        Assert.Equal("NoTextTemplate",Assert.Single(reader.Diagnostics).Reason);
+        sign.SignTemplate="sign_templ.test";
+        fs.Files["/def/sign/test.sii"]="SiiNunit { sign_template : .root { dynamic_attributes: 0 } }";
+        Assert.Empty(reader.ReadTexts(sign));Assert.Equal("NoReadableTextObjects",Assert.Single(reader.Diagnostics).Reason);
+        Assert.Equal(string.Empty,reader.TrafficRule(sign)); // valid root, no traffic_rule field
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DocumentReadFailureReachesBothTextAndTrafficRuleCallers(bool rule)
+    {
+        var fs=new Fs();var original=new IOException("template IO failure");fs.Failures["/def/sign/test.sii"]=original;
+        var map=new TruckLib.ScsMap.Map();var sign=Sign.Add(map,System.Numerics.Vector3.Zero,default);sign.SignTemplate="sign_templ.test";
+        var reader=new SignTextReader(fs);
+        var observed=Record.Exception(()=>{if(rule)reader.TrafficRule(sign);else reader.ReadTexts(sign);});
+        Assert.Same(original,observed);Assert.Contains(nameof(Fs.ReadAllBytes),original.StackTrace);
+        Assert.DoesNotContain(reader.Diagnostics,d=>d.Reason=="TemplateReadFailure");
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MalformedDocumentRetainsOriginalParserException(bool rule)
+    {
+        var fs=new Fs();fs.Files["/def/sign/test.sii"]="SiiNunit";
+        var data=GameDataManager.From(fs);
+        var original=Record.Exception(()=>data.GetSii("/def/sign/test.sii"));Assert.NotNull(original);
+        var map=new TruckLib.ScsMap.Map();var sign=Sign.Add(map,System.Numerics.Vector3.Zero,default);sign.SignTemplate="sign_templ.test";
+        var reader=new SignTextReader(data);
+        Assert.Same(original,Record.Exception(()=>{if(rule)reader.TrafficRule(sign);else reader.ReadRawTexts(sign);}));
+    }
+    [Fact]
+    public void ReferencedBoardReadFailureDoesNotMeanTheSignHasNoText()
+    {
+        var fs=new Fs();fs.Files.Remove("/def/sign/board.sii");
+        var map=new TruckLib.ScsMap.Map();var sign=Sign.Add(map,System.Numerics.Vector3.Zero,default);sign.SignTemplate="sign_templ.test";
+        var error=Assert.Throws<FileNotFoundException>(()=>new SignTextReader(fs).ReadTexts(sign));
+        Assert.Equal("/def/sign/board.sii",error.FileName);
+    }
+    [Fact]
     public void MultipleDestinationTextsAndRawPlaceholderAreRetainedWithoutChoosingOneCity()
     {
         var fs=new Fs();
@@ -74,6 +118,7 @@ public sealed class SignTextReaderTests
     private sealed class Fs:IFileSystem
     {
         public Dictionary<string,string> Files=>files;
+        public Dictionary<string,Exception> Failures {get;}=new();
         private readonly Dictionary<string,string> files=new()
         {
             ["/def/sign/templates.sii"]="SiiNunit {\n sign_template_def : sign_templ.test {\n path: \"/def/sign/test.sii\"\n }\n}",
@@ -85,7 +130,8 @@ public sealed class SignTextReaderTests
         public bool FileExists(string p)=>files.ContainsKey(p);
         public bool DirectoryExists(string p)=>files.Keys.Any(k=>k.StartsWith(p.TrimEnd('/')+"/"));
         public IList<string> GetFiles(string p)=>files.Keys.Where(k=>GetParent(k).TrimEnd('/')==p.TrimEnd('/')).ToArray();
-        public byte[] ReadAllBytes(string p)=>Encoding.UTF8.GetBytes(files[p]);
+        public byte[] ReadAllBytes(string p)=>Failures.TryGetValue(p,out var error)?throw error:
+            files.TryGetValue(p,out var text)?Encoding.UTF8.GetBytes(text):throw new FileNotFoundException("Missing sign document",p);
         public string ReadAllText(string p)=>files[p];
         public string ReadAllText(string p,Encoding encoding)=>files[p];
         public Stream Open(string p)=>new MemoryStream(ReadAllBytes(p));

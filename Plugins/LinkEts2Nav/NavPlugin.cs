@@ -107,8 +107,6 @@ public sealed class NavPlugin : Plugin
         await using var motionTrace = new NavigationTraceRecorder(
             Path.Combine(AppContext.BaseDirectory, "Cache", "LinkEts2Nav", "Diagnostics"),
             message => logOutput.Event(message, DateTimeOffset.UtcNow));
-        ReplayCapture.Attach(motionTrace);
-        logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
         await using var speech = CreateSpeech(logOutput, token,out var cityNames,out var speechResources,speechUsage.Collector);
         await using var playback=new GuidancePlaybackManager(speech?.Queue,new Ets2LaGuidanceAudioPlayer(),
             ()=>Ets2LaGuidanceAudioPlayer.FallbackFile(AppContext.BaseDirectory,message=>logOutput.Event(message,DateTimeOffset.UtcNow),allowCustom:speech is null),
@@ -147,8 +145,10 @@ public sealed class NavPlugin : Plugin
         string session = "";
         var mountCheck = DateTimeOffset.MinValue;
         var scanBusySince = DateTimeOffset.MinValue;
+        ReplayCapture.Attach(motionTrace);
         try
         {
+            logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
             do
             {
                 token.ThrowIfCancellationRequested();

@@ -136,13 +136,15 @@ public sealed class MapRetryCoordinatorTests
         await Wait(()=>requests.Count>=before+2&&!requests.Last().Contains(A));
     }
     [Fact]
-    public async Task NotificationFailureDoesNotKillLaterDemandPublication()
+    public async Task NotificationFailurePropagatesToTheOwningDriver()
     {
-        int calls=0;var requests=new ConcurrentQueue<SectorCoordinate[]>();
-        await using var coordinator=new MapRetryCoordinator(s=>
-        {if(Interlocked.Increment(ref calls)==1)throw new IOException("expected consumer failure");requests.Enqueue(s.ToArray());});
-        coordinator.Publish(Snapshot(),1);await Wait(()=>Volatile.Read(ref calls)>0);
-        coordinator.Report(Missing(A));await Wait(()=>requests.Count>0&&requests.Last().Contains(A));
+        var invoked=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failure=new IOException("consumer failure");
+        var coordinator=new MapRetryCoordinator(_=>{invoked.SetResult();throw failure;});
+        coordinator.Publish(Snapshot(),1);
+        await invoked.Task.WaitAsync(TimeSpan.FromSeconds(4),TestContext.Current.CancellationToken);
+        Assert.Same(failure,await Assert.ThrowsAsync<IOException>(()=>coordinator.DisposeAsync().AsTask()));
+        Assert.Same(failure,Assert.Throws<IOException>(coordinator.ThrowIfFaulted));
     }
     [Fact]
     public async Task SlowQueryDoesNotBlockLoadingOrDisposalClearingDemands()

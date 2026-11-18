@@ -7,12 +7,19 @@ namespace LinkEts2Nav.Runtime;
 /// Loader demand notifications are asynchronous, coalesced, and serialized independently of query callbacks.</summary>
 public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
 {
+    // The worker owns one reference. Deferred cancellation actions reserve
+    // another under gate, so completion cannot dispose a source before Cancel.
+    private sealed class Attempt
+    {
+        public required CancellationTokenSource Source;
+        public int References=1;
+    }
     private sealed class Entry
     {
         public required (string Key,Type Type) Key;public required MissingMapSectors Missing;
         public required Func<MapRetryContext,CancellationToken,ValueTask<(object Value,MapQueryIssue? Issue)>> Query;
         public required object Result;public long ResultRevision=-1,LastAttempt=-1,Serial;public MapQueryIssue? Error;
-        public bool Running,Finished;public HashSet<long> Subscribers=[];public CancellationTokenSource? Cancellation;
+        public bool Running,Finished;public HashSet<long> Subscribers=[];public Attempt? Cancellation;
     }
     private readonly object gate=new();
     private readonly Dictionary<(string,Type),Entry> entries=[];
@@ -31,6 +38,12 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     public long Generation {get{lock(gate)return epoch;}}
     public MapRetryCoordinator(Action<IReadOnlyList<SectorCoordinate>> request,Action<string>? log=null)
     {this.request=request;this.log=log;worker=Task.Run(WorkAsync);demandWorker=Task.Run(PublishDemandsAsync);}
+    /// <summary>The owning driver observes both background entry points at its fatal boundary.</summary>
+    public void ThrowIfFaulted()
+    {
+        if(worker.IsCompleted)worker.GetAwaiter().GetResult();
+        if(demandWorker.IsCompleted)demandWorker.GetAwaiter().GetResult();
+    }
     private bool Local(MissingMapSectors missing)=>current?.Snapshot.Coverage is {} coverage
         &&missing.QueryAnchor is {} anchor&&coverage.ContainsQueryAnchor(anchor);
     private bool Ready(MissingMapSectors missing)=>current is {} context&&missing.Sectors.All(context.Snapshot.ReadySectors.Contains);
@@ -98,27 +111,27 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     }
     private void Release(Entry entry,long id)
     {
-        CancellationTokenSource? cancel=null;
+        Action? cancel=null;
         lock(gate)
         {
             entry.Subscribers.Remove(id);
             if(entry.Subscribers.Count==0&&entries.GetValueOrDefault(entry.Key)==entry)
-            {entries.Remove(entry.Key);entry.Serial++;cancel=entry.Cancellation;}
+            {entries.Remove(entry.Key);entry.Serial++;cancel=ReserveCancellation(entry.Cancellation is {} attempt?[attempt]:[]);}
         }
-        SafeCancel(cancel);DemandChanged();
+        cancel?.Invoke();DemandChanged();
     }
     public void Reset()=>ResetScope()();
     // Invalidate under an owner's lifecycle lock, then cancel callers after all owner locks exit.
     internal Action ResetScope()
     {
-        CancellationTokenSource[] cancel;
+        Action cancel;
         lock(gate)
         {
-            epoch++;scopeRevision++;current=null;cancel=entries.Values.Select(e=>e.Cancellation).OfType<CancellationTokenSource>().ToArray();
+            epoch++;scopeRevision++;current=null;cancel=ReserveCancellation(entries.Values.Select(e=>e.Cancellation).OfType<Attempt>());
             entries.Clear();reported.Clear();
         }
         DemandChanged();
-        return ()=>{foreach(var c in cancel)SafeCancel(c);};
+        return cancel;
     }
     /// <summary>Only call after a successful full derived snapshot became visible to consumers.</summary>
     public void Publish(NearbyMapSnapshot snapshot,long revision)
@@ -126,14 +139,14 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
     /// <summary>Reject an in-flight load if its resource/session generation was reset before publication.</summary>
     public bool Publish(NearbyMapSnapshot snapshot,long revision,long expectedGeneration)
     {
-        CancellationTokenSource[] cancel;
+        Action cancel;
         lock(gate)
         {
             if(disposed||epoch!=expectedGeneration)return false;scopeRevision++;current=new(snapshot,revision);
-            cancel=entries.Values.Where(e=>e.Running).Select(e=>e.Cancellation).OfType<CancellationTokenSource>().ToArray();
+            cancel=ReserveCancellation(entries.Values.Where(e=>e.Running).Select(e=>e.Cancellation).OfType<Attempt>());
             foreach(var entry in entries.Values.Where(e=>e.Running)){entry.Serial++;entry.Running=false;}
         }
-        foreach(var c in cancel)SafeCancel(c);DemandChanged();wake.Writer.TryWrite(true);
+        cancel();DemandChanged();wake.Writer.TryWrite(true);
         return true;
     }
     private void DemandChanged()=>demandWake.Writer.TryWrite(true);
@@ -146,12 +159,7 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
             while(demandWake.Reader.TryRead(out _)){}
             IReadOnlyList<SectorCoordinate> demands;
             lock(gate)demands=disposed?[]:Demands();
-            try{request(demands);}
-            catch(Exception ex)
-            {
-                // One failing consumer must not permanently kill the notifier.
-                try{log?.Invoke("Map demand notification failed: "+ex.GetType().Name+": "+ex.Message);}catch{}
-            }
+            request(demands);
         }
     }
     private async Task WorkAsync()
@@ -163,57 +171,80 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
                 while(wake.Reader.TryRead(out _)){}
                 while(true)
                 {
-                    Entry? job;MapRetryContext context;long serial,scope;CancellationTokenSource cancellation;
+                    Entry? job;MapRetryContext context;long serial,scope;Attempt cancellation;
                     lock(gate)
                     {
                         if(current is null)break;
                         job=entries.Values.FirstOrDefault(e=>!e.Finished&&!e.Running&&e.LastAttempt!=current.Revision&&Local(e.Missing)&&Ready(e.Missing));
                         if(job is null)break;
                         context=current;scope=epoch;serial=++job.Serial;job.Running=true;job.LastAttempt=context.Revision;
-                        cancellation=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);job.Cancellation=cancellation;
+                        // Shutdown reserves and cancels attempts through Reset;
+                        // do not add an unowned linked-source cancellation path.
+                        cancellation=new(){Source=new CancellationTokenSource()};job.Cancellation=cancellation;
                     }
-                    object? result=null;MapQueryIssue? issue=null;Exception? error=null;
-                    try{(result,issue)=await job.Query(context,cancellation.Token).ConfigureAwait(false);}
-                    catch(OperationCanceledException) when(cancellation.IsCancellationRequested){}
-                    catch(Exception ex){error=ex;}
-                    bool demandsChanged=false;
-                    lock(gate)
+                    try
                     {
-                        if(!disposed&&scope==epoch&&job.Serial==serial&&current?.Revision==context.Revision&&entries.GetValueOrDefault(job.Key)==job)
+                        object result;MapQueryIssue? issue;
+                        try{(result,issue)=await job.Query(context,cancellation.Source.Token).ConfigureAwait(false);}
+                        catch(OperationCanceledException) when(cancellation.Source.IsCancellationRequested){continue;}
+                        bool demandsChanged=false;
+                        lock(gate)
                         {
-                            job.Running=false;
-                            job.Error=error is null?null:new MapQueryFailure(MapQueryFailureKind.InvalidData,error.GetType().Name+": "+error.Message);
-                            if(result is not null){job.Result=result;job.ResultRevision=context.Revision;}
-                            if(issue is MissingMapSectors missing&&!Ready(missing)){job.Missing=missing;demandsChanged=true;}
-                            else
+                            if(!disposed&&scope==epoch&&job.Serial==serial&&current?.Revision==context.Revision&&entries.GetValueOrDefault(job.Key)==job)
                             {
-                                job.Finished=true;
-                                if(issue is MissingMapSectors)job.Error=new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,
-                                    "Query still requires sectors already in this published snapshot; loading alone cannot resolve it.");
+                                job.Running=false;job.Error=null;job.Result=result;job.ResultRevision=context.Revision;
+                                if(issue is MissingMapSectors missing&&!Ready(missing)){job.Missing=missing;demandsChanged=true;}
+                                else
+                                {
+                                    job.Finished=true;
+                                    if(issue is MissingMapSectors)job.Error=new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,
+                                        "Query still requires sectors already in this published snapshot; loading alone cannot resolve it.");
+                                }
                             }
                         }
-                        if(ReferenceEquals(job.Cancellation,cancellation))job.Cancellation=null;
+                        if(demandsChanged)DemandChanged();
                     }
-                    cancellation.Dispose();
-                    if(error is not null)log?.Invoke("Map retry failed: "+error.GetType().Name+": "+error.Message);
-                    if(demandsChanged)DemandChanged();
+                    finally
+                    {
+                        lock(gate)
+                            if(ReferenceEquals(job.Cancellation,cancellation)){job.Cancellation=null;job.Running=false;}
+                        ReleaseAttempt(cancellation);
+                    }
                 }
             }
         }
-        catch(OperationCanceledException) when(stop.IsCancellationRequested){}
+        catch(OperationCanceledException error) when(stop.IsCancellationRequested&&error.CancellationToken==stop.Token){}
     }
-    private void SafeCancel(CancellationTokenSource? cancellation)
+    // Called under gate; the returned single-use action runs outside all owner locks.
+    private Action ReserveCancellation(IEnumerable<Attempt> attempts)
     {
-        if(cancellation is null)return;
-        try{cancellation.Cancel();}
-        catch(ObjectDisposedException){}
-        catch(AggregateException ex){log?.Invoke("Map retry cancellation callback failed: "+ex.Message);}
+        var reserved=attempts.Distinct().ToArray();
+        foreach(var attempt in reserved)attempt.References++;
+        return ()=>
+        {
+            try{foreach(var attempt in reserved)attempt.Source.Cancel();}
+            finally{foreach(var attempt in reserved)ReleaseAttempt(attempt);}
+        };
+    }
+    private void ReleaseAttempt(Attempt attempt)
+    {
+        bool release;
+        lock(gate)release=--attempt.References==0;
+        if(release)attempt.Source.Dispose();
     }
     public async ValueTask DisposeAsync()
     {
         lock(gate){if(disposed)return;disposed=true;}
-        Reset();stop.Cancel();wake.Writer.TryComplete();demandWake.Writer.TryComplete();
-        try{await worker.ConfigureAwait(false);}
-        finally{await demandWorker.ConfigureAwait(false);stop.Dispose();}
+        try{Reset();}
+        finally
+        {
+            try{stop.Cancel();}
+            finally
+            {
+                wake.Writer.TryComplete();demandWake.Writer.TryComplete();
+                try{await Task.WhenAll(worker,demandWorker).ConfigureAwait(false);}
+                finally{stop.Dispose();}
+            }
+        }
     }
 }

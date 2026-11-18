@@ -17,7 +17,6 @@ public sealed class Ets2LaWarningAnnouncer : IWarningAnnouncer
     private readonly Func<string?> audioFile;
     private readonly Action<string> playFile;
     private readonly Action<string> info;
-    private readonly Action<string> warn;
     private readonly CancellationToken cancellationToken;
 
     public Ets2LaWarningAnnouncer(Action? play = null, Func<string?>? audioFile = null,
@@ -28,7 +27,6 @@ public sealed class Ets2LaWarningAnnouncer : IWarningAnnouncer
         this.audioFile = audioFile ?? (() => WarningAudioOptions.LoadFilePath(AppContext.BaseDirectory));
         this.playFile = playFile ?? (path => AudioHandler.Current.Queue(path));
         this.info = info ?? (message => Logger.Info(Escape(message)));
-        warn = warning ?? (message => Logger.Warn(Escape(message)));
         this.cancellationToken = cancellationToken;
     }
 
@@ -36,41 +34,29 @@ public sealed class Ets2LaWarningAnnouncer : IWarningAnnouncer
 
     public void Announce(CameraWarning warning) => TryPlay();
 
-    /// <summary>True means a playback request was submitted, not that the device has played it.</summary>
+    /// <summary>True means submitted, not played. False means cancellation; configuration and submission failures propagate.</summary>
     public bool TryPlay()
     {
         if (cancellationToken.IsCancellationRequested) return false;
         try
         {
-            string? file = null;
-            try { file = audioFile(); }
-            catch (Exception ex) { warn("预警音频配置无法读取，回退内置提示音：" + ex.Message); }
+            string? file = audioFile();
             if (file is not null)
             {
-                if (!File.Exists(file)) warn("自定义预警音频不存在，回退内置提示音：" + file);
-                else
-                {
-                    try
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        playFile(file);
-                        info("自定义预警音频已提交播放：" + file);
-                        return true;
-                    }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return false; }
-                    catch (Exception ex) { warn("自定义音频提交失败，回退内置提示音：" + ex.Message); }
-                }
+                if (!File.Exists(file)) throw new FileNotFoundException("Configured warning audio file is missing.", file);
+                cancellationToken.ThrowIfCancellationRequested();
+                playFile(file);
+                info("自定义预警音频已提交播放：" + file);
             }
-            cancellationToken.ThrowIfCancellationRequested();
-            play();
-            info("内置预警提示音已提交播放。");
+            else
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                play();
+                info("内置预警提示音已提交播放。");
+            }
             return true;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return false; }
-        catch (Exception ex)
-        {
-            warn("预警音频不可用：" + ex.GetType().Name + ": " + ex.Message);
-            return false;
-        }
+        catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested && error.CancellationToken == cancellationToken)
+        { return false; }
     }
 }

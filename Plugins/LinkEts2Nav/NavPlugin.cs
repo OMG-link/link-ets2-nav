@@ -153,6 +153,7 @@ public sealed class NavPlugin : Plugin
             {
                 token.ThrowIfCancellationRequested();
                 mapScanner.ThrowIfFaulted();
+                playback.ThrowIfFaulted();
                 if(speechResources is not null&&await speechResources.ApplyPendingAsync(speech!.Queue))
                 {
                     navigation.RefreshSpeechNames();

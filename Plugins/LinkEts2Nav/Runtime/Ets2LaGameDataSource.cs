@@ -21,13 +21,23 @@ public sealed class Ets2LaGameDataSource : IDisposable
         this.events = events;
         this.clock = clock ?? TimeProvider.System;
         events.Subscribe<GameTelemetryData>(TelemetryTopic, OnTelemetry);
-        try { events.Subscribe<NavigationData>(NavigationTopic, OnNavigation); }
-        catch { events.Unsubscribe<GameTelemetryData>(TelemetryTopic, OnTelemetry); throw; }
-        try { events.Subscribe<SemaphoreData>(TrafficSignalTopic, OnTrafficSignals); }
-        catch
+        bool navigationRegistered = false, complete = false;
+        try
         {
-            events.Unsubscribe<NavigationData>(NavigationTopic, OnNavigation);
-            events.Unsubscribe<GameTelemetryData>(TelemetryTopic, OnTelemetry);throw;
+            events.Subscribe<NavigationData>(NavigationTopic, OnNavigation);
+            navigationRegistered = true;
+            events.Subscribe<SemaphoreData>(TrafficSignalTopic, OnTrafficSignals);
+            complete = true;
+        }
+        finally
+        {
+            // Registration is transactional. Cleanup does not handle or replace
+            // the subscription exception; it continues with its original stack.
+            if (!complete)
+            {
+                if (navigationRegistered) events.Unsubscribe<NavigationData>(NavigationTopic, OnNavigation);
+                events.Unsubscribe<GameTelemetryData>(TelemetryTopic, OnTelemetry);
+            }
         }
     }
 

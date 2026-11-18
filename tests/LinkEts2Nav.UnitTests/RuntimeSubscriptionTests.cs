@@ -109,6 +109,19 @@ public sealed class RuntimeSubscriptionTests
         Assert.Equal(0,bus.SubscriptionCount);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void RegistrationCleanupPreservesUnknownExceptionAndItsOriginalThrowSite(bool navigation)
+    {
+        var original = new SubscriptionTestException();
+        var bus = new FakeBus { RejectNavigation = navigation, RejectSignals = !navigation, Failure = original };
+        var observed = Assert.Throws<SubscriptionTestException>(() => new Ets2LaGameDataSource(bus));
+        Assert.Same(original, observed);
+        Assert.Contains(nameof(FakeBus.Subscribe), observed.StackTrace);
+        Assert.Equal(0, bus.SubscriptionCount);
+    }
+
     [Fact]
     public void AnnouncerDoesNotInitializePlaybackUntilWarning()
     {
@@ -129,13 +142,14 @@ public sealed class RuntimeSubscriptionTests
         private readonly Dictionary<string, List<Delegate>> handlers = new();
         public bool RejectNavigation { get; init; }
         public bool RejectSignals {get;init;}
+        public Exception? Failure { get; init; }
         public int SubscriptionCount => handlers.Values.Sum(x => x.Count);
         public void Subscribe<T>(string topic, Action<T> handler)
         {
             if (RejectNavigation && topic == Ets2LaGameDataSource.NavigationTopic)
-                throw new InvalidOperationException("Test subscription failure");
+                throw Failure ?? new InvalidOperationException("Test subscription failure");
             if(RejectSignals&&topic==Ets2LaGameDataSource.TrafficSignalTopic)
-                throw new InvalidOperationException("Test signal subscription failure");
+                throw Failure ?? new InvalidOperationException("Test signal subscription failure");
             if (!handlers.TryGetValue(topic, out var list)) handlers[topic] = list = new();
             list.Add(handler);
         }
@@ -149,4 +163,5 @@ public sealed class RuntimeSubscriptionTests
                 foreach (var handler in list.ToArray()) ((Action<T>)handler)(data);
         }
     }
+    private sealed class SubscriptionTestException : Exception;
 }

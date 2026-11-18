@@ -42,7 +42,8 @@ public static class ComponentManeuverProjection
             if(fact.Kind is ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular)
             {Fail(fact,"组件主侧关系或车道终点尚未确定");return;}
             if(!outgoing&&fact.Kind==ComponentContinuityKind.Soft&&UsesOwnSideExit(fact))return;
-            bool choose=fact.Kind==ComponentContinuityKind.Natural||fact.Kind==ComponentContinuityKind.Main&&outgoing&&fact.HasNaturalAlternative;
+            bool choose=outgoing&&(fact.Kind==ComponentContinuityKind.Natural
+                ||fact.Kind==ComponentContinuityKind.Main&&fact.HasNaturalAlternative);
             if(fact.Kind==ComponentContinuityKind.Main&&!choose)
             {
                 if(outgoing&&entryFacts.Any(f=>Selected(f)&&f.Kind==ComponentContinuityKind.Main))return;
@@ -53,10 +54,15 @@ public static class ComponentManeuverProjection
             if(position is null||end is null||end<position-.001)
             {Fail(fact,"组件动作点或真实结束点不在本次导航访问中");return;}
             string? text;ManeuverKind kind;RoadForkInstruction? fork=null;
-            if(choose)
+            if(!outgoing&&fact.Kind==ComponentContinuityKind.Natural)
             {
-                var orders=outgoing?fact.EntryOrders:fact.ExitOrders;
-                int count=outgoing?fact.EntryLaneCount:fact.ExitLaneCount;
+                kind=ManeuverKind.Merge;
+                text=NavigationPrompts.Action(kind);
+            }
+            else if(choose)
+            {
+                var orders=fact.EntryOrders;
+                int count=fact.EntryLaneCount;
                 text=LaneInstructionFormatter.Selection(count,orders);
                 if(text is null)
                 {
@@ -69,16 +75,13 @@ public static class ComponentManeuverProjection
                     return;
                 }
                 NavigationSide side=NavigationSide.None;
-                if(outgoing)
+                if(fact.LegalExitCount>=3)text="有多个相近出口，请"+text;
+                else if(fact.LegalExitCount==2)
                 {
-                    if(fact.LegalExitCount>=3)text="有多个相近出口，请"+text;
-                    else if(fact.LegalExitCount==2)
-                    {
-                        var order=ExitSide(fact,exitFacts);
-                        side=order;
-                        text=order==NavigationSide.None?"分岔口，请"+text:
-                            "分岔口靠"+(order==NavigationSide.Left?"左":"右")+"，"+text;
-                    }
+                    var order=ExitSide(fact,exitFacts);
+                    side=order;
+                    text=order==NavigationSide.None?"分岔口，请"+text:
+                        "分岔口靠"+(order==NavigationSide.Left?"左":"右")+"，"+text;
                 }
                 kind=ManeuverKind.ChooseLanes;
                 fork=new(kind,false,text,orders,orders){Side=side};
@@ -104,8 +107,7 @@ public static class ComponentManeuverProjection
                 interval=new(start.Value,finish.Value);
             }
             string id=$"component:{fact.EdgeId}:{(outgoing?"exit":"entry")}:{fact.Kind}";
-            var actualTurn=SelectedTurn(fact);
-            string? execution=!outgoing&&fact.Kind==ComponentContinuityKind.Hard&&actualTurn is {} approach
+            string? execution=!outgoing&&fact.Kind==ComponentContinuityKind.Hard&&SelectedTurn(fact) is {} approach
                 ?text+"，注意"+(approach.Side==NavigationSide.Left?"右":"左")+"侧来车":null;
             actions.Add(new(id,kind,position.Value,edge.Id,edge.Id)
             {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,EndDistanceMeters=end,

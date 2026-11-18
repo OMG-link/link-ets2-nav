@@ -13,6 +13,7 @@ public static class NavigationPrompts
         ManeuverKind.MergeLeft => "向左前方进入主路", ManeuverKind.MergeRight => "向右前方进入主路",
         ManeuverKind.EnterRoundabout => "进入环岛", ManeuverKind.ExitRoundabout => "驶出环岛", ManeuverKind.PassRoundaboutExit => "经过出口",
         ManeuverKind.Straight => "直行", ManeuverKind.UTurn => "掉头",
+        ManeuverKind.Merge => "汇入主路",
         ManeuverKind.ChooseLanes => "按指定车道行驶",
         ManeuverKind.Destination => "到达目的地",
         ManeuverKind.BoardFerry => "进入码头",

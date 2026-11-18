@@ -69,29 +69,33 @@ public sealed class ComponentManeuverProjectionTests
         Assert.Equal(250,action.DistanceMeters);Assert.Equal(300,action.EndDistanceMeters);
     }
     [Fact]
-    public void NaturalEntrySelectsDownstreamLanesWhileNaturalExitSelectsUpstreamLanes()
+    public void NaturalEntryMergesWithoutATurnWhileNaturalExitSelectsUpstreamLanes()
     {
         var edge=Edge("prefab:2A:1:2");
         var entry=Fact(edge,ComponentContinuityKind.Natural) with{ExitOrders=[2]};
-        Assert.Equal("走最右侧车道",Assert.Single(ComponentManeuverProjection.Build([edge],0,[entry],[]).Actions).Instruction);
+        var merge=Assert.Single(ComponentManeuverProjection.Build([edge],0,[entry],[]).Actions);
+        Assert.Equal(ManeuverKind.Merge,merge.Kind);Assert.Equal(NavigationSide.None,NavigationManeuverDirections.Side(merge));
+        Assert.Equal("汇入主路",merge.Instruction);Assert.Null(merge.ForkInstruction);
+        Assert.Equal(50,merge.DistanceMeters);Assert.Equal(100,merge.EndDistanceMeters);
         var exit=entry with{EntryLaneCount=4,EntryOrders=[0,1],LegalExitCount=2,ExitTurnRadians=-.1};
         var other=exit with{ExitNodeUid=3,EntryOrders=[2,3],ExitTurnRadians=.1};
         var result=ComponentManeuverProjection.Build([edge],0,[],[exit,other]);
         Assert.Contains(result.Actions,a=>a.Instruction=="分岔口靠左，走左侧两车道");
     }
     [Fact]
-    public void WholeRoadNaturalContinuationWithoutAnOutletChoiceIsNotAJunctionSite()
+    public void NaturalEntryWithoutAnOutletChoiceStillAnnouncesMerge()
     {
         var edge=Edge("prefab:2A:1:2");var fact=Fact(edge,ComponentContinuityKind.Natural) with{ExitOrders=[0,1,2]};
-        Assert.Empty(ComponentManeuverProjection.Build([edge],0,[fact],[]).Actions);
+        Assert.Equal(ManeuverKind.Merge,Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[]).Actions).Kind);
     }
     [Fact]
-    public void AWholeRoadNaturalContinuationWithAnOutletChoiceKeepsItsTransparentSite()
+    public void NaturalEntryWithAllLanesRetainedStillAnnouncesMerge()
     {
         var edge=Edge("prefab:2A:1:2");
         var fact=Fact(edge,ComponentContinuityKind.Natural) with{ExitOrders=[0,1,2],LegalExitCount=2};
         var action=Assert.Single(ComponentManeuverProjection.Build([edge],0,[fact],[]).Actions);
-        Assert.Equal(ManeuverKind.Straight,action.Kind);Assert.True(action.IsMainRoadContinuation);Assert.Null(action.Instruction);
+        Assert.Equal(ManeuverKind.Merge,action.Kind);Assert.False(action.IsMainRoadContinuation);
+        Assert.Equal("汇入主路",action.Instruction);
     }
     [Fact]
     public void MainMergeWithOnlyOneReachableOutletDoesNotBecomeAnOrdinalJunction()

@@ -28,9 +28,10 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
         LastCacheHit=null;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(120));
+        bool completed=false;
         try
         {
-            if (process is null || process.HasExited) Start();
+            if (process is null || process.HasExited) await StartAsync().ConfigureAwait(false);
             string id = Interlocked.Increment(ref nextId).ToString(System.Globalization.CultureInfo.InvariantCulture);
             await process!.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { id, text }).AsMemory(), deadline.Token);
             await process.StandardInput.FlushAsync(deadline.Token);
@@ -53,16 +54,16 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
             Span<byte> header = stackalloc byte[12];
             if (wav.Length < 44 || wav.Read(header) != 12 || !header[..4].SequenceEqual("RIFF"u8)
                 || !header[8..].SequenceEqual("WAVE"u8)) throw new IOException("Speech worker returned invalid WAV audio.");
+            completed=true;
             return path;
         }
-        catch
+        finally
         {
-            Stop();
-            throw;
+            if(!completed)Stop(process);
         }
     }
 
-    private void Start()
+    private async Task StartAsync()
     {
         if (!File.Exists(options.WorkerPath)) throw new FileNotFoundException("Speech worker is not deployed.", options.WorkerPath);
         var start = new ProcessStartInfo("dotnet")
@@ -75,7 +76,7 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
         foreach (string argument in new[] { options.WorkerPath, "--model-dir", options.ModelDirectory!,
             "--cache-dir", options.CacheDirectory, "--pack-dir", options.PackDirectory, "--voice", options.Voice, "--threads",
             options.Threads.ToString(System.Globalization.CultureInfo.InvariantCulture) }) start.ArgumentList.Add(argument);
-        process?.Dispose();
+        await DisposeAsync().ConfigureAwait(false);
         process = Process.Start(start) ?? throw new IOException("Could not start the speech worker.");
         lock (errors) errors.Clear();
         var started = process;
@@ -98,7 +99,7 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
     }
 
     private string RecentErrors() { lock (errors) return string.Join(" | ", errors); }
-    private void Stop()
+    private static void Stop(Process? process)
     {
         try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); }
         catch (InvalidOperationException) { }
@@ -106,17 +107,20 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
 
     public async ValueTask DisposeAsync()
     {
-        Stop();
-        if (process is not null)
+        using var stopped=process;
+        var pump=errorPump;
+        process=null;errorPump=null;
+        if(stopped is null)return;
+        using var input=stopped.StandardInput;
+        using var output=stopped.StandardOutput;
+        using var error=stopped.StandardError;
+        Stop(stopped);
+        try { await stopped.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (TimeoutException) { }
+        if(pump is not null)
         {
-            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)); }
+            try { await pump.WaitAsync(TimeSpan.FromSeconds(2)); }
             catch (TimeoutException) { }
-            if (errorPump is not null)
-            {
-                try { await errorPump.WaitAsync(TimeSpan.FromSeconds(2)); }
-                catch (TimeoutException) { }
-            }
-            process.Dispose();
         }
     }
 }

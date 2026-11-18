@@ -70,6 +70,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     public void ThrowIfFaulted()
     {
         if(worker.IsCompleted)worker.GetAwaiter().GetResult();
+        retries.ThrowIfFaulted();
     }
 
     public MapScanState Capture() { lock (gate) return state; }

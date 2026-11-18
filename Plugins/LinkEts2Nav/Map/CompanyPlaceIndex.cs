@@ -44,7 +44,6 @@ public sealed class CompanyPlaceReader(GameDataManager data)
     {
         var result=new Dictionary<string,string?>(StringComparer.Ordinal);
         foreach(var path in data.GetFiles("/def/").Where(p=>data.GetParent(p).TrimEnd('/')=="/def"&&Path.GetFileName(p).StartsWith("company",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order())
-        try
         {
             foreach(var unit in data.GetSii(path).OfClass("company_permanent"))
             {
@@ -54,8 +53,6 @@ public sealed class CompanyPlaceReader(GameDataManager data)
                 if(result[unit.Name.Split('.').Last()] is null)Diagnostics.Add("货场显示名未解析："+unit.Name+"，定义="+path+"，原值="+name);
             }
         }
-        catch(Exception e) when(e is IOException or InvalidDataException or FormatException or ArgumentException)
-        {Diagnostics.Add("货场名称定义加载失败："+path+"，"+e.GetType().Name+"："+e.Message);}
         return result;
     }
 }

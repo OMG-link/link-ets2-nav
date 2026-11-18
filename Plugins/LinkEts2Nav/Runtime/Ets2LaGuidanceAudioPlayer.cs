@@ -6,13 +6,13 @@ public sealed class Ets2LaGuidanceAudioPlayer:IGuidanceAudioPlayer
 {
     public static string FallbackFile(string hostDirectory,Action<string>? log=null,bool allowCustom=true)
     {
-        try
+        // A custom recording may contain a fixed distance; synthesized speech failures use a neutral tone.
+        string? custom=allowCustom?WarningAudioOptions.LoadFilePath(hostDirectory):null;
+        if(custom is not null)
         {
-            // A custom recording may contain a fixed distance; synthesized speech failures use a neutral tone.
-            string? custom=allowCustom?WarningAudioOptions.LoadFilePath(hostDirectory):null;
-            if(custom is not null&&File.Exists(custom))return custom;
+            if(!File.Exists(custom))throw new FileNotFoundException("Configured warning audio file is missing.",custom);
+            return custom;
         }
-        catch(Exception ex){log?.Invoke("预警音频配置不可用，使用内置提示音："+ex.Message);}
         return Path.Combine(hostDirectory,"Assets","Sounds","pre_alert.wav");
     }
     public async Task PlayAsync(string file,CancellationToken cancellationToken)

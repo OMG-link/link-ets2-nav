@@ -45,7 +45,6 @@ public sealed record DirectedRoad(
     public IReadOnlyList<PrefabLanePath> LanePaths { get; init; } = [];
     /// <summary>Native curve starts in this exact representative polyline, including its first control-node join.</summary>
     public IReadOnlyList<PrefabCurveSpan> NativeCurveSpans { get; init; } = [];
-    public RoundaboutPassage? Roundabout { get; init; }
     public IReadOnlyList<LaneConnection>? LaneConnections { get; init; }
     /// <summary>Snapshot-local decision for independent entrance groups adding disjoint exit lanes.</summary>
     public RoadJoinPriority? JoinPriority { get; init; }
@@ -55,12 +54,6 @@ public sealed record DirectedRoad(
 }
 
 public sealed record PrefabCurveSpan(int CurveIndex,int PointIndex);
-
-public sealed record RoundaboutPassage(string Id, int ExitNumber, double ExitConnectorMeters = 0)
-{
-    public IReadOnlyList<RoundaboutExitCue> Exits { get; init; } = [];
-}
-public sealed record RoundaboutExitCue(int Number,double AlongMeters);
 
 public sealed record LaneConnection(ulong EntryNode, int EntryLane, ulong ExitNode, int ExitLane);
 

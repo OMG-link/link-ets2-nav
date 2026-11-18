@@ -46,7 +46,7 @@ public sealed class SpeedLimitTests
         s.Data=s.Data with { Roads=new Dictionary<ulong,LimitRoad>{
             [s.Road.Uid]=s.Data.Roads[s.Road.Uid] with { CountryUncertain=true } },
             Regions=[new("city",[new(650,0,-100),new(1000,0,-100),new(1000,0,100),new(650,0,100)],0,true){Country="norway"}] };
-        Assert.Throws<InvalidDataException>(()=>Resolve(s));
+        Assert.Equal(40,Resolve(s).Kph);
     }
     [Fact]
     public void RoadCountryResolvesRuralLimitWithoutMapWindowCountry()

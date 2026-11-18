@@ -32,7 +32,7 @@ public sealed record LimitRoad(DirectedRoad Geometry, string? SpeedClass)
     public MapQueryResult<string> QueryCountry()
     {
         if(countryQuery is not null)return countryQuery();
-        if(CountryUncertain)throw new InvalidDataException($"Road {Geometry.Id}: country evidence conflicts.");
+        if(CountryUncertain)return MapQueryResult<string>.Unavailable(new UndeterminedRoadCountry($"Road {Geometry.Id}: declared country evidence conflicts."));
         return country is not null?MapQueryResult<string>.Ready(country):MapQueryResult<string>.Unavailable(
             new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,$"Road {Geometry.Id}: country evidence is unavailable."));
     }

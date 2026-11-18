@@ -2,6 +2,9 @@ using TruckLib.ScsMap;
 using GameMap=TruckLib.ScsMap.Map;
 namespace LinkEts2Nav.Map;
 
+/// <summary>Loaded native country evidence does not identify a unique country; map data is not missing.</summary>
+public sealed record UndeterminedRoadCountry(string Detail):MapQueryIssue(Detail);
+
 /// <summary>Immutable native road endpoint evidence. Validation occurs only when a road is queried.</summary>
 public sealed class RoadCountryIndex
 {
@@ -26,10 +29,13 @@ public sealed class RoadCountryIndex
                     ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"Road {roadUid:X16}: native endpoint {endpoint.Uid:X16} is not loaded; its country has not been read."));
         }
         byte first=Country(road.Start),last=Country(road.End);
-        if(first==0||last==0||first!=last)
-            throw new InvalidDataException($"Road {roadUid:X16}: endpoint countries must be equal and nonzero; node {road.Start.Uid:X16} has {first}, node {road.End.Uid:X16} has {last}.");
-        if(!names.TryGetValue(first,out string? country)||string.IsNullOrWhiteSpace(country))
-            throw new InvalidDataException($"Road {roadUid:X16}: native country ID {first} has no loaded country definition.");
+        foreach(byte id in new[]{first,last}.Where(id=>id!=0))
+            if(!names.TryGetValue(id,out var name)||string.IsNullOrWhiteSpace(name))
+                throw new InvalidDataException($"Road {roadUid:X16}: native country ID {id} has no loaded country definition.");
+        if(first==0&&last==0||first!=0&&last!=0&&first!=last)
+            return MapQueryResult<string>.Unavailable(new UndeterminedRoadCountry(
+                $"Road {roadUid:X16}: loaded endpoint countries do not identify one country; node {road.Start.Uid:X16} has {first}, node {road.End.Uid:X16} has {last}."));
+        string country=names[first!=0?first:last];
         return MapQueryResult<string>.Ready(country);
 
         byte Country(Endpoint endpoint)

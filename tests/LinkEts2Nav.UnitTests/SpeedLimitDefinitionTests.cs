@@ -365,8 +365,8 @@ public sealed class SpeedLimitDefinitionTests
         var data=reader.Build(map,TestContext.Current.CancellationToken);
         Assert.Equal(80,reader.RoadCategoryLimit(valid,true).Kph);
         Assert.Equal("norway",data.Roads[valid.Uid].QueryCountry().Value);
-        Assert.Throws<InvalidDataException>(()=>reader.RoadCategoryLimit(invalid,true));
-        Assert.Throws<InvalidDataException>(()=>data.Roads[invalid.Uid].QueryCountry());
+        Assert.Equal(60,reader.RoadCategoryLimit(invalid,true).Kph);
+        Assert.IsType<UndeterminedRoadCountry>(data.Roads[invalid.Uid].QueryCountry().Issue);
     }
 
     [Fact]
@@ -401,7 +401,7 @@ public sealed class SpeedLimitDefinitionTests
         CityArea.Add(map,new(500,0,0),"test",1000,1000);
         var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
         Assert.Null(data.Error);
-        Assert.Throws<InvalidDataException>(()=>data.Roads[road.Uid].QueryCountry());
+        Assert.IsType<UndeterminedRoadCountry>(data.Roads[road.Uid].QueryCountry().Issue);
         Assert.Null(Assert.Single(data.Regions).Country);
     }
     [Fact]

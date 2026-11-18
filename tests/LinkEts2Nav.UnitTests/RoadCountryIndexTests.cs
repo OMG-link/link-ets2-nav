@@ -20,20 +20,34 @@ public sealed class RoadCountryIndexTests
   Assert.False(road.Node.IsCountryBorder);Assert.False(road.ForwardNode.IsCountryBorder);
   Assert.Equal("finland",RoadCountryIndex.Build(map,Names).QueryCountry(road.Uid).Value);
  }
- [Theory][InlineData(0,0)][InlineData(0,23)][InlineData(23,0)][InlineData(23,38)][InlineData(200,200)]
- public void InvalidCountryPairsFailOnlyWhenThatRoadIsQueried(int first,int last)
+ [Theory][InlineData(200,200)][InlineData(200,23)]
+ public void UndefinedNonzeroCountryIdsAreNotDefaultable(int first,int last)
  {
   var map=new TruckLib.ScsMap.Map();var road=Add(map,(byte)first,(byte)last);
   var index=RoadCountryIndex.Build(map,Names);
   var error=Assert.Throws<InvalidDataException>(()=>index.QueryCountry(road.Uid));
   Assert.Contains(road.Uid.ToString("X16"),error.Message);
  }
+ [Theory][InlineData(0,0)][InlineData(23,38)]
+ public void LoadedWithoutUniqueCountryIsDistinctFromMissingMap(int first,int last)
+ {
+  var map=new TruckLib.ScsMap.Map();var road=Add(map,(byte)first,(byte)last);
+  var result=RoadCountryIndex.Build(map,Names).QueryCountry(road.Uid);
+  Assert.Null(result.Value);Assert.IsType<UndeterminedRoadCountry>(result.Issue);
+ }
+ [Theory][InlineData(0,23)][InlineData(23,0)]
+ public void OneNonzeroCountryIdentifiesTheRoadWithoutGuessing(int first,int last)
+ {
+  var map=new TruckLib.ScsMap.Map();var road=Add(map,(byte)first,(byte)last);
+  var result=RoadCountryIndex.Build(map,Names).QueryCountry(road.Uid);
+  Assert.Null(result.Issue);Assert.Equal("finland",result.Value);
+ }
  [Fact] public void AnUnrelatedZeroRoadDoesNotPreventPreparationOrAValidRoadQuery()
  {
   var map=new TruckLib.ScsMap.Map();var invalid=Add(map,0,0);var valid=Add(map);
   var index=RoadCountryIndex.Build(map,Names);
   Assert.Equal("finland",index.QueryCountry(valid.Uid).Value);
-  Assert.Throws<InvalidDataException>(()=>index.QueryCountry(invalid.Uid));
+  Assert.IsType<UndeterminedRoadCountry>(index.QueryCountry(invalid.Uid).Issue);
  }
  [Fact] public void MissingEndpointHasALoadDependencyRatherThanAnInventedZero()
  {

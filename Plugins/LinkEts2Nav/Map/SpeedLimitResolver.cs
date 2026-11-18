@@ -84,15 +84,15 @@ public sealed class SpeedLimitResolver
         var regions=data.RegionIndex!.At(position);
         if(metadata is null)return Unavailable("Road country metadata is unavailable",MapQueryFailureKind.DefinitionUnavailable,position);
         var resolved=metadata.QueryCountry();
-        if(resolved.Issue is {} issue)return Unavailable(issue.Reason,MapQueryFailureKind.DefinitionUnavailable,position,issue);
-        string country=resolved.Value!;
+        if(resolved.Issue is {} issue&&issue is not UndeterminedRoadCountry)return Unavailable(issue.Reason,MapQueryFailureKind.DefinitionUnavailable,position,issue);
+        string? country=resolved.Value;
         if(regions.Any(r=>r.Unsupported))return Unavailable("所在交通区域包含未支持的限速规则",MapQueryFailureKind.DefinitionUnavailable,position);
         string? speedClass=metadata?.ClassFor(road);
         if(motorway==true)speedClass="motorway";
         if(speedClass is null)return Unavailable("监测道路车道类别或变体未支持",MapQueryFailureKind.DefinitionUnavailable,position);
         if(!TruckSpeedLimitRules.TryGet(data.Limits,country,speedClass,out var rule,out bool usedDefault))
             return Unavailable("缺少货车限速规则："+country+"/"+speedClass,MapQueryFailureKind.DefinitionUnavailable,position);
-        if(usedDefault)reason+="；"+TruckSpeedLimitRules.DefaultReason;
+        if(usedDefault)reason+="；"+TruckSpeedLimitRules.DefaultReasonFor(country,speedClass);
         bool urban=urbanOverride??regions.Any(r=>r.Urban);
         int baseline=urban?rule.Urban:rule.Rural;
         int? value=baseline>0?(temporary.HasValue?Math.Min(temporary.Value,baseline):baseline):temporary;

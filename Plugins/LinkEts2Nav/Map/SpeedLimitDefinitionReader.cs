@@ -94,14 +94,14 @@ public sealed class SpeedLimitDefinitionReader
     {
         if(hostCountries is null)return new(null,"宿主国家索引尚未准备");
         var result=hostCountries.QueryCountry(road.Uid);
-        if(result.Issue is {} issue)return new(null,issue.Reason){MapIssue=issue};
-        string country=result.Value!;
+        if(result.Issue is {} issue&&issue is not UndeterminedRoadCountry)return new(null,issue.Reason){MapIssue=issue};
+        string? country=result.Value;
         string? speedClass=RoadClass(road,forward?road.LeftHandTraffic:!road.LeftHandTraffic);
         if(speedClass is null)return new(null,"道路类别或变体未知");
         if(!TruckSpeedLimitRules.TryGet(limits,country,speedClass,out var rule,out bool usedDefault)||rule.Rural<=0)
             return new(null,"缺少国家道路类别货车限速："+country+"/"+speedClass);
-        return new(rule.Maximum>0?Math.Min(rule.Rural,rule.Maximum):rule.Rural,country+"/"+speedClass
-            +(usedDefault?"；"+TruckSpeedLimitRules.DefaultReason:""));
+        return new(rule.Maximum>0?Math.Min(rule.Rural,rule.Maximum):rule.Rural,(country??"undetermined country")+"/"+speedClass
+            +(usedDefault?"；"+TruckSpeedLimitRules.DefaultReasonFor(country,speedClass):""));
     }
 
     public SpeedLimitData Build(TruckLib.ScsMap.Map map) => Build(map,CancellationToken.None);

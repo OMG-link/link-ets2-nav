@@ -61,7 +61,10 @@ public static class ComponentManeuverProjection
             }
             else if(choose)
             {
-                var orders=fact.EntryOrders;
+                // Priority facts retain only inherited lanes. Driver advice uses
+                // every player-permitted native lane of this concrete passage,
+                // including lanes born upstream that still reach this outlet.
+                var orders=edge.LanePaths.Select(p=>p.EntryOrder).Distinct().Order().ToArray();
                 int count=fact.EntryLaneCount;
                 text=LaneInstructionFormatter.Selection(count,orders);
                 if(text is null)

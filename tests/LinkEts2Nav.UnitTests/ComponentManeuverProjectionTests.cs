@@ -79,8 +79,31 @@ public sealed class ComponentManeuverProjectionTests
         Assert.Equal(50,merge.DistanceMeters);Assert.Equal(100,merge.EndDistanceMeters);
         var exit=entry with{EntryLaneCount=4,EntryOrders=[0,1],LegalExitCount=2,ExitTurnRadians=-.1};
         var other=exit with{ExitNodeUid=3,EntryOrders=[2,3],ExitTurnRadians=.1};
+        edge=edge with{LanePaths=[new(42,1,2,0,0,0,0,4,2,[0],edge.Points,100),new(42,1,2,1,1,1,1,4,2,[1],edge.Points,100)]};
         var result=ComponentManeuverProjection.Build([edge],0,[],[exit,other]);
         Assert.Contains(result.Actions,a=>a.Instruction=="分岔口靠左，走左侧两车道");
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OutletAdviceIncludesEveryReachableLaneWithoutChangingInheritedClassification(bool main)
+    {
+        var edge=Edge("prefab:2A:1:2");
+        edge=edge with{LanePaths=[new(42,1,2,2,0,2,0,4,2,[0],edge.Points,100),
+            new(42,1,2,3,1,3,1,4,2,[3],edge.Points,100)]};
+        var fact=Fact(edge,main?ComponentContinuityKind.Main:ComponentContinuityKind.Natural,main:main) with
+        {EntryLaneCount=4,EntryOrders=[2],LegalExitCount=2,ExitTurnRadians=.1,HasNaturalAlternative=main};
+        var other=fact with{ExitNodeUid=3,EntryOrders=[0,1],ExitTurnRadians=-.1};
+        foreach(var selected in edge.LanePaths)
+        {
+            var result=ComponentManeuverProjection.Build([edge],0,[],[fact,other],selected);
+            var choice=Assert.Single(result.Actions);
+            Assert.Equal("分岔口靠右，走右侧两车道",choice.Instruction);
+            Assert.Equal(new[]{2,3},choice.ForkInstruction!.EntryOrders);
+            Assert.Empty(result.Issues);
+        }
+        Assert.Equal(new[]{2},fact.EntryOrders);
+        Assert.Equal(main?ComponentContinuityKind.Main:ComponentContinuityKind.Natural,fact.Kind);
     }
     [Fact]
     public void NaturalEntryWithoutAnOutletChoiceStillAnnouncesMerge()

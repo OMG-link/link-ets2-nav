@@ -22,7 +22,6 @@ public sealed class MileageTargetDefinitionReader(GameDataManager data)
         Diagnostics.Clear();var result=new Dictionary<string,MileageTargetDefinition>(StringComparer.Ordinal);
         foreach(string file in data.GetFiles("/def/sign/").Where(p=>data.GetParent(p).TrimEnd('/')=="/def/sign"
             &&Path.GetFileName(p).StartsWith("mileage_targets",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal)).Order(StringComparer.Ordinal))
-        try
         {
             foreach(var unit in data.GetSii(file).OfClass("mileage_target"))
             {
@@ -46,29 +45,22 @@ public sealed class MileageTargetDefinitionReader(GameDataManager data)
                 result[unit.Name]=new(unit.Name,file,raw,name,variants,uid,position,radius);
             }
         }
-        catch(Exception e) when(e is IOException or InvalidDataException or FormatException or ArgumentException)
-        {Diagnostics.Add(file+": "+e.GetType().Name+": "+e.Message);}
         return result.Values.OrderBy(t=>t.Id,StringComparer.Ordinal).ToArray();
     }
 
     private string? Name(string raw,string id)
     {
         if(string.IsNullOrWhiteSpace(raw))return null;
-        string text;
-        try
-        {
-            // TruckLib keeps escaped UTF-8 bytes as string literals. Match one or two
-            // backslashes; do not interpret arbitrary escape sequences as another language.
-            text=Regex.Replace(raw,@"(?:\\{1,2}x[0-9a-fA-F]{2})+",match=>
-                new UTF8Encoding(false,true).GetString(Regex.Matches(match.Value,@"x([0-9a-fA-F]{2})")
-                    .Select(m=>Convert.ToByte(m.Groups[1].Value,16)).ToArray()));
-            // Layout markup does not change the spoken spelling. Keep the original literal separately.
-            text=Regex.Replace(text,@"(?<=[-/])<br\s*/?>","");
-            text=Regex.Replace(text,@"<br\s*/?>"," ");
-            text=Regex.Replace(text,@"</?(?:font|sub|sup|b|i|u)(?:\s+[^<>]*)?>","",RegexOptions.CultureInvariant);
-            text=Regex.Replace(text.Trim(),@"\s+"," ").Normalize();
-        }
-        catch(DecoderFallbackException){Diagnostics.Add(id+": InvalidEscapedUtf8Name");return null;}
+        // TruckLib keeps escaped UTF-8 bytes as string literals. Match one or two
+        // backslashes; do not interpret arbitrary escape sequences as another language.
+        string text=Regex.Replace(raw,@"(?:\\{1,2}x[0-9a-fA-F]{2})+",match=>
+            new UTF8Encoding(false,true).GetString(Regex.Matches(match.Value,@"x([0-9a-fA-F]{2})")
+                .Select(m=>Convert.ToByte(m.Groups[1].Value,16)).ToArray()));
+        // Layout markup does not change the spoken spelling. Keep the original literal separately.
+        text=Regex.Replace(text,@"(?<=[-/])<br\s*/?>","");
+        text=Regex.Replace(text,@"<br\s*/?>"," ");
+        text=Regex.Replace(text,@"</?(?:font|sub|sup|b|i|u)(?:\s+[^<>]*)?>","",RegexOptions.CultureInvariant);
+        text=Regex.Replace(text.Trim(),@"\s+"," ").Normalize();
         if(text.Contains('\\')||text.Contains("@@",StringComparison.Ordinal)||text.Any(char.IsControl)||text.Contains('<')||text.Contains('>'))
         {Diagnostics.Add(id+": UnresolvedNameLiteral "+raw);return null;}
         return text;

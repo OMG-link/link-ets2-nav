@@ -30,13 +30,21 @@ public sealed class MileageTargetDefinitionTests
     }
 
     [Fact]
-    public void InvalidUtf8DoesNotProduceAnInventedNameAndZeroArraysAreEmpty()
+    public void InvalidUtf8IsAnExplicitDecodingFailure()
+    {
+        var fs=new Fs();fs.Content=fs.Content.Replace("Stykkish\\xc3\\xb3lmur","Broken\\xff",StringComparison.Ordinal);
+        var reader=new MileageTargetDefinitionReader(fs);
+        Assert.Throws<DecoderFallbackException>(()=>reader.Read());
+        Assert.Empty(reader.Diagnostics);
+    }
+    [Fact]
+    public void UntranslatedNameAndZeroArraysRemainValidUnresolvedFields()
     {
         var fs=new Fs { Content="""
             SiiNunit
             {
             mileage_target : mileage.invalid {
-              default_name: "Broken\xff"
+              default_name: "@@untranslated@@"
               names: 0
               variants: 0
               node_uid: nil
@@ -48,7 +56,22 @@ public sealed class MileageTargetDefinitionTests
         var reader=new MileageTargetDefinitionReader(fs);var target=Assert.Single(reader.Read());
         Assert.Null(target.DefaultName);Assert.Empty(target.Variants);
         Assert.Null(target.NodeUid);Assert.Null(target.Position);
-        Assert.Contains(reader.Diagnostics,d=>d.Contains("InvalidEscapedUtf8Name",StringComparison.Ordinal));
+        Assert.Contains(reader.Diagnostics,d=>d.Contains("UnresolvedNameLiteral",StringComparison.Ordinal));
+    }
+    [Fact]
+    public void ReadFailurePreservesItsOriginalTypeAndStack()
+    {
+        var original=new IOException("mileage catalogue read failed");var fs=new Fs{Failure=original};
+        var reader=new MileageTargetDefinitionReader(fs);
+        Assert.Same(original,Assert.Throws<IOException>(()=>reader.Read()));
+        Assert.Contains(nameof(Fs.ReadAllBytes),original.StackTrace);Assert.Empty(reader.Diagnostics);
+    }
+    [Fact]
+    public void MalformedCataloguePreservesItsCachedParserException()
+    {
+        var fs=new Fs{Content="SiiNunit"};var data=GameDataManager.From(fs);
+        var original=Record.Exception(()=>data.GetSii("/def/sign/mileage_targets.sii"));Assert.NotNull(original);
+        Assert.Same(original,Record.Exception(()=>new MileageTargetDefinitionReader(data).Read()));
     }
     [Fact]
     public void LayoutTagsAreRemovedForSpeechButOriginalSpellingIsPreserved()
@@ -69,6 +92,7 @@ public sealed class MileageTargetDefinitionTests
     private sealed class Fs:IFileSystem
     {
         public int Reads;
+        public Exception? Failure;
         public string Content="""
             SiiNunit
             {
@@ -88,7 +112,7 @@ public sealed class MileageTargetDefinitionTests
         public bool FileExists(string p)=>p=="/def/sign/mileage_targets.sii";
         public bool DirectoryExists(string p)=>p.TrimEnd('/')=="/def/sign";
         public IList<string> GetFiles(string p)=>DirectoryExists(p)?["/def/sign/mileage_targets.sii"]:[];
-        public byte[] ReadAllBytes(string p){Reads++;return Encoding.UTF8.GetBytes(Content);}
+        public byte[] ReadAllBytes(string p){Reads++;if(Failure is {} error)throw error;return Encoding.UTF8.GetBytes(Content);}
         public string ReadAllText(string p)=>Content;
         public string ReadAllText(string p,Encoding encoding)=>Content;
         public Stream Open(string p)=>new MemoryStream(ReadAllBytes(p));

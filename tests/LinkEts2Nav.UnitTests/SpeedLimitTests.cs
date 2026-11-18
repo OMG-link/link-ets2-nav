@@ -135,20 +135,18 @@ public sealed class SpeedLimitTests
         public Task<string> SynthesizeAsync(string text,CancellationToken cancellationToken)=>throw new InvalidOperationException();
         public ValueTask DisposeAsync()=>ValueTask.CompletedTask;
     }
-    private sealed class NoFallback : IWarningAnnouncer
-    { public void Announce(CameraWarning warning)=>throw new InvalidOperationException("Unexpected beep."); }
-    [Fact] public async Task UnreadyLimitPhraseUsesMatchingCachedBasicPhraseInsteadOfBeep()
+    [Fact] public async Task MissingExactLimitPhraseDoesNotPlayAnotherCachedSentence()
     {
         string path=Path.Combine(Path.GetTempPath(),"nav-limit-voice-"+Guid.NewGuid().ToString("N")+".wav");
         File.WriteAllBytes(path,[1]);
         try
         {
             var played=new List<string>();
-            await using var speech=new PlannedSpeechAnnouncer(new NoSynthesis(),new NoFallback(),played.Add,
+            await using var speech=new PlannedSpeechAnnouncer(new NoSynthesis(),played.Add,
                 cancellationToken:TestContext.Current.CancellationToken,
                 preGenerated:new Dictionary<string,string>{{"五百米处，有测速照相。",path}});
-            speech.Announce(new("camera",499,WarningDistanceKind.Road){StageDistanceMeters=500,SpeedLimitKph=50});
-            Assert.Equal(path,Assert.Single(played));
+            Assert.False(speech.Queue.TryAnnounce(PlannedSpeechAnnouncer.Text(500,499,speedLimitKph:50)));
+            Assert.Empty(played);
         }
         finally{File.Delete(path);}
     }

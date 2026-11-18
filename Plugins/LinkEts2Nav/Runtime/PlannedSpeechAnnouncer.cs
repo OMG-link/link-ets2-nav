@@ -8,26 +8,19 @@ public interface IWarningPlanner
     void ClearPlan();
 }
 
-/// <summary>Camera-specific wording and fallback policy over a shared speech queue.</summary>
-public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner, IAsyncDisposable
+/// <summary>Camera-specific preparation and wording over a shared speech queue.</summary>
+public sealed class PlannedSpeechAnnouncer : IWarningPlanner, IAsyncDisposable
 {
-    private readonly IWarningAnnouncer fallback;
-    private readonly Action<string> log;
     private readonly bool ownsQueue;
     public SpeechAnnouncementQueue Queue { get; }
 
-    public PlannedSpeechAnnouncer(ISpeechSynthesizer synthesizer, IWarningAnnouncer fallback,
+    public PlannedSpeechAnnouncer(ISpeechSynthesizer synthesizer,
         Action<string> play, Action<string>? log = null, CancellationToken cancellationToken = default,
         IReadOnlyDictionary<string, string>? preGenerated = null,SpeechUsageCollector? usage=null)
-        : this(new SpeechAnnouncementQueue(synthesizer, play, log, cancellationToken, preGenerated,usage), fallback, log)
+        : this(new SpeechAnnouncementQueue(synthesizer, play, log, cancellationToken, preGenerated,usage))
     { ownsQueue = true; }
 
-    public PlannedSpeechAnnouncer(SpeechAnnouncementQueue queue, IWarningAnnouncer fallback, Action<string>? log = null)
-    {
-        Queue = queue;
-        this.fallback = fallback;
-        this.log = log ?? (_ => { });
-    }
+    public PlannedSpeechAnnouncer(SpeechAnnouncementQueue queue)=>Queue=queue;
 
     public const string UncalibratedText = "正靠近未校准的探头，无法获取其监测方向，请减速慢行。";
 
@@ -80,25 +73,6 @@ public sealed class PlannedSpeechAnnouncer : IWarningAnnouncer, IWarningPlanner,
     }
 
     public void ClearPlan() => Queue.ClearPlan("camera");
-
-    public void Announce(CameraWarning warning)
-    {
-        if (Queue.IsStopped) return;
-        string text = Text(warning.StageDistanceMeters, warning.DistanceMeters,
-            warning.FirstConfirmedInside200Meters, warning.SpeedLimitKph, warning.Kind);
-        if (!Queue.IsReady(text) && warning.SpeedLimitKph.HasValue)
-        {
-            string basic = Text(warning.StageDistanceMeters, warning.DistanceMeters, warning.FirstConfirmedInside200Meters);
-            if (Queue.IsReady(basic))
-            {
-                log("带限速语音尚未就绪，使用对应的不含限速版本：" + text);
-                text = basic;
-            }
-        }
-        if (Queue.TryAnnounce(text)) return;
-        log("TTS 缓存尚未就绪，立即使用现有提示音；不延迟补播：" + text);
-        if (!Queue.IsStopped) fallback.Announce(warning);
-    }
 
     public async ValueTask DisposeAsync()
     {

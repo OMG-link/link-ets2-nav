@@ -18,14 +18,8 @@ public sealed class LateWarningTests : IDisposable
         { Calls++; throw new Exception("Pre-generated warning must not require inference."); }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
-    private sealed class Fallback : IWarningAnnouncer
-    {
-        public int Calls;
-        public void Announce(CameraWarning warning) => Calls++;
-    }
-
     [Fact]
-    public async Task FirstConfirmedTargetAt150MetersPlays200WithinImmediatelyWithoutPlanningOrFallback()
+    public async Task FirstConfirmedTargetAt150MetersPlaysExactPreparedSentenceWithoutInference()
     {
         string text = "两百米内，有测速照相。", name = SpeechPack.FileName(text);
         string path = Path.Combine(root, name);
@@ -34,9 +28,8 @@ public sealed class LateWarningTests : IDisposable
             new PackManifest(1, "model", "voice", [new(text, name, SpeechPack.Hash(File.ReadAllBytes(path)))])));
         var preloaded = PreGeneratedSpeech.Load(root);
         var synth = new Synth();
-        var fallback = new Fallback();
         var played = new List<string>();
-        await using var announcer = new PlannedSpeechAnnouncer(synth, fallback, played.Add, preGenerated: preloaded);
+        await using var announcer = new PlannedSpeechAnnouncer(synth, played.Add, preGenerated: preloaded);
         var engine = new CameraWarningEngine();
         var now = DateTimeOffset.UtcNow;
         WarningSnapshot Snapshot(CameraApproach approach) => new("session", "", false, true, now,
@@ -44,10 +37,9 @@ public sealed class LateWarningTests : IDisposable
         Assert.Empty(engine.Update(Snapshot(CameraApproach.Unknown), now));
         var warning = Assert.Single(engine.Update(Snapshot(CameraApproach.UnavoidableAhead), now));
         Assert.Equal(200, warning.StageDistanceMeters);
-        announcer.Announce(warning);
+        Assert.True(announcer.Queue.TryAnnounce(PlannedSpeechAnnouncer.Text(warning.StageDistanceMeters,warning.DistanceMeters,warning.FirstConfirmedInside200Meters,warning.SpeedLimitKph,warning.Kind)));
         Assert.Equal(path, Assert.Single(played));
         Assert.Equal(0, synth.Calls);
-        Assert.Equal(0, fallback.Calls);
         Assert.Empty(engine.Update(Snapshot(CameraApproach.UnavoidableAhead), now));
     }
 

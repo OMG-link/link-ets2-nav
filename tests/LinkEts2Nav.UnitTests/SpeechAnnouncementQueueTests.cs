@@ -66,7 +66,7 @@ public sealed class SpeechAnnouncementQueueTests : IDisposable
     {
         var synth=new Synth();
         await using var queue=new SpeechAnnouncementQueue(synth,_=>{});
-        var adapter=new PlannedSpeechAnnouncer(queue,new Ets2LaWarningAnnouncer(play:()=>{}));
+        var adapter=new PlannedSpeechAnnouncer(queue);
         await adapter.DisposeAsync();
         Assert.False(queue.IsStopped);
         Assert.False(synth.Disposed);

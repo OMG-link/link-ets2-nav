@@ -91,7 +91,7 @@ public sealed class NavPlugin : Plugin
         resources=new ReloadableSpeech(options,SpeechPackSettings.Current,message=>log.Event(message,DateTimeOffset.UtcNow));
         cityNames=resources.Names;
         log.Event("TTS 已启用：按预警触发顺序预生成，音色=" + options.Voice + "，文件缓存=" + options.CacheDirectory, DateTimeOffset.UtcNow);
-        return new(resources, new Ets2LaWarningAnnouncer(audioFile: () => null, cancellationToken: token), path => AudioHandler.Current.Queue(path),
+        return new(resources, path => AudioHandler.Current.Queue(path),
             message => log.Event(message, DateTimeOffset.UtcNow), token,
             resources.Fixed,usage);
     }

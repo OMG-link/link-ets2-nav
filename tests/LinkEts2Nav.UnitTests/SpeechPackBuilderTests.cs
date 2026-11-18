@@ -18,11 +18,6 @@ public sealed class SpeechPackBuilderTests : IDisposable
             => throw new InvalidOperationException("Pre-generated speech should play without inference.");
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
-    private sealed class NoFallback : IWarningAnnouncer
-    {
-        public void Announce(CameraWarning warning) => throw new InvalidOperationException("Unexpected fallback.");
-    }
-
     [Fact]
     public async Task MixedCachedAndNewClipsKeepCachedTailAndLateDiscoveryPlaysImmediately()
     {
@@ -37,9 +32,9 @@ public sealed class SpeechPackBuilderTests : IDisposable
         var preloaded = PreGeneratedSpeech.Load(directory);
         Assert.Equal(3,preloaded.Count);
         var played = new List<string>();
-        await using var speech = new PlannedSpeechAnnouncer(new NoSynthesis(),new NoFallback(),played.Add,
+        await using var speech = new PlannedSpeechAnnouncer(new NoSynthesis(),played.Add,
             cancellationToken:token,preGenerated:preloaded);
-        speech.Announce(new("camera",425.1,WarningDistanceKind.Road){StageDistanceMeters=500});
+        Assert.True(speech.Queue.TryAnnounce(PlannedSpeechAnnouncer.Text(500,425.1)));
         Assert.Equal(preloaded[generic],Assert.Single(played));
         // A completely cached rerun must retain the complete manifest without an API call.
         await SpeechPackBuilder.BuildAsync(directory,"model","voice",[far,generic,near],

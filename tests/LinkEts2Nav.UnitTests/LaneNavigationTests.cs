@@ -44,6 +44,16 @@ public sealed class LaneNavigationTests
     {
         Assert.False(new LaneRoutePlanner().Build([Edge("prefab:A:0:1",10,20)]).Complete);
     }
+    [Fact]
+    public void RepeatedPhysicalEdgesKeepSeparateRouteVisitIdentities()
+    {
+        var edge=Edge("prefab:A:0:1",10,20,Lane(10,20,0,0,1));
+        var loop=Edge("road-loop",20,10);
+        var plan=new LaneRoutePlanner().Build([edge,loop,edge]);
+        Assert.True(plan.Complete);
+        Assert.Equal(new[]{0,2},plan.Sections.Select(s=>s.SourceVisitIndex));
+        Assert.All(plan.Sections,s=>Assert.Equal(edge.Id,s.EdgeId));
+    }
 #if DEBUG
     [Theory]
     [InlineData(true)]

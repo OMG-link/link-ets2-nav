@@ -105,7 +105,7 @@ public sealed class AuxiliaryLaneDirectionTests
             [scene.Route[1],mainExit],middle,index));
         Assert.Equal(required.Kind,midway.Kind);Assert.Same(immutable,index.Corridors);
         Assert.Equal(required.ApproachInterval!.LengthMeters,midway.ApproachInterval!.LengthMeters,5);
-        var alreadyMain=new LaneNavigationPlan([new(mainExit.Id,mainExit.LanePaths[0])],[],true,null);
+        var alreadyMain=new LaneNavigationPlan([new(mainExit.Id,mainExit.LanePaths[0],1)],[],true,null);
         Assert.Null(alreadyMain.InitialTransfer);
         var silentMiddle=Assert.Single(Guidance([mainAction],[scene.Route[1],mainExit],alreadyMain,index));
         Assert.Equal(NavigationAnnouncementMode.Silent,silentMiddle.AnnouncementMode);

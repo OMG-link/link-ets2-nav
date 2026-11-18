@@ -16,12 +16,12 @@ public sealed class ComponentManeuverPlanner
         if(!ReferenceEquals(graph,source))
         {index=ComponentContinuityIndex.Build(new(source),missing);graph=source;}
         var result=new Dictionary<int,IReadOnlyList<NavigationManeuver>>();var issues=new List<MapQueryIssue>();var unresolved=new List<NavigationUnresolvedSpan>();
-        var selections=new Dictionary<int,PrefabLanePath>();int cursor=route.Count-1;
-        foreach(var section in selected?.Sections.Reverse()??[])
-        {
-            while(cursor>=0&&route[cursor].Id!=section.EdgeId)cursor--;
-            if(cursor>=0)selections[cursor--]=section.Path;
-        }
+        var selections=(selected?.Sections??[]).ToDictionary(s=>s.SourceVisitIndex,s=>s.Path);
+#if DEBUG
+        foreach(var section in selected?.Sections??[])
+            if(section.SourceVisitIndex<0||section.SourceVisitIndex>=route.Count||route[section.SourceVisitIndex].Id!=section.EdgeId)
+                throw new NavigationContractException($"Selected lane {section.EdgeId} has no matching route visit {section.SourceVisitIndex}.");
+#endif
         for(int i=0;i<route.Count;i++)
         {
             if(excludeVisit?.Invoke(i)==true)continue;

@@ -32,9 +32,10 @@ public sealed class LaneMergeDetector
     {
         if(!ReferenceEquals(indexed,graph)){indexed=graph;models=Build(graph,missingConnection);}
         var result=new List<LaneMergeObservation>();double offset=0;
-        foreach(var edge in route)
+        for(int visit=0;visit<route.Count;visit++)
         {
-            var selected=plan.Sections.FirstOrDefault(s=>s.EdgeId==edge.Id)?.Path;
+            var edge=route[visit];
+            var selected=plan.Sections.SingleOrDefault(s=>s.SourceVisitIndex==visit)?.Path;
             foreach(var m in models.Where(m=>edge.LanePaths.Any(p=>p.PrefabUid==m.Ending.PrefabUid
                 &&(p.EntryNodeUid==m.Ending.EntryNodeUid||p.EntryNodeUid==m.Main.EntryNodeUid)&&p.ExitNodeUid==m.Ending.ExitNodeUid)))
             {

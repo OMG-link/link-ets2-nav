@@ -23,7 +23,7 @@ public sealed class SelectedStraightPassageTests
             {LanePaths=[entryOther,chosen],ForkInfo=info,Junction=new(1,2,0){InterfaceCount=3}};
         var side=new DirectedRoad("prefab:000000000000002A:0:1",10,30,left){LanePaths=[branch],ForkInfo=info,Junction=main.Junction};
         DirectedRoad[] route=[main];DirectedRoad[] graph=legalSide?[main,side]:[main];
-        var lanes=new LaneNavigationPlan([new(main.Id,chosen)],[],true,null);
+        var lanes=new LaneNavigationPlan([new(main.Id,chosen,0)],[],true,null);
         var target=new NavigationManeuver("merge",ManeuverKind.MergeLeft,400,"a","b")
             {EndDistanceMeters=450,JunctionId="merge-target",AnnouncementMode=targetMode};
         var source=new NavigationStructurePlan(route,route,[target],lanes,[],[new("42",10,20,"mixed outlet signals")],500,true,0)
@@ -69,8 +69,8 @@ public sealed class SelectedStraightPassageTests
         var original=Build();var main=original.Route[0];var lane=main.LanePaths[1];
         var loop=new DirectedRoad("loop",main.EndNodeUid,main.StartNodeUid,[main.Points[^1],main.Points[0]]);
         DirectedRoad[] route=revisit?[main,loop,main]:[main];
-        var chosen=new LaneRouteSection(main.Id,lane);
-        var lanes=new LaneNavigationPlan(revisit?[chosen,chosen]:[chosen],[],true,null);
+        var chosen=new LaneRouteSection(main.Id,lane,0);
+        var lanes=new LaneNavigationPlan(revisit?[chosen,chosen with{SourceVisitIndex=2}]:[chosen],[],true,null);
         var keep=new NavigationManeuver("early-fork",ManeuverKind.KeepRight,laterAction?50:-50,"approach",main.Id)
             {JunctionId="prefab:000000000000002A",EndDistanceMeters=laterAction?180:60,
                 ApproachInterval=interval?laterAction?new(40,120):new(-60,0):null};

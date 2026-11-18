@@ -33,7 +33,7 @@ public sealed class TrafficLightBindingTests
     private static NearbyMapSnapshot Nearby(IEnumerable<TrafficSignalControl> controls,ScsMap? map=null,IReadOnlyList<DirectedRoad>? paths=null)
         =>new(map??new(),[],[],[]){TrafficSignals=new(controls),PrefabPaths=paths??[]};
     private static NavigationDiagnostic Navigation(params PrefabLanePath[] paths)=>new("test")
-        {LaneRoute=new(paths.Select((p,i)=>new LaneRouteSection(i.ToString(),p)).ToArray(),[],true,null)};
+        {LaneRoute=new(paths.Select((p,i)=>new LaneRouteSection(i.ToString(),p,i)).ToArray(),[],true,null)};
 
     [Fact]
     public void NavigationBindsOnlyItsChosenCurveGroupInsteadOfTheNearestLamp()

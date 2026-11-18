@@ -48,7 +48,7 @@ public sealed class AccelerationLaneApproachTests
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(graph),TestContext.Current.CancellationToken);
         var selected=new[]{graph.Single(e=>e.Id=="prefab:1:2:1"),graph.Single(e=>e.Id==body.Uid.ToString("X16")&&e.StartNodeUid==body.Node.Uid),graph.Single(e=>e.Id=="prefab:2:0:1")};
         var ending=selected[^1].LanePaths.Single(p=>p.EntryLane==2);
-        var plan=new LaneNavigationPlan([new(selected[^1].Id,ending)],[],true,null);
+        var plan=new LaneNavigationPlan([new(selected[^1].Id,ending,2)],[],true,null);
         var weak=Assert.Single(new LaneMergeDetector().Find(selected,graph,plan,0));
         Assert.Equal(LaneMergeKind.LaneReduction,weak.Kind);Assert.True(weak.ParallelDistanceMeters>500);
         Assert.NotNull(index.NativeMerge(weak));

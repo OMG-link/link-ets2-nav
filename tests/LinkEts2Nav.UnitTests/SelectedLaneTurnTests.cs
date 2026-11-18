@@ -70,9 +70,9 @@ public sealed class SelectedLaneTurnTests
         }
         var main=Path(0,10);var side=Path(1,20);var graph=new NativeLaneGraph([main,side]);
         var planner=new ComponentManeuverPlanner();
-        var chosen=new LaneNavigationPlan([new(side.Id,side.LanePaths[0])],[],true,null);
+        var chosen=new LaneNavigationPlan([new(side.Id,side.LanePaths[0],0)],[],true,null);
         Assert.Equal(ManeuverKind.KeepRight,Assert.Single(planner.Build([side],graph.Edges,chosen)[0]).Kind);
-        var invalid=chosen with{Sections=[new(side.Id,side.LanePaths[0] with{EntryOrder=9})]};
+        var invalid=chosen with{Sections=[new(side.Id,side.LanePaths[0] with{EntryOrder=9},0)]};
         var error=Assert.Throws<ArgumentException>(()=>planner.Build([side],graph.Edges,invalid));
         Assert.Contains("9->0",error.Message);
     }

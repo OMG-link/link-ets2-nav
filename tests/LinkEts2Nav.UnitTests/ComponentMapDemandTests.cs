@@ -36,7 +36,8 @@ public sealed class ComponentMapDemandTests
         Assert.Contains(index.Issues.OfType<MissingMapSectors>(),i=>i.Sectors.Contains(remote));
         Assert.Empty(reported); // Keeping static diagnostics is not a load request.
         var planner=new ComponentManeuverPlanner();planner.UseIndex(graph,index);
-        planner.Build([graph.Single(e=>e.StartNodeUid==10)],graph);
+        var chosen=graph.Single(e=>e.StartNodeUid==10);
+        planner.Build([chosen],graph,new([new(chosen.Id,chosen.LanePaths[0],0)],[],true,null));
         foreach(var issue in planner.Issues)paths.ReportMapIssue(issue);
         Assert.NotEmpty(reported);
         Assert.All(reported.OfType<MissingMapSectors>(),i=>Assert.Equal([local],i.Sectors));

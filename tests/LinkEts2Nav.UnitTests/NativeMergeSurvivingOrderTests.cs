@@ -70,7 +70,7 @@ public sealed class NativeMergeSurvivingOrderTests
         Assert.Equal([2],result.SurvivingOrders);
         var edge=new DirectedRoad("prefab:2A:0:1",10,20,a.Points){LanePaths=[a,b,c]};
         var road=new DirectedRoad("road",5,10,[new(-700,0,0),new(-100,0,0)]);
-        var observed=Assert.Single(new LaneMergeDetector().Find([edge],[road,edge],new([new(edge.Id,a)],[],true,null),0));
+        var observed=Assert.Single(new LaneMergeDetector().Find([edge],[road,edge],new([new(edge.Id,a,0)],[],true,null),0));
         Assert.False(observed.AllIncomingLanesDie);Assert.Null(observed.MoveLeft);Assert.Equal([2],observed.SurvivingEntryOrders);
     }
     [Fact]
@@ -82,7 +82,7 @@ public sealed class NativeMergeSurvivingOrderTests
         var result=Read(g,a,b,unknown);Assert.True(result.AllDead);Assert.Null(result.FirstEnds);Assert.Empty(result.SurvivingOrders);
         var edge=new DirectedRoad("prefab:2A:0:1",10,20,a.Points){LanePaths=[a,b,unknown]};
         var road=new DirectedRoad("road",5,10,[new(-700,0,0),new(-100,0,0)]);
-        var observed=Assert.Single(new LaneMergeDetector().Find([edge],[road,edge],new([new(edge.Id,a)],[],true,null),0));
+        var observed=Assert.Single(new LaneMergeDetector().Find([edge],[road,edge],new([new(edge.Id,a,0)],[],true,null),0));
         Assert.False(observed.AllIncomingLanesDie);Assert.Empty(observed.SurvivingEntryOrders);
     }
     [Theory]
@@ -97,7 +97,7 @@ public sealed class NativeMergeSurvivingOrderTests
         var paths=new[]{a,b}.Concat(reverse?new[]{alive,dead}:new[]{dead,alive}).ToArray();
         var edge=new DirectedRoad("prefab:2A:0:1",10,20,a.Points){LanePaths=paths};
         var road=new DirectedRoad("road",5,10,[new(-700,0,0),new(-100,0,0)]);
-        var observed=Assert.Single(new LaneMergeDetector().Find([edge],[road,edge],new([new(edge.Id,a)],[],true,null),0));
+        var observed=Assert.Single(new LaneMergeDetector().Find([edge],[road,edge],new([new(edge.Id,a,0)],[],true,null),0));
         Assert.Equal([0,2],observed.SurvivingEntryOrders);
     }
     [Fact]

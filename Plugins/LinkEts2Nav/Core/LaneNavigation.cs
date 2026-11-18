@@ -18,7 +18,8 @@ public sealed record PrefabLanePath(ulong PrefabUid,ulong EntryNodeUid,ulong Exi
     /// <summary>Effective lamp after this lane's native divergence, verified across all native alternatives.</summary>
     public ForkSignal? NativeBranchSignal { get; init; }
 }
-public sealed record LaneRouteSection(string EdgeId,PrefabLanePath Path);
+/// <summary>A selected lane belongs to one exact visit in the unchanged SDK route.</summary>
+public sealed record LaneRouteSection(string EdgeId,PrefabLanePath Path,int SourceVisitIndex);
 /// <summary>A road corridor connects consecutive selected prefab paths. A requested lane change is explicit, not a PPD curve.</summary>
 public sealed record LaneRouteTransfer(string FromEdgeId,string ToEdgeId,IReadOnlyList<string> RoadIds,
     int FromLane,int ToLane,bool SameLaneVerified)
@@ -112,7 +113,7 @@ public sealed class LaneRoutePlanner
         int selected=Enumerable.Range(0,costs[^1].Length).MinBy(i=>costs[^1][i]);
         if(!double.IsFinite(costs[^1][selected].Length))return cached=new([],[],false,"相邻预制件之间没有连续的车道链");
         var sections=new LaneRouteSection[layers.Length];
-        for(int i=layers.Length-1;i>=0;i--){sections[i]=new(layers[i].edge.Id,layers[i].edge.LanePaths[selected]);selected=parents[i][selected];}
+        for(int i=layers.Length-1;i>=0;i--){sections[i]=new(layers[i].edge.Id,layers[i].edge.LanePaths[selected],layers[i].index);selected=parents[i][selected];}
         var transfers=new List<LaneRouteTransfer>();
         for(int i=1;i<layers.Length;i++)
         {

@@ -59,7 +59,7 @@ public sealed class LateWarningTests : IDisposable
         File.WriteAllText(Path.Combine(root, name), new string('x', 44));
         File.WriteAllText(Path.Combine(root, "manifest.json"), JsonSerializer.Serialize(
             new PackManifest(1, "model", "voice", [new(text, name, "invalid")])));
-        Assert.Empty(PreGeneratedSpeech.Load(root));
+        Assert.Throws<InvalidDataException>(()=>PreGeneratedSpeech.Load(root));
     }
 
     [Fact]

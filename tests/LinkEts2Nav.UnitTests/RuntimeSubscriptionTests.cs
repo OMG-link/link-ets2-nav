@@ -8,6 +8,25 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class RuntimeSubscriptionTests
 {
     [Fact]
+    public void NavigationNotificationsUpdateStableRouteAndInvokeObserversOutsideSourceLock()
+    {
+        var bus = new FakeBus(); using var source = new Ets2LaGameDataSource(bus, new FixedClock());
+        int changed = 0;
+        source.Store.RouteChanged += _ => changed++;
+        bus.Publish(Ets2LaGameDataSource.NavigationTopic, new NavigationData
+        { entries = [new() { nodeUid = 7 }, new() { nodeUid = 8 }] });
+        bus.Publish(Ets2LaGameDataSource.NavigationTopic, new NavigationData
+        { entries = [new() { nodeUid = 8 }] });
+        var snapshot = source.Capture();
+        Assert.Equal(1, changed); Assert.Equal(1, snapshot.NavigationRoute.CurrentNodeIndex);
+        Assert.Equal(new ulong[] { 7, 8 }, snapshot.NavigationRoute.FullRoute.Nodes.Select(n => n.Uid));
+        source.Store.RouteChanged += _ => Assert.True(Task.Run(source.Dispose).Wait(TimeSpan.FromSeconds(3)));
+        bus.Publish(Ets2LaGameDataSource.NavigationTopic, new NavigationData
+        { entries = [new() { nodeUid = 9 }] });
+        Assert.Equal(2, changed);
+    }
+
+    [Fact]
     public void SourceCopiesMutablePayloadAndStopsReceivingAfterDispose()
     {
         var clock = new FixedClock();

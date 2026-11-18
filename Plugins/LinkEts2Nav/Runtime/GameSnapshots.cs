@@ -65,6 +65,8 @@ public sealed record GameDataSnapshot(VehicleSnapshot? Vehicle, RouteSnapshot Ro
     RouteAvailability RouteAvailability, string SessionId, bool IsVehicleUsable, FineObservation? LatestFine = null,
     FineObservation? LatestCameraFine = null, IReadOnlyList<FineObservation>? FineHistory = null, long DroppedFineCount = 0)
 {
+    /// <summary>Stable route and its current SDK node pointer, captured atomically with Route.</summary>
+    public NavigationRouteState NavigationRoute { get; init; } = NavigationRouteState.Empty;
     public PositionSignalStatus PositionSignal {get;init;}=PositionSignalStatus.None;
     public FerryUseObservation? FerryUse {get;init;}
     public VerifiedFerryArrival? FerryArrival {get;init;}
@@ -87,7 +89,18 @@ public sealed class GameSnapshotStore
     private DateTimeOffset lastVehicleProgress;
     private readonly PositionSignalTracker positionSignal=new();
     private readonly FineObservationTracker fines = new();
-    private RouteSnapshot route = new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.Unknown, default);
+    private NavigationRouteState navigationRoute = NavigationRouteState.Empty;
+    private RouteSnapshot route
+    {
+        get => navigationRoute.CurrentSnapshot;
+        set => navigationRoute = navigationRoute.Accept(value);
+    }
+    /// <summary>
+    /// First available route, explicit clear, and non-suffix SDK replacements only.
+    /// Called outside the store lock; payload identifies the change even if another
+    /// producer has since published a later generation. Session resets use SessionId.
+    /// </summary>
+    public event Action<NavigationRouteState>? RouteChanged;
     private long session;
     private DateTimeOffset? zeroNavigationSince;
     private int zeroNavigationSamples;
@@ -167,7 +180,18 @@ public sealed class GameSnapshotStore
         }
     }
 
-    public void UpdateRoute(RouteSnapshot next) { lock (gate) route = next; }
+    public void UpdateRoute(RouteSnapshot next)
+    {
+        NavigationRouteState changed;
+        long generation;
+        lock (gate)
+        {
+            generation = navigationRoute.Generation;
+            route = next;
+            changed = navigationRoute;
+        }
+        if (changed.Generation != generation) RouteChanged?.Invoke(changed);
+    }
 
     public void ObserveFine(bool fined, string offence, ulong amount, DateTimeOffset observedAt)
     {
@@ -216,7 +240,7 @@ public sealed class GameSnapshotStore
             }
             return new(vehicle, route, availability, $"{instanceId}:{session}", usable,
                 fines.Latest, fines.LatestCamera, fines.GetHistory(), fines.DroppedCount)
-                {PositionSignal=positionSignal.Capture(now),FerryUse=ferryEvents.Latest,FerryArrival=ferryArrival,IsTransportPending=pendingFerry is not null,TrafficSignals=trafficSignals};
+                {NavigationRoute=navigationRoute,PositionSignal=positionSignal.Capture(now),FerryUse=ferryEvents.Latest,FerryArrival=ferryArrival,IsTransportPending=pendingFerry is not null,TrafficSignals=trafficSignals};
         }
     }
 

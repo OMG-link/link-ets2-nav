@@ -61,12 +61,12 @@ public sealed class Ets2LaGameDataSource : IDisposable
 
     private void OnNavigation(NavigationData data)
     {
-        lock (gate)
-        {
-            if (disposed) return;
-            Store.UpdateRoute(RouteSnapshot.Parse(data.entries.Select(e =>
-                new RouteNode(e.nodeUid, e.distanceToEnd, e.timeToEnd)), clock.GetUtcNow()));
-        }
+        // Event unsubscription cannot retract an already dispatched callback.
+        // Store serializes its updates; do not hold the source lock while its
+        // route-change subscribers run.
+        lock (gate) { if (disposed) return; }
+        Store.UpdateRoute(RouteSnapshot.Parse(data.entries.Select(e =>
+            new RouteNode(e.nodeUid, e.distanceToEnd, e.timeToEnd)), clock.GetUtcNow()));
     }
 
     public GameDataSnapshot Capture() => Store.Capture(clock.GetUtcNow());

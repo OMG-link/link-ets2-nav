@@ -23,8 +23,7 @@ public sealed class SpeedLimitDefinitionReader
     private readonly Dictionary<string,TruckSpeedLimit> limits=new(StringComparer.Ordinal);
     private readonly Dictionary<string,Unit> rules=new(StringComparer.Ordinal);
     private readonly Dictionary<byte,string> countryNames=new();
-    private CitySignNameReader? citySignNames;
-    private string? error;
+    private readonly CitySignNameReader citySignNames;
     private TruckLib.ScsMap.Map? indexedHost;
     private RoadCountryIndex? hostCountries;
 
@@ -33,57 +32,52 @@ public sealed class SpeedLimitDefinitionReader
     public SpeedLimitDefinitionReader(GameDataManager fs)
     {
         playerAccess=new(rules);
-        try
+        citySignNames=new(fs);
+        IEnumerable<Unit> Files(string directory,string prefix) => fs.GetFiles(directory)
+            .Where(p=>fs.GetParent(p).TrimEnd('/')==directory.TrimEnd('/')
+                && Path.GetFileName(p).StartsWith(prefix,StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal).SelectMany(p=>fs.GetSii(p).Units);
+        foreach(var u in Files("/def/world/","traffic_rules"))rules[u.Name]=u;
+        foreach(var u in Files("/def/world/","traffic_lane").Where(u=>u.Class=="traffic_lane_data"))
         {
-            citySignNames=new(fs);
-            IEnumerable<Unit> Files(string directory,string prefix) => fs.GetFiles(directory)
-                .Where(p=>fs.GetParent(p).TrimEnd('/')==directory.TrimEnd('/')
-                    && Path.GetFileName(p).StartsWith(prefix,StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal))
-                .Order(StringComparer.Ordinal).SelectMany(p=>fs.GetSii(p).Units);
-            foreach(var u in Files("/def/world/","traffic_rules"))rules[u.Name]=u;
-            foreach(var u in Files("/def/world/","traffic_lane").Where(u=>u.Class=="traffic_lane_data"))
+            laneClasses[u.Name]=Text(u,"speed_class");
+            if(Values(u,"traffic_rules").Select(Link).Any(name=>HasSingleTrackRule(name,[])))singleTrackLanes.Add(u.Name);
+            lanePlayerAccess[u.Name]=playerAccess.Read(Values(u,"traffic_rules").Select(Link));
+            if(lanePlayerAccess[u.Name]==false)playerForbiddenLanes.Add(u.Name);
+        }
+        foreach(var u in Files("/def/world/","road_look"))roadUnits[u.Name]=u;
+        foreach(var u in roadUnits.Values.Where(u=>u.Class=="road_look"))
+            roadLooks[u.Name.Split('.').Last()]=u;
+        foreach(var u in Files("/def/world/","sign").Where(u=>u.Class=="sign_model"))
+        {
+            string model=u.Name.Split('.').Last();
+            signRules[model]=Link(Value(u,"traffic_rule"));signs[model]=Action(signRules[model],[]);
+        }
+        foreach(var u in Files("/def/","city").Where(u=>u.Class=="city_data"))
+            cityCountries[u.Name.Split('.').Last()]=Link(Value(u,"country")).Split('.').Last();
+        var countryUnits=Files("/def/","country").Where(u=>u.Class=="country_data").ToArray();
+        foreach(var group in countryUnits.Select(u=>(Name:u.Name.Split('.').Last(),Ids:Numbers(u,"country_id")))
+            .Where(p=>p.Ids.Length==1&&p.Ids[0] is >0 and <=255).GroupBy(p=>(byte)p.Ids[0]))
+        {
+            var names=group.Select(p=>p.Name).Distinct(StringComparer.Ordinal).ToArray();
+            if(names.Length==1)countryNames[group.Key]=names[0];
+        }
+        var countries=countryUnits.Select(u=>u.Name.Split('.').Last())
+            .Concat(cityCountries.Values).Where(p=>!string.IsNullOrEmpty(p)).Distinct().ToArray();
+        foreach(string country in countries)
+        {
+            string directory="/def/country/"+country;
+            if(!fs.DirectoryExists(directory))continue;
+            foreach(var u in fs.GetFiles(directory).Where(p=>Path.GetFileName(p).StartsWith("speed_limits",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal))
+                .OrderBy(p=>Path.GetFileName(p)=="speed_limits.sii"?0:1).ThenBy(p=>p,StringComparer.Ordinal)
+                .SelectMany(p=>fs.GetSii(p).Units).Where(u=>Text(u,"vehicle_speed_class")=="truck"))
             {
-                laneClasses[u.Name]=Text(u,"speed_class");
-                if(Values(u,"traffic_rules").Select(Link).Any(name=>HasSingleTrackRule(name,[])))singleTrackLanes.Add(u.Name);
-                lanePlayerAccess[u.Name]=playerAccess.Read(Values(u,"traffic_rules").Select(Link));
-                if(lanePlayerAccess[u.Name]==false)playerForbiddenLanes.Add(u.Name);
-            }
-            foreach(var u in Files("/def/world/","road_look"))roadUnits[u.Name]=u;
-            foreach(var u in roadUnits.Values.Where(u=>u.Class=="road_look"))
-                roadLooks[u.Name.Split('.').Last()]=u;
-            foreach(var u in Files("/def/world/","sign").Where(u=>u.Class=="sign_model"))
-            {
-                string model=u.Name.Split('.').Last();
-                signRules[model]=Link(Value(u,"traffic_rule"));signs[model]=Action(signRules[model],[]);
-            }
-            foreach(var u in Files("/def/","city").Where(u=>u.Class=="city_data"))
-                cityCountries[u.Name.Split('.').Last()]=Link(Value(u,"country")).Split('.').Last();
-            var countryUnits=Files("/def/","country").Where(u=>u.Class=="country_data").ToArray();
-            foreach(var group in countryUnits.Select(u=>(Name:u.Name.Split('.').Last(),Ids:Numbers(u,"country_id")))
-                .Where(p=>p.Ids.Length==1&&p.Ids[0] is >0 and <=255).GroupBy(p=>(byte)p.Ids[0]))
-            {
-                var names=group.Select(p=>p.Name).Distinct(StringComparer.Ordinal).ToArray();
-                if(names.Length==1)countryNames[group.Key]=names[0];
-            }
-            var countries=countryUnits.Select(u=>u.Name.Split('.').Last())
-                .Concat(cityCountries.Values).Where(p=>!string.IsNullOrEmpty(p)).Distinct().ToArray();
-            foreach(string country in countries)
-            {
-                string directory="/def/country/"+country;
-                if(!fs.DirectoryExists(directory))continue;
-                foreach(var u in fs.GetFiles(directory).Where(p=>Path.GetFileName(p).StartsWith("speed_limits",StringComparison.Ordinal)&&p.EndsWith(".sii",StringComparison.Ordinal))
-                    .OrderBy(p=>Path.GetFileName(p)=="speed_limits.sii"?0:1).ThenBy(p=>p,StringComparer.Ordinal)
-                    .SelectMany(p=>fs.GetSii(p).Units).Where(u=>Text(u,"vehicle_speed_class")=="truck"))
-                {
-                    var classes=Values(u,"lane_speed_class").Select(Link).ToArray();
-                    var rural=Numbers(u,"limit");var urban=Numbers(u,"urban_limit");var maximum=Numbers(u,"max_limit");
-                    for(int i=0;i<classes.Length;i++)if(i<rural.Length&&i<urban.Length)
-                        limits[country+"/"+classes[i]]=new(rural[i],urban[i],i<maximum.Length?maximum[i]:0);
-                }
+                var classes=Values(u,"lane_speed_class").Select(Link).ToArray();
+                var rural=Numbers(u,"limit");var urban=Numbers(u,"urban_limit");var maximum=Numbers(u,"max_limit");
+                for(int i=0;i<classes.Length;i++)if(i<rural.Length&&i<urban.Length)
+                    limits[country+"/"+classes[i]]=new(rural[i],urban[i],i<maximum.Length?maximum[i]:0);
             }
         }
-        catch(Exception ex) when(ex is not OutOfMemoryException)
-        { error="限速定义加载失败："+ex.GetType().Name+": "+ex.Message; }
     }
 
     public void PrepareHost(TruckLib.ScsMap.Map? hostMap, CancellationToken cancellationToken = default)
@@ -98,7 +92,6 @@ public sealed class SpeedLimitDefinitionReader
     /// <summary>Prepared host country plus directed road category, excluding signs and traffic/city areas.</summary>
     public SpeedLimitResult RoadCategoryLimit(Road road,bool forward)
     {
-        if(error is not null)return new(null,error);
         if(hostCountries is null)return new(null,"宿主国家索引尚未准备");
         if(hostCountries.IsUncertain(road.Uid))return new(null,"道路国家归属存在冲突");
         string? country=hostCountries.GetCountry(road.Uid);
@@ -115,7 +108,6 @@ public sealed class SpeedLimitDefinitionReader
 
     public SpeedLimitData Build(TruckLib.ScsMap.Map map,CancellationToken cancellationToken, TruckLib.ScsMap.Map? hostMap = null, IReadOnlyList<LimitRegion>? regionsOverride = null)
     {
-        if(error is not null)return SpeedLimitData.Empty with{Error=error};
         var roads=new Dictionary<ulong,LimitRoad>();
         foreach(var road in map.MapItems.Values.OfType<Road>().Where(r=>r.Node is Node&&r.ForwardNode is Node))
         {
@@ -137,9 +129,9 @@ public sealed class SpeedLimitDefinitionReader
                 // Its editable template supplies the city name/layout, not the urban state.
                 // Keep the conservative template check for numeric or unresolved rules.
                 bool fixedUrban=action.Urban.HasValue&&!action.Unsupported&&(action.SetKph is null
-                    ||citySignNames?.TrafficRule(sign)==signRules.GetValueOrDefault(sign.Model.ToString()));
+                    ||citySignNames.TrafficRule(sign)==signRules.GetValueOrDefault(sign.Model.ToString()));
                 placedSigns.Add(new(sign.Uid.ToString("X16"),sign.Node.Position,Vector3.Transform(-Vector3.UnitZ,sign.Node.Rotation),
-                    sign.FollowRoadDir,action,hasTemplate&&!fixedUrban){CityName=action.Urban==true?citySignNames?.Read(sign):null});
+                    sign.FollowRoadDir,action,hasTemplate&&!fixedUrban){CityName=action.Urban==true?citySignNames.Read(sign):null});
             }
         var regions=regionsOverride??ReadRegions(map);
         PrepareHost(hostMap, cancellationToken);

@@ -22,8 +22,20 @@ public sealed record LimitRoad(DirectedRoad Geometry, string? SpeedClass)
     public string? ClassFor(DirectedRoad directed) => DirectionalClasses is null?SpeedClass:
         directed.StartNodeUid==Geometry.StartNodeUid&&directed.EndNodeUid==Geometry.EndNodeUid?DirectionalClasses.Forward:
         directed.StartNodeUid==Geometry.EndNodeUid&&directed.EndNodeUid==Geometry.StartNodeUid?DirectionalClasses.Reverse:null;
-    public string? Country { get; init; }
+    private string? country;
+    private Func<MapQueryResult<string>>? countryQuery;
+    // Explicit country metadata remains useful to callers constructing their own
+    // LimitRoad values. Loaded game roads provide the native query instead.
+    public string? Country { get=>country; init {country=value;countryQuery=null;} }
+    internal Func<MapQueryResult<string>>? CountryQuery { init=>countryQuery=value; }
     public bool CountryUncertain { get; init; }
+    public MapQueryResult<string> QueryCountry()
+    {
+        if(countryQuery is not null)return countryQuery();
+        if(CountryUncertain)throw new InvalidDataException($"Road {Geometry.Id}: country evidence conflicts.");
+        return country is not null?MapQueryResult<string>.Ready(country):MapQueryResult<string>.Unavailable(
+            new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,$"Road {Geometry.Id}: country evidence is unavailable."));
+    }
 }
 public sealed record DirectionalSpeedClasses(string? Forward,string? Reverse);
 public sealed record LimitRegion(string Id, IReadOnlyList<Vector3> Points, float Height, bool Urban, int? SetKph = null)

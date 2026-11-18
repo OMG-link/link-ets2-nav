@@ -93,9 +93,9 @@ public sealed class SpeedLimitDefinitionReader
     public SpeedLimitResult RoadCategoryLimit(Road road,bool forward)
     {
         if(hostCountries is null)return new(null,"宿主国家索引尚未准备");
-        if(hostCountries.IsUncertain(road.Uid))return new(null,"道路国家归属存在冲突");
-        string? country=hostCountries.GetCountry(road.Uid);
-        if(country is null)return new(null,"道路国家归属未知");
+        var result=hostCountries.QueryCountry(road.Uid);
+        if(result.Issue is {} issue)return new(null,issue.Reason){MapIssue=issue};
+        string country=result.Value!;
         string? speedClass=RoadClass(road,forward?road.LeftHandTraffic:!road.LeftHandTraffic);
         if(speedClass is null)return new(null,"道路类别或变体未知");
         if(!TruckSpeedLimitRules.TryGet(limits,country,speedClass,out var rule,out bool usedDefault)||rule.Rural<=0)
@@ -136,24 +136,8 @@ public sealed class SpeedLimitDefinitionReader
         var regions=regionsOverride??ReadRegions(map);
         PrepareHost(hostMap, cancellationToken);
         var countryIndex=RoadCountryIndex.Build(map,countryNames,cancellationToken);
-        // Global evidence is authoritative, including ambiguity; local city seeds cannot override it.
-        if (hostMap is not null && hostCountries is not null)
-            foreach (ulong uid in roads.Keys.ToArray())
-                if (hostCountries.Contains(uid))
-                    roads[uid] = roads[uid] with { Country = hostCountries.GetCountry(uid), CountryUncertain = hostCountries.IsUncertain(uid) };
-        // Only a road actually inside a city's polygon may borrow its country evidence.
-        // A city on another island or across a border is never a map-window default.
-        foreach(var region in regions.Where(r=>r.Country is not null))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            foreach(var (uid,road) in roads)
-                if(road.Geometry.Points.Any(region.Contains))countryIndex.AddSeed(uid,region.Country!);
-        }
         foreach(ulong uid in roads.Keys.ToArray())
-            if (hostMap is null || hostCountries is null || !hostCountries.Contains(uid))
-                roads[uid]=roads[uid] with { Country=countryIndex.GetCountry(uid), CountryUncertain=countryIndex.IsUncertain(uid) };
-            else if (roads[uid].Country is null && !roads[uid].CountryUncertain)
-                roads[uid]=roads[uid] with { Country=countryIndex.GetCountry(uid), CountryUncertain=countryIndex.IsUncertain(uid) };
+            roads[uid]=roads[uid] with{CountryQuery=()=>countryIndex.QueryCountry(uid)};
         return new(roads,placedSigns,regions,limits,null);
     }
     public IReadOnlyList<LimitRegion> ReadRegions(TruckLib.ScsMap.Map map)

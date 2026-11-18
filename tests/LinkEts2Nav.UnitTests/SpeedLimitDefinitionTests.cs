@@ -5,6 +5,11 @@ using TruckLib.ScsMap;
 namespace LinkEts2Nav.UnitTests;
 public sealed class SpeedLimitDefinitionTests
 {
+    private static void SetRoadCountry(Road road,byte country=35)
+    {
+        road.Node.ForwardItem=road;road.Node.ForwardCountry=country;
+        road.ForwardNode.BackwardItem=road;road.ForwardNode.BackwardCountry=country;
+    }
     private static string Format(string text) => System.Text.RegularExpressions.Regex.Replace(text.Replace("{","{\\n").Replace("}","\\n}"), @"([a-z_]+(?:\[\])?):", "\\n$1:").Replace("\\n","\n");
     private sealed class Fs : IFileSystem
     {
@@ -172,7 +177,7 @@ public sealed class SpeedLimitDefinitionTests
         var fs=new Fs();
         fs.Files["/def/country/norway/speed_limits.sii"]="""SiiNunit { country_speed_limit : .speed_limit.truck { vehicle_speed_class: truck lane_speed_class[]: local_road limit[]: 90 urban_limit[]: 30 max_limit[]: 80 } }""";
         var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);road.RoadType="un11";
-        road.Node.IsCountryBorder=true;road.Node.ForwardItem=road;road.Node.ForwardCountry=35;
+        road.Node.IsCountryBorder=true;SetRoadCountry(road);
         var reader=new SpeedLimitDefinitionReader(fs);
         Assert.Null(reader.RoadCategoryLimit(road,true).Kph);
         reader.PrepareHost(map,TestContext.Current.CancellationToken);
@@ -187,7 +192,7 @@ public sealed class SpeedLimitDefinitionTests
         fs.Files["/def/world/traffic_lane.sii"]="""SiiNunit { traffic_lane_data : traffic_lane.road.local { speed_class: slow_road } }""";
         fs.Files["/def/country/norway/speed_limits.sii"]="SiiNunit {}";
         var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(100,0,0),default);road.RoadType="un11";
-        road.Node.IsCountryBorder=true;road.Node.ForwardItem=road;road.Node.ForwardCountry=35;
+        road.Node.IsCountryBorder=true;SetRoadCountry(road);
         var reader=new SpeedLimitDefinitionReader(fs);reader.PrepareHost(map,TestContext.Current.CancellationToken);
         var result=reader.RoadCategoryLimit(road,true);
         Assert.Equal(30,result.Kph);Assert.Contains(TruckSpeedLimitRules.DefaultReason,result.Reason);
@@ -350,7 +355,22 @@ public sealed class SpeedLimitDefinitionTests
     }
 
     [Fact]
-    public void NearbyRoadUsesDistantHostBorderAndRebuildsForNewMap()
+    public void PreparingHostAndWindowDoesNotQueryUnrelatedZeroCountryRoads()
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var invalid=Road.Add(map,new(0,0,0),new(100,0,0),"un11");
+        var valid=Road.Add(map,new(200,0,0),new(300,0,0),"un11");SetRoadCountry(valid);
+        var reader=new SpeedLimitDefinitionReader(new Fs());
+        reader.PrepareHost(map,TestContext.Current.CancellationToken);
+        var data=reader.Build(map,TestContext.Current.CancellationToken);
+        Assert.Equal(80,reader.RoadCategoryLimit(valid,true).Kph);
+        Assert.Equal("norway",data.Roads[valid.Uid].QueryCountry().Value);
+        Assert.Throws<InvalidDataException>(()=>reader.RoadCategoryLimit(invalid,true));
+        Assert.Throws<InvalidDataException>(()=>data.Roads[invalid.Uid].QueryCountry());
+    }
+
+    [Fact]
+    public void NearbyRoadUsesItsOwnEndpointEvidenceIndependentlyOfHostBorders()
     {
         var host = new TruckLib.ScsMap.Map();
         var first=Road.Add(host,new(0,0,0),new(1000,0,0),default);
@@ -359,14 +379,15 @@ public sealed class SpeedLimitDefinitionTests
         first.Node.IsCountryBorder=true;
         first.Node.ForwardItem=first;
         first.Node.ForwardCountry=35;
+        SetRoadCountry(next);
         var nearby=new TruckLib.ScsMap.Map();
         nearby.MapItems.Add(next.Uid,next);
         var reader=new SpeedLimitDefinitionReader(new Fs());
         var data=reader.Build(nearby,TestContext.Current.CancellationToken,host);
-        Assert.Equal("norway",data.Roads[next.Uid].Country);
+        Assert.Equal("norway",data.Roads[next.Uid].QueryCountry().Value);
         var empty=new TruckLib.ScsMap.Map();
         data=reader.Build(nearby,TestContext.Current.CancellationToken,empty);
-        Assert.Null(data.Roads[next.Uid].Country);
+        Assert.Equal("norway",data.Roads[next.Uid].QueryCountry().Value);
     }
 
     [Fact]
@@ -380,7 +401,7 @@ public sealed class SpeedLimitDefinitionTests
         CityArea.Add(map,new(500,0,0),"test",1000,1000);
         var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
         Assert.Null(data.Error);
-        Assert.Null(data.Roads[road.Uid].Country);
+        Assert.Throws<InvalidDataException>(()=>data.Roads[road.Uid].QueryCountry());
         Assert.Null(Assert.Single(data.Regions).Country);
     }
     [Fact]
@@ -392,12 +413,13 @@ public sealed class SpeedLimitDefinitionTests
         var map=new TruckLib.ScsMap.Map();
         var first=Road.Add(map,new(0,0,0),new(1000,0,0),default); first.RoadType="un11";
         var other=Road.Add(map,new(10000,0,0),new(11000,0,0),default); other.RoadType="un11";
+        SetRoadCountry(first);SetRoadCountry(other,22);
         CityArea.Add(map,new(500,0,0),"test",1000,1000);
         CityArea.Add(map,new(10500,0,0),"other",1000,1000);
         var data=new SpeedLimitDefinitionReader(fs).Build(map,TestContext.Current.CancellationToken);
         Assert.Null(data.Country);
-        Assert.Equal("norway",data.Roads[first.Uid].Country);
-        Assert.Equal("estonia",data.Roads[other.Uid].Country);
+        Assert.Equal("norway",data.Roads[first.Uid].QueryCountry().Value);
+        Assert.Equal("estonia",data.Roads[other.Uid].QueryCountry().Value);
     }
 
     [Fact]
@@ -408,8 +430,9 @@ public sealed class SpeedLimitDefinitionTests
         road.Node.IsCountryBorder=true;
         road.Node.ForwardItem=road;
         road.Node.ForwardCountry=35;
+        road.ForwardNode.BackwardItem=road;road.ForwardNode.BackwardCountry=35;
         var data=new SpeedLimitDefinitionReader(new Fs()).Build(map,TestContext.Current.CancellationToken);
-        Assert.Equal("norway",data.Roads[road.Uid].Country);
+        Assert.Equal("norway",data.Roads[road.Uid].QueryCountry().Value);
     }
 
     [Fact]
@@ -417,13 +440,13 @@ public sealed class SpeedLimitDefinitionTests
     {
         var map=new TruckLib.ScsMap.Map();
         var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);
-        road.RoadType="un11";
+        road.RoadType="un11";SetRoadCountry(road);
         CityArea.Add(map,new(500,0,0),"test",1000,1000);
         Sign.Add(map,new(400,0,5),"test");
         var data=new SpeedLimitDefinitionReader(new Fs()).Build(map,TestContext.Current.CancellationToken);
         Assert.Null(data.Error);
         Assert.Null(data.Country);
-        Assert.Equal("norway",data.Roads[road.Uid].Country);
+        Assert.Equal("norway",data.Roads[road.Uid].QueryCountry().Value);
         Assert.Equal("local_road",data.Roads[road.Uid].SpeedClass);
         Assert.Equal(50,data.Limits["norway/local_road"].Urban);
         Assert.Equal(60,Assert.Single(data.Signs).Action.SetKph);

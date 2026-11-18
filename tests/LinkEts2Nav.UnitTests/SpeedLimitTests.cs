@@ -14,7 +14,7 @@ public sealed class SpeedLimitTests
         var road=Road.Add(map,new(0,0,0),new(1000,0,0),default);
         var geometry=new DirectedRoad(road.Uid.ToString("X16"),road.Node.Uid,road.ForwardNode.Uid,
             Enumerable.Range(0,201).Select(i=>new Vector3(i*5,0,0)).ToArray());
-        return(map,road,new(new Dictionary<ulong,LimitRoad>{{road.Uid,new(geometry,"local_road")}},[Sign("initial-reset",1,new(Reset:true)),..signs],[],
+        return(map,road,new(new Dictionary<ulong,LimitRoad>{{road.Uid,new(geometry,"local_road"){Country="norway"}}},[Sign("initial-reset",1,new(Reset:true)),..signs],[],
             new Dictionary<string,TruckSpeedLimit>{{"norway/local_road",new(80,50,80)}},"norway"));
     }
     private static LimitSign Sign(string id,float x,LimitAction action,bool reverse=false)
@@ -46,7 +46,7 @@ public sealed class SpeedLimitTests
         s.Data=s.Data with { Roads=new Dictionary<ulong,LimitRoad>{
             [s.Road.Uid]=s.Data.Roads[s.Road.Uid] with { CountryUncertain=true } },
             Regions=[new("city",[new(650,0,-100),new(1000,0,-100),new(1000,0,100),new(650,0,100)],0,true){Country="norway"}] };
-        Assert.Null(Resolve(s).Kph);
+        Assert.Throws<InvalidDataException>(()=>Resolve(s));
     }
     [Fact]
     public void RoadCountryResolvesRuralLimitWithoutMapWindowCountry()
@@ -58,13 +58,13 @@ public sealed class SpeedLimitTests
     }
 
     [Fact]
-    public void ConflictingRoadAndContainingCityCountriesRemainUnknown()
+    public void ContainingCityCountryDoesNotOverrideRoadCountry()
     {
         var s=Scene();
         s.Data=s.Data with { Country=null, Roads=new Dictionary<ulong,LimitRoad>{
             [s.Road.Uid]=s.Data.Roads[s.Road.Uid] with { Country="norway" } },
             Regions=[new("foreign-city",[new(650,0,-100),new(1000,0,-100),new(1000,0,100),new(650,0,100)],0,true){Country="finland"}] };
-        Assert.Null(Resolve(s).Kph);
+        Assert.Equal(50,Resolve(s).Kph);
     }
 
     [Fact] public void DefaultRuralAndCityLimitsUseCameraPosition()
@@ -90,8 +90,20 @@ public sealed class SpeedLimitTests
         =>Assert.Equal(60,Resolve(Scene(Sign("unknown",100,new(Unsupported:true)),Sign("known",400,new(SetKph:60)))).Kph);
     [Fact] public void MissingCountryDoesNotGuess()
     {
-        var s=Scene();s.Data=s.Data with{Country=null};
+        var s=Scene();s.Data=s.Data with{Country=null,Roads=new Dictionary<ulong,LimitRoad>{
+            [s.Road.Uid]=s.Data.Roads[s.Road.Uid] with{Country=null}}};
         Assert.Null(Resolve(s).Kph);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MissingRoadCountryDoesNotUseGlobalOrContainingRegion(bool includeRegion)
+    {
+        var s=Scene();s.Data=s.Data with{Roads=new Dictionary<ulong,LimitRoad>{
+            [s.Road.Uid]=s.Data.Roads[s.Road.Uid] with{Country=null}},
+            Regions=includeRegion?[new("city",[new(650,0,-100),new(1000,0,-100),new(1000,0,100),new(650,0,100)],0,true){Country="norway"}]:[]};
+        var result=Resolve(s);
+        Assert.Null(result.Kph);Assert.Contains("country evidence is unavailable",result.Reason);
     }
     [Fact] public void RegionHeightDoesNotAffectOverpass()
     {

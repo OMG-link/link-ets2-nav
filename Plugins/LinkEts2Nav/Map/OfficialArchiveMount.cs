@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text.RegularExpressions;
 using System.IO.Compression;
 using TruckLib;
@@ -29,13 +30,20 @@ public sealed class OfficialArchiveMount : IDisposable
     {
         var selected = paths.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (selected.Length == 0) throw new ArgumentException("No official game archives were selected.", nameof(paths));
+        bool complete=false;
         try
         {
-            foreach (var path in selected) readers.Add((IFileSystem)HashFsReader.Open(path));
+            foreach(var path in selected)
+            {
+                var stream=File.OpenRead(path);bool registered=false;
+                try { readers.Add((IFileSystem)HashFsReader.Open(stream));registered=true; }
+                finally { if(!registered)stream.Dispose(); }
+            }
             FileSystem = new AssetLoader(readers.ToArray());
             ArchivePaths = Array.AsReadOnly(selected);
+            complete=true;
         }
-        catch { Dispose(); throw; }
+        finally { if(!complete)Dispose(); }
     }
 
     public static OfficialArchiveMount FromGameLog(string gamePath, IEnumerable<string> logLines)
@@ -141,39 +149,49 @@ public sealed class OfficialArchiveMount : IDisposable
         if (Directory.Exists(modPath))
             return Directory.EnumerateFiles(modPath, "*", SearchOption.AllDirectories)
                 .Select(path => Path.GetRelativePath(modPath, path).Replace('\\', '/')).FirstOrDefault(path => Conflicts(path, () => File.ReadAllBytes(Path.Combine(modPath, path))));
-        try
+        using var stream=File.OpenRead(modPath);
+        bool hash=IsHashFs(stream);
+        stream.Position=0;
+        if(!hash)
         {
-            using var zip = ZipFile.OpenRead(modPath);
-            return zip.Entries.FirstOrDefault(entry => entry.Name.Length > 0
-                && Conflicts(entry.FullName, () => ReadZipEntry(entry)))?.FullName;
+            using var zip=new ZipArchive(stream,ZipArchiveMode.Read,leaveOpen:true);
+            return zip.Entries.FirstOrDefault(entry=>entry.Name.Length>0
+                &&Conflicts(entry.FullName,()=>ReadZipEntry(entry)))?.FullName;
         }
-        catch (InvalidDataException)
+        var reader=HashFsReader.Open(stream);
+        using var owner=reader as IDisposable;
+        var fs=(IFileSystem)reader;
+        var pending=new Stack<string>(RelevantRoots.Select(p=>"/"+p).Where(fs.DirectoryExists));
+        var visited=new HashSet<string>(StringComparer.Ordinal);
+        while(pending.TryPop(out string? path))
         {
-            try
-            {
-                var reader = HashFsReader.Open(modPath);
-                try
-                {
-                    var fs = (IFileSystem)reader;
-                    var pending = new Stack<string>(RelevantRoots.Select(p => "/" + p).Where(fs.DirectoryExists));
-                    var visited = new HashSet<string>(StringComparer.Ordinal);
-                    while (pending.TryPop(out string? path))
-                    {
-                        if (!visited.Add(path)) continue;
-                        var listing = reader.GetDirectoryListing(path, filesOnly: false, returnAbsolute: true);
-                        string? conflict = listing.Files.FirstOrDefault(path => Conflicts(path, () => fs.ReadAllBytes(path)));
-                        if (conflict is not null) return conflict;
-                        foreach (string directory in listing.Subdirectories) pending.Push(directory);
-                    }
-                    return null;
-                }
-                finally { (reader as IDisposable)?.Dispose(); }
-            }
-            catch (Exception ex)
-            {
-                throw new NotSupportedException($"Cannot verify active mod archive {Path.GetFileName(modPath)}: {ex.Message}", ex);
-            }
+            if(!visited.Add(path))continue;
+            var listing=reader.GetDirectoryListing(path,filesOnly:false,returnAbsolute:true);
+            string? conflict=listing.Files.FirstOrDefault(path=>Conflicts(path,()=>fs.ReadAllBytes(path)));
+            if(conflict is not null)return conflict;
+            foreach(string directory in listing.Subdirectories)pending.Push(directory);
         }
+        return null;
+    }
+
+    // Dispatch by format facts, never by catching one reader's failure. ZIPs
+    // with a leading stub retain their standard end-of-central-directory record.
+    private static bool IsHashFs(Stream stream)
+    {
+        Span<byte> header=stackalloc byte[4];
+        if(stream.ReadAtLeast(header,4,throwOnEndOfStream:false)==4)
+        {
+            uint signature=BinaryPrimitives.ReadUInt32LittleEndian(header);
+            if(signature==Header.Magic)return true;
+            if(signature is 0x04034B50 or 0x06054B50 or 0x08074B50)return false;
+        }
+        int length=(int)Math.Min(stream.Length,22+ushort.MaxValue);
+        var tail=new byte[length];stream.Position=stream.Length-length;stream.ReadExactly(tail);
+        for(int i=tail.Length-22;i>=0;i--)
+            if(BinaryPrimitives.ReadUInt32LittleEndian(tail.AsSpan(i,4))==0x06054B50
+                &&BinaryPrimitives.ReadUInt16LittleEndian(tail.AsSpan(i+20,2))==tail.Length-i-22)
+                return false;
+        throw new InvalidDataException("Archive has neither a HashFS signature nor a ZIP header/end record.");
     }
 
 
@@ -182,19 +200,15 @@ public sealed class OfficialArchiveMount : IDisposable
         if (!IsRelevantAsset(path)) return false;
         if (!path.Replace('\\', '/').TrimStart('/').Equals("unit/hookup/tollgate.sii", StringComparison.OrdinalIgnoreCase))
             return true;
-        try
-        {
-            byte[] bytes = read();
-            if (bytes.Length > 2 * 1024 * 1024) return true;
-            string text = System.Text.Encoding.UTF8.GetString(bytes);
-            if (!text.TrimStart('\uFEFF', ' ', '\r', '\n', '\t').StartsWith("SiiNunit", StringComparison.Ordinal)
-                || text.Contains("@include", StringComparison.OrdinalIgnoreCase)) return true;
-            var units = TruckLib.Sii.SiiFile.Load(bytes, "/unit/hookup/tollgate.sii").Units;
-            return units.Count == 0 || units.Any(unit =>
-                unit.Class is not "tollgate" and not "lod_model_hookup"
-                || unit.Name.StartsWith("speedcam", StringComparison.OrdinalIgnoreCase));
-        }
-        catch { return true; } // Unknown definitions retain the original conservative behavior.
+        byte[] bytes = read();
+        if (bytes.Length > 2 * 1024 * 1024) return true;
+        string text = System.Text.Encoding.UTF8.GetString(bytes);
+        if (!text.TrimStart('\uFEFF', ' ', '\r', '\n', '\t').StartsWith("SiiNunit", StringComparison.Ordinal)
+            || text.Contains("@include", StringComparison.OrdinalIgnoreCase)) return true;
+        var units = TruckLib.Sii.SiiFile.Load(bytes, "/unit/hookup/tollgate.sii").Units;
+        return units.Count == 0 || units.Any(unit =>
+            unit.Class is not "tollgate" and not "lod_model_hookup"
+            || unit.Name.StartsWith("speedcam", StringComparison.OrdinalIgnoreCase));
     }
 
     private static byte[] ReadZipEntry(ZipArchiveEntry entry)

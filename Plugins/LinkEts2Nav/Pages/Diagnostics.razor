@@ -220,16 +220,28 @@
         if (previewing) return;
         previewing = true;
         audioMessage = "正在提交试听请求……";
-        ETS2LA.Logging.Logger.Info("[[LinkEts2Nav]] 手动试听预警音（不计为探头预警）。");
         try
         {
+            ETS2LA.Logging.Logger.Info("[[LinkEts2Nav]] 手动试听预警音（不计为探头预警）。");
             var announcer = new Ets2LaWarningAnnouncer(cancellationToken: stop.Token);
             bool queued = await Task.Run(() => announcer.TryPlay(), stop.Token);
             audioMessage = queued ? "试听请求已提交；若未听到声音，请检查宿主音频设置和日志。" : "试听未能提交，请查看音频错误日志。";
             await Task.Delay(TimeSpan.FromSeconds(6), stop.Token);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException error) when (stop.IsCancellationRequested && error.CancellationToken == stop.Token) { }
+        catch (System.Text.Json.JsonException error) { ReportAudioPreviewFailure(error); }
+        catch (InvalidDataException error) { ReportAudioPreviewFailure(error); }
+        catch (IOException error) { ReportAudioPreviewFailure(error); }
+        catch (UnauthorizedAccessException error) { ReportAudioPreviewFailure(error); }
         finally { previewing = false; }
+    }
+
+    private void ReportAudioPreviewFailure(Exception error)
+    {
+        audioMessage = "试听失败：" + error.Message;
+        if(error is FileNotFoundException { FileName: { } file }) audioMessage += " 文件：" + file;
+        string detail = "[[LinkEts2Nav]] 预警音试听失败：" + error.ToString().Replace("[", "[[").Replace("]", "]]");
+        ETS2LA.Logging.Logger.Warn(detail);
     }
 
     private NavDiagnosticSnapshot snapshot = NavDiagnostics.Current;

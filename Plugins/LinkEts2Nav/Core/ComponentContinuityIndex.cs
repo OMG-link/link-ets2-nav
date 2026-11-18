@@ -97,8 +97,18 @@ public sealed class ComponentContinuityIndex
         }
         bool Same(ComponentBoundary? a,ComponentBoundary? b)=>a is not null&&b is not null&&a.EdgeId==b.EdgeId
             &&a.StartNodeUid==b.StartNodeUid&&a.EndNodeUid==b.EndNodeUid&&Math.Abs(a.OffsetMeters-b.OffsetMeters)<1e-6;
-        var owner=fact.Lanes.FirstOrDefault(l=>Same(l.Terminal,fact.ActionPoint)||Same(l.SoftAction,fact.ActionPoint))
-            ??fact.Lanes.FirstOrDefault();
+        // Aggregate chooses its action from exactly one of these original
+        // lane anchors. Restore that same owner, never an arbitrary first lane.
+        ComponentBoundary? OwnerPoint(ComponentLaneOutcome lane)=>fact.Kind switch
+        {
+            ComponentContinuityKind.Main or ComponentContinuityKind.Natural=>lane.InitialMidpoint,
+            ComponentContinuityKind.Hard=>lane.Terminal,
+            ComponentContinuityKind.Soft=>lane.InComponent&&lane.Fate==ComponentLaneFate.Dies?lane.Terminal:lane.SoftAction,
+            _=>null
+        };
+        var owner=fact.Kind is ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular?null:
+            fact.Lanes.FirstOrDefault(l=>Same(OwnerPoint(l),fact.ActionPoint))
+                ??throw new ArgumentException($"Reverse component {fact.EdgeId} ({fact.Kind}) has no lane owning its action anchor.",nameof(fact));
         var turns=fact.Lanes.Select(ActualTurn).ToArray();
         var directions=turns.Where(t=>t?.Side is NavigationSide.Left or NavigationSide.Right).Select(t=>t!.Side).Distinct().ToArray();
         var issue=fact.Issue;

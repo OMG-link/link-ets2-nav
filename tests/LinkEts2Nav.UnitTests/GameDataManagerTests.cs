@@ -122,13 +122,48 @@ public sealed class GameDataManagerTests
     }
 
     [Fact]
-    public void BrokenOptionalSignCatalogueIsDiagnosedWithoutBlockingPreparation()
+    public void BrokenCataloguePropagatesItsCachedOriginalParsingFailure()
     {
         var fs=new Files();fs.Content["/def/sign/templates.sii"]="not a SII document";
-        var data=new GameDataManager(fs);data.Prepare(TestContext.Current.CancellationToken);
-        Assert.Contains(data.Diagnostics,d=>d.Contains("/def/sign/templates.sii"));
-        Assert.NotNull(data.SpeedLimits);
-        data.Prepare(TestContext.Current.CancellationToken);Assert.Equal(1,fs.Reads["/def/sign/templates.sii"]);
+        using var data=new GameDataManager(fs);
+        var original=Record.Exception(()=>data.GetSii("/def/sign/templates.sii"));Assert.NotNull(original);
+        Assert.Same(original,Record.Exception(()=>data.Prepare(TestContext.Current.CancellationToken)));
+        Assert.Equal(1,fs.Reads["/def/sign/templates.sii"]);
+        Assert.Empty(data.Diagnostics);
+    }
+
+    [Fact]
+    public void CatalogueProjectionErrorsAreNotConvertedIntoMissingDefinitions()
+    {
+        var fs=new Files();fs.Content["/def/test.sii"]="SiiNunit { test : .one {} }";
+        using var data=new GameDataManager(fs);var original=new NotSupportedException("unhandled projection");
+        Assert.Same(original,Assert.Throws<NotSupportedException>(()=>data.TryDefinitions("/def/test.sii",_=>throw original)));
+        Assert.Contains(nameof(CatalogueProjectionErrorsAreNotConvertedIntoMissingDefinitions),original.StackTrace);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MissingConnectionSeparatesAbsentDescriptorFromReadFailure(bool absent)
+    {
+        var fs=new Files();fs.Content["/def/world/prefab.test.sii"]="SiiNunit { prefab_model : prefab.test { prefab_desc: \"/prefab/test.ppd\" } }";
+        if(!absent)fs.Content["/prefab/test.ppd"]="present descriptor";
+        var original=new IOException("asset read failed");fs.Failures["/prefab/test.ppd"]=original;
+        var map=new TruckLib.ScsMap.Map();var node=new Node{Uid=10,Position=Vector3.Zero};
+        var prefab=new Prefab{Uid=42,Model=new Token("test"),Nodes=[node]};node.ForwardItem=prefab;
+        map.Nodes.Add(10,node);map.MapItems.Add(42,prefab);
+        using var data=new GameDataManager(fs,map:map);
+        MapQueryIssue Query()=>data.DescribeMissingConnection(10,new HashSet<ulong>{42},new HashSet<SectorCoordinate>{new(0,0)});
+        if(absent)
+        {
+            Assert.Contains("/prefab/test.ppd is missing",Assert.IsType<MapQueryFailure>(Query()).Reason);
+            Assert.False(fs.Reads.ContainsKey("/prefab/test.ppd"));
+        }
+        else
+        {
+            Assert.Same(original,Assert.Throws<IOException>(()=>Query()));
+            Assert.Contains(nameof(Files.ReadAllBytes),original.StackTrace);
+        }
     }
 
     [Fact]
@@ -144,6 +179,7 @@ public sealed class GameDataManagerTests
     private sealed class Files:IFileSystem
     {
         public readonly Dictionary<string,string> Content=new(StringComparer.Ordinal);
+        public readonly Dictionary<string,Exception> Failures=new(StringComparer.Ordinal);
         public readonly ConcurrentDictionary<string,int> Reads=new(StringComparer.Ordinal),Scans=new(StringComparer.Ordinal);
         public char DirectorySeparator=>'/';
         public bool FileExists(string path)=>Content.ContainsKey(path);
@@ -151,7 +187,7 @@ public sealed class GameDataManagerTests
         public IList<string> GetFiles(string path)
         {Scans.AddOrUpdate(path,1,(_,n)=>n+1);return Content.Keys.Where(p=>GetParent(p)==path.TrimEnd('/')).ToArray();}
         public byte[] ReadAllBytes(string path)
-        {Reads.AddOrUpdate(path,1,(_,n)=>n+1);return Content.TryGetValue(path,out var text)?Encoding.UTF8.GetBytes(text):throw new FileNotFoundException(path);}
+        {Reads.AddOrUpdate(path,1,(_,n)=>n+1);if(Failures.TryGetValue(path,out var failure))throw failure;return Content.TryGetValue(path,out var text)?Encoding.UTF8.GetBytes(text):throw new FileNotFoundException(path);}
         public Stream Open(string path)=>new MemoryStream(ReadAllBytes(path),false);
         public string ReadAllText(string path)=>ReadAllText(path,Encoding.UTF8);
         public string ReadAllText(string path,Encoding encoding)=>encoding.GetString(ReadAllBytes(path));

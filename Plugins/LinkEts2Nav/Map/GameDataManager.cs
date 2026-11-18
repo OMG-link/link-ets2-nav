@@ -23,7 +23,6 @@ public sealed class GameDataManager:IDisposable
     private readonly GameResourceStore resources;
     private readonly ConcurrentDictionary<string,Lazy<GameSiiDocument>> documents=new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<(string Kind,string Resource),Lazy<object>> projections=new();
-    private readonly ConcurrentDictionary<string,string> diagnostics=new(StringComparer.Ordinal);
     private readonly Lazy<WorldDefinitionIndex> world;
     private readonly object preparation=new();
     private readonly IDisposable? owner;
@@ -42,7 +41,7 @@ public sealed class GameDataManager:IDisposable
     internal IFileSystem Resources=>resources;
     public GameMapData Map {get;}
     public WorldDefinitionIndex World=>world.Value;
-    public IReadOnlyList<string> Diagnostics=>diagnostics.OrderBy(p=>p.Key,StringComparer.Ordinal).Select(p=>p.Value).ToArray();
+    public IReadOnlyList<string> Diagnostics=>Array.Empty<string>();
     public GameDataStatistics Statistics=>new(resources.ResourceReads,resources.DirectoryScans,Interlocked.Read(ref parses),resources.ResidentBytes);
     public SpeedLimitDefinitionReader SpeedLimits=>speedLimits??throw new InvalidOperationException("Dataset has not been prepared.");
     public CompanyPlaceReader Companies=>companies??throw new InvalidOperationException("Dataset has not been prepared.");
@@ -62,8 +61,14 @@ public sealed class GameDataManager:IDisposable
     public static GameDataManager Open(string gamePath,IEnumerable<string> logLines,NativeMap? map=null)
     {
         var mount=OfficialArchiveMount.FromGameLog(gamePath,logLines);
-        try{return new(mount.FileSystem,mount.ActiveModPaths,map,"/map/europe.mbd",mount);}
-        catch{mount.Dispose();throw;}
+        bool transferred=false;
+        try
+        {
+            var manager=new GameDataManager(mount.FileSystem,mount.ActiveModPaths,map,"/map/europe.mbd",mount);
+            transferred=true;
+            return manager;
+        }
+        finally { if(!transferred)mount.Dispose(); }
     }
     // Also makes standalone readers and tools using the same filesystem share one dataset.
     public static GameDataManager From(IFileSystem source,IReadOnlyList<string>? mods=null)
@@ -89,12 +94,9 @@ public sealed class GameDataManager:IDisposable
     public bool DirectoryExists(string path)=>resources.DirectoryExists(path);
     public string GetParent(string path)=>resources.GetParent(path);
     public ReadOnlyMemory<byte> GetResource(string path)=>resources.Read(path);
-    internal void TryDefinitions(string path,Action<GameSiiDocument> action)
-    {
-        try{action(GetSii(path));}
-        catch(Exception ex) when(ex is not OperationCanceledException and not OutOfMemoryException)
-        {diagnostics.TryAdd(path,path+": "+ex.GetType().Name+": "+ex.Message);}
-    }
+    // Keep the catalogue-reader API while propagating invalid data and reader
+    // failures. Neither parsing nor projection has a local recovery strategy.
+    internal void TryDefinitions(string path,Action<GameSiiDocument> action)=>action(GetSii(path));
     internal T Projection<T>(string kind,string key,Func<T> factory) where T:notnull
         =>(T)projections.GetOrAdd((kind,key),_=>new(()=>factory(),LazyThreadSafetyMode.ExecutionAndPublication)).Value;
     internal IReadOnlyDictionary<string,string> SignIndex(string prefix)=>Projection("sign-index",prefix,()=>
@@ -211,12 +213,8 @@ public sealed class GameDataManager:IDisposable
             if(prefab?.Definition is not {} definition)continue;
             if(!FileExists(definition.Descriptor))
             {details.Add($"Prefab {uid:X16} definition {definition.Descriptor} is missing.");continue;}
-            try
-            {
-                if(prefab.Description is {} description&&description.NavCurves.Count==0)
-                    details.Add($"Prefab {uid:X16} ({definition.Descriptor}) has no native navigation curves (NavCurves=0; SpawnPoints={description.SpawnPoints.Count}).");
-            }
-            catch(IOException error){details.Add($"Prefab {uid:X16} descriptor could not be read: {error.Message}");}
+            if(prefab.Description is {} description&&description.NavCurves.Count==0)
+                details.Add($"Prefab {uid:X16} ({definition.Descriptor}) has no native navigation curves (NavCurves=0; SpawnPoints={description.SpawnPoints.Count}).");
         }
         return new MapQueryFailure(unknown.Count>0?MapQueryFailureKind.UnresolvedReference:MapQueryFailureKind.DefinitionUnavailable,
             (unknown.Count>0?$"Boundary {boundaryUid:X16} has unlocated references: {string.Join(',',unknown.Select(u=>u.ToString("X16")))}."

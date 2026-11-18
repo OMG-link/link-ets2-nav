@@ -66,6 +66,12 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         worker = Task.Run(WorkAsync);
     }
 
+    /// <summary>The plugin driver observes failed worker tasks at its outer FATAL boundary.</summary>
+    public void ThrowIfFaulted()
+    {
+        if(worker.IsCompleted)worker.GetAwaiter().GetResult();
+    }
+
     public MapScanState Capture() { lock (gate) return state; }
 
     /// <summary>Prepare resources without requiring or fabricating a vehicle position.</summary>
@@ -190,25 +196,26 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                 var watch = Stopwatch.StartNew();
                 NearbyMapSnapshot? completed = null;
                 string? error = null;
-                try
+                stop.Token.ThrowIfCancellationRequested();
+                if (backend is null || backendResource != item.Request.ResourceId)
                 {
-                    stop.Token.ThrowIfCancellationRequested();
-                    if (backend is null || backendResource != item.Request.ResourceId)
+                    var previous=backend;
+                    backend=null; backendResource=null;
+                    previous?.Dispose();
+                    backend=ReadResource(()=>factory(item.Request),out error);
+                    if(error is null)backendResource=item.Request.ResourceId;
+                }
+                if(error is null&&!item.Request.PreparationOnly)
+                {
+                    var readyBackend=backend??throw new InvalidOperationException("Map scan backend was not initialized.");
+                    bool needsNearby;
+                    lock (gate) needsNearby = state.Map is null && item.Request.Route is not null;
+                    if (needsNearby)
                     {
-                        backend?.Dispose();
-                        backend = null;
-                        backendResource = null;
-                        backend = factory(item.Request);
-                        backendResource = item.Request.ResourceId;
-                    }
-                    var readyBackend=backend??throw new InvalidOperationException("地图读取后端尚未初始化。");
-                    if (!item.Request.PreparationOnly)
-                    {
-                        bool needsNearby;
-                        lock (gate) needsNearby = state.Map is null && item.Request.Route is not null;
-                        if (needsNearby)
+                        var read=ReadResource(()=>readyBackend.Read(item.Request with { Route = null },stop.Token),out error);
+                        if(error is null)
                         {
-                            var nearby = Decorate(readyBackend.Read(item.Request with { Route = null }, stop.Token));
+                            var nearby=Decorate(read!);
                             long published=0;
                             lock (gate)
                                 if (item.Generation == generation && !stop.IsCancellationRequested)
@@ -216,12 +223,14 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                             if(published!=0)Publish(nearby,published,expectedRetryGeneration);
                             watch.Restart();
                         }
-                        completed = Decorate(readyBackend.Read(item.Request, stop.Token));
                     }
-                    stop.Token.ThrowIfCancellationRequested();
+                    if(error is null)
+                    {
+                        var read=ReadResource(()=>readyBackend.Read(item.Request,stop.Token),out error);
+                        if(error is null)completed=Decorate(read!);
+                    }
                 }
-                catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
-                catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+                stop.Token.ThrowIfCancellationRequested();
                 long completedRevision=0;
                 lock (gate)
                 {
@@ -248,13 +257,33 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         finally { backend?.Dispose(); }
     }
 
+    // Only resource access failures are recoverable here. Invalid serialized
+    // input, callbacks, publication and cleanup errors belong to the driver.
+    private static T? ReadResource<T>(Func<T> read,out string? error) where T:class
+    {
+        try
+        {
+            var value=read();error=null;return value;
+        }
+        catch(IOException ex)
+        {error=ex.GetType().Name+": "+ex.Message;return null;}
+        catch(UnauthorizedAccessException ex)
+        {error=ex.GetType().Name+": "+ex.Message;return null;}
+    }
+
     public async ValueTask DisposeAsync()
     {
-        stop.Cancel();
-        wake.Writer.TryComplete();
-        await worker.ConfigureAwait(false);
-        await retries.DisposeAsync().ConfigureAwait(false);
-        stop.Dispose();
+        try { stop.Cancel(); }
+        finally
+        {
+            wake.Writer.TryComplete();
+            try { await worker.ConfigureAwait(false); }
+            finally
+            {
+                try { await retries.DisposeAsync().ConfigureAwait(false); }
+                finally { stop.Dispose(); }
+            }
+        }
     }
 
     private sealed class OfficialBackend : IMapScanBackend
@@ -264,12 +293,14 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         public OfficialBackend(MapScanRequest request, CancellationToken token)
         {
             data=GameDataManager.Open(request.GamePath,request.LogLines,request.HostMap);
+            bool prepared=false;
             try
             {
                 scanner=new NearbyCameraScanner(data);
                 scanner.Prepare(token);
+                prepared=true;
             }
-            catch { data.Dispose(); throw; }
+            finally { if(!prepared)data.Dispose(); }
         }
         public RouteJourneyEstimator? JourneyEstimator=>scanner.JourneyEstimator;
         public NearbyMapSnapshot Read(Vector3 position, CancellationToken cancellationToken)

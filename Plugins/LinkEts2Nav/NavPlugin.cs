@@ -50,7 +50,8 @@ public sealed class NavPlugin : Plugin
                 catch (OperationCanceledException) when (next.IsCancellationRequested) { }
                 catch (Exception ex)
                 {
-                    new NavigationLogReporter().Status("后台任务异常退出：" + ex, DateTimeOffset.UtcNow, isWarning: true);
+                    string failure="[LinkEts2Nav] FATAL 后台任务异常退出："+ex;
+                    Logger.Fatal(ex,failure.Replace("[","[[").Replace("]","]]"));
                     if (!next.IsCancellationRequested)
                         NavDiagnostics.Publish(new(DateTimeOffset.UtcNow, "插件发生错误：" + ex.Message, "Unknown", 0, []));
                 }
@@ -81,26 +82,18 @@ public sealed class NavPlugin : Plugin
 
     public override void Shutdown() => OnDisable();
 
-    private static PlannedSpeechAnnouncer? CreateSpeech(IWarningAnnouncer fallback, NavigationLogReporter log, CancellationToken token,out IReadOnlySet<string> cityNames,out ReloadableSpeech? resources,SpeechUsageCollector? usage=null)
+    private static PlannedSpeechAnnouncer? CreateSpeech(NavigationLogReporter log, CancellationToken token,out IReadOnlySet<string> cityNames,out ReloadableSpeech? resources,SpeechUsageCollector? usage=null)
     {
         cityNames=new HashSet<string>(StringComparer.Ordinal);
         resources=null;
-        try
-        {
-            var options = SpeechOptions.Load(AppContext.BaseDirectory);
-            if (!options.Enabled) return null;
-            resources=new ReloadableSpeech(options,SpeechPackSettings.Current,message=>log.Event(message,DateTimeOffset.UtcNow));
-            cityNames=resources.Names;
-            log.Event("TTS 已启用：按预警触发顺序预生成，音色=" + options.Voice + "，文件缓存=" + options.CacheDirectory, DateTimeOffset.UtcNow);
-            return new(resources, new Ets2LaWarningAnnouncer(audioFile: () => null, cancellationToken: token), path => AudioHandler.Current.Queue(path),
-                message => log.Event(message, DateTimeOffset.UtcNow), token,
-                resources.Fixed,usage);
-        }
-        catch (Exception ex)
-        {
-            log.Event("TTS 配置不可用，使用现有提示音：" + ex.Message, DateTimeOffset.UtcNow);
-            return null;
-        }
+        var options = SpeechOptions.Load(AppContext.BaseDirectory);
+        if (!options.Enabled) return null;
+        resources=new ReloadableSpeech(options,SpeechPackSettings.Current,message=>log.Event(message,DateTimeOffset.UtcNow));
+        cityNames=resources.Names;
+        log.Event("TTS 已启用：按预警触发顺序预生成，音色=" + options.Voice + "，文件缓存=" + options.CacheDirectory, DateTimeOffset.UtcNow);
+        return new(resources, new Ets2LaWarningAnnouncer(audioFile: () => null, cancellationToken: token), path => AudioHandler.Current.Queue(path),
+            message => log.Event(message, DateTimeOffset.UtcNow), token,
+            resources.Fixed,usage);
     }
 
     private static async Task RunAsync(CancellationToken token)
@@ -116,8 +109,7 @@ public sealed class NavPlugin : Plugin
             message => logOutput.Event(message, DateTimeOffset.UtcNow));
         ReplayCapture.Attach(motionTrace);
         logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
-        var fallback = new Ets2LaWarningAnnouncer(cancellationToken: token);
-        await using var speech = CreateSpeech(fallback, logOutput, token,out var cityNames,out var speechResources,speechUsage.Collector);
+        await using var speech = CreateSpeech(logOutput, token,out var cityNames,out var speechResources,speechUsage.Collector);
         await using var playback=new GuidancePlaybackManager(speech?.Queue,new Ets2LaGuidanceAudioPlayer(),
             ()=>Ets2LaGuidanceAudioPlayer.FallbackFile(AppContext.BaseDirectory,message=>logOutput.Event(message,DateTimeOffset.UtcNow),allowCustom:speech is null),
             message=>logOutput.Event(message,DateTimeOffset.UtcNow),token,speechUsage.Collector);
@@ -125,13 +117,7 @@ public sealed class NavPlugin : Plugin
         var pipeline = new WarningPipeline(speech,guidance);
         var navigation = new NavigationRuntime(speech?.Queue,
             message => logOutput.Event(message, DateTimeOffset.UtcNow),guidance,cityNames);
-        TrafficLightReminderOptions signalOptions;
-        try { signalOptions=TrafficLightReminderOptions.Load(AppContext.BaseDirectory); }
-        catch(Exception ex)
-        {
-            signalOptions=new(){Enabled=false};
-            logOutput.Event("信号灯实验设置无效，已关闭该提醒："+ex.Message,DateTimeOffset.UtcNow);
-        }
+        var signalOptions=TrafficLightReminderOptions.Load(AppContext.BaseDirectory);
         var trafficLightReminder=new TrafficLightReminderRuntime(guidance,signalOptions);
         void Publish(NavDiagnosticSnapshot snapshot, bool isWarning = false)
         {
@@ -150,8 +136,7 @@ public sealed class NavPlugin : Plugin
         var calibrations = CameraCalibrationSet.Empty;
         var calibrationPath = Path.Combine(AppContext.BaseDirectory, "Settings", "LinkEts2Nav.CameraCalibrations.json");
         var calibrationCheck = DateTimeOffset.MinValue;
-        string? calibrationError = null;
-        var mapScanner = new BackgroundMapScanner(cancellationToken: token);
+        await using var mapScanner = new BackgroundMapScanner(cancellationToken: token);
         guidance.JourneyEstimateProvider=data=>mapScanner.Capture().JourneyEstimator?.Estimate(data.Route);
         string[] gameLog = [];
         long resourceVersion = 0;
@@ -161,13 +146,13 @@ public sealed class NavPlugin : Plugin
         string signature = "";
         string session = "";
         var mountCheck = DateTimeOffset.MinValue;
-        var setupRetryAfter = DateTimeOffset.MinValue;
         var scanBusySince = DateTimeOffset.MinValue;
         try
         {
             do
             {
                 token.ThrowIfCancellationRequested();
+                mapScanner.ThrowIfFaulted();
                 if(speechResources is not null&&await speechResources.ApplyPendingAsync(speech!.Queue))
                 {
                     navigation.RefreshSpeechNames();
@@ -182,20 +167,10 @@ public sealed class NavPlugin : Plugin
                 if (now >= calibrationCheck)
                 {
                     calibrationCheck = now.AddSeconds(5);
-                    try
-                    {
-                        calibrations = File.Exists(calibrationPath) ? CameraCalibrationSet.Load(calibrationPath) : CameraCalibrationSet.Empty;
-                        calibrationError = null;
-                        logOutput.Change("calibration", calibrations.Count == 0
-                            ? "校准配置为空或不存在：有效探头仅作500米未校准接近提醒。配置位置：" + calibrationPath
-                            : $"已加载 {calibrations.Count} 条模型校准配置。", now);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        calibrations = CameraCalibrationSet.Empty;
-                        calibrationError = "校准配置无效，已停止使用：" + ex.Message;
-                        logOutput.Change("calibration", calibrationError, now, isWarning: true);
-                    }
+                    calibrations = CameraCalibrationSet.Load(calibrationPath);
+                    logOutput.Change("calibration", calibrations.Count == 0
+                        ? "校准配置为空或不存在：有效探头仅作500米未校准接近提醒。配置位置：" + calibrationPath
+                        : $"已加载 {calibrations.Count} 条模型校准配置。", now);
                 }
                 var currentInstallation = ApplicationState.Current.RunningGame;
                 if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2 || !currentInstallation.IsParsed)
@@ -205,9 +180,7 @@ public sealed class NavPlugin : Plugin
                     Publish(new(now, "等待 ETS2 当前地图就绪。", data.RouteAvailability.ToString(), 0, []));
                     continue;
                 }
-                try
                 {
-                    if (now < setupRetryAfter) { speech?.ClearPlan(); continue; }
                     if (!ReferenceEquals(installation, currentInstallation) || now >= mountCheck)
                     {
                         mountCheck = now.AddSeconds(5);
@@ -311,28 +284,22 @@ public sealed class NavPlugin : Plugin
                     if (scan.IsScanning && now - scanBusySince >= TimeSpan.FromSeconds(1)
                         && latest.Vehicle is not { Paused: true })
                         diagnostic = diagnostic with { State = diagnostic.State + "；地图正在后台刷新，使用已准备快照。" };
-                    if (calibrationError is not null) diagnostic = diagnostic with { State = diagnostic.State + " " + calibrationError };
                     Publish(diagnostic);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    speech?.ClearPlan();
-                    Publish(new(DateTimeOffset.UtcNow, "地图暂不可用：" + ex.GetType().Name + ": " + ex.Message,
-                        data.RouteAvailability.ToString(), 0, []), isWarning: true);
-                    mapScanner.Invalidate();
-                    pipeline.Reset(); navigation.Reset(); guidance.Reset();
-                    // Back off setup retries without blocking the telemetry/diagnostic loop.
-                    setupRetryAfter = DateTimeOffset.UtcNow.AddSeconds(5);
                 }
             } while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false));
         }
         finally
         {
-            source.Dispose();
-            logOutput.ReportFines(source.Store.DrainFines(), source.Capture().DroppedFineCount, DateTimeOffset.UtcNow);
-            await mapScanner.DisposeAsync().ConfigureAwait(false);
-            ReplayCapture.Detach(motionTrace);
-            logOutput.Event("后台扫描已停止。", DateTimeOffset.UtcNow);
+            try
+            {
+                source.Dispose();
+                logOutput.ReportFines(source.Store.DrainFines(), source.Capture().DroppedFineCount, DateTimeOffset.UtcNow);
+            }
+            finally
+            {
+                ReplayCapture.Detach(motionTrace);
+                logOutput.Event("后台扫描已停止。", DateTimeOffset.UtcNow);
+            }
         }
     }
 }

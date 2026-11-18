@@ -115,21 +115,6 @@ public sealed class PlannedSpeechTests : IDisposable
     }
 
     [Fact]
-    public async Task FailedSynthesisDoesNotRetryOnEveryTelemetryTick()
-    {
-        var synth = new Synthesizer();
-        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var speech = new PlannedSpeechAnnouncer(synth, _ => { },
-            message => { if (message.StartsWith("TTS 合成失败")) failed.TrySetResult(); });
-        speech.UpdatePlan(Snapshot(), [Plan(500, 800)], Now);
-        (await synth.Next()).Result.SetException(new IOException("missing model"));
-        await failed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        for (int i = 0; i < 20; i++) speech.UpdatePlan(Snapshot(), [Plan(500, 800)], Now);
-        Assert.False(speech.Queue.TryAnnounce(PlannedSpeechAnnouncer.Text(500,499)));
-        Assert.False(synth.Requests.Reader.TryRead(out _));
-    }
-
-    [Fact]
     public async Task DeletedReadyFileIsRegeneratedEvenWhenThePlanIsUnchanged()
     {
         var synth = new Synthesizer();

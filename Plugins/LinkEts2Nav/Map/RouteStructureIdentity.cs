@@ -5,14 +5,17 @@ namespace LinkEts2Nav.Map;
 /// <summary>The directed node sequence is topology; remaining distance, ETA and refresh timestamps are not.</summary>
 public static class RouteStructureIdentity
 {
-    public static ulong[] Nodes(RouteSnapshot route)
+    public static ulong[] Nodes(RouteSnapshot route)=>SourceNodeIndices(route).Select(i=>route.Nodes[i].Uid).ToArray();
+
+    /// <summary>Original FullRoute node indices, ordered in the direction of travel.</summary>
+    public static int[] SourceNodeIndices(RouteSnapshot route)
     {
-        var nodes = route.Nodes.Where((n, i) => i == 0 || n != route.Nodes[i - 1]).ToArray();
-        if (nodes.Length < 2) return [];
-        bool descending = nodes.Zip(nodes.Skip(1)).All(p => p.First.DistanceToEndMeters > p.Second.DistanceToEndMeters);
-        bool ascending = nodes.Zip(nodes.Skip(1)).All(p => p.First.DistanceToEndMeters < p.Second.DistanceToEndMeters);
-        if (!descending && !ascending) return [];
-        if (!descending) Array.Reverse(nodes);
-        return nodes.Select(n => n.Uid).ToArray();
+        var indices=Enumerable.Range(0,route.Nodes.Count).Where(i=>i==0||route.Nodes[i]!=route.Nodes[i-1]).ToArray();
+        if(indices.Length<2)return [];
+        bool descending=indices.Zip(indices.Skip(1)).All(p=>route.Nodes[p.First].DistanceToEndMeters>route.Nodes[p.Second].DistanceToEndMeters);
+        bool ascending=indices.Zip(indices.Skip(1)).All(p=>route.Nodes[p.First].DistanceToEndMeters<route.Nodes[p.Second].DistanceToEndMeters);
+        if(!descending&&!ascending)return [];
+        if(!descending)Array.Reverse(indices);
+        return indices;
     }
 }

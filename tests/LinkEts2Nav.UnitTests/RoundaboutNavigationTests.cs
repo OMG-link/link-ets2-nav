@@ -4,6 +4,8 @@ using LinkEts2Nav.Map;
 namespace LinkEts2Nav.UnitTests;
 public sealed class RoundaboutNavigationTests
 {
+    private static IReadOnlyList<RoundaboutRouteRange> Build(IReadOnlyList<DirectedRoad> route,IReadOnlyDictionary<ulong,RoundaboutStructure> annotations)
+        =>RoundaboutRouteAdapter.Build(route,annotations,Enumerable.Range(0,route.Count).ToArray());
     private static RoundaboutStructure Ring(bool mirrored=false)
     {
         Vector3 P(double a)=>new((float)(20*Math.Cos(a)),0,(float)((mirrored?20:-20)*Math.Sin(a)));
@@ -32,7 +34,7 @@ public sealed class RoundaboutNavigationTests
     {
         var ring=Ring();
         var route=new[]{new DirectedRoad("prefab:1:0:1",(ulong)(10+entry),(ulong)(10+exit),[new(0,0,0),new(100,0,0)])};
-        var ranges=RoundaboutRouteAdapter.Build(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring}});
+        var ranges=Build(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring}});
         Assert.Equal(ordinal,Assert.Single(ranges).Actions[^1].SpeechSequenceOrder);
     }
     [Theory]
@@ -41,7 +43,7 @@ public sealed class RoundaboutNavigationTests
     {
         var ring=Ring(mirrored);
         var road=new DirectedRoad("prefab:1:0:3",10,13,[Vector3.Zero,new(100,0,0)]);
-        var range=Assert.Single(RoundaboutRouteAdapter.Build([road],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        var range=Assert.Single(Build([road],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
         Assert.Equal(3,range.Actions[^1].SpeechSequenceOrder);
         Assert.Equal(new double[]{1,2,3},range.Actions.Skip(1).Select(e=>e.SpeechSequenceOrder));
         Assert.NotEqual(ring.EntryPorts.Single(p=>p.NodeUid==10).Bearing,
@@ -55,7 +57,7 @@ public sealed class RoundaboutNavigationTests
         DirectedRoad[] route=[new("prefab:1:0:1",10,50,[new(40,0,0),new(20,0,0),new(0,0,-20)]),
             new("prefab:2:0:1",50,12,[new(0,0,-20),new(-20,0,0),new(-40,0,0)])];
         var originals=route.ToArray();var points=route.SelectMany(e=>e.Points).ToArray();
-        var ranges=RoundaboutRouteAdapter.Build(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring},{2,ring}});
+        var ranges=Build(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring},{2,ring}});
         var range=Assert.Single(ranges);Assert.Equal(2,range.Actions[^1].SpeechSequenceOrder);
         Assert.Equal(0,range.StartVisitIndex);Assert.Equal(2,range.EndVisitIndexExclusive);
         Assert.All(Enumerable.Range(0,route.Length),i=>Assert.Same(originals[i],route[i]));
@@ -79,7 +81,7 @@ public sealed class RoundaboutNavigationTests
         }:p).ToArray()};
         var selected=new DirectedRoad("prefab:1:0:2",10,12,[Vector3.Zero,new(40,0,0),new(80,0,0),new(100,0,0)])
             {NativeCurveSpans=[new(4,0),new(7,2)]};
-        var range=Assert.Single(RoundaboutRouteAdapter.Build([selected],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        var range=Assert.Single(Build([selected],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
         Assert.Equal(80,range.Actions[^1].DistanceMeters);
         Assert.Equal(20,range.EndMeters-range.Actions[^1].DistanceMeters);
     }
@@ -100,7 +102,7 @@ public sealed class RoundaboutNavigationTests
     public void UnknownPortLeavesExistingGeometryUnchanged()
     {
         var ring=Ring();var edge=new DirectedRoad("prefab:1:0:1",999,12,[Vector3.Zero,Vector3.UnitX]);
-        Assert.Throws<NotSupportedException>(()=>RoundaboutRouteAdapter.Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        Assert.Throws<NotSupportedException>(()=>Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
     }
     [Theory] [InlineData(false)] [InlineData(true)]
     public void EmptyCandidatesOrDegeneratePathCannotBecomeAProjectedZeroDeparture(bool emptyCandidates)
@@ -108,13 +110,13 @@ public sealed class RoundaboutNavigationTests
         var ring=Ring();
         if(emptyCandidates)ring=ring with{ExitPorts=ring.ExitPorts.Select(p=>p.BoundaryNodeUid==12?p with{DepartureBranches=[]}:p).ToArray()};
         var edge=new DirectedRoad("prefab:1:0:2",10,12,emptyCandidates?[Vector3.Zero,new(100,0,0)]:[Vector3.Zero,Vector3.Zero]);
-        Assert.Throws<InvalidDataException>(()=>RoundaboutRouteAdapter.Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        Assert.Throws<InvalidDataException>(()=>Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
     }
     [Fact] public void IndistinguishableBearingsAreReportedInsteadOfReturningTheUnadaptedRoute()
     {
         var ring=Ring();ring=ring with{ExitPorts=ring.ExitPorts.Select(p=>p with{Bearing=0}).ToArray()};
         var edge=new DirectedRoad("prefab:1:0:2",10,12,[Vector3.Zero,new(100,0,0)]);
-        Assert.Throws<NotSupportedException>(()=>RoundaboutRouteAdapter.Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        Assert.Throws<NotSupportedException>(()=>Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
     }
 
     [Fact]
@@ -180,7 +182,7 @@ public sealed class RoundaboutNavigationTests
         Vector3 P(double angle)=>new((float)(20*Math.Cos(angle)),0,(float)(-20*Math.Sin(angle)));
         Vector3[] points=[new(40,0,0),P(Math.PI/4),P(Math.PI/2),P(3*Math.PI/4),P(Math.PI),new(-40,0,0)];
         var road=new DirectedRoad("prefab:1:0:2",10,12,points);var ring=Ring();
-        var range=Assert.Single(RoundaboutRouteAdapter.Build([road],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        var range=Assert.Single(Build([road],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
         var cues=range.Actions.Skip(1).ToArray();
         Assert.Equal(new double[]{1,2},cues.Select(c=>c.SpeechSequenceOrder));
         Assert.Equal(Vector3.Distance(points[0],points[1])+Vector3.Distance(points[1],points[2]),cues[0].DistanceMeters,3);
@@ -194,7 +196,7 @@ public sealed class RoundaboutNavigationTests
         var edge=new DirectedRoad("prefab:1:0:0",10,10,[new(40,0,0),new(0,0,-30),new(-30,0,0),new(0,0,30),new(40,0,0)])
             {NativeCurveSpans=[new(100,0)]};
         DirectedRoad[] route=[edge,edge];
-        var ranges=RoundaboutRouteAdapter.Build(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring}});
+        var ranges=Build(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring}});
         Assert.Equal(2,ranges.Count);Assert.Equal((0,1),(ranges[0].StartVisitIndex,ranges[0].EndVisitIndexExclusive));
         Assert.Equal((1,2),(ranges[1].StartVisitIndex,ranges[1].EndVisitIndexExclusive));
         Assert.Equal(ranges[0].EndMeters,ranges[1].StartMeters);
@@ -210,7 +212,7 @@ public sealed class RoundaboutNavigationTests
         var passage=new DirectedRoad("prefab:1:0:2",10,12,[new(123,0,0),new(203,0,0),new(223,0,0)])
             {NativeCurveSpans=[new(100,0),new(102,1)]};
         DirectedRoad[] route=[prefix,passage];var originalSpans=passage.NativeCurveSpans;
-        var range=Assert.Single(RoundaboutRouteAdapter.Build(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        var range=Assert.Single(Build(route,new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
         Assert.Equal((1,2),(range.StartVisitIndex,range.EndVisitIndexExclusive));
         Assert.Equal(123,range.StartMeters);Assert.Equal(223,range.EndMeters);
         Assert.Equal(123,range.Actions[0].DistanceMeters);
@@ -225,7 +227,7 @@ public sealed class RoundaboutNavigationTests
         var ring=Ring();
         var edge=new DirectedRoad("prefab:1:0:0",10,10,[new(40,0,0),new(-40,0,0),new(40,0,0)])
             {LanePaths=[new(1,10,10,0,0,0,0,1,1,[0],[new(40,0,0),new(-40,0,0),new(40,0,0)],160)]};
-        var ranges=RoundaboutRouteAdapter.Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}});
+        var ranges=Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}});
         var actions=Detect([edge],ranges);
         Assert.DoesNotContain(actions,a=>a.Kind==ManeuverKind.UTurn);
         Assert.Single(actions,a=>a.Kind==ManeuverKind.EnterRoundabout);

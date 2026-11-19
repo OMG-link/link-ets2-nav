@@ -28,7 +28,7 @@ public sealed class SelectedStraightPassageTests
             {EndDistanceMeters=450,JunctionId="merge-target",AnnouncementMode=targetMode};
         var paths=new RoadPathSource(new TruckLib.ScsMap.Map(),[main],native:new NativeLaneGraph(graph));
         var nearby=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=graph};
-        var plan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),nearby,paths,lanes);
+        var plan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),nearby,paths,lanes,Enumerable.Range(0,route.Length).ToArray());
         return plan with{Actions=ActionPointConstraints.Apply([..plan.Actions,target])};
     }
     private static GuidanceSourcePlan Speech(NavigationStructurePlan structure)
@@ -77,7 +77,7 @@ public sealed class SelectedStraightPassageTests
         var graph=new NativeLaneGraph([main,loop]);
         var paths=new RoadPathSource(new TruckLib.ScsMap.Map(),[main],native:graph);
         var nearby=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=[main]};
-        var plan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),nearby,paths,lanes);
+        var plan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),nearby,paths,lanes,Enumerable.Range(0,route.Length).ToArray());
         return plan with{Actions=ActionPointConstraints.Apply([keep,..plan.Actions,target])};
     }
 

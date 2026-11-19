@@ -94,7 +94,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         {
             if(structures.ContainsKey(component))continue;
             var selectedLanes=lanePlanner.Build(component);
-            structures.Add(component,structurePlanner.Build(component,sdkRoute,nearby,paths,selectedLanes));
+            structures.Add(component,structurePlanner.Build(component,sdkRoute,nearby,paths,selectedLanes,paths.SourceNodeIndices(component)));
             StructureBuildCount++;
         }
         var route = paths!.GetPath(position, vehicle.ForwardDirection, sdkRoute, data.RouteAvailability,currentNode);

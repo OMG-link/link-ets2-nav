@@ -24,7 +24,7 @@ public sealed class EntranceActionPointIntegrationTests
    {JunctionId="previous-real-junction",EndDistanceMeters=priorEnd};
   var scene=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=graph,AuxiliaryLanes=auxiliaries};
   var source=new RoadPathSource(scene.Map,graph,native:native);
-  var staticPlan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),scene,source,lanes);
+  var staticPlan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),scene,source,lanes,Enumerable.Range(0,route.Length).ToArray());
   var selected=staticPlan with{Actions=ActionPointConstraints.Apply([preceding,..staticPlan.Actions])};
   var final=Assert.Single(selected.Actions,a=>a.Id==raw.Id);
   Assert.Equal(priorEnd,final.DistanceMeters);Assert.Equal(raw.ApproachInterval,final.ApproachInterval);

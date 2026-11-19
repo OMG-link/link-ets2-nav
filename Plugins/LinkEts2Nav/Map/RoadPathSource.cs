@@ -47,7 +47,8 @@ public sealed class RoadPathSource
     private readonly HashSet<(ulong,ulong)> reportedLoadedConnectionFailures = new();
     private ulong[]? cachedNodes;
     private (bool Truncated,ulong? Terminal) cachedRouteMeaning;
-    private readonly Dictionary<IReadOnlyList<DirectedRoad>,List<(int Start,int End)>> sdkVisits=new(ReferenceEqualityComparer.Instance);
+    private int[]? cachedSourceNodeIndices;
+    private readonly Dictionary<IReadOnlyList<DirectedRoad>,List<(int Start,int End,int SourceNodeIndex)>> sdkVisits=new(ReferenceEqualityComparer.Instance);
     public int RouteStructureBuildCount { get; private set; }
     private List<List<DirectedRoad>> cachedChunks = [];
     private IReadOnlyList<DirectedRoad>? navigationGraph;
@@ -176,11 +177,12 @@ public sealed class RoadPathSource
     /// <summary>Build topology once per directed UID sequence. Position only selects a cached component.</summary>
     public List<List<DirectedRoad>> GetRouteComponents(RouteSnapshot route)
     {
-        var ids=RouteStructureIdentity.Nodes(route);
+        var sourceIndices=RouteStructureIdentity.SourceNodeIndices(route);
+        var ids=sourceIndices.Select(i=>route.Nodes[i].Uid).ToArray();
         var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
         var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
-        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning)return cachedChunks;
-        cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];sdkVisits.Clear();
+        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedSourceNodeIndices!.SequenceEqual(sourceIndices)&&cachedRouteMeaning==meaning)return cachedChunks;
+        cachedNodes=ids;cachedSourceNodeIndices=sourceIndices;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];sdkVisits.Clear();
         var nodes=ids.Select(uid=>new RouteNode(uid,0,0)).ToArray();
         List<DirectedRoad>? chunk = null;
         for (int i = 1; i < nodes.Length; i++)
@@ -230,10 +232,14 @@ public sealed class RoadPathSource
                 chunk = null; continue;
             }
             if (chunk is null) { chunk = new(); cachedChunks.Add(chunk);sdkVisits.Add(chunk,[]); }
-            chunk.Add(directed);sdkVisits[chunk].Add((sdkStart,i));
+            chunk.Add(directed);sdkVisits[chunk].Add((sdkStart,i,sourceIndices[sdkStart]));
         }
         return cachedChunks;
     }
+
+    /// <summary>Stable identities of this component's visits in the untrimmed SDK route.</summary>
+    public IReadOnlyList<int> SourceNodeIndices(IReadOnlyList<DirectedRoad> component)
+        =>sdkVisits[component].Select(v=>v.SourceNodeIndex).ToArray();
 
     /// <summary>Excludes consumed SDK visits from position matching, preserving full path mileage and geometry.</summary>
     public int FirstLiveVisit(IReadOnlyList<DirectedRoad> component,int currentNodeIndex)

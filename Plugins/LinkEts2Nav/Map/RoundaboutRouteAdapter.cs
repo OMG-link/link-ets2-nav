@@ -7,8 +7,9 @@ namespace LinkEts2Nav.Map;
 public static class RoundaboutRouteAdapter
 {
     public static IReadOnlyList<RoundaboutRouteRange> Build(IReadOnlyList<DirectedRoad> route,
-        IReadOnlyDictionary<ulong, RoundaboutStructure> annotations)
+        IReadOnlyDictionary<ulong, RoundaboutStructure> annotations,IReadOnlyList<int> sourceNodeIndices)
     {
+        ValidateSourceNodes(route,sourceNodeIndices);
         var result = new List<RoundaboutRouteRange>();
         var offsets=new double[route.Count+1];
         for(int i=0;i<route.Count;i++)offsets[i+1]=offsets[i]+RouteGeometry.Length(route[i]);
@@ -59,18 +60,24 @@ public static class RoundaboutRouteAdapter
                 cues.Add(new(n+1,along));previous=along;
             }
             cues.Add(new(ordinal,departure));
-            var actions=BuildActions(ring.Id,i,route[i],route[last],offsets[i],offsets[last+1],ordinal,cues);
+            var actions=BuildActions(ring.Id,sourceNodeIndices[i],route[i],route[last],offsets[i],offsets[last+1],ordinal,cues);
             result.Add(new(ring.Id,i,last+1,offsets[i],offsets[last+1],actions));
             i = last;
         }
         return result;
     }
-    private static IReadOnlyList<NavigationManeuver> BuildActions(string ringId,int firstVisit,DirectedRoad entry,
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void ValidateSourceNodes(IReadOnlyList<DirectedRoad> route,IReadOnlyList<int> sourceNodeIndices)
+    {
+        if(sourceNodeIndices.Count!=route.Count||sourceNodeIndices.Any(i=>i<0)||sourceNodeIndices.Distinct().Count()!=route.Count)
+            throw new NavigationContractException("Each raw route visit requires its unique original SDK source-node index.");
+    }
+    private static IReadOnlyList<NavigationManeuver> BuildActions(string ringId,int sourceNodeIndex,DirectedRoad entry,
         DirectedRoad exit,double start,double end,int exitNumber,IReadOnlyList<(int Number,double AlongMeters)> cues)
     {
-        // The visit index distinguishes repeated traversals of the same physical
-        // entry/exit without changing their identity or the original route.
-        string sequence=$"roundabout:{ringId}:{entry.StartNodeUid:X16}:visit:{firstVisit}";
+        // Use the complete SDK route occurrence, not this active component's
+        // local visit index, which changes when earlier map geometry unloads.
+        string sequence=$"roundabout:{ringId}:{entry.StartNodeUid:X16}:visit:{sourceNodeIndex}";
         string id=sequence+$":{exit.EndNodeUid:X16}";
         var actions=new List<NavigationManeuver>
         {

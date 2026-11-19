@@ -33,6 +33,48 @@ public sealed class WrapperRoundaboutProgressTests
         Assert.Single(logs.Where(l=>l.StartsWith("\u5bfc\u822a\u6307\u4ee4")&&l.Contains("\u9a76\u51fa\u73af\u5c9b")));
     }
     [Fact]
+    public void UnloadedMapPrefixKeepsTheSameSeriesInTheProductionRuntime()
+    {
+        var now=DateTimeOffset.UtcNow;var map=new TruckLib.ScsMap.Map();
+        var before=Road.Add(map,Vector3.Zero,new(100,0,0),default);
+        var after=Road.Add(map,new(200,0,0),new(400,0,0),default);
+        ulong entry=before.ForwardNode.Uid,exit=after.Node.Uid;
+        var passage=new DirectedRoad("prefab:1:0:1",entry,exit,[new(100,0,0),new(180,0,0),new(200,0,0)]){NativeCurveSpans=[new(7,1)]};
+        var ring=new RoundaboutStructure("same-ring",[1],[],[],1,[]){RingLength=100,
+            EntryPorts=[new(entry,new(100,0,0)){Bearing=0}],
+            ExitPorts=[new(exit,new(200,0,0)){Bearing=1,DepartureBranches=[new(new(1,7),new(180,0,0))]}]};
+        var annotations=new Dictionary<ulong,RoundaboutStructure>{{1,ring}};
+        var full=RouteSnapshot.Parse([new(before.Node.Uid,400,40),new(entry,300,30),new(exit,200,20),new(after.ForwardNode.Uid,0,0)],now);
+        var stable=NavigationRouteState.Empty.Accept(full);var logs=new List<string>();var runtime=new NavigationRuntime(log:logs.Add);
+        GameDataSnapshot Data(double x)=>new(new(x,0,0,.75,10,400,true,false,1,now),stable.CurrentSnapshot,RouteAvailability.Available,"same-session",true){NavigationRoute=stable};
+        var original=new NearbyMapSnapshot(map,[],[],[]){PrefabPaths=[passage],RoadStructures=annotations};
+        runtime.Process(Data(90),original,now);
+        // Same full SDK input, new active geometry window containing only ring and tail.
+        var window=new TruckLib.ScsMap.Map();window.MapItems.Add(after.Uid,after);
+        window.Nodes.Add(after.Node.Uid,after.Node);window.Nodes.Add(after.ForwardNode.Uid,after.ForwardNode);
+        var smaller=new NearbyMapSnapshot(window,[],[],[]){PrefabPaths=[passage],RoadStructures=annotations,
+            MissingConnection=_=>new MissingMapSectors([new(9,9)],"test unloaded old prefix")};
+        runtime.Process(Data(100),smaller,now);runtime.Process(Data(160),smaller,now);
+        Assert.Single(logs,l=>l.StartsWith("\u5bfc\u822a\u6307\u4ee4")&&l.Contains("\u8fdb\u5165\u73af\u5c9b"));
+        Assert.Single(logs,l=>l.StartsWith("\u5bfc\u822a\u6307\u4ee4")&&l.Contains("\u9a76\u51fa\u73af\u5c9b"));
+        Assert.Same(full,stable.FullRoute);Assert.Equal(0,stable.CurrentNodeIndex);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OriginalSdkIndicesSurviveNormalizationAndKnownGeometryGaps(bool ascending)
+    {
+        RouteNode[] nodes=[new(10,200,20),new(10,200,20),new(12,100,10),new(13,0,0)];
+        if(ascending)Array.Reverse(nodes);
+        var sdk=RouteSnapshot.Parse(nodes,DateTimeOffset.UtcNow);
+        var a=new DirectedRoad("prefab:1:0:1",10,12,[Vector3.Zero,new(100,0,0)]);
+        var b=new DirectedRoad("prefab:2:0:1",12,13,[new(100,0,0),new(200,0,0)]);
+        var source=new RoadPathSource(new TruckLib.ScsMap.Map(),[a,b]);
+        var component=Assert.Single(source.GetRouteComponents(sdk));
+        Assert.Equal(ascending?new[]{2,1}:new[]{0,2},source.SourceNodeIndices(component));
+        Assert.Equal(new ulong[]{10,12,13},RouteStructureIdentity.Nodes(sdk));
+    }
+    [Fact]
     public void ConsumedSdkVisitsKeepTheirMileageButCannotMatchAgain()
     {
         var map=new TruckLib.ScsMap.Map();

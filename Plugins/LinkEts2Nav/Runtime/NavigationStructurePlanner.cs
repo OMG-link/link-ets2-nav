@@ -25,9 +25,9 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
     private readonly NavigationManeuverDetector detector=new();
     private readonly LaneMergeDetector mergeDetector=new();
 
-    public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes,AuxiliaryLaneIndex? auxiliaries=null)
+    public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes,IReadOnlyList<int> sourceNodeIndices,AuxiliaryLaneIndex? auxiliaries=null)
     {
-        var ranges=RoundaboutRouteAdapter.Build(route,nearby.RoadStructures);
+        var ranges=RoundaboutRouteAdapter.Build(route,nearby.RoadStructures,sourceNodeIndices);
         detector.MissingConnection=paths.DescribeMissingConnection;
         if(nearby.Components is {} components)detector.Components.UseIndex(paths.GetNavigationGraph(),components);
         IReadOnlyList<NavigationManeuver> upcoming=detector.FindSequence(route,0,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong,lanes,ranges);

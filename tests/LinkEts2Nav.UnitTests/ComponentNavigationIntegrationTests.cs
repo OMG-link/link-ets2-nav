@@ -85,7 +85,7 @@ public sealed class ComponentNavigationIntegrationTests
         var scene=new NearbyMapSnapshot(new(),[],[],[]){PrefabPaths=graph,AuxiliaryLanes=auxiliary};
         var lanes=new LaneNavigationPlan([new(route[0].Id,route[0].LanePaths[0],0)],[],true,null);
         var sdk=new RouteSnapshot([new(20,100,1),new(30,0,0)],"test",RouteAvailability.Available,DateTimeOffset.UtcNow);
-        var plan=new NavigationStructurePlanner().Build(route,sdk,scene,source,lanes,auxiliary);
+        var plan=new NavigationStructurePlanner().Build(route,sdk,scene,source,lanes,Enumerable.Range(0,route.Length).ToArray(),auxiliary);
         Assert.Single(plan.Actions,a=>a.Id.StartsWith("component:")&&a.Kind==ManeuverKind.KeepRight);
         Assert.DoesNotContain(plan.Actions,a=>a.Id.StartsWith("direct-join:")||a.Id.StartsWith("entrance-merge:"));
     }

@@ -55,7 +55,7 @@ public sealed class LaneInstructionFormatterTests
         DirectedRoad[] route=[road,edge];var lanes=new LaneNavigationPlan([new(edge.Id,left,1)],[],true,null);
         var paths=new RoadPathSource(new TruckLib.ScsMap.Map(),[edge],native:new NativeLaneGraph(route));
         var map=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=[edge]};
-        var result=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),map,paths,lanes);
+        var result=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),map,paths,lanes,Enumerable.Range(0,route.Length).ToArray());
         var merge=Assert.Single(result.Merges);Assert.Equal(3,merge.ApproachLaneCount);Assert.Equal(2,merge.RecommendedLaneCount);
         var action=Assert.Single(result.Actions);
         Assert.Equal("车道合并，建议提前走右侧两车道",action.Instruction);

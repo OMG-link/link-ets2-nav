@@ -24,10 +24,10 @@ public sealed class MainLoopMapRetryTests
         int loop=Environment.CurrentManagedThreadId;
         using var other=owner.Query("two",context=>
         {Assert.Equal(loop,Environment.CurrentManagedThreadId);return Read(context);}).Retry!;
-        owner.Adopt(Window(true),3);Assert.Equal(2,calls);Assert.Equal(7,handle.Capture().Result.Value);
+        var ready=Window(true);owner.Adopt(ready,3);Assert.Equal(2,calls);Assert.Equal(7,handle.Capture().Result.Value);
         Assert.True(other.Capture().Result.IsSuccess);
         Assert.Null(owner.Query("ready",Read).Retry);
-        owner.Adopt(Window(true),3);Assert.Equal(2,calls);
+        owner.Adopt(ready,3);Assert.Equal(2,calls);
     }
     [Fact]
     public void CancellationAndRouteScopeResetInvalidateWaitingLeases()
@@ -48,10 +48,10 @@ public sealed class MainLoopMapRetryTests
             calls++;var missing=keys.Where(k=>!context.Contains(k)).ToArray();
             return new MapQueryResult<int>(2-missing.Length,missing.Length==0?null:new MissingMapObjects(missing,"partial"));
         }).Retry!;
-        owner.Adopt(Window(true),2);
+        var ready=Window(true);owner.Adopt(ready,2);
         Assert.Equal(2,calls);Assert.Equal(1,handle.Capture().Result.Value);
         Assert.Equal([keys[1]],Assert.IsType<MissingMapObjects>(handle.Capture().Result.Issue).Keys);
-        owner.Adopt(Window(true),2);Assert.Equal(2,calls);
+        owner.Adopt(ready,2);Assert.Equal(2,calls);
     }
     [Fact]
     public void ACallbackFailureIsAnOriginalMainLoopFailureWithoutBackgroundDowngrade()

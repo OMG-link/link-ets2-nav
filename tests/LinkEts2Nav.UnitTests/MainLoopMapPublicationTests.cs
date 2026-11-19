@@ -65,4 +65,24 @@ public sealed class MainLoopMapPublicationTests
         scanner.ObserveRoute(RouteSnapshot.Parse([new(500,100,0),new(600,0,0)],DateTimeOffset.UtcNow));
         Assert.False(lease.Capture().Active);Assert.Equal(1,reads);Assert.NotNull(scanner.Capture().Map);
     }
+    [Fact]
+    public async Task AWindowCompletedDuringCallbacksIsLeftForTheNextBoundedAdoption()
+    {
+        var initial=new NearbyMapSnapshot(new(),[],[],[]);var aMap=new TruckLib.ScsMap.Map();aMap.MapItems.Add(99,new Road{Uid=99});
+        var a=new NearbyMapSnapshot(aMap,[],[],[]);var b=new NearbyMapSnapshot(new(),[],[],[]);
+        using var entered=new ManualResetEventSlim();using var release=new ManualResetEventSlim();
+        await using var scanner=new BackgroundMapScanner(_=>new Backend((position,token)=>
+        {if(position.X<25)return initial;if(position.X<75)return a;entered.Set();release.Wait(token);return b;}));
+        var now=DateTimeOffset.UtcNow;scanner.Request(new("r","s","",[],Vector3.Zero),now);await Wait(()=>!scanner.Capture().IsScanning);scanner.AdoptReady();
+        using var lease=scanner.Retries.Query<int>("bounded",context=>
+        {
+            if(!context.Contains(new(MapObjectKind.Item,99)))return MapQueryResult<int>.Unavailable(new MissingMapObjects([new(MapObjectKind.Item,99)],"bounded"));
+            release.Set();Assert.True(SpinWait.SpinUntil(()=>!scanner.Capture().IsScanning,TimeSpan.FromSeconds(4)));return MapQueryResult<int>.Ready(1);
+        }).Retry!;
+        scanner.Request(new("r","s","",[],new(50,0,0)),now.AddSeconds(1));await Wait(()=>!scanner.Capture().IsScanning);
+        scanner.Request(new("r","s","",[],new(100,0,0)),now.AddSeconds(2));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(4),TestContext.Current.CancellationToken));
+        try{Assert.Same(a.Map,scanner.AdoptReady().Map!.Map);Assert.Same(b.Map,scanner.AdoptReady().Map!.Map);}
+        finally{release.Set();}
+    }
 }

@@ -131,7 +131,8 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     /// <summary>Main-loop boundary: adopt each complete window, then execute its ready callbacks before any judgement.</summary>
     public MapScanState AdoptReady()
     {
-        while(true)
+        int count;lock(gate)count=completedWindows.Count;
+        for(int i=0;i<count;i++)
         {
             MapScanState adopted;long mapRevision;
             lock(gate)
@@ -146,6 +147,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
             }
             if(adopted.Map is {} map)retries.Adopt(map,mapRevision);
         }
+        return Capture();
     }
     private NearbyMapSnapshot Decorate(NearbyMapSnapshot snapshot)=>snapshot with{Retries=retries};
     private void EnqueueWindow(NearbyMapSnapshot? snapshot,MapScanRequest request,TimeSpan elapsed,bool scanning,

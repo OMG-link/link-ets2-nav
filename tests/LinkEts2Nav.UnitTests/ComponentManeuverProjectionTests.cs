@@ -141,7 +141,10 @@ public sealed class ComponentManeuverProjectionTests
             [..passage.Actions,target],true,false,false,new());
         Assert.Equal("两百米后，右转。",Assert.Single(plan.Triggers,t=>t.Id.EndsWith(":200")).Text);
         Assert.DoesNotContain(plan.Triggers,t=>t.Kind==LinkEts2Nav.Core.Guidance.SpeechTriggerKind.ActionAssist);
-        var fork=ComponentManeuverProjection.Build([before,merge],1,[fact with{LegalExitCount=2}],[]);
+        var outlet=fact with{LegalExitCount=2};
+        var side=outlet with{EdgeId="prefab:2A:1:3",ExitNodeUid=3,Kind=ComponentContinuityKind.Hard,
+            Turn=new(NavigationSide.Right,ComponentTurnKind.Forward)};
+        var fork=ComponentManeuverProjection.Build([before,merge],1,[outlet],[outlet,side]);
         Assert.Single(fork.Actions);
         var counted=new LinkEts2Nav.Core.Guidance.NavigationEventPlanner().Build("s","r",DateTimeOffset.UtcNow,0,
             [..fork.Actions,target],true,false,false,new());

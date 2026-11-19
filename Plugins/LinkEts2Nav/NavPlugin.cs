@@ -102,7 +102,8 @@ public sealed class NavPlugin : Plugin
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
         var logOutput = new NavigationLogReporter();
         await using var speechUsage=new SpeechUsageStore(Path.Combine(AppContext.BaseDirectory,"Cache","LinkEts2Nav","SpeechUsage"),
-            message=>logOutput.Event(message,DateTimeOffset.UtcNow));
+            message=>logOutput.Event(message,DateTimeOffset.UtcNow),
+            warning:message=>logOutput.Change("speech-usage-corrupt",message,DateTimeOffset.UtcNow,isWarning:true));
         SpeechUsageReports.Attach(speechUsage);
         await using var motionTrace = new NavigationTraceRecorder(
             Path.Combine(AppContext.BaseDirectory, "Cache", "LinkEts2Nav", "Diagnostics"),
@@ -155,6 +156,7 @@ public sealed class NavPlugin : Plugin
                 mapScanner.ThrowIfFaulted();
                 playback.ThrowIfFaulted();
                 motionTrace.ThrowIfFaulted();
+                speechUsage.ThrowIfFaulted();
                 if(speechResources is not null&&await speechResources.ApplyPendingAsync(speech!.Queue))
                 {
                     navigation.RefreshSpeechNames();

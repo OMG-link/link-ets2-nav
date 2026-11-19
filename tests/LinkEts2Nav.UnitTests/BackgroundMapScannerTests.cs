@@ -59,6 +59,32 @@ public sealed class BackgroundMapScannerTests
     }
 
     [Fact]
+    public async Task SectorParseFailureFaultsTheWorkerInsteadOfBecomingARetryableIoError()
+    {
+        var failure = new MapSectorReadException(new Dictionary<TruckLib.ScsMap.SectorCoordinate, string>
+        {
+            [new(1, 2)] = "InvalidDataException: truncated sector"
+        });
+        var scanner = new BackgroundMapScanner(_ => new Backend((_, _) => throw failure));
+        try
+        {
+            Assert.True(scanner.Request(Request(), DateTimeOffset.UtcNow));
+            await WaitFor(() =>
+            {
+                try { scanner.ThrowIfFaulted(); return scanner.Capture().Error is not null; }
+                catch (MapSectorReadException error) { Assert.Same(failure, error); return true; }
+            });
+            Assert.Same(failure, Assert.Throws<MapSectorReadException>(() => scanner.ThrowIfFaulted()));
+            Assert.Null(scanner.Capture().Map);
+            Assert.Null(scanner.Capture().Error);
+        }
+        finally
+        {
+            Assert.Same(failure, await Assert.ThrowsAsync<MapSectorReadException>(() => scanner.DisposeAsync().AsTask()));
+        }
+    }
+
+    [Fact]
     public async Task PreparedJourneyMetadataIsPublishedBeforeAnyNearbyMapRead()
     {
         var estimator=new RouteJourneyEstimator(new TruckLib.ScsMap.Map(),(_,_)=>new(80,"test"));

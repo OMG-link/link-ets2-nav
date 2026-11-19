@@ -30,8 +30,9 @@ internal sealed class SectorReadEvidence:IDisposable
     public void Dispose()=>AppDomain.CurrentDomain.FirstChanceException-=Observe;
 }
 
+/// <summary>A partially parsed map window cannot be published or retried as a resource I/O failure.</summary>
 public sealed class MapSectorReadException(IReadOnlyDictionary<SectorCoordinate,string> failures)
-    :IOException("Map sector parsing did not complete: "+string.Join("; ",failures.Select(p=>$"{p.Key}: {p.Value}")))
+    :Exception("Map sector parsing did not complete: "+string.Join("; ",failures.Select(p=>$"{p.Key}: {p.Value}")))
 {
     public IReadOnlyDictionary<SectorCoordinate,string> Failures {get;}=new System.Collections.ObjectModel.ReadOnlyDictionary<SectorCoordinate,string>(failures.ToDictionary());
 }

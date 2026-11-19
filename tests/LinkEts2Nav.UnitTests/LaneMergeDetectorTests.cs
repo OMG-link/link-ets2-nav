@@ -291,7 +291,7 @@ public sealed class LaneMergeDetectorTests
         var now=new DateTimeOffset(2026,11,9,0,0,0,TimeSpan.Zero);
         var route=RouteSnapshot.Parse([new(incoming.Node.Uid,2310,100),new(incoming.ForwardNode.Uid,2120,90),
             new(outgoing.Node.Uid,2000,80),new(outgoing.ForwardNode.Uid,0,0)],now);
-        GameDataSnapshot Data(double x,double z,DateTimeOffset time)=>new(new(x,0,z,0,15,2100,true,false,1,time),route,RouteAvailability.Available,"s",true);
+        GameDataSnapshot Data(double x,double z,DateTimeOffset time)=>new(new(x,0,z,0,15,2100,true,false,1,time),route,RouteAvailability.Available,"s",true){NavigationRoute=NavigationRouteState.Empty.Accept(route)};
         int sounds=0;var spoken=new List<string>();var runtime=new NavigationRuntime(log:line=>{spoken.Add(line);if(line.StartsWith("\u5bfc\u822a\u6307\u4ee4\uff1a",StringComparison.Ordinal))sounds++;});
         var first=runtime.Process(Data(4.5,shortApproach?70:500,now),nearby,now);
         Assert.Contains(first.LaneMerges,m=>m.Kind==LaneMergeKind.LaneReduction);
@@ -323,7 +323,7 @@ public sealed class LaneMergeDetectorTests
         var continuing=shape.Edge with{Id="prefab:000000000000002A:2:1",StartNodeUid=main.EntryNodeUid,EndNodeUid=main.ExitNodeUid,Points=main.Points,LanePaths=[main]};
         var now=DateTimeOffset.UtcNow;
         var route=RouteSnapshot.Parse([new(sideRoad.Node.Uid,3000,100),new(sideRoad.ForwardNode.Uid,2500,90),new(outgoing.Node.Uid,2000,80),new(outgoing.ForwardNode.Uid,0,0)],now);
-        var data=new GameDataSnapshot(new(ending.Points[0].X,0,ending.Points[0].Z+100,0,15,3000,true,false,1,now),route,RouteAvailability.Available,"s",true);
+        var data=new GameDataSnapshot(new(ending.Points[0].X,0,ending.Points[0].Z+100,0,15,3000,true,false,1,now),route,RouteAvailability.Available,"s",true){NavigationRoute=NavigationRouteState.Empty.Accept(route)};
         var diagnostic=new NavigationRuntime().Process(data,new(map,[],[],[]){PrefabPaths=[selected,continuing]},now);
         var merge=Assert.Single(diagnostic.LaneMerges);Assert.Equal(LaneMergeKind.Ramp,merge.Kind);
         Assert.DoesNotContain(diagnostic.Upcoming,a=>a.Kind is ManeuverKind.MergeLeft or ManeuverKind.MergeRight);

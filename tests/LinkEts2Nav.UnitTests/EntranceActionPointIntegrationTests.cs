@@ -5,25 +5,18 @@ public sealed class EntranceActionPointIntegrationTests
  [Fact]
  public void StaticActionsClampTheGeneratedEntranceMergeAtThePreviousPhysicalEnd()
  {
-  PrefabLanePath Lane(ulong uid,ulong from,ulong to,int input,int output,int inputs,int outputs,int order)=>
-   new(uid,from,to,input,output,input,order,inputs,outputs,[input*10+output],
-    [new(0,0,0),new(10,0,0)],10){CurveBlinkers=[LaneBlinker.NoBlinker],CurveStartPointIndices=[0]};
-  var own=Lane(1,10,20,0,0,1,2,0);var added=Lane(1,11,20,0,1,1,2,1);
-  var main=new DirectedRoad("prefab:1:0:1",10,20,own.Points){LanePaths=[own],LaneConnections=[new(10,0,20,0),new(11,0,20,1)],JoinPriority=new(10,[],[],20,"proven")};
-  var side=main with{Id="prefab:1:2:1",StartNodeUid=11,LanePaths=[added]};
-  var road=new DirectedRoad("road",20,30,[new(10,0,0),new(210,0,0)]);
-  var kept=Lane(2,30,40,0,0,2,1,0);var leaving=Lane(2,30,41,1,0,2,1,0);
-  var mainExit=new DirectedRoad("prefab:2:0:1",30,40,[new(210,0,0),new(310,0,0)]){LanePaths=[kept]};
-  var sideExit=mainExit with{Id="prefab:2:0:2",EndNodeUid=41,LanePaths=[leaving]};
-  DirectedRoad[] graph=[main,side,road,mainExit,sideExit];DirectedRoad[] route=[side,road,mainExit];
-  var native=new NativeLaneGraph(graph);var auxiliaries=AuxiliaryLaneIndex.Build(native,TestContext.Current.CancellationToken);
-  var lanes=new LaneRoutePlanner().Build(route);var view=LaneContractionView.Build(route,auxiliaries);
-  var raw=Assert.Single(LaneContractionGuidance.Apply([],view.Select([],lanes)));
+  // Reuse the native soft-entry/death topology, not legacy geometric transfer inference.
+  var graph=ComponentContinuityTests.Soft();
+  var terminal=graph[3] with{LanePaths=[..graph[3].LanePaths,..graph[4].LanePaths]};
+  var native=new NativeLaneGraph([graph[0],graph[1],graph[2],terminal]);
+  DirectedRoad[] route=[graph[1],graph[2],terminal];
+  var lanes=new LaneRoutePlanner().Build(route);
+  var raw=Assert.Single(new ComponentManeuverPlanner().Build(route,native.Edges,lanes)[0],a=>a.ApproachInterval is not null);
   var priorEnd=raw.DistanceMeters+30;
   var preceding=new NavigationManeuver("preceding",ManeuverKind.TurnRight,0,"in","out")
    {JunctionId="previous-real-junction",EndDistanceMeters=priorEnd};
-  var scene=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=graph,AuxiliaryLanes=auxiliaries};
-  var source=new RoadPathSource(scene.Map,graph,native:native);
+  var scene=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=native.Edges,NativeGraph=native,Components=ComponentContinuityIndex.Build(native)};
+  var source=new RoadPathSource(scene.Map,native.Edges,native:native);
   var staticPlan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),scene,source,lanes,Enumerable.Range(0,route.Length).ToArray());
   var selected=staticPlan with{Actions=ActionPointConstraints.Apply([preceding,..staticPlan.Actions])};
   var final=Assert.Single(selected.Actions,a=>a.Id==raw.Id);

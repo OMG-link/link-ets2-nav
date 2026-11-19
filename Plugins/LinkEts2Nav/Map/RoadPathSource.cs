@@ -6,6 +6,9 @@ using GameMap = TruckLib.ScsMap.Map;
 
 namespace LinkEts2Nav.Map;
 
+/// <summary>A concrete SDK entry in a complete known geometry component.</summary>
+public sealed record RouteComponentEntry(IReadOnlyList<DirectedRoad> Route,int VisitIndex,double AlongMeters);
+
 /// <summary>Builds provable directed road paths; unknown prefab geometry is never invented.</summary>
 public sealed class RoadPathSource
 {
@@ -48,6 +51,7 @@ public sealed class RoadPathSource
     private ulong[]? cachedNodes;
     private (bool Truncated,ulong? Terminal) cachedRouteMeaning;
     private int[]? cachedSourceNodeIndices;
+    private int[] rawNodeOrdinals=[];
     private readonly Dictionary<IReadOnlyList<DirectedRoad>,List<(int Start,int End,int SourceNodeIndex)>> sdkVisits=new(ReferenceEqualityComparer.Instance);
     public int RouteStructureBuildCount { get; private set; }
     private List<List<DirectedRoad>> cachedChunks = [];
@@ -111,10 +115,21 @@ public sealed class RoadPathSource
     }
 
 
-    public IReadOnlyList<DirectedRoad> GetRoutePrefix(Vector3 position,RouteSnapshot route,ulong firstNode)
+    /// <summary>Locates a current SDK entry without clipping its full geometry component.</summary>
+    public RouteComponentEntry? GetRouteEntry(RouteSnapshot route,int sourceNodeIndex)
     {
-        var matches=GetRouteChunks(position,route).Where(p=>p.Count>0 && p[0].StartNodeUid==firstNode).ToArray();
-        return matches.Length==1 ? matches[0] : [];
+        var components=GetRouteComponents(route);
+        int ordinal=rawNodeOrdinals[sourceNodeIndex];
+        foreach(var component in components)
+        {
+            double along=0;var visits=sdkVisits[component];
+            for(int i=0;i<component.Count;i++)
+            {
+                if(visits[i].Start==ordinal)return new(component,i,along);
+                along+=RouteGeometry.Length(component[i]);
+            }
+        }
+        return null;
     }
 
     /// <summary>Nearby directed geometry, preserving the PPD's explicit junction connections.</summary>
@@ -181,8 +196,13 @@ public sealed class RoadPathSource
         var ids=sourceIndices.Select(i=>route.Nodes[i].Uid).ToArray();
         var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
         var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
-        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedSourceNodeIndices!.SequenceEqual(sourceIndices)&&cachedRouteMeaning==meaning)return cachedChunks;
+        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedSourceNodeIndices!.SequenceEqual(sourceIndices)&&rawNodeOrdinals.Length==route.Nodes.Count&&cachedRouteMeaning==meaning)return cachedChunks;
         cachedNodes=ids;cachedSourceNodeIndices=sourceIndices;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];sdkVisits.Clear();
+        rawNodeOrdinals=new int[route.Nodes.Count];
+        for(int i=0;i<sourceIndices.Length;i++)rawNodeOrdinals[sourceIndices[i]]=i;
+        // Adjacent identical SDK entries normalize to the same traversal node.
+        for(int i=1;i<route.Nodes.Count;i++)
+            if(route.Nodes[i]==route.Nodes[i-1])rawNodeOrdinals[i]=rawNodeOrdinals[i-1];
         var nodes=ids.Select(uid=>new RouteNode(uid,0,0)).ToArray();
         List<DirectedRoad>? chunk = null;
         for (int i = 1; i < nodes.Length; i++)
@@ -246,7 +266,8 @@ public sealed class RoadPathSource
     {
         if(component.Count==0)return 0;
         var visits=sdkVisits[component];
-        int index=visits.FindIndex(v=>v.End>=currentNodeIndex);
+        int ordinal=rawNodeOrdinals[currentNodeIndex];
+        int index=visits.FindIndex(v=>v.End>=ordinal);
         return index<0?component.Count:index;
     }
 

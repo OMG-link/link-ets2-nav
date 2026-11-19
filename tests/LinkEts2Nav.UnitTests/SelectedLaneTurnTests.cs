@@ -50,7 +50,7 @@ public sealed class SelectedLaneTurnTests
     public void TransparentMainPassageDoesNotConsumeATurn()
     {
         var fact=Fact(ComponentContinuityKind.Main,null) with{Lanes=[],IsMain=true};
-        var result=Project(fact,null);
+        var result=ComponentManeuverProjection.Build([Edge],0,[],[fact]);
         Assert.Equal(ManeuverKind.Straight,Assert.Single(result.Actions).Kind);Assert.Empty(result.Issues);
     }
     [Fact]

@@ -25,6 +25,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private readonly LaneRoutePlanner lanePlanner = new();
     private readonly Dictionary<IReadOnlyList<DirectedRoad>,NavigationStructurePlan> structures = new(ReferenceEqualityComparer.Instance);
     private NavigationStructurePlan? publishedStructure;
+    private long publishedGeneration=-1;
     private NavigationMapIdentity? mapIdentity;
     private int routeBuildGeneration;
     private double routeOrigin;
@@ -78,7 +79,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             throw new NavigationContractException("Available navigation requires the atomically captured stable route.");
 #endif
         int currentNode=stable.CurrentNodeIndex;
-        string routeRevision=stable.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture)+":"+sdkRoute.Revision;
+        string routeRevision=stable.CurrentSnapshot.Revision;
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
         if(nearby.Retries is {} retries&&mapRequestScope!=retries.ScopeRevision)
         {mapRequestScope=retries.ScopeRevision;paths!.ReconsiderMapIssues();}
@@ -103,17 +104,19 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         if(along is null)
         {
             var areas=nearby.FreeNavigationAreas.Where(a=>a.Contains(position)).ToArray();
-            var first=sdkRoute.Nodes.OrderByDescending(n=>n.DistanceToEndMeters).FirstOrDefault();
-            if(areas.Length==1 && first is not null && areas[0].ExitNodes.Contains(first.Uid))
+            var remaining=stable.CurrentSnapshot.Nodes;
+            int firstIndex=Enumerable.Range(0,remaining.Count).MaxBy(i=>remaining[i].DistanceToEndMeters);
+            var first=remaining[firstIndex];
+            if(areas.Length==1 && areas[0].ExitNodes.Contains(first.Uid))
             {
-                var prefix=paths.GetRoutePrefix(position,sdkRoute,first.Uid);
-                if(prefix.Count>0 && prefix[0].Id.StartsWith("prefab:",StringComparison.Ordinal))
+                var entry=paths.GetRouteEntry(sdkRoute,stable.CurrentNodeIndex+firstIndex);
+                if(entry is not null && entry.Route[entry.VisitIndex].Id.StartsWith("prefab:",StringComparison.Ordinal))
                 {
-                    var exit=prefix[0].Points[0];var delta=exit-position;
+                    var exit=entry.Route[entry.VisitIndex].Points[0];var delta=exit-position;
                     exitDistance=new Vector2(delta.X,delta.Z).Length();
                     if(exitDistance>0 && exitDistance<=100 && Math.Abs(delta.Y)<=3
                         && Vector3.Dot(Vector3.Normalize(new(delta.X,0,delta.Z)),vehicle.ForwardDirection)>=.5f)
-                    { route=prefix;along=-exitDistance;yardApproach=true; }
+                    { route=entry.Route;along=entry.AlongMeters-exitDistance;yardApproach=true; }
                 }
             }
         }
@@ -126,7 +129,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 log?.Invoke($"道路分流未定：{issue.Prefab}，入口={issue.EntryNode:X16}，出口={issue.ExitNode:X16}；{issue.Reason}");
         }
         var laneRoute=structure.Lanes;
-        bool structuralUpdate=!ReferenceEquals(publishedStructure,structure)||planningSession!=data.SessionId;
+        bool structuralUpdate=!ReferenceEquals(publishedStructure,structure)||planningSession!=data.SessionId||publishedGeneration!=stable.Generation;
         if(structuralUpdate)routeOrigin=progress.Update(data.SessionId,route,0);
         double playerAlong=routeOrigin+along.Value;
         var upcoming=structure.Actions.Select(m=>Relative(m,along.Value)).Where(m=>m.DistanceMeters>=0).ToArray();
@@ -218,7 +221,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 lastSpoken=text;
             }
         }
-        publishedStructure=structure;planningSession=data.SessionId;
+        publishedStructure=structure;planningSession=data.SessionId;publishedGeneration=stable.Generation;
         string state = yardApproach ? "货场出口方向提示（距出口采用直线距离）。" : defer ? "正在通过当前路口。" : next is not null ? "沿游戏导航路线提供基础路口提示。"
             : confirmedContinuation ? "当前可见路线没有非直行动作，沿当前道路行驶，等待下一操作提示。"
             : "当前连续路径内没有可确认的普通路口操作。";
@@ -296,7 +299,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     {
         ferryProgress.Reset();
         analysisTimeline.Reset();analysisScheduler.Reset();analysisRoute=null;planningSession=null;eventPlanner.Reset();progress.Reset();narrowPlanner.Reset();cityPlanner.Reset();cityEntries.Reset();citySession=null;cityFrame=null;guidance?.Suspend("navigation");guidance?.Suspend(CityEntryEventBuilder.Kind);guidance?.Suspend(NarrowRoadEventBuilder.Kind);
-        structures.Clear();publishedStructure=null;mapIdentity=null;routeBuildGeneration=0;
+        structures.Clear();publishedStructure=null;publishedGeneration=-1;mapIdentity=null;routeBuildGeneration=0;
         connectionFailureSignature=null;
         speech?.ClearPlan("navigation");
         map = null;

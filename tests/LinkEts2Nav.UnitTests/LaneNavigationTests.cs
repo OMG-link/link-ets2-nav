@@ -75,14 +75,13 @@ public sealed class LaneNavigationTests
         Assert.Equal("route",failure.ParamName);
     }
     [Fact]
-    public void DiscontinuousHistoryIsRejectedBeforeUsingTheCachedPlanOrPositionAnchor()
+    public void DiscontinuousHistoryIsRejectedBeforeReusingTheCachedStaticPlan()
     {
         var planner=new LaneRoutePlanner();
         DirectedRoad[] route=[Edge("roadA",1,2),Edge("roadB",2,3),Edge("prefab:A:0:1",3,4,Lane(3,4,0,0,1))];
         Assert.True(planner.Build(route).Complete);
         route[1]=route[1] with{StartNodeUid=99};
         Assert.Throws<ArgumentException>(()=>planner.Build(route));
-        Assert.Throws<ArgumentException>(()=>planner.Build(route,new(0,0,20),1000));
     }
     [Fact]
     public void BuildsAllLaneChainsWithExactNativeCurveIndices()

@@ -140,4 +140,44 @@ public sealed class WrapperRoundaboutProgressTests
         Assert.Equal(2,logs.Count(l=>l.StartsWith("\u5bfc\u822a\u6307\u4ee4")&&l.Contains("\u9a76\u51fa\u73af\u5c9b")));
     }
 
+    [Fact]
+    public void RawConsumedBoundIsConvertedBeforeFilteringNormalizedVisits()
+    {
+        RouteNode[] nodes=[new(10,200,20),new(10,200,20),new(12,100,10),new(13,0,0)];
+        var sdk=RouteSnapshot.Parse(nodes,DateTimeOffset.UtcNow);
+        var a=new DirectedRoad("prefab:1:0:1",10,12,[Vector3.Zero,new(100,0,0)]);
+        var b=new DirectedRoad("prefab:2:0:1",12,13,[new(100,0,0),new(200,0,0)]);
+        var source=new RoadPathSource(new TruckLib.ScsMap.Map(),[a,b]);
+        var component=Assert.Single(source.GetRouteComponents(sdk));
+        Assert.Equal(0,source.FirstLiveVisit(component,2));
+        int first=source.FirstLiveVisit(component,3);Assert.Equal(1,first);
+        Assert.Equal(150,new DirectedPathMatcher().ProjectDistance(new(150,0,0),Vector3.UnitX,component,first));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RawSdkBoundUsesTheSameCanonicalNodeAsGeometryNormalization(bool ascending)
+    {
+        RouteNode[] nodes=[new(10,200,20),new(10,200,20),new(12,100,10),new(13,0,0)];
+        if(ascending)Array.Reverse(nodes);
+        var sdk=RouteSnapshot.Parse(nodes,DateTimeOffset.UtcNow);
+        var a=new DirectedRoad("prefab:1:0:1",10,12,[Vector3.Zero,new(100,0,0)]);
+        var b=new DirectedRoad("prefab:2:0:1",12,13,[new(100,0,0),new(200,0,0)]);
+        var source=new RoadPathSource(new TruckLib.ScsMap.Map(),[a,b]);
+        var component=Assert.Single(source.GetRouteComponents(sdk));
+        var expected=ascending?new[]{1,0,0,0}:new[]{0,0,0,1};
+        for(int raw=0;raw<nodes.Length;raw++)Assert.Equal(expected[raw],source.FirstLiveVisit(component,raw));
+    }
+    [Fact]
+    public void AChangedRawNodeCountRefreshesTheProgressMappingEvenWhenGeometryIsUnchanged()
+    {
+        var a=new DirectedRoad("prefab:1:0:1",10,12,[Vector3.Zero,new(100,0,0)]);
+        var source=new RoadPathSource(new TruckLib.ScsMap.Map(),[a]);
+        var nodes=new RouteNode[]{new(10,100,10),new(12,0,0),new(12,0,0)};
+        source.GetRouteComponents(RouteSnapshot.Parse(nodes,DateTimeOffset.UtcNow));
+        var component=Assert.Single(source.GetRouteComponents(RouteSnapshot.Parse([..nodes,nodes[^1]],DateTimeOffset.UtcNow)));
+        Assert.Equal(2,source.RouteStructureBuildCount);Assert.Equal(0,source.FirstLiveVisit(component,3));
+    }
+
 }

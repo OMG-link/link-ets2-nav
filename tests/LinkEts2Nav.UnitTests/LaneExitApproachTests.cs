@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using LinkEts2Nav.Core;
 namespace LinkEts2Nav.UnitTests;
 public sealed class LaneExitApproachTests
@@ -81,9 +81,13 @@ public sealed class LaneExitApproachTests
     public void RecognizedRoundaboutDoesNotGainDedicatedExitLaneGuidance()
     {
         var s=Scene();
-        var range=new RoundaboutRouteRange("ring",0,s.Route.Length,0,s.Route.Sum(RouteGeometry.Length),[]);
-        Assert.Empty(new NavigationManeuverDetector().FindSequence(s.Route,0,s.Graph,out _,out _,out _,
-            new LaneRoutePlanner().Build(s.Route),[range]));
+        var end=s.Route.Sum(RouteGeometry.Length);
+        var ringAction=new NavigationManeuver("ring:enter",ManeuverKind.EnterRoundabout,0,"in","out")
+            {JunctionId="ring",EndDistanceMeters=end,SpeechSequenceStartDistanceMeters=0};
+        var range=new RoundaboutRouteRange("ring",0,s.Route.Length,0,end,[ringAction]);
+        var actual=new NavigationManeuverDetector().FindSequence(s.Route,0,s.Graph,out _,out _,out _,
+            new LaneRoutePlanner().Build(s.Route),[range]);
+        Assert.Equal(ringAction,Assert.Single(actual));
     }
 
     [Fact]

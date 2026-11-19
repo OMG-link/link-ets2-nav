@@ -11,20 +11,21 @@ public sealed class ComponentManeuverPlanner
     public IReadOnlyList<MapQueryIssue> Issues {get;private set;}=[];
     public IReadOnlyList<NavigationUnresolvedSpan> Unresolved {get;private set;}=[];
     public IReadOnlyDictionary<int,IReadOnlyList<NavigationManeuver>> Build(IReadOnlyList<DirectedRoad> route,
-        IReadOnlyList<DirectedRoad> source,LaneNavigationPlan? selected=null,Func<ulong,MapQueryIssue>? missing=null)
+        IReadOnlyList<DirectedRoad> source,LaneNavigationPlan? selected=null,Func<ulong,MapQueryIssue>? missing=null,Func<int,bool>? excludeVisit=null)
     {
         if(!ReferenceEquals(graph,source))
         {index=ComponentContinuityIndex.Build(new(source),missing);graph=source;}
         var result=new Dictionary<int,IReadOnlyList<NavigationManeuver>>();var issues=new List<MapQueryIssue>();var unresolved=new List<NavigationUnresolvedSpan>();
-        var selections=new Dictionary<int,PrefabLanePath>();int cursor=route.Count-1;
-        foreach(var section in selected?.Sections.Reverse()??[])
-        {
-            while(cursor>=0&&route[cursor].Id!=section.EdgeId)cursor--;
-            if(cursor>=0)selections[cursor--]=section.Path;
-        }
+        var selections=(selected?.Sections??[]).ToDictionary(s=>s.SourceVisitIndex,s=>s.Path);
+#if DEBUG
+        foreach(var section in selected?.Sections??[])
+            if(section.SourceVisitIndex<0||section.SourceVisitIndex>=route.Count||route[section.SourceVisitIndex].Id!=section.EdgeId)
+                throw new NavigationContractException($"Selected lane {section.EdgeId} has no matching route visit {section.SourceVisitIndex}.");
+#endif
         for(int i=0;i<route.Count;i++)
         {
-            var edge=route[i];if(edge.Junction?.IsJunction==true||edge.Roundabout is not null||edge.ReturnsToEntry)continue;
+            if(excludeVisit?.Invoke(i)==true)continue;
+            var edge=route[i];if(edge.Junction?.IsJunction==true||edge.ReturnsToEntry)continue;
             var entry=index!.ForEntry(edge.Id);var exit=index.ForExit(edge.Id);
             if(entry is null&&exit is null)
             {

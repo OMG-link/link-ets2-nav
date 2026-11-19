@@ -23,14 +23,13 @@ public sealed class SelectedStraightPassageTests
             {LanePaths=[entryOther,chosen],ForkInfo=info,Junction=new(1,2,0){InterfaceCount=3}};
         var side=new DirectedRoad("prefab:000000000000002A:0:1",10,30,left){LanePaths=[branch],ForkInfo=info,Junction=main.Junction};
         DirectedRoad[] route=[main];DirectedRoad[] graph=legalSide?[main,side]:[main];
-        var lanes=new LaneNavigationPlan([new(main.Id,chosen)],[],true,null);
+        var lanes=new LaneNavigationPlan([new(main.Id,chosen,0)],[],true,null);
         var target=new NavigationManeuver("merge",ManeuverKind.MergeLeft,400,"a","b")
             {EndDistanceMeters=450,JunctionId="merge-target",AnnouncementMode=targetMode};
-        var source=new NavigationStructurePlan(route,route,[target],lanes,[],[new("42",10,20,"mixed outlet signals")],500,true,0)
-            {BaseActions=[target]};
         var paths=new RoadPathSource(new TruckLib.ScsMap.Map(),[main],native:new NativeLaneGraph(graph));
         var nearby=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=graph};
-        return new NavigationStructurePlanner().SelectLanes(source,lanes,nearby,paths);
+        var plan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),nearby,paths,lanes,Enumerable.Range(0,route.Length).ToArray());
+        return plan with{Actions=ActionPointConstraints.Apply([..plan.Actions,target])};
     }
     private static GuidanceSourcePlan Speech(NavigationStructurePlan structure)
         =>new NavigationEventPlanner().Build("s","r",DateTimeOffset.UtcNow,0,structure.Actions,true,false,false,new());
@@ -69,17 +68,17 @@ public sealed class SelectedStraightPassageTests
         var original=Build();var main=original.Route[0];var lane=main.LanePaths[1];
         var loop=new DirectedRoad("loop",main.EndNodeUid,main.StartNodeUid,[main.Points[^1],main.Points[0]]);
         DirectedRoad[] route=revisit?[main,loop,main]:[main];
-        var chosen=new LaneRouteSection(main.Id,lane);
-        var lanes=new LaneNavigationPlan(revisit?[chosen,chosen]:[chosen],[],true,null);
+        var chosen=new LaneRouteSection(main.Id,lane,0);
+        var lanes=new LaneNavigationPlan(revisit?[chosen,chosen with{SourceVisitIndex=2}]:[chosen],[],true,null);
         var keep=new NavigationManeuver("early-fork",ManeuverKind.KeepRight,laterAction?50:-50,"approach",main.Id)
             {JunctionId="prefab:000000000000002A",EndDistanceMeters=laterAction?180:60,
                 ApproachInterval=interval?laterAction?new(40,120):new(-60,0):null};
-        var target=original.BaseActions.Single();
-        var source=original with{Route=route,InstructionRoute=route,Lanes=lanes,Actions=[keep,target],BaseActions=[keep,target]};
+        var target=original.Actions.Single(a=>a.Id=="merge");
         var graph=new NativeLaneGraph([main,loop]);
         var paths=new RoadPathSource(new TruckLib.ScsMap.Map(),[main],native:graph);
         var nearby=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=[main]};
-        return new NavigationStructurePlanner().SelectLanes(source,lanes,nearby,paths);
+        var plan=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),nearby,paths,lanes,Enumerable.Range(0,route.Length).ToArray());
+        return plan with{Actions=ActionPointConstraints.Apply([keep,..plan.Actions,target])};
     }
 
     [Theory]

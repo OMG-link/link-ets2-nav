@@ -26,7 +26,7 @@ public sealed class NavigationStructurePlanTests
         return (new(map,[],[],[]){PrefabPaths=links},route);
     }
     private static GameDataSnapshot Data(RouteSnapshot route,float z,DateTimeOffset now)
-        =>new(new(0,0,z,.5,15,1000,true,false,100,now),route,RouteAvailability.Available,"session",true);
+        =>new(new(0,0,z,.5,15,1000,true,false,100,now),route,RouteAvailability.Available,"session",true){NavigationRoute=NavigationRouteState.Empty.Accept(route)};
 
     [Fact]
     public void MovementAndSdkObjectRefreshOnlyAdvanceExistingPlans()
@@ -62,15 +62,16 @@ public sealed class NavigationStructurePlanTests
         var scene=Scene();var coordinator=new GuidanceCoordinator();var runtime=new NavigationRuntime(guidance:coordinator);
         var partial=scene.Scene with{PrefabPaths=[]};
         runtime.Process(Data(scene.Route,10,Now),partial,Now);
-        Assert.Equal(1,runtime.StructureBuildCount);
+        // Both known components on either side of the gap are planned before position matching.
+        Assert.Equal(2,runtime.StructureBuildCount);
         runtime.Process(Data(scene.Route,20,Now),scene.Scene,Now);
-        Assert.Equal(2,runtime.StructureBuildCount);
-        Assert.NotNull(runtime.Process(Data(scene.Route,30,Now),scene.Scene,Now).Next);
-        Assert.Equal(2,runtime.StructureBuildCount);
-        runtime.Process(Data(scene.Route with{MayBeTruncated=true},40,Now),scene.Scene,Now);
         Assert.Equal(3,runtime.StructureBuildCount);
-        runtime.Process(Data(scene.Route with{Nodes=scene.Route.Nodes.Select(n=>n with{DistanceToEndMeters=n.DistanceToEndMeters+100}).ToArray()},50,Now),scene.Scene,Now);
+        Assert.NotNull(runtime.Process(Data(scene.Route,30,Now),scene.Scene,Now).Next);
+        Assert.Equal(3,runtime.StructureBuildCount);
+        runtime.Process(Data(scene.Route with{MayBeTruncated=true},40,Now),scene.Scene,Now);
         Assert.Equal(4,runtime.StructureBuildCount);
+        runtime.Process(Data(scene.Route with{Nodes=scene.Route.Nodes.Select(n=>n with{DistanceToEndMeters=n.DistanceToEndMeters+100}).ToArray()},50,Now),scene.Scene,Now);
+        Assert.Equal(5,runtime.StructureBuildCount);
     }
 
     [Fact]
@@ -188,4 +189,43 @@ public sealed class NavigationStructurePlanTests
         var second=Assert.Single(refined.Triggers,t=>t.Id.StartsWith("second")&&t.Kind==SpeechTriggerKind.Overview);
         Assert.Equal(980,second.AlongMeters);
     }
+    private sealed class NoAudioPlayer:IGuidanceAudioPlayer
+    {
+        public Task PlayAsync(string file,CancellationToken token)=>throw new InvalidOperationException("No audio should be loaded in this planning fixture.");
+    }
+    [Fact]
+    public async Task DivergentStableRouteWithdrawsTheOldQueuedNavigationPreview()
+    {
+        var scene=Scene();var stable=NavigationRouteState.Empty.Accept(scene.Route);
+        await using var playback=new GuidancePlaybackManager(null,new NoAudioPlayer(),()=>null,cancellationToken:TestContext.Current.CancellationToken);
+        var coordinator=new GuidanceCoordinator(playback:playback);var runtime=new NavigationRuntime(guidance:coordinator);
+        void Step()
+        {
+            var data=Data(stable.CurrentSnapshot,250,Now) with{NavigationRoute=stable};
+            coordinator.Observe(data,Now,processJourney:false);runtime.Process(data,scene.Scene,Now);coordinator.Tick(data,Now);
+        }
+        Step();var old=Assert.Single(playback.Pending,p=>p.Source=="navigation");
+        var straight=scene.Scene.Map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Position.Z==760);
+        stable=stable.Accept(RouteSnapshot.Parse([scene.Route.Nodes[0],scene.Route.Nodes[1],new(straight.Node.Uid,500,20),new(straight.ForwardNode.Uid,0,0)],Now));
+        Step();Assert.DoesNotContain(playback.Pending,p=>p.Source=="navigation"&&p.EventId==old.EventId);
+    }
+    [Fact]
+    public void ClearingAndRestoringIdenticalSdkNodesRepublishesWithoutRebuildingGeometry()
+    {
+        var scene=Scene();var stable=NavigationRouteState.Empty.Accept(scene.Route);
+        var coordinator=new GuidanceCoordinator();var runtime=new NavigationRuntime(guidance:coordinator);
+        void Step(bool cleared=false)
+        {
+            var data=Data(stable.CurrentSnapshot,250,Now) with{NavigationRoute=stable,RouteAvailability=stable.CurrentSnapshot.Availability};
+            if(cleared)data=data with{Vehicle=data.Vehicle! with{NavigationDistanceRemainingMeters=0}};
+            coordinator.Observe(data,Now);runtime.Process(data,scene.Scene,Now);coordinator.Tick(data,Now);
+        }
+        Step();int builds=runtime.StructureBuildCount,events=runtime.EventPlanBuildCount;
+        stable=stable.Accept(RouteSnapshot.Parse([],Now));Step(true);
+        Assert.DoesNotContain(coordinator.Timeline.Sources,p=>p.Source=="navigation");
+        stable=stable.Accept(scene.Route);Step();
+        Assert.Contains(coordinator.Timeline.Sources,p=>p.Source=="navigation");
+        Assert.Equal(builds,runtime.StructureBuildCount);Assert.Equal(events+1,runtime.EventPlanBuildCount);
+    }
+
 }

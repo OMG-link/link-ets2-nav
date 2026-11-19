@@ -15,7 +15,7 @@ public sealed class NavigationConfirmationSpanTests
         DirectedRoad[] graph=[..route,Road("prefab:A:0:2",2,99,100,140),Road("prefab:B:0:2",4,98,300,340)];
         var detector=new NavigationManeuverDetector();
         var actions=detector.FindSequence(route,0,graph,out double end,out bool unknown,out double firstUnknown);
-        var plan=new NavigationStructurePlan(route,route,actions,new([],[],true,null),[],[],end,unknown,firstUnknown)
+        var plan=new NavigationStructurePlan(route,actions,new([],[],true,null),[],[],end,unknown,firstUnknown)
             {UnresolvedSpans=detector.UnresolvedSpans.ToArray()};
         return(plan,detector);
     }

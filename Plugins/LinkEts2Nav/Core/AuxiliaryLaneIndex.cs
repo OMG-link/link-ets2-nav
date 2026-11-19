@@ -72,7 +72,7 @@ public sealed class AuxiliaryLaneIndex
         {
             cancellationToken.ThrowIfCancellationRequested();
             var entrances=shared.GroupBy(e=>e.StartNodeUid).ToArray();
-            if(shared.Any(e=>e.Junction?.IsJunction==true||e.Roundabout is not null))continue;
+            if(shared.Any(e=>e.Junction?.IsJunction==true))continue;
             if(entrances.Length<2)continue;
             ulong? priority=entrances.SelectMany(g=>g).Select(e=>RoadJoinClassifier.Classify(e).MainEntry).FirstOrDefault(p=>p is not null);
             foreach(var entrance in entrances)
@@ -87,7 +87,7 @@ public sealed class AuxiliaryLaneIndex
                 Trace(edge,AuxiliaryBoundaryKind.IndependentEntrance,priority,side,others,counts[0],[],0);
             }
         }
-        foreach(var edge in graph.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null&&e.Junction?.IsJunction!=true&&e.Roundabout is null))
+        foreach(var edge in graph.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null&&e.Junction?.IsJunction!=true))
         foreach(var family in edge.LanePaths.GroupBy(p=>p.EntryLane))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -156,7 +156,7 @@ public sealed class AuxiliaryLaneIndex
                     }
                     if(next.Select(NativeLaneGraph.Prefab).Distinct().Count()!=1){Missing("控制接口对应多个预制件");break;}
                     // These are known, ordinary exclusions, not incomplete map data.
-                    if(next.Any(e=>e.Roundabout is not null||e.Junction?.IsJunction==true))break;
+                    if(next.Any(e=>e.Junction?.IsJunction==true))break;
                     var sidePaths=next.SelectMany(e=>e.LanePaths).Where(p=>side.Contains(p.EntryOrder)&&p.EntryLaneCount==count).ToArray();
                     var mainPaths=next.SelectMany(e=>e.LanePaths).Where(p=>main.Contains(p.EntryOrder)&&p.EntryLaneCount==count).ToArray();
                     if(sidePaths.Length==0||mainPaths.Length==0)

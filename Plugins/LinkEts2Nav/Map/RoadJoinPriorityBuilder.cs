@@ -12,7 +12,7 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
     {
         var result=source.ToArray();var sampler=new RoadSlopeWindowSampler(incidentRoads,result.Where(e=>!e.ReturnsToEntry).ToArray(),missingConnection);
         var passages=result.Select((edge,index)=>(edge,index)).Where(p=>!p.edge.ReturnsToEntry&&p.edge.Id.StartsWith("prefab:",StringComparison.Ordinal)
-            &&p.edge.Junction?.IsJunction!=true&&p.edge.Roundabout is null).ToArray();
+            &&p.edge.Junction?.IsJunction!=true).ToArray();
         var groups=passages
             .GroupBy(p=>(Prefab:p.edge.Id.Split(':')[1],Exit:p.edge.EndNodeUid));
         foreach(var group in groups)

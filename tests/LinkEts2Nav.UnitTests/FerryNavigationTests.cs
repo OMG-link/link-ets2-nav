@@ -26,7 +26,7 @@ public sealed class FerryNavigationTests
         return(new(map,[],[],[]){Ferries=ferry,FreeNavigationAreas=withAreas?areas:[]},route,a,b,outgoing);
     }
     private static GameDataSnapshot Data(RouteSnapshot route,float z,DateTimeOffset now,bool paused=false)
-        =>new(new(0,0,z,.5,10,1000,true,paused,100,now),route,RouteAvailability.Available,"session",!paused);
+        =>new(new(0,0,z,.5,10,1000,true,paused,100,now),route,RouteAvailability.Available,"session",!paused){NavigationRoute=NavigationRouteState.Empty.Accept(route)};
 
     [Theory][InlineData(false)][InlineData(true)]
     public void FerryIsAnActionWithShortFarPreviewsAndFullNearDirection(bool nameClips)
@@ -42,7 +42,8 @@ public sealed class FerryNavigationTests
         string full=nameClips?"进入Port A码头，乘坐前往Port B的轮渡":FerryNavigationPrompts.Generic;
         Assert.Contains(queued,q=>q.Text=="一百米后，"+full+"。");Assert.Contains(queued,q=>q.Text==full+"。");
         Assert.DoesNotContain(queued,q=>q.Text==NavigationPrompts.Continue());
-        Assert.Equal(1,runtime.StructureBuildCount);Assert.Equal(1,runtime.EventPlanBuildCount);
+        // Both known shores are planned, while only the current component publishes its event table.
+        Assert.Equal(2,runtime.StructureBuildCount);Assert.Equal(1,runtime.EventPlanBuildCount);
     }
 
     [Fact]

@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 using LinkEts2Nav.Map;
@@ -52,11 +52,10 @@ public sealed class LaneInstructionFormatterTests
         var left=Lane(0,0,0,ending);var center=Lane(1,0,1,main);var right=Lane(2,1,2,other);
         var edge=new DirectedRoad("prefab:000000000000002A:0:1",10,20,main){LanePaths=[left,center,right]};
         var road=new DirectedRoad("road",5,10,Enumerable.Range(0,651).Select(i=>new Vector3(0,0,695-i)).ToArray());
-        DirectedRoad[] route=[road,edge];var lanes=new LaneNavigationPlan([new(edge.Id,left)],[],true,null);
+        DirectedRoad[] route=[road,edge];var lanes=new LaneNavigationPlan([new(edge.Id,left,1)],[],true,null);
         var paths=new RoadPathSource(new TruckLib.ScsMap.Map(),[edge],native:new NativeLaneGraph(route));
-        var source=new NavigationStructurePlan(route,route,[],lanes,[],[],1000,false,1000);
         var map=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=[edge]};
-        var result=new NavigationStructurePlanner().SelectLanes(source,lanes,map,paths);
+        var result=new NavigationStructurePlanner().Build(route,new([],"fixture",RouteAvailability.None,DateTimeOffset.UtcNow),map,paths,lanes,Enumerable.Range(0,route.Length).ToArray());
         var merge=Assert.Single(result.Merges);Assert.Equal(3,merge.ApproachLaneCount);Assert.Equal(2,merge.RecommendedLaneCount);
         var action=Assert.Single(result.Actions);
         Assert.Equal("车道合并，建议提前走右侧两车道",action.Instruction);

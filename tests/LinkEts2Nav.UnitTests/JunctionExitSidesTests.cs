@@ -1,5 +1,6 @@
 using System.Numerics;
 using LinkEts2Nav.Core;
+using LinkEts2Nav.Map;
 
 namespace LinkEts2Nav.UnitTests;
 
@@ -19,7 +20,7 @@ public sealed class JunctionExitSidesTests
         var main=Exit(20,ComponentContinuityKind.Main,[1,2]);
         // Lane orders deliberately suggest left. Only the established Turn is authoritative.
         var other=Exit(30,kind,[0],NavigationSide.Right);
-        Assert.Equal(NavigationSide.Right,JunctionExitSides.OtherSides([main,other],42,10,20));
+        Assert.Equal(NavigationSide.Right,JunctionExitSides.OtherSides([main,other],42,10,20).Sides);
     }
 
     [Theory]
@@ -30,10 +31,10 @@ public sealed class JunctionExitSidesTests
         var selected=Exit(20,selectedKind,[1,2]);
         var left=Exit(30,ComponentContinuityKind.Natural,[0],NavigationSide.Right);
         var right=Exit(40,ComponentContinuityKind.Natural,[3],NavigationSide.Left);
-        Assert.Equal(NavigationSide.Left,JunctionExitSides.OtherSides([selected,left],42,10,20));
-        Assert.Equal(NavigationSide.Right,JunctionExitSides.OtherSides([selected,right],42,10,20));
+        Assert.Equal(NavigationSide.Left,JunctionExitSides.OtherSides([selected,left],42,10,20).Sides);
+        Assert.Equal(NavigationSide.Right,JunctionExitSides.OtherSides([selected,right],42,10,20).Sides);
         Assert.Equal(NavigationSide.Left|NavigationSide.Right,
-            JunctionExitSides.OtherSides([selected,left,right],42,10,20));
+            JunctionExitSides.OtherSides([selected,left,right],42,10,20).Sides);
     }
 
     [Fact]
@@ -44,7 +45,7 @@ public sealed class JunctionExitSidesTests
         var otherEntrance=Exit(40,ComponentContinuityKind.Hard,[0],NavigationSide.Left,entry:11);
         var otherPrefab=Exit(50,ComponentContinuityKind.Hard,[0],NavigationSide.Left,prefab:43);
         Assert.Equal(NavigationSide.Right,
-            JunctionExitSides.OtherSides([selected,legal,otherEntrance,otherPrefab],42,10,20));
+            JunctionExitSides.OtherSides([selected,legal,otherEntrance,otherPrefab],42,10,20).Sides);
     }
 
     [Theory]
@@ -68,6 +69,19 @@ public sealed class JunctionExitSidesTests
     {
         var selected=Exit(20,ComponentContinuityKind.Main,[0]);
         Assert.Throws<NotSupportedException>(()=>JunctionExitSides.OtherSides([selected,Exit(30,kind,[1])],42,10,20));
+    }
+
+    [Fact]
+    public void KnownSidesRemainExplicitlyPendingWhenAnotherOutletNeedsMapData()
+    {
+        var selected=Exit(20,ComponentContinuityKind.Main,[1]);
+        var left=Exit(30,ComponentContinuityKind.Natural,[0]);
+        var missing=new MissingMapSectors([new(3,4)],"upstream window seam");
+        var pending=Exit(40,ComponentContinuityKind.Unknown,[2]) with{Issue=missing};
+        var result=JunctionExitSides.OtherSides([selected,left,pending],42,10,20);
+        Assert.Equal(NavigationSide.Left,result.Sides);Assert.Same(missing,Assert.Single(result.Issues));
+        var mixed=left with{EntryOrders=[1]};
+        Assert.Throws<NotSupportedException>(()=>JunctionExitSides.OtherSides([selected,pending,mixed],42,10,20));
     }
 
     [Fact]

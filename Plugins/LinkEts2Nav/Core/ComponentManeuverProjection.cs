@@ -135,12 +135,18 @@ public static class ComponentManeuverProjection
             // A sole legal outlet is a merge/transition, not a ramp junction
             // to count or remind the driver to pass straight through.
             if(fact.LegalExitCount<2)return;
+            // The reverse classifier emits every outlet for this multi-outlet
+            // entrance. A missing map dependency remains a typed query issue;
+            // it does not turn an unfinished side query into unsupported input.
+            var sideQuery=JunctionExitSides.OtherSides(exitFacts,fact.PrefabUid,edge.StartNodeUid,edge.EndNodeUid);
+            issues.AddRange(sideQuery.Issues);
+            if(sideQuery.Issues.Count>0)unresolved.Add(new(offsets[visit],offsets[visit+1]));
             actions.Add(new($"component:{fact.EdgeId}:through",ManeuverKind.Straight,offsets[visit],edge.Id,edge.Id)
             {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,
                 EndDistanceMeters=end,IsMainRoadContinuation=true,
                 // fact may describe the entrance. The reference lane orders must
                 // instead belong to this route visit's selected outlet.
-                StraightExitSides=JunctionExitSides.OtherSides(exitFacts,fact.PrefabUid,edge.StartNodeUid,edge.EndNodeUid)});
+                StraightExitSides=sideQuery.Sides});
         }
         bool UsesOwnSideExit(ComponentPassageContinuity fact)
         {

@@ -137,19 +137,10 @@ public static class ComponentManeuverProjection
             if(fact.LegalExitCount<2)return;
             actions.Add(new($"component:{fact.EdgeId}:through",ManeuverKind.Straight,offsets[visit],edge.Id,edge.Id)
             {JunctionId=$"prefab:{fact.PrefabUid:X16}",JunctionKind=NavigationJunctionKind.Ramp,
-                EndDistanceMeters=end,IsMainRoadContinuation=true,StraightExitSides=PassageExitSides(fact)});
-        }
-        NavigationSide PassageExitSides(ComponentPassageContinuity selected)
-        {
-            NavigationSide sides=NavigationSide.None;
-            foreach(var other in exitFacts.Where(f=>f.PrefabUid==selected.PrefabUid&&f.EntryNodeUid==edge.StartNodeUid
-                &&f.ExitNodeUid!=edge.EndNodeUid&&f.Kind is not (ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular)
-                &&f.Issue is null))
-            {
-                if(other.Turn is {Kind:not ComponentTurnKind.Unknown,Side:NavigationSide.Left or NavigationSide.Right} turn)
-                    sides|=turn.Side;
-            }
-            return sides;
+                EndDistanceMeters=end,IsMainRoadContinuation=true,
+                // fact may describe the entrance. The reference lane orders must
+                // instead belong to this route visit's selected outlet.
+                StraightExitSides=JunctionExitSides.OtherSides(exitFacts,fact.PrefabUid,edge.StartNodeUid,edge.EndNodeUid)});
         }
         bool UsesOwnSideExit(ComponentPassageContinuity fact)
         {

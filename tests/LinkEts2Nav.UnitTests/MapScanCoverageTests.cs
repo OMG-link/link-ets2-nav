@@ -74,10 +74,10 @@ public sealed class MapScanCoverageTests
     }
 
     [Fact]
-    public void ReversePayloadOrderAndMissingIntermediateUidStillUseKnownRouteNodes()
+    public void MissingIntermediateUidStillUsesTheOrderedKnownRouteNodes()
     {
         var (host,route)=Scene();
-        route=route with{Nodes=route.Nodes.Append(new(999,8500,0)).Reverse().ToArray()};
+        route=route with{Nodes=[..route.Nodes.Take(3),new(999,8500,0),..route.Nodes.Skip(3)]};
         var coverage=MapScanCoverage.Create(default,1100,host,route,15000);
         Assert.True(coverage.Contains(new(6999,0,3000)));
         Assert.False(coverage.Contains(new(7201,0,3000)));
@@ -102,4 +102,23 @@ public sealed class MapScanCoverageTests
         Assert.Equal(first.Sectors,second.Sectors);
         Assert.Equal(second.Sectors.Count,second.Sectors.Distinct().Count());
     }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void NondecreasingOrMixedSdkOrderKeepsOnlyTheNearbyCoverage(bool increasing)
+    {
+        var (host,route)=Scene();
+        route=route with{Nodes=increasing?route.Nodes.Reverse().ToArray():[route.Nodes[0],route.Nodes[2],route.Nodes[1],route.Nodes[3]]};
+        var coverage=MapScanCoverage.Create(default,1100,host,route,15000);
+        Assert.Empty(coverage.RouteSegments);Assert.True(coverage.Contains(new(0,0,100)));
+        Assert.False(coverage.Contains(new(6999,0,3000)));
+    }
+    [Fact]
+    public void AParsedSingleDestinationStillHasItsKnownLocalCoverage()
+    {
+        var (host,route)=Scene();route=RouteSnapshot.Parse([route.Nodes[^1]],Now);
+        var coverage=MapScanCoverage.Create(new(11000,0,3000),1100,host,route,1000);
+        Assert.Equal(1000,coverage.RouteSegments.Sum(s=>(double)Vector3.Distance(s.From,s.To)),2);
+    }
+
 }

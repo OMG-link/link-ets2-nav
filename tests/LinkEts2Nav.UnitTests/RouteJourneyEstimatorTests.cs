@@ -117,4 +117,22 @@ public sealed class RouteJourneyEstimatorTests
         var estimate=new RouteJourneyEstimator(map,Eighty).Estimate(Route(road.Node.Uid,road.ForwardNode.Uid));
         Assert.True(estimate.Ready,estimate.Failure);Assert.Equal(180,estimate.WorldMeters!.Value,2);
     }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void IncreasingOrEqualRemainingDistancesDoNotProduceAnEstimate(bool increasing)
+    {
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(1000,0,0),default);
+        var route=increasing?Route(road.Node.Uid,road.ForwardNode.Uid) with{Nodes=Route(road.Node.Uid,road.ForwardNode.Uid).Nodes.Reverse().ToArray()}
+            :RouteSnapshot.Parse([new(road.Node.Uid,0,10),new(road.ForwardNode.Uid,0,0)],Now);
+        var estimate=new RouteJourneyEstimator(map,Eighty).Estimate(route);
+        Assert.False(estimate.Ready);Assert.Null(estimate.WorldMeters);Assert.Null(estimate.RealSeconds);Assert.NotNull(estimate.Failure);
+    }
+    [Fact]
+    public void ASingleNodeIsStillAnUnavailableJourneyEstimate()
+    {
+        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,Vector3.Zero,new(1000,0,0),default);
+        Assert.False(new RouteJourneyEstimator(map,Eighty).Estimate(Route(road.Node.Uid)).Ready);
+    }
+
 }

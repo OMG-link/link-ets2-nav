@@ -29,13 +29,11 @@ public sealed class RouteJourneyEstimator(GameMapData map,Func<Road,bool,SpeedLi
         if(!double.IsFinite(prefabDistanceFactor)||prefabDistanceFactor<=0)return Missing("预制件距离系数无效");
         if(route.Availability!=RouteAvailability.Available||route.MayBeTruncated||route.Nodes.Count<2)
             return Missing("完整导航路线尚未就绪或已截断");
-        var nodes=route.Nodes.Where((n,i)=>i==0||n!=route.Nodes[i-1]).ToArray();
-        if(nodes.Length<2)return Missing("导航路线不足两个节点");
-        if(nodes[0].DistanceToEndMeters<nodes[^1].DistanceToEndMeters)Array.Reverse(nodes);
-        if(!nodes.Zip(nodes.Skip(1)).All(p=>p.First.DistanceToEndMeters>=p.Second.DistanceToEndMeters)
-            ||nodes[^1].DistanceToEndMeters>.01f)return Missing("导航终端或节点顺序未确认");
+        var nodes=route.Nodes;
+        if(!RouteStructureIdentity.HasForwardOrder(route)||nodes[^1].DistanceToEndMeters>.01f)
+            return Missing("导航终端或节点顺序未确认");
         var spans=new List<Span>();
-        for(int i=0;i<nodes.Length-1;i++)
+        for(int i=0;i<nodes.Count-1;i++)
         {
             bool transfer=ferries?.Connects(nodes[i].Uid,nodes[i+1].Uid)==true;
             // The SDK also emits ferry activation nodes between a port interface
@@ -91,7 +89,7 @@ public sealed class RouteJourneyEstimator(GameMapData map,Func<Road,bool,SpeedLi
                 // boundary ends the search; it is never silently bridged.
                 var candidates=new List<(Span Span,int Stop)>();
                 foreach(var prefab in owners.OfType<Prefab>().Where(p=>p.Nodes.Any(n=>n.Uid==start.Uid)))
-                    for(int j=i+1;j<nodes.Length;j++)
+                    for(int j=i+1;j<nodes.Count;j++)
                     {
                         if(!TryNode(nodes[j].Uid,out var end))continue;
                         if(prefab.Nodes.Any(n=>n.Uid==end.Uid))

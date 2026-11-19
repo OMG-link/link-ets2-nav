@@ -33,9 +33,9 @@ public sealed class MapScanCoverage
     private static MapScanCoverage CreateCore(Vector3 position,float radius,IReadOnlyDictionary<ulong,INode>? mapNodes,RouteSnapshot? route,double remaining)
     {
         var segments = new List<(Vector3, Vector3)>();
-        if (mapNodes is null || route?.Availability != RouteAvailability.Available || !double.IsFinite(remaining) || remaining <= 0)
+        if (mapNodes is null || route?.Availability != RouteAvailability.Available || !double.IsFinite(remaining) || remaining <= 0 || !RouteStructureIdentity.HasForwardOrder(route))
             return new(position, radius, segments);
-        var nodes = route.Nodes.OrderByDescending(n => n.DistanceToEndMeters).ToArray();
+        var nodes = route.Nodes;
         (INode Node, double Remaining)? previous = null;
         double covered = 0;
         bool started = false;

@@ -99,15 +99,12 @@ public sealed class RoadPathSourceTests
         Assert.Empty(lines);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void IdenticalAdjacentSdkNodesDoNotInvalidateOtherwiseMonotonicRoute(bool reversed)
+    [Fact]
+    public void IdenticalAdjacentSdkNodesDoNotInvalidateDecreasingRoute()
     {
         var map=new GameMap();var road=AddRoad(map,Point(0),Point(500));
         var entries=new[]{new RouteNode(road.Node.Uid,500,25),new RouteNode(road.Node.Uid,500,25),
             new RouteNode(road.ForwardNode.Uid,0,0)};
-        if(reversed)Array.Reverse(entries);
         var route=RouteSnapshot.Parse(entries,Now);
         var path=new RoadPathSource(map).GetPath(Point(50),Vector3.UnitX,route,route.Availability);
         Assert.Single(path);
@@ -156,13 +153,13 @@ public sealed class RoadPathSourceTests
     }
 
     [Fact]
-    public void IncreasingPayloadOrderIsNormalizedToTravelOrder()
+    public void IncreasingPayloadOrderDoesNotDefineATravelOrder()
     {
         var map = new GameMap();
         var road = AddRoad(map, Point(0), Point(500));
         var route = Route((road.ForwardNode.Uid, 0), (road.Node.Uid, 500));
-        var selected = Assert.Single(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
-        Assert.Equal(road.Node.Uid, selected.StartNodeUid);
+        Assert.Empty(RouteStructureIdentity.Nodes(route));
+        Assert.Empty(new RoadPathSource(map).GetPath(Point(50),Vector3.UnitX,route,route.Availability));
     }
 
     [Fact]
@@ -518,4 +515,13 @@ public sealed class RoadPathSourceTests
         first.Append(Point(250, 250));
         Assert.Empty(new RoadPathSource(map).GetPath(Point(250), Vector3.Normalize(new Vector3(1, 0, -1)), Route(), RouteAvailability.None));
     }
+    [Fact]
+    public void SingleNodeRetainsTheExistingNoGeometrySemantics()
+    {
+        var map=new GameMap();var road=AddRoad(map,Point(0),Point(500));
+        var route=RouteSnapshot.Parse([new(road.ForwardNode.Uid,0,0)],Now);
+        using var source=new RoadPathSource(map);
+        Assert.Empty(source.GetRouteComponents(route));Assert.Null(source.GetRouteEntry(route,0));
+    }
+
 }

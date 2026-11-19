@@ -95,6 +95,22 @@ public sealed class MainLoopMapRetryTests
         Assert.Equal(completedLookups,lookups);Assert.Single(Assert.Single(old.GetRouteComponents(route)));
     }
     [Fact]
+    public void RouteQueryCacheDistinguishesInvalidMetricOrderWithoutChangingUidRevision()
+    {
+        var map=new TruckLib.ScsMap.Map();var a=Road.Add(map,Vector3.Zero,new(100,0,0),default);var b=a.Append(new(200,0,0));
+        var valid=RouteSnapshot.Parse([new(a.Node.Uid,200,0),new(a.ForwardNode.Uid,100,0),new(b.ForwardNode.Uid,0,0)],DateTimeOffset.UtcNow);
+        var mixed=RouteSnapshot.Parse([new(a.Node.Uid,100,0),new(a.ForwardNode.Uid,200,0),new(b.ForwardNode.Uid,0,0)],DateTimeOffset.UtcNow);
+        Assert.Equal(valid.Revision,mixed.Revision);
+        var owner=new MapRetryCoordinator();owner.Adopt(new(map,[],[],[]),1);
+        using var source=new RoadPathSource(map,retries:owner);
+        Assert.Equal(2,Assert.Single(source.GetRouteComponents(valid)).Count);
+        Assert.Empty(source.GetRouteComponents(mixed));
+        using var another=new RoadPathSource(map,retries:owner);
+        Assert.Empty(another.GetRouteComponents(mixed));
+        Assert.Equal(2,Assert.Single(source.GetRouteComponents(valid)).Count);
+        Assert.Equal(2,Assert.Single(another.GetRouteComponents(valid)).Count);
+    }
+    [Fact]
     public void AnExplicitFerryLegIsANormalBreakBetweenTwoKnownDrivableComponents()
     {
         var map=new TruckLib.ScsMap.Map();var before=Road.Add(map,Vector3.Zero,new(100,0,0),default);var after=Road.Add(map,new(100000,0,0),new(100100,0,0),default);

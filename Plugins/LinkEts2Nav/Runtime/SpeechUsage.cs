@@ -44,8 +44,10 @@ public sealed class SpeechUsageCollector
     {
         if(previous is not null)
         {
-            if(previous.Schema!=1||previous.MetricVersion!=1||previous.Entries is null||previous.CollectionSessions<1)
-                throw new InvalidDataException("Unsupported speech usage statistics.");
+            if(previous.Schema!=1||previous.MetricVersion!=1)
+                throw new NotSupportedException("Unsupported speech usage statistics version.");
+            if(previous.Entries is null||previous.CollectionSessions<1)
+                throw new InvalidDataException("Invalid speech usage statistics.");
             foreach(var entry in previous.Entries)
                 if(entry is null||string.IsNullOrWhiteSpace(entry.Text)||entry.Contexts is null||entry.Contexts.Any(c=>c is null)
                     ||entry.EnqueuedCount<0||entry.PlayedCount<0||entry.FallbackCount<0||entry.PreparationCount<0
@@ -117,23 +119,53 @@ public sealed class SpeechUsageStore:IAsyncDisposable
     private bool primaryValid;
     public SpeechUsageCollector Collector {get;}
     public string? LastError {get;private set;}
-    public SpeechUsageStore(string directory,Action<string>? log=null)
+    public SpeechUsageStore(string directory,Action<string>? log=null,Action<string>? warning=null)
     {
         this.directory=directory;this.log=log??(_=>{});
-        SpeechUsageSnapshot? previous=null;
+        SpeechUsageSnapshot? previous=null;SpeechUsageCollector? replacement=null;
         foreach(string file in new[]{"summary.json","summary.previous.json"})
         {
+            string contents;
+            try { contents=File.ReadAllText(Path.Combine(directory,file)); }
+            catch(FileNotFoundException) { continue; }
+            catch(DirectoryNotFoundException) { continue; }
             try
             {
-                string path=Path.Combine(directory,file);if(!File.Exists(path))continue;
-                previous=JsonSerializer.Deserialize<SpeechUsageSnapshot>(File.ReadAllText(path))??throw new InvalidDataException("Empty statistics.");
-                _=new SpeechUsageCollector(previous);primaryValid=file=="summary.json";break;
+                previous=JsonSerializer.Deserialize<SpeechUsageSnapshot>(contents)??throw new InvalidDataException("Empty statistics.");
+                _=new SpeechUsageCollector(previous);primaryValid=file=="summary.json";
             }
-            catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException or ArgumentException)
-            {previous=null;Error("读取语音统计失败",ex);}
+            catch(Exception error)when(file=="summary.json"&&(error is JsonException or InvalidDataException))
+            {
+                replacement=new SpeechUsageCollector();
+                string backup=ReplaceCorruptPrimary(Path.Combine(directory,file),replacement.Capture());
+                primaryValid=true;savedRevision=replacement.Revision;
+                warning?.Invoke("\u8bed\u97f3\u7edf\u8ba1\u4e3b\u6863\u635f\u574f\uff0c\u5df2\u539f\u6837\u4fdd\u5b58\u81f3 "+backup+"\uff0c\u5e76\u521b\u5efa\u7a7a\u7edf\u8ba1\uff1a"+error);
+            }
+            break;
         }
-        Collector=new(previous);worker=Task.Run(CheckpointLoop);
+        Collector=replacement??new(previous);worker=Task.Run(CheckpointLoop);
     }
+    private static string ReplaceCorruptPrimary(string primary,SpeechUsageSnapshot empty)
+    {
+        string suffix=DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fff",CultureInfo.InvariantCulture)+"-"+Guid.NewGuid().ToString("N");
+        string backup=Path.Combine(Path.GetDirectoryName(primary)!,"summary.unreadable-"+suffix+".json");
+        string temporary=primary+"."+suffix+".tmp";
+        // Prepare the complete replacement before moving the original. Neither
+        // move overwrites another file; every failure leaves the original bytes
+        // either at their initial path or at the unique backup path.
+        try
+        {
+            using(var stream=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None))
+                JsonSerializer.Serialize(stream,empty,Json);
+            File.Move(primary,backup);
+            File.Move(temporary,primary);
+            return backup;
+        }
+        finally{if(File.Exists(temporary))File.Delete(temporary);}
+    }
+    /// <summary>The owning driver must poll this to observe unknown checkpoint-worker failures.</summary>
+    public void ThrowIfFaulted()
+    {if(worker.IsCompleted)worker.GetAwaiter().GetResult();}
     private async Task CheckpointLoop()
     {
         using var timer=new PeriodicTimer(TimeSpan.FromSeconds(30));
@@ -146,11 +178,14 @@ public sealed class SpeechUsageStore:IAsyncDisposable
         try
         {
             long version=Collector.Revision;if(version==savedRevision)return;
-            var snapshot=Collector.Capture();Directory.CreateDirectory(directory);
+            // Serialization errors are internal/data failures, not a reason to
+            // retry storage or replace history. Validate before opening a file.
+            string contents=JsonSerializer.Serialize(Collector.Capture(),Json);
+            Directory.CreateDirectory(directory);
             string target=Path.Combine(directory,"summary.json"),temporary=target+"."+Guid.NewGuid().ToString("N")+".tmp";
             try
             {
-                await File.WriteAllTextAsync(temporary,JsonSerializer.Serialize(snapshot,Json),new UTF8Encoding(false));
+                await File.WriteAllTextAsync(temporary,contents,new UTF8Encoding(false));
                 if(primaryValid&&File.Exists(target))File.Copy(target,Path.Combine(directory,"summary.previous.json"),true);
                 else if(File.Exists(target))File.Copy(target,Path.Combine(directory,"summary.unreadable-"+
                     DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fff",CultureInfo.InvariantCulture)+"-"+Guid.NewGuid().ToString("N")[..8]+".json"));
@@ -158,7 +193,7 @@ public sealed class SpeechUsageStore:IAsyncDisposable
             }
             finally{if(File.Exists(temporary))File.Delete(temporary);}
         }
-        catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException)
+        catch(Exception ex)when(ex is IOException or UnauthorizedAccessException)
         {Error("保存语音统计失败",ex);}
         finally{writes.Release();}
     }
@@ -185,9 +220,9 @@ public sealed class SpeechUsageStore:IAsyncDisposable
         return "\""+text.Replace("\"","\"\"",StringComparison.Ordinal)+"\"";
     }
     private void Error(string action,Exception ex)
-    {LastError=action+"："+ex.GetType().Name;try{log(LastError);}catch{}}
+    {LastError=action+"："+ex;log(LastError);}
     public async ValueTask DisposeAsync()
-    {stop.Cancel();await worker;await FlushAsync();stop.Dispose();}
+    {stop.Cancel();try{await worker;await FlushAsync();}finally{stop.Dispose();}}
 }
 
 public static class SpeechUsageReports

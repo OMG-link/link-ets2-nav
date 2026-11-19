@@ -93,18 +93,94 @@ public sealed class SpeechUsageTests:IDisposable
         }
         await using var third=new SpeechUsageStore(directory);Assert.Equal(2,Row(third.Collector,"左转。").PlayedCount);
     }
-    [Fact]
-    public async Task CorruptCheckpointFallsBackToBackupAndDiskFailureDoesNotDiscardMemoryCounts()
+    [Theory]
+    [InlineData("invalid")]
+    [InlineData("null")]
+    [InlineData("{\"Schema\":1,\"MetricVersion\":1,\"CollectionSessions\":1,\"Entries\":null}")]
+    public async Task CorruptPrimaryIsArchivedExactlyAndStartsEmptyWithoutLoadingHistory(string damaged)
     {
         await using(var first=new SpeechUsageStore(directory))
-        {first.Collector.Enqueued(Item("左转。"));await first.FlushAsync();first.Collector.Played("左转。",SpeechPlaybackOrigin.Prepared);await first.FlushAsync();}
-        await File.WriteAllTextAsync(Path.Combine(directory,"summary.json"),"invalid",Token);
-        await using(var recovered=new SpeechUsageStore(directory))
-        {Assert.Equal(1,Row(recovered.Collector,"左转。").EnqueuedCount);Assert.NotNull(recovered.LastError);}
-        Assert.Single(Directory.GetFiles(directory,"summary.unreadable-*.json"));
-        string blocked=Path.Combine(directory,"blocked");await File.WriteAllTextAsync(blocked,"not a directory",Token);
-        await using var failure=new SpeechUsageStore(blocked);failure.Collector.Played("右转。",SpeechPlaybackOrigin.Prepared);
-        await failure.FlushAsync();Assert.NotNull(failure.LastError);Assert.Equal(1,Row(failure.Collector,"右转。").PlayedCount);
+        {first.Collector.Enqueued(Item("history"));await first.FlushAsync();first.Collector.Played("history",SpeechPlaybackOrigin.Prepared);await first.FlushAsync();}
+        string primary=Path.Combine(directory,"summary.json"),previous=Path.Combine(directory,"summary.previous.json");
+        byte[] history=File.ReadAllBytes(previous),bad=System.Text.Encoding.UTF8.GetBytes(damaged);
+        File.WriteAllBytes(primary,bad);
+        string oldArchive=Path.Combine(directory,"summary.unreadable-existing.json");File.WriteAllText(oldArchive,"old backup");
+        var warnings=new List<string>();
+        await using var fresh=new SpeechUsageStore(directory,warning:warnings.Add);
+        Assert.Empty(fresh.Collector.Capture().Entries);Assert.Equal(1,fresh.Collector.Capture().CollectionSessions);
+        Assert.Equal(history,File.ReadAllBytes(previous));Assert.Equal("old backup",File.ReadAllText(oldArchive));
+        string archive=Assert.Single(Directory.GetFiles(directory,"summary.unreadable-*.json"),f=>f!=oldArchive);
+        Assert.Equal(bad,File.ReadAllBytes(archive));Assert.Contains(archive,Assert.Single(warnings));
+        var saved=JsonSerializer.Deserialize<SpeechUsageSnapshot>(File.ReadAllText(primary))!;
+        Assert.Empty(saved.Entries);Assert.Equal(1,saved.Schema);Assert.Null(fresh.LastError);
+        Assert.Empty(Directory.GetFiles(directory,"*.tmp"));
+    }
+    [Fact]
+    public void ReadAndArchiveAccessFailuresDoNotBecomeCorruptionRecovery()
+    {
+        Directory.CreateDirectory(directory);string primary=Path.Combine(directory,"summary.json");
+        File.WriteAllText(primary,"invalid");var warnings=new List<string>();
+        using(var blocked=new FileStream(primary,FileMode.Open,FileAccess.Read,FileShare.None))
+            Assert.Throws<IOException>(()=>new SpeechUsageStore(directory,warning:warnings.Add));
+        Assert.Empty(warnings);Assert.Equal("invalid",File.ReadAllText(primary));
+        // Read succeeds, but Windows denies rename while the handle lacks Delete sharing.
+        using(var cannotRename=new FileStream(primary,FileMode.Open,FileAccess.Read,FileShare.Read))
+            Assert.Throws<IOException>(()=>new SpeechUsageStore(directory,warning:warnings.Add));
+        Assert.Empty(warnings);Assert.Equal("invalid",File.ReadAllText(primary));
+        Assert.Empty(Directory.GetFiles(directory,"summary.unreadable-*.json"));
+        Assert.Empty(Directory.GetFiles(directory,"*.tmp"));
+    }
+    [Fact]
+    public void UnknownWarningCallbackErrorPropagatesAfterSafeRecovery()
+    {
+        Directory.CreateDirectory(directory);string primary=Path.Combine(directory,"summary.json");File.WriteAllText(primary,"invalid");
+        var original=new NotSupportedException("warning handler failed");
+        Assert.Same(original,Assert.Throws<NotSupportedException>(()=>new SpeechUsageStore(directory,warning:_=>throw original)));
+        Assert.Equal("invalid",File.ReadAllText(Assert.Single(Directory.GetFiles(directory,"summary.unreadable-*.json"))));
+        Assert.Empty(JsonSerializer.Deserialize<SpeechUsageSnapshot>(File.ReadAllText(primary))!.Entries);
+    }
+    [Fact]
+    public async Task MissingPrimaryCanLoadValidExistingBackup()
+    {
+        await using(var first=new SpeechUsageStore(directory))
+        {first.Collector.Enqueued(Item("???"));await first.FlushAsync();first.Collector.Played("???",SpeechPlaybackOrigin.Prepared);await first.FlushAsync();}
+        File.Delete(Path.Combine(directory,"summary.json"));
+        await using var recovered=new SpeechUsageStore(directory);
+        Assert.Equal(1,Row(recovered.Collector,"???").EnqueuedCount);Assert.Null(recovered.LastError);
+    }
+    [Fact]
+    public async Task DiskFailureDoesNotDiscardMemoryCountsAndCanBeRetried()
+    {
+        Directory.CreateDirectory(directory);string blocked=Path.Combine(directory,"blocked");
+        await using var store=new SpeechUsageStore(blocked);
+        await File.WriteAllTextAsync(blocked,"not a directory",Token);
+        store.Collector.Played("???",SpeechPlaybackOrigin.Prepared);
+        await store.FlushAsync();Assert.NotNull(store.LastError);Assert.Equal(1,Row(store.Collector,"???").PlayedCount);
+        File.Delete(blocked);await store.FlushAsync();Assert.Null(store.LastError);
+        Assert.True(File.Exists(Path.Combine(blocked,"summary.json")));
+    }
+    [Fact]
+    public async Task UnknownLoggingCallbackFailureRetainsItsOriginalIdentityAndStack()
+    {
+        Directory.CreateDirectory(directory);string blocked=Path.Combine(directory,"blocked");
+        var original=new NotSupportedException("logger failed");
+        var store=new SpeechUsageStore(blocked,_=>throw original);
+        try
+        {
+            await File.WriteAllTextAsync(blocked,"not a directory",Token);
+            var observed=await Assert.ThrowsAsync<NotSupportedException>(()=>store.FlushAsync());
+            Assert.Same(original,observed);Assert.Contains(nameof(UnknownLoggingCallbackFailureRetainsItsOriginalIdentityAndStack),observed.StackTrace);
+        }
+        finally {File.Delete(blocked);await store.DisposeAsync();}
+    }
+    [Fact]
+    public void UnsupportedCheckpointVersionIsNotCorruption()
+    {
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory,"summary.json"),JsonSerializer.Serialize(new SpeechUsageCollector().Capture() with{Schema=2}));
+        var warnings=new List<string>();
+        Assert.Throws<NotSupportedException>(()=>new SpeechUsageStore(directory,warning:warnings.Add));
+        Assert.Empty(warnings);Assert.Empty(Directory.GetFiles(directory,"summary.unreadable-*.json"));
     }
     private static async Task Until(Func<bool> done)
     {

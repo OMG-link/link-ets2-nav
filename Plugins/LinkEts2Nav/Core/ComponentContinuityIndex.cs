@@ -155,7 +155,7 @@ public sealed class ComponentContinuityIndex
         public List<MapQueryIssue> Issues {get;}=[];
         private sealed record Segment(DirectedRoad Edge,PrefabLanePath? Lane,double Start,double Length);
         private sealed record Local(DirectedRoad Edge,PrefabLanePath Lane,LaneContinuityBranch? Death,
-            Vector3? DeathPoint,bool IdentityPreserved,MapQueryIssue? Issue);
+            LaneContinuityPoint? Merge,bool IdentityPreserved,MapQueryIssue? Issue);
 
         public Builder(NativeLaneGraph graph,Func<ulong,MapQueryIssue>? missing,bool reverse,CancellationToken token)
         {
@@ -227,7 +227,7 @@ public sealed class ComponentContinuityIndex
                     var merge=facts.Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Merge&&p.SharedCurveIndex==curve);
                     var branch=merge?.Branches.FirstOrDefault(b=>b.CurveIndex==path.CurveIndices[i-1]);
                     if(branch?.Role==LaneContinuityRole.Unknown)return new(edge,path,null,null,false,branch.MapIssue??merge?.MapIssue);
-                    if(branch?.Role==LaneContinuityRole.Dead)return new(edge,path,branch,merge!.Origin,true,null);
+                    if(branch?.Role==LaneContinuityRole.Dead)return new(edge,path,branch,merge,true,null);
                 }
                 if(i+1<path.CurveIndices.Count)
                 {
@@ -261,11 +261,11 @@ public sealed class ComponentContinuityIndex
                     MidpointDistanceFromExitMeters=-initialLength/2,
                     LifecycleDistanceFromExitMeters=current?0:distance+(lifecycle is not null&&terminal is not null&&lifecycle.EdgeId==terminal.EdgeId?lifecycle.OffsetMeters-terminal.OffsetMeters:0),
                     SoftActionDistanceFromExitMeters=actionDistance,
-                    StructuralConstraintId=fate==ComponentLaneFate.Dies&&chosen?.Death is {} death
-                        ?Constraint(chosen,death):fate==ComponentLaneFate.Separates&&terminal is not null
+                    StructuralConstraintId=fate==ComponentLaneFate.Dies&&chosen?.Death is not null
+                        ?Constraint(chosen):fate==ComponentLaneFate.Separates&&terminal is not null
                             ?$"{(reverse?"component-joining":"component-separation")}:{chosen!.Lane.PrefabUid:X16}:{chosen.Edge.StartNodeUid:X16}:{chosen.Edge.EndNodeUid:X16}":null,
                     TurnPrefabUid=fate==ComponentLaneFate.Dies?chosen!.Lane.PrefabUid:null,
-                    TurnSharedCurveIndex=fate==ComponentLaneFate.Dies?DeathPoint(chosen!,chosen!.Death!).SharedCurveIndex:null,
+                    TurnSharedCurveIndex=fate==ComponentLaneFate.Dies?chosen!.Merge!.SharedCurveIndex:null,
                     TurnBranchCurveIndex=fate==ComponentLaneFate.Dies?chosen!.Death!.CurveIndex:null
                 };
             }
@@ -301,7 +301,7 @@ public sealed class ComponentContinuityIndex
                 }
                 if(chosen.Death is {} dead)
                 {
-                    double local=new LanePolyline(chosen.Lane.Points).Project(chosen.DeathPoint!.Value).Along;
+                    double local=new LanePolyline(chosen.Lane.Points).Project(chosen.Merge!.Origin).Along;
                     double at=distance+local;
                     if(at>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,at);
                     return Result(ComponentLaneFate.Dies,current,at,At(chosen.Edge,chosen.Lane,local),
@@ -371,13 +371,10 @@ public sealed class ComponentContinuityIndex
             var turn=ConvertTurn(description.Turn);
             return (turn.Kind==ComponentTurnKind.Unknown?turn:turn with{Kind=ComponentTurnKind.Forward},null);
         }
-        private string Constraint(Local local,LaneContinuityBranch branch)
+        private string Constraint(Local local)
         {
-            var point=DeathPoint(local,branch);
+            var point=local.Merge!;
             return $"{(reverse?"lane-split":"lane-merge")}:{local.Lane.PrefabUid:X16}:{point.SharedCurveIndex}";
         }
-        private LaneContinuityPoint DeathPoint(Local local,LaneContinuityBranch branch)
-            =>continuity[local.Lane.PrefabUid].Points.First(p=>p.Kind==LaneContinuityPointKind.Merge
-                &&p.Branches.Any(b=>b.CurveIndex==branch.CurveIndex)&&p.Origin==local.DeathPoint);
     }
 }

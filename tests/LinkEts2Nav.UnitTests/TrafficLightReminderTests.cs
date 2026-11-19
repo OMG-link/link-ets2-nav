@@ -24,35 +24,9 @@ public sealed class TrafficLightReminderTests
         Step(policy,0,1.4f);Step(policy,.2,1.2f);Assert.NotNull(Step(policy,.4,1).NoticeId);
         Assert.NotEqual("本次红灯等待已提醒",Step(policy,1.4,0).Diagnostic.State);
     }
-    [Fact]
-    public void LiveBoundCustomizedOrdinaryLampCanPrepareWithoutInventingItsExactNextPhase()
-    {
-        var policy=new TrafficLightReminderPolicy();
-        for(int i=0;i<3;i++)
-        {
-            double time=i*.2;
-            var selection=Selection(time,1.4f-(float)time) with{Control=Control with{Timing=new(null,"PPD",CustomLayout:true)}};
-            var decision=policy.Update(Data(time),selection,Start.AddSeconds(time),"missing");
-            Assert.Equal(i==2,decision.NoticeId is not null);
-            Assert.Null(decision.Diagnostic.NextPhase);
-        }
-    }
-    [Theory]
-    [InlineData(null,false)]
-    [InlineData(SignalPhase.OrangeToRed,true)]
-    public void UnsupportedTransitionIsNotEnabledByARealCountdown(SignalPhase? next,bool custom)
-    {
-        var policy=new TrafficLightReminderPolicy();
-        for(int i=0;i<5;i++)
-        {
-            double time=i*.2;
-            var selection=Selection(time,1.4f-(float)time) with{Control=Control with{Timing=new(next,"unknown",custom)}};
-            Assert.Null(policy.Update(Data(time),selection,Start.AddSeconds(time),"missing").NoticeId);
-        }
-    }
     private static readonly DateTimeOffset Start=DateTimeOffset.Parse("2026-11-15T00:00:00Z");
     private static readonly TrafficSignalControl Control=new(1,0,0,new(10,0,0),Vector3.UnitX,
-        [new(new(10,0,3),Quaternion.Identity)],new(SignalPhase.OrangeToGreen,"PPD"),"test");
+        [new(new(10,0,3),Quaternion.Identity)]);
     private static GameDataSnapshot Data(double seconds,double speed=0,bool paused=false)
     {
         var now=Start.AddSeconds(seconds);
@@ -66,7 +40,7 @@ public sealed class TrafficLightReminderTests
         =>policy.Update(Data(seconds,speed),Selection(seconds,left,phase),Start.AddSeconds(seconds),"missing",audioReady);
 
     [Fact]
-    public void CountsDownToTheKnownRedToAmberTransitionAndQueuesOnce()
+    public void CountsDownToTheObservedRedExitAndQueuesOnce()
     {
         var policy=new TrafficLightReminderPolicy();
         Assert.Null(Step(policy,0,2).NoticeId);
@@ -74,21 +48,7 @@ public sealed class TrafficLightReminderTests
         Assert.Null(Step(policy,.4,1.6f).NoticeId);
         var notice=Step(policy,1,1);
         Assert.NotNull(notice.NoticeId);Assert.True(notice.Diagnostic.ClockVerified);
-        Assert.Equal(SignalPhase.OrangeToGreen,notice.Diagnostic.NextPhase);
         Assert.Null(Step(policy,1.2,.8f).NoticeId);
-    }
-    [Fact]
-    public void CountriesWithoutPreparatoryAmberCanUseTheDirectGreenTransition()
-    {
-        var policy=new TrafficLightReminderPolicy();
-        for(int i=0;i<3;i++)
-        {
-            double time=i*.2;
-            var selection=Selection(time,1.4f-(float)time) with{Control=Control with{Timing=new(SignalPhase.Green,"country")}};
-            var decision=policy.Update(Data(time),selection,Start.AddSeconds(time),"missing");
-            Assert.Equal(i==2,decision.NoticeId is not null);
-            Assert.Equal(SignalPhase.Green,decision.Diagnostic.NextPhase);
-        }
     }
     [Theory]
     [InlineData(.002)]
@@ -165,15 +125,5 @@ public sealed class TrafficLightReminderTests
         var policy=new TrafficLightReminderPolicy();
         for(int i=0;i<4;i++)Assert.Null(Step(policy,i*.2,1.4f-i*.2f,audioReady:false).NoticeId);
         Assert.NotNull(Step(policy,.8,.6f,audioReady:true).NoticeId);
-    }
-    [Fact]
-    public void InvalidAndUnknownNextPhasesRemainSilent()
-    {
-        var policy=new TrafficLightReminderPolicy();
-        for(int i=0;i<4;i++)
-        {
-            var s=Selection(i*.2,1f-i*.2f) with{Control=Control with{Timing=null}};
-            Assert.Null(policy.Update(Data(i*.2),s,Start.AddSeconds(i*.2),"missing").NoticeId);
-        }
     }
 }

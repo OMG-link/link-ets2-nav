@@ -62,8 +62,24 @@ public sealed class MainLoopMapPublicationTests
         int reads=0;await using var scanner=new BackgroundMapScanner(_=>new Backend((_,_)=>{reads++;return new(new(),[],[],[]);}));
         scanner.Request(new("r","s","",[],Vector3.Zero),DateTimeOffset.UtcNow);await Wait(()=>!scanner.Capture().IsScanning);scanner.AdoptReady();
         using var lease=scanner.Retries.Query<int>("old",_=>MapQueryResult<int>.Unavailable(new MissingMapObjects([new(MapObjectKind.Node,123)],"old route"))).Retry!;
-        scanner.ObserveRoute(RouteSnapshot.Parse([new(500,100,0),new(600,0,0)],DateTimeOffset.UtcNow));
+        scanner.ObserveRoute(1);
         Assert.False(lease.Capture().Active);Assert.Equal(1,reads);Assert.NotNull(scanner.Capture().Map);
+    }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheAuthoritativeRouteGenerationRetainsOnlyTheTrueSuffixScope(bool suffix)
+    {
+        var now=DateTimeOffset.UtcNow;
+        RouteSnapshot Route(params ulong[] ids)=>RouteSnapshot.Parse(ids.Select((id,i)=>new RouteNode(id,(ids.Length-i)*100,0)),now);
+        var route=NavigationRouteState.Empty.Accept(Route(10,20,30));int reads=0;
+        await using var scanner=new BackgroundMapScanner(_=>new Backend((_,_)=>{reads++;return new(new(),[],[],[]);}));
+        scanner.Request(new("r","s","",[],Vector3.Zero){Route=route.CurrentSnapshot,RouteGeneration=route.Generation},now);
+        await Wait(()=>!scanner.Capture().IsScanning);scanner.AdoptReady();
+        using var lease=scanner.Retries.Query<int>("scope",_=>MapQueryResult<int>.Unavailable(new MissingMapObjects([new(MapObjectKind.Item,99)],"scope"))).Retry!;
+        var next=route.Accept(suffix?Route(20,30):Route(30,40));int priorReads=reads;
+        Assert.Equal(suffix?1:2,next.Generation);scanner.ObserveRoute(next.Generation);
+        Assert.Equal(suffix,lease.Capture().Active);Assert.Equal(priorReads,reads);
     }
     [Fact]
     public async Task AWindowCompletedDuringCallbacksIsLeftForTheNextBoundedAdoption()

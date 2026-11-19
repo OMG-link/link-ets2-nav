@@ -11,7 +11,7 @@ public sealed class RouteSpeedLimitTests
     private static readonly DirectedRoad Road=R(1,10,11,P(0),P(1000));
     private static LimitSign Sign(string id,float x,LimitAction action)=>new(id,P(x,5),Vector3.UnitX,false,action);
     private static SpeedLimitData Source(DirectedRoad[] roads,params LimitSign[] signs)=>new(
-        roads.ToDictionary(r=>Convert.ToUInt64(r.Id,16),r=>new LimitRoad(r,"local_road")),signs,[],
+        roads.ToDictionary(r=>Convert.ToUInt64(r.Id,16),r=>new LimitRoad(r,"local_road"){Country="test"}),signs,[],
         new Dictionary<string,TruckSpeedLimit>{{"test/local_road",new(80,50,120)}},"test");
     private static SpeedLimitData Build(SpeedLimitData data,params DirectedRoad[] prefabs)
         =>ProjectedSignBuilder.Build(data,prefabs,TestContext.Current.CancellationToken);

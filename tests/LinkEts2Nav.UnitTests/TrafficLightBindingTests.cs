@@ -10,9 +10,9 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class TrafficLightBindingTests
 {
     [Fact]
-    public void CustomizedOrdinaryControlStillRequiresAMatchingConsistentLiveLamp()
+    public void ControlledGroupStillRequiresAMatchingConsistentLiveLamp()
     {
-        var control=Control() with{Timing=new(null,"PPD",CustomLayout:true)};
+        var control=Control();
         var nearby=Nearby([control]);var navigation=Navigation(Lane(1,2));
         Assert.NotNull(new TrafficSignalBinder().Match(Data(),nearby,navigation,out _));
         Assert.Null(new TrafficSignalBinder().Match(Data() with{TrafficSignals=new(Now,[])},nearby,navigation,out _));
@@ -25,7 +25,7 @@ public sealed class TrafficLightBindingTests
     private static PrefabLanePath Lane(ulong entry,ulong exit,int curve=0,int lane=0)=>new(7,entry,exit,lane,0,lane,0,2,1,[curve],
         [new(100,0,lane*3.5f),new(130,0,lane*3.5f)],30);
     private static TrafficSignalControl Control(int curve=0,int signal=0,float z=0)=>new(7,curve,signal,new(100,0,z),Vector3.UnitX,
-        [new(new(100,0,4+z),Quaternion.Identity)],new(SignalPhase.Green,"PPD"),"known");
+        [new(new(100,0,4+z),Quaternion.Identity)]);
     private static GameDataSnapshot Data(bool navigation=true,float x=90,float z=0)=>new(
         new(x,0,z,.75,0,100,true,false,1,Now),RouteSnapshot.Parse(navigation?[new(1,100,1),new(2,0,0)]:[],Now),
         navigation?RouteAvailability.Available:RouteAvailability.None,"s",true)
@@ -51,10 +51,9 @@ public sealed class TrafficLightBindingTests
         =>Assert.Null(new TrafficSignalBinder().Match(Data(x:x,z:z),Nearby([Control()]),Navigation(Lane(1,2)),out _));
 
     [Fact]
-    public void UnknownStaticTransitionAndOppositelyFacingLampsAreNotPredicted()
+    public void OppositelyFacingLampsCannotBindToTheSelectedGroup()
     {
         var binder=new TrafficSignalBinder();
-        Assert.Null(binder.Match(Data(),Nearby([Control() with{Timing=null}]),Navigation(Lane(1,2)),out _));
         var data=Data() with{TrafficSignals=new(Now,[new(99,new(100,0,4),Quaternion.CreateFromAxisAngle(Vector3.UnitY,MathF.PI),SignalPhase.Red,2)])};
         Assert.Null(binder.Match(data,Nearby([Control()]),Navigation(Lane(1,2)),out _));
     }

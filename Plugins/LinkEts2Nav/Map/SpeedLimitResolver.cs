@@ -81,20 +81,18 @@ public sealed class SpeedLimitResolver
     private SpeedLimitResult Compose(Vector3 position,DirectedRoad road,int? temporary,bool? urbanOverride,bool? motorway,string reason)
     {
         var metadata=data.SignProjections!.Context(road);
-        if(metadata?.CountryUncertain==true)return Unavailable("道路国家证据冲突或国界国家ID未知",MapQueryFailureKind.Ambiguous,position);
         var regions=data.RegionIndex!.At(position);
-        var countries=regions.Where(r=>r.Country is not null).Select(r=>r.Country!).Distinct().ToArray();
-        if(countries.Length>1 || countries.Length==1&&metadata?.Country is {} rc&&rc!=countries[0])
-            return Unavailable("道路国家证据冲突或国界国家ID未知",MapQueryFailureKind.Ambiguous,position);
-        string? country=metadata?.Country??countries.SingleOrDefault()??data.Country;
-        if(country is null)return Unavailable("国家归属未知",MapQueryFailureKind.DefinitionUnavailable,position);
+        if(metadata is null)return Unavailable("Road country metadata is unavailable",MapQueryFailureKind.DefinitionUnavailable,position);
+        var resolved=metadata.QueryCountry();
+        if(resolved.Issue is {} issue&&issue is not UndeterminedRoadCountry)return Unavailable(issue.Reason,MapQueryFailureKind.DefinitionUnavailable,position,issue);
+        string? country=resolved.Value;
         if(regions.Any(r=>r.Unsupported))return Unavailable("所在交通区域包含未支持的限速规则",MapQueryFailureKind.DefinitionUnavailable,position);
         string? speedClass=metadata?.ClassFor(road);
         if(motorway==true)speedClass="motorway";
         if(speedClass is null)return Unavailable("监测道路车道类别或变体未支持",MapQueryFailureKind.DefinitionUnavailable,position);
         if(!TruckSpeedLimitRules.TryGet(data.Limits,country,speedClass,out var rule,out bool usedDefault))
             return Unavailable("缺少货车限速规则："+country+"/"+speedClass,MapQueryFailureKind.DefinitionUnavailable,position);
-        if(usedDefault)reason+="；"+TruckSpeedLimitRules.DefaultReason;
+        if(usedDefault)reason+="；"+TruckSpeedLimitRules.DefaultReasonFor(country,speedClass);
         bool urban=urbanOverride??regions.Any(r=>r.Urban);
         int baseline=urban?rule.Urban:rule.Rural;
         int? value=baseline>0?(temporary.HasValue?Math.Min(temporary.Value,baseline):baseline):temporary;

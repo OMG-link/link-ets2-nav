@@ -211,8 +211,7 @@ public sealed class NavPlugin : Plugin
                         pipeline.Reset(); navigation.Reset();
                         if(!guidance.HasVerifiedFerryContinuation(data))guidance.Reset();
                     }
-                    if(data.RouteAvailability is RouteAvailability.Available or RouteAvailability.None)
-                        mapScanner.ObserveRoute(data.RouteAvailability==RouteAvailability.Available?data.Route:null);
+                    mapScanner.ObserveRoute(data.NavigationRoute.Generation);
                     var preparation = mapScanner.AdoptReady();
                     if (preparation.IsPrepared)
                         logOutput.Change("map-preparation", "全局地图准备已完成。", now);
@@ -250,6 +249,7 @@ public sealed class NavPlugin : Plugin
                         session, currentInstallation.Path, gameLog, position) {
                         HostMap = currentInstallation.GetMapData(),
                         Route = data.RouteAvailability == RouteAvailability.Available ? data.Route : null,
+                        RouteGeneration=data.NavigationRoute.Generation,
                         NavigationRemainingMeters = vehicle.NavigationDistanceRemainingMeters }, now))
                         logOutput.ScanStarted(position, now);
                     }
@@ -282,8 +282,7 @@ public sealed class NavPlugin : Plugin
                     var latest = source.Capture();
                     if (latest.SessionId != session) { mapScanner.Invalidate(); speech?.ClearPlan(); continue; }
                     token.ThrowIfCancellationRequested();
-                    if(latest.RouteAvailability is RouteAvailability.Available or RouteAvailability.None)
-                        mapScanner.ObserveRoute(latest.RouteAvailability==RouteAvailability.Available?latest.Route:null);
+                    mapScanner.ObserveRoute(latest.NavigationRoute.Generation);
                     guidance.Observe(latest,DateTimeOffset.UtcNow);
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var navigationDiagnostic=navigation.Process(latest,calibrated,DateTimeOffset.UtcNow);

@@ -15,6 +15,7 @@ public sealed record MapQueryOperation<T>(MapQueryResult<T> Result,MapRetryHandl
 public sealed record MapRetryStatus<T>(bool Active,bool Running,long Revision,MapQueryResult<T> Result);
 public interface IMapRetryScheduler
 {
+    long ScopeVersion {get;}
     MapQueryOperation<T> Query<T>(string key,Func<MapRetryContext,MapQueryResult<T>> query,CancellationToken cancellationToken=default);
     MapRetryHandle<T> WaitFor<T>(string key,MissingMapObjects missing,T localValue,Func<MapRetryContext,MapQueryResult<T>> query);
 }

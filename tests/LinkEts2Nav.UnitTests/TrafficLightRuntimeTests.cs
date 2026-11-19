@@ -14,14 +14,14 @@ public sealed class TrafficLightRuntimeTests
         try
         {
             await using var cache=new SpeechAnnouncementQueue(new NeverSynthesize(),_=>{},preGenerated:
-                new Dictionary<string,string>{{TrafficLightReminderRuntime.Text,clip}});
+                new Dictionary<string,string>{{TrafficLightReminderRuntime.Text,clip},{PositionSignalTracker.Text,clip}});
             // An intentionally unavailable playback cache holds the ready notice for expiry inspection.
             await using var player=new GuidancePlaybackManager(null,new NeverPlay(),()=>null);
             var coordinator=new GuidanceCoordinator(cache,player);
             var runtime=new TrafficLightReminderRuntime(coordinator,new());
             var begin=DateTimeOffset.UtcNow;
             var control=new TrafficSignalControl(7,0,0,new(100,0,0),Vector3.UnitX,
-                [new(new(100,0,4),Quaternion.Identity)],new(SignalPhase.OrangeToGreen,"PPD"),"known");
+                [new(new(100,0,4),Quaternion.Identity)]);
             var map=new NearbyMapSnapshot(new(),[],[],[]){TrafficSignals=new([control])};
             var path=new PrefabLanePath(7,1,2,0,0,0,0,1,1,[0],[new(100,0,0),new(130,0,0)],30);
             var navigation=new NavigationDiagnostic("test"){LaneRoute=new([new("prefab:7:0",path)],[],true,null)};

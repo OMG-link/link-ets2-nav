@@ -16,6 +16,7 @@ public sealed class RoadPathSource:IDisposable
     private HashSet<MapObjectKey>? routeKeys;
     private Func<MapRetryContext,MapQueryResult<RouteChunks>>? routeQuery;
     private string? routeOperationKey;
+    private long routeWaitScope=-1;
     private readonly Dictionary<(ulong, ulong), Road> links = new();
     private readonly Dictionary<ulong, DirectedRoad> samples = new();
     private readonly Dictionary<ulong, List<Road>> incidentRoads = new();
@@ -190,8 +191,9 @@ public sealed class RoadPathSource:IDisposable
         var ids=RouteStructureIdentity.Nodes(route);
         var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
         var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
-        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning)return cachedChunks;
+        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning&&routeWaitScope==retries.ScopeVersion)return cachedChunks;
         routeRetry?.Dispose();
+        routeWaitScope=retries.ScopeVersion;mapIssues.Clear();
         var operationKeys=new HashSet<MapObjectKey>();routeKeys=operationKeys;
         routeOperationKey="route-components:"+route.Revision+":"+meaning;
         routeQuery=context=>
@@ -333,6 +335,13 @@ public sealed class RoadPathSource:IDisposable
 
     private IReadOnlyList<DirectedRoad> CurrentRoad(Vector3 position, Vector3 heading)
     {
+        if(routeQuery is not null)
+        {
+            // Switching to no-navigation matching must not attach a new local
+            // camera dependency to the previous SDK route operation.
+            routeRetry?.Dispose();routeRetry=null;routeQuery=null;routeKeys=null;routeOperationKey=null;
+            cachedNodes=null;cachedChunks=[];mapIssues.Clear();
+        }
         var candidates = roads.Where(r => r.Node is not null && r.ForwardNode is not null && Near(r, position))
             .Select(r => (Road: r, Sample: Orient(r, r.Node.Uid)))
             // Clamped distance to a road endpoint is not proof that the vehicle has

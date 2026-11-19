@@ -11,6 +11,7 @@ public sealed record MapScanRequest(string ResourceId, string SessionId, string 
     public TruckLib.ScsMap.Map? HostMap { get; init; }
     public bool PreparationOnly { get; init; }
     public RouteSnapshot? Route { get; init; }
+    public long RouteGeneration {get;init;}
     public double NavigationRemainingMeters { get; init; }
 }
 
@@ -38,7 +39,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     private readonly object gate = new();
     private readonly MapRetryCoordinator retries;
     public IMapRetryScheduler Retries=>retries;
-    private RouteSnapshot? routeScope;
+    private long? routeScope;
     private MapScanRequest? inFlight;
     private readonly Queue<MapScanState> completedWindows=[];
     private long producedRevision;
@@ -90,8 +91,8 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         {
             bool newSession=resourceId!=request.ResourceId||sessionId!=request.SessionId;
             bool changedRoute=requestedRoute!=request.Route?.Revision;
-            if(newSession){retries.Reset();routeScope=request.Route;}
-            else ObserveRoute(request.Route);
+            if(newSession){retries.Reset();routeScope=request.RouteGeneration;}
+            else ObserveRoute(request.RouteGeneration);
             if(newSession)
             {
                 generation++;resourceId=request.ResourceId;sessionId=request.SessionId;
@@ -112,11 +113,10 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         }
     }
     /// <summary>Cancel obsolete route operations without requesting a scan. Called on the main loop even without a new position sample.</summary>
-    public void ObserveRoute(RouteSnapshot? route)
+    public void ObserveRoute(long routeGeneration)
     {
-        if(routeScope?.Revision!=route?.Revision
-            &&!(routeScope is {} previous&&route is {} next&&RouteContinuity.IsForwardExtension(previous,next)))retries.Reset(false);
-        routeScope=route;
+        if(routeScope is {} previous&&previous!=routeGeneration)retries.Reset(false);
+        routeScope=routeGeneration;
     }
     public void Invalidate()
     {

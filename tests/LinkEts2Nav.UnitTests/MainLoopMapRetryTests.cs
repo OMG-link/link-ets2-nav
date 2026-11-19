@@ -77,6 +77,9 @@ public sealed class MainLoopMapRetryTests
         var owner=new MapRetryCoordinator();var first=new NearbyMapSnapshot(partial,[],[],[]){Retries=owner};owner.Adopt(first,1);
         var old=new RoadPathSource(partial,retries:owner);Assert.Single(Assert.Single(old.GetRouteComponents(route)));
         Assert.Contains(old.MapIssues.OfType<MissingMapObjects>(),m=>m.Keys.Contains(new(MapObjectKind.Item,b.Uid)));
+        // Clearing/replacing navigation can repeat the same UID chain in the
+        // same map window; its canceled wait must be registered again.
+        owner.Reset(false);old.GetRouteComponents(route);Assert.Equal(2,old.RouteStructureBuildCount);
         int lookups=0;
         var next=new NearbyMapSnapshot(full,[],[],[]){Retries=owner,MissingConnection=uid=>{lookups++;return GameDataManager.DescribeMissingNativeObjects(full,uid);}};
         owner.Adopt(next,2);int completedLookups=lookups;old.Dispose();Assert.True(completedLookups>0);

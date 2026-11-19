@@ -21,8 +21,9 @@ public sealed class MapRetryCoordinator:IMapRetryScheduler
     private readonly System.Collections.Concurrent.ConcurrentQueue<(Entry Entry,long Id)> released=[];
     private MapRetryContext? current;
     private long subscriber;
+    public long ScopeVersion {get;private set;}
     public void Reset(bool clearWindow=true)
-    {DrainReleased();entries.Clear();if(clearWindow)current=null;}
+    {DrainReleased();entries.Clear();ScopeVersion++;if(clearWindow)current=null;}
     public void Adopt(NearbyMapSnapshot snapshot,long revision)
     {
         DrainReleased();

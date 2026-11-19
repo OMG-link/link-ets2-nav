@@ -4,6 +4,20 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class TruckSpeedLimitRulesTests
 {
+    [Theory]
+    [InlineData("motorway",70,50,70)]
+    [InlineData("expressway",70,40,70)]
+    [InlineData("local_road",60,40,60)]
+    [InlineData("slow_road",30,30,30)]
+    public void LoadedButUndeterminedCountryUsesTheSharedKnownClassTable(string speedClass,int rural,int urban,int maximum)
+    {
+        Assert.True(TruckSpeedLimitRules.TryGet(new Dictionary<string,TruckSpeedLimit>(),null,speedClass,out var rule,out bool usedDefault));
+        Assert.True(usedDefault);Assert.Equal(new(rural,urban,maximum),rule);
+        Assert.Contains(speedClass,TruckSpeedLimitRules.DefaultReasonFor(null,speedClass));
+    }
+    [Fact] public void UndeterminedCountryDoesNotInventAnUnknownClass()
+        =>Assert.False(TruckSpeedLimitRules.TryGet(new Dictionary<string,TruckSpeedLimit>(),null,"unknown",out _,out _));
+
     [Fact]
     public void MissingSlowRoadUsesExplicitThirtyDefault()
     {

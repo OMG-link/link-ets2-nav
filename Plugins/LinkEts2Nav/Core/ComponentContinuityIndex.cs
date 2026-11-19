@@ -156,6 +156,9 @@ public sealed class ComponentContinuityIndex
         private sealed record Segment(DirectedRoad Edge,PrefabLanePath? Lane,double Start,double Length);
         private sealed record Local(DirectedRoad Edge,PrefabLanePath Lane,LaneContinuityBranch? Death,
             LaneContinuityPoint? Merge,bool IdentityPreserved,MapQueryIssue? Issue);
+        // Each comparable lane keeps its own measured progress. Different lane
+        // arcs need not have the side lane's length between common interfaces.
+        private sealed record Reference(Local Local,double StartDistance);
 
         public Builder(NativeLaneGraph graph,Func<ulong,MapQueryIssue>? missing,bool reverse,CancellationToken token)
         {
@@ -280,13 +283,26 @@ public sealed class ComponentContinuityIndex
             if(mainEntrance&&chosen.Death is null)
                 return Result(ComponentLaneFate.Continues,true,0);
             double distance=-initialLength;bool current=true;
+            var references=mains.Select(m=>new Reference(m,-Length(m.Lane))).ToArray();
+            MapQueryIssue? referenceIssue=null;
             // A repeated edge is another measured occurrence. Positive lengths
             // make the finite-graph traversal advance to its distance budget.
             while(true)
             {
                 token.ThrowIfCancellationRequested();
                 if(mains.Length==0&&chosen.Death is null)return Missing("主线资格已丢失，无法确认最近主线",chosen.Edge.StartNodeUid,
-                    new MapQueryFailure(MapQueryFailureKind.Ambiguous,"主线资格已丢失，无法确认最近主线"));
+                    referenceIssue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"主线资格已丢失，无法确认最近主线"));
+                double referenceEnd=references.Length>0&&references.All(r=>r.Local.Death is not null)
+                    ?references.Max(r=>LaneTraceDistance.Advance(r.StartDistance,DeathOffset(r.Local))):double.PositiveInfinity;
+                double limit=Math.Min(ComponentContinuity.WindowMeters,referenceEnd);
+                bool sameDeath=chosen.Death is not null&&references.Any(r=>r.Local.Death is not null
+                    &&r.Local.Lane.PrefabUid==chosen.Lane.PrefabUid
+                    &&r.Local.Merge!.SharedCurveIndex==chosen.Merge!.SharedCurveIndex);
+                bool sameBoundary=references.Any(r=>r.Local.Death is not null&&r.Local.Lane.PrefabUid==chosen.Lane.PrefabUid
+                    &&r.Local.Merge!.SharedCurveIndex==chosen.Lane.CurveIndices[0]);
+                if(distance>limit&&!sameDeath&&!sameBoundary)
+                    return referenceIssue is null?Result(ComponentLaneFate.Continues,false,limit)
+                        :Missing("主线参照结束，其余候选身份尚未确认",chosen.Edge.StartNodeUid,referenceIssue);
                 var nearest=mains.Select(m=>(Main:m,Distance:Vector3.DistanceSquared(chosen.Lane.Points[0],m.Lane.Points[0])))
                     .OrderBy(p=>p.Distance).ToArray();
                 if(nearest.Length>1&&Math.Abs(nearest[0].Distance-nearest[1].Distance)<1e-6
@@ -301,16 +317,24 @@ public sealed class ComponentContinuityIndex
                 }
                 if(chosen.Death is {} dead)
                 {
-                    double local=new LanePolyline(chosen.Lane.Points).Project(chosen.Merge!.Origin).Along;
+                    double local=DeathOffset(chosen);
                     double at=distance+local;
-                    if(at>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,at);
-                    return Result(ComponentLaneFate.Dies,current,at,At(chosen.Edge,chosen.Lane,local),
+                    // The side's real death at the same origin wins over the
+                    // observation range ending there.
+                    if(at<=ComponentContinuity.WindowMeters&&(at<=referenceEnd||sameDeath))
+                        return Result(ComponentLaneFate.Dies,current,at,At(chosen.Edge,chosen.Lane,local),
                         At(chosen.Edge,chosen.Lane,Length(chosen.Lane)),ConvertTurn(dead.Turn),dead.MapIssue);
+                    if(referenceEnd>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,at);
                 }
+                if(referenceEnd<=ComponentContinuity.WindowMeters)
+                    return referenceIssue is null?Result(ComponentLaneFate.Continues,false,referenceEnd)
+                        :Missing("主线参照结束，其余候选身份尚未确认",chosen.Edge.StartNodeUid,referenceIssue);
                 distance=LaneTraceDistance.Advance(distance,Length(chosen.Lane));
                 if(distance>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,distance);
                 ulong node=chosen.Edge.EndNodeUid;int lane=chosen.Lane.ExitOrder;
-                var mainOrders=mains.Where(m=>m.Lane.ExitNodeUid==node).Select(m=>m.Lane.ExitOrder).ToHashSet();
+                var mainEnds=references.Where(r=>r.Local.Death is null&&r.Local.Lane.ExitNodeUid==node)
+                    .Select(r=>(Order:r.Local.Lane.ExitOrder,Distance:LaneTraceDistance.Advance(r.StartDistance,Length(r.Local.Lane)))).ToArray();
+                var mainOrders=mainEnds.Select(r=>r.Order).ToHashSet();
                 string previousPrefab=NativeLaneGraph.Prefab(chosen.Edge)!;string? previousRoad=null;
                 while(true)
                 {
@@ -319,6 +343,7 @@ public sealed class ComponentContinuityIndex
                     if(roads.Length==0)break;
                     if(roads.Length!=1||next.Length!=1)return Missing("相接普通道路不唯一",node,new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接普通道路不唯一"));
                     var road=roads[0];double length=LaneTraceDistance.Positive(RouteGeometry.Length(road),$"Road {road.Id}");
+                    mainEnds=mainEnds.Select(r=>(r.Order,Distance:LaneTraceDistance.Advance(r.Distance,length))).ToArray();
                     trace.Add(new(road,null,distance,length));distance=LaneTraceDistance.Advance(distance,length);node=road.EndNodeUid;previousRoad=road.Id;
                     if(distance>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,distance);
                 }
@@ -332,8 +357,12 @@ public sealed class ComponentContinuityIndex
                 chosen=Choose(options);
                 if(chosen is null)return Missing("相接组件车道没有唯一原生延续",node,
                     options.Select(p=>p.Issue).OfType<MapQueryIssue>().FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接组件车道没有唯一原生延续"));
-                mains=component.SelectMany(e=>e.LanePaths.Where(p=>mainOrders.Contains(p.EntryOrder)).Select(p=>Inspect(e,p)))
-                    .Where(p=>p.IdentityPreserved&&p.Death is null&&p.Issue is null).ToArray();
+                var mainCandidates=component.SelectMany(e=>e.LanePaths.Where(p=>mainOrders.Contains(p.EntryOrder)).Select(p=>Inspect(e,p))).ToArray();
+                // A later confirmed death does not resolve an earlier uncertain reference.
+                referenceIssue??=mainCandidates.Select(m=>m.Issue).OfType<MapQueryIssue>().FirstOrDefault();
+                references=mainCandidates.Where(p=>p.IdentityPreserved&&p.Issue is null)
+                    .SelectMany(m=>mainEnds.Where(r=>r.Order==m.Lane.EntryOrder).Select(r=>new Reference(m,r.Distance))).ToArray();
+                mains=references.Select(r=>r.Local).ToArray();
                 trace.Add(new(chosen.Edge,chosen.Lane,distance,Length(chosen.Lane)));current=false;
             }
         }
@@ -375,6 +404,22 @@ public sealed class ComponentContinuityIndex
         {
             var point=local.Merge!;
             return $"{(reverse?"lane-split":"lane-merge")}:{local.Lane.PrefabUid:X16}:{point.SharedCurveIndex}";
+        }
+        private double DeathOffset(Local local)
+        {
+            // A repeated physical position elsewhere on the polyline is not
+            // this native merge visit. Use the shared curve's sampled boundary.
+            int shared=local.Merge!.SharedCurveIndex;
+            ValidateDeathVisit(local.Lane,shared);
+            int index=local.Lane.CurveIndices.ToList().IndexOf(shared);
+            return new LanePolyline(local.Lane.Points).Along[local.Lane.CurveStartPointIndices[index]];
+        }
+        [System.Diagnostics.Conditional("DEBUG")]
+        private static void ValidateDeathVisit(PrefabLanePath lane,int shared)
+        {
+            if(lane.CurveStartPointIndices.Count!=lane.CurveIndices.Count||lane.CurveIndices.Count(i=>i==shared)!=1
+                ||lane.CurveStartPointIndices.Any(i=>i<0||i>=lane.Points.Count))
+                throw new NavigationContractException($"Native lane {lane.PrefabUid:X16}:{lane.EntryOrder}->{lane.ExitOrder} must identify one sampled visit of shared curve {shared}.");
         }
     }
 }

@@ -58,7 +58,7 @@ public sealed class LaneTraceLoopTests
     public void UnrepresentablePositiveProgressIsRejectedRatherThanSpinning()
         =>Assert.Throws<ArgumentException>(()=>LaneTraceDistance.Advance(500,double.Epsilon));
     [Fact]
-    public void ReturningSideLaneDoesNotHideTheLossOfItsMainIdentityByClaimingFiveHundredMetres()
+    public void ReturningSideLaneStopsAtTheProvenNativeEndOfItsMainReference()
     {
         NativeLaneCurve C(int id,Vector3 a,Vector3 b,int[] next,int[] previous)=>new(id,a,b,b-a,b-a,next,previous);
         var geo=new NativeLaneGeometry(1,[C(0,Vector3.Zero,new(90,0,0),[2],[]),
@@ -77,8 +77,10 @@ public sealed class LaneTraceLoopTests
             [next.Curves[order].Start,next.Curves[order].End],10){NativeGeometry=next,CurveStartPointIndices=[0]}).ToArray();
         var index=ComponentContinuityIndex.Build(new([main,side,Road("out",30,40,10),Edge("prefab:2:40:50",nextPaths),Road("return",50,20,120)]));
         var result=index.ForEntry(side.Id)!;
-        Assert.Equal(ComponentContinuityKind.Unknown,result.Kind);
-        Assert.Equal(ComponentLaneFate.Unresolved,result.Lanes.Single(l=>l.EntryOrder==1).Fate);
-        Assert.Equal(MapQueryFailureKind.Ambiguous,Assert.IsType<MapQueryFailure>(result.Issue).Kind);
+        Assert.Equal(ComponentContinuityKind.Natural,result.Kind);
+        var survivor=result.Lanes.Single(l=>l.EntryOrder==1);
+        Assert.Equal(ComponentLaneFate.Continues,survivor.Fate);
+        Assert.Equal(140+Vector3.Distance(new(0,0,-30),new(90,0,0)),survivor.TerminalDistanceFromExitMeters,5);
+        Assert.Null(result.Issue);
     }
 }

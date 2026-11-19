@@ -255,9 +255,6 @@ public sealed class RoadPathSource:IDisposable
         cachedNodes=ids;cachedSourceNodeIndices=sourceIndices;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];sdkVisits.Clear();
         rawNodeOrdinals=new int[route.Nodes.Count];
         for(int i=0;i<sourceIndices.Length;i++)rawNodeOrdinals[sourceIndices[i]]=i;
-        // Adjacent identical SDK entries normalize to the same traversal node.
-        for(int i=1;i<route.Nodes.Count;i++)
-            if(route.Nodes[i]==route.Nodes[i-1])rawNodeOrdinals[i]=rawNodeOrdinals[i-1];
         var nodes=ids.Select(uid=>new RouteNode(uid,0,0)).ToArray();
         List<DirectedRoad>? chunk = null;
         for (int i = 1; i < nodes.Length; i++)

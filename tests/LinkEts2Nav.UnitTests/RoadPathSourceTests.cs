@@ -111,7 +111,7 @@ public sealed class RoadPathSourceTests
         var route=RouteSnapshot.Parse(entries,Now);
         var path=new RoadPathSource(map).GetPath(Point(50),Vector3.UnitX,route,route.Availability);
         Assert.Single(path);
-        Assert.Equal(3,route.Nodes.Count); // Preserve the raw SDK payload for diagnostics.
+        Assert.Equal(2,route.Nodes.Count); // The ingress removes only the exact adjacent duplicate.
     }
     [Fact]
     public void SameDistanceDifferentUidOrConflictingRepeatedNodeIsNotSilentlyRemoved()

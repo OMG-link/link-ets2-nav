@@ -125,4 +125,18 @@ public sealed class NavigationRouteStateTests
         }
         await producer;
     }
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void SuffixCutInsideAnExactDuplicateBlockUsesIngressIndices(int hostCut)
+    {
+        RouteNode[] host=[new(1,300,30),new(2,200,20),new(2,200,20),new(3,0,0)];
+        var full=RouteSnapshot.Parse(host,Now);var store=new GameSnapshotStore();int changes=0;
+        store.RouteChanged+=_=>changes++;store.UpdateRoute(full);
+        store.UpdateRoute(RouteSnapshot.Parse(host.Skip(hostCut),Now.AddSeconds(1)));
+        var current=store.Capture(Now.AddSeconds(1)).NavigationRoute;
+        Assert.Equal(3,full.Nodes.Count);Assert.Equal(1,current.CurrentNodeIndex);
+        Assert.Same(full,current.FullRoute);Assert.Equal(1,current.Generation);Assert.Equal(1,changes);
+    }
+
 }

@@ -29,7 +29,7 @@ public sealed record RouteSnapshot(
     public static RouteSnapshot Parse(IEnumerable<RouteNode> source, DateTimeOffset receivedAt)
     {
         var nodes = new List<RouteNode>();
-        bool padding = false;
+        bool padding = false;int validCount=0;
         foreach (var node in source)
         {
             if (node.Uid == 0) { padding = true; continue; }
@@ -37,7 +37,8 @@ public sealed record RouteSnapshot(
             if (padding || !float.IsFinite(node.DistanceToEndMeters) || node.DistanceToEndMeters < 0
                 || !float.IsFinite(node.TimeToEndSeconds) || node.TimeToEndSeconds < 0)
                 return new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.Invalid, receivedAt);
-            nodes.Add(node);
+            validCount++;
+            if(nodes.Count==0||node!=nodes[^1])nodes.Add(node);
         }
         if (nodes.Count == 0)
             return new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.None, receivedAt);
@@ -45,7 +46,7 @@ public sealed record RouteSnapshot(
         for (int i = 0; i < nodes.Count; i++)
             BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(i * sizeof(ulong)), nodes[i].Uid);
         return new(nodes.AsReadOnly(), Convert.ToHexString(SHA256.HashData(bytes)),
-            RouteAvailability.Available, receivedAt, nodes.Count >= 6000);
+            RouteAvailability.Available, receivedAt, validCount >= 6000);
     }
 }
 

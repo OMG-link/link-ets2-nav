@@ -155,4 +155,47 @@ public sealed class RuntimeSnapshotTests
         Assert.Equal(before.SessionId, after.SessionId);
         Assert.Equal(RouteAvailability.Available, after.RouteAvailability);
     }
+    [Fact]
+    public void IngressRemovesOnlyAdjacentRecordsWithAllThreeFieldsEqual()
+    {
+        var a=new RouteNode(7,100,20);var b=new RouteNode(8,50,10);
+        var parsed=RouteSnapshot.Parse([a,a,b,b,a],Now);
+        Assert.Equal(new[]{a,b,a},parsed.Nodes);
+        Assert.Equal(RouteSnapshot.Parse([a,b,a],Now).Revision,parsed.Revision);
+    }
+    [Theory]
+    [InlineData(101,20)]
+    [InlineData(100,21)]
+    public void SameUidWithDifferentDistanceOrTimeIsPreserved(float distance,float time)
+    {
+        var parsed=RouteSnapshot.Parse([new(7,100,20),new(7,distance,time)],Now);
+        Assert.Equal(2,parsed.Nodes.Count);
+    }
+    [Theory]
+    [InlineData(5999,false)]
+    [InlineData(6000,true)]
+    public void TruncationUsesValidSdkSlotsBeforeDeduplication(int validSlots,bool truncated)
+    {
+        var a=new RouteNode(7,100,20);
+        var parsed=RouteSnapshot.Parse(Enumerable.Repeat(a,validSlots).Concat(Enumerable.Repeat(new RouteNode(0,0,0),6000-validSlots)),Now);
+        Assert.Single(parsed.Nodes);Assert.Equal(truncated,parsed.MayBeTruncated);
+    }
+    [Fact]
+    public void DeduplicationCannotHideANonzeroRecordAfterPadding()
+    {
+        var a=new RouteNode(7,100,20);
+        Assert.Equal(RouteAvailability.Invalid,RouteSnapshot.Parse([a,a,new(0,0,0),a],Now).Availability);
+    }
+
+    [Fact]
+    public void RecordedSameInterfaceRoundaboutCircuitRetainsBothLegBoundaries()
+    {
+        // Retained 164857 replay: the SDK leg describes a real circuit back to the same port.
+        const ulong uid=0x578C5DB3022A0003;
+        var route=RouteSnapshot.Parse([new(uid,969.7153f,144.24272f),new(uid,530.0771f,92.86501f)],Now);
+        Assert.Equal(2,route.Nodes.Count);
+        Assert.Equal(new ulong[]{uid,uid},LinkEts2Nav.Map.RouteStructureIdentity.Nodes(route));
+        Assert.Equal(969.7153f,route.Nodes[0].DistanceToEndMeters);Assert.Equal(530.0771f,route.Nodes[1].DistanceToEndMeters);
+    }
+
 }

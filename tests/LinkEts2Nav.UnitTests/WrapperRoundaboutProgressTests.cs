@@ -7,8 +7,10 @@ namespace LinkEts2Nav.UnitTests;
 // Constructed production Runtime handoff; actual recorded SDK suffix evidence is checked separately.
 public sealed class WrapperRoundaboutProgressTests
 {
-    [Fact]
-    public void SdkPrefixConsumptionDoesNotRebuildOrReplayTheRingSeries()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void SdkPrefixConsumptionDoesNotRebuildOrReplayTheRingSeries(int hostCut)
     {
         var now=DateTimeOffset.UtcNow;var map=new TruckLib.ScsMap.Map();
         var before=Road.Add(map,Vector3.Zero,new(100,0,0),default);
@@ -19,11 +21,12 @@ public sealed class WrapperRoundaboutProgressTests
             EntryPorts=[new(entry,new(100,0,0)){Bearing=0}],
             ExitPorts=[new(exit,new(200,0,0)){Bearing=1,DepartureBranches=[new(new(1,7),new(180,0,0))]}]};
         var nearby=new NearbyMapSnapshot(map,[],[],[]){PrefabPaths=[passage],RoadStructures=new Dictionary<ulong,RoundaboutStructure>{{1,ring}}};
-        var full=RouteSnapshot.Parse([new(before.Node.Uid,400,40),new(entry,300,30),new(exit,200,20),new(after.ForwardNode.Uid,0,0)],now);
+        RouteNode[] host=[new(before.Node.Uid,400,40),new(entry,300,30),new(entry,300,30),new(exit,200,20),new(after.ForwardNode.Uid,0,0)];
+        var full=RouteSnapshot.Parse(host,now);
         var stable=NavigationRouteState.Empty.Accept(full);var logs=new List<string>();var runtime=new NavigationRuntime(log:logs.Add);
         GameDataSnapshot Data(double x)=>new(new(x,0,0,.75,10,400,true,false,1,now),stable.CurrentSnapshot,RouteAvailability.Available,"same-session",true){NavigationRoute=stable};
         var first=runtime.Process(Data(90),nearby,now);int structures=runtime.StructureBuildCount,plans=runtime.EventPlanBuildCount;
-        stable=stable.Accept(RouteSnapshot.Parse(full.Nodes.Skip(1).ToArray(),now));
+        stable=stable.Accept(RouteSnapshot.Parse(host.Skip(hostCut),now));
         var same=runtime.Process(Data(90),nearby,now);
         Assert.Equal(1,stable.CurrentNodeIndex);Assert.Same(full,stable.FullRoute);
         Assert.Equal(structures,runtime.StructureBuildCount);Assert.Equal(plans,runtime.EventPlanBuildCount);
@@ -71,7 +74,7 @@ public sealed class WrapperRoundaboutProgressTests
         var b=new DirectedRoad("prefab:2:0:1",12,13,[new(100,0,0),new(200,0,0)]);
         var source=new RoadPathSource(new TruckLib.ScsMap.Map(),[a,b]);
         var component=Assert.Single(source.GetRouteComponents(sdk));
-        Assert.Equal(ascending?new[]{2,1}:new[]{0,2},source.SourceNodeIndices(component));
+        Assert.Equal(ascending?new[]{2,1}:new[]{0,1},source.SourceNodeIndices(component));
         Assert.Equal(new ulong[]{10,12,13},RouteStructureIdentity.Nodes(sdk));
     }
     [Fact]
@@ -141,7 +144,7 @@ public sealed class WrapperRoundaboutProgressTests
     }
 
     [Fact]
-    public void RawConsumedBoundIsConvertedBeforeFilteringNormalizedVisits()
+    public void IngressDedupGivesWrapperAndGeometryTheSameProgressIndices()
     {
         RouteNode[] nodes=[new(10,200,20),new(10,200,20),new(12,100,10),new(13,0,0)];
         var sdk=RouteSnapshot.Parse(nodes,DateTimeOffset.UtcNow);
@@ -149,15 +152,16 @@ public sealed class WrapperRoundaboutProgressTests
         var b=new DirectedRoad("prefab:2:0:1",12,13,[new(100,0,0),new(200,0,0)]);
         var source=new RoadPathSource(new TruckLib.ScsMap.Map(),[a,b]);
         var component=Assert.Single(source.GetRouteComponents(sdk));
-        Assert.Equal(0,source.FirstLiveVisit(component,2));
-        int first=source.FirstLiveVisit(component,3);Assert.Equal(1,first);
+        Assert.Equal(3,sdk.Nodes.Count);
+        Assert.Equal(0,source.FirstLiveVisit(component,1));
+        int first=source.FirstLiveVisit(component,2);Assert.Equal(1,first);
         Assert.Equal(150,new DirectedPathMatcher().ProjectDistance(new(150,0,0),Vector3.UnitX,component,first));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void RawSdkBoundUsesTheSameCanonicalNodeAsGeometryNormalization(bool ascending)
+    public void IngressNodeBoundsRetainTheReverseTraversalMapping(bool ascending)
     {
         RouteNode[] nodes=[new(10,200,20),new(10,200,20),new(12,100,10),new(13,0,0)];
         if(ascending)Array.Reverse(nodes);
@@ -166,18 +170,19 @@ public sealed class WrapperRoundaboutProgressTests
         var b=new DirectedRoad("prefab:2:0:1",12,13,[new(100,0,0),new(200,0,0)]);
         var source=new RoadPathSource(new TruckLib.ScsMap.Map(),[a,b]);
         var component=Assert.Single(source.GetRouteComponents(sdk));
-        var expected=ascending?new[]{1,0,0,0}:new[]{0,0,0,1};
-        for(int raw=0;raw<nodes.Length;raw++)Assert.Equal(expected[raw],source.FirstLiveVisit(component,raw));
+        var expected=ascending?new[]{1,0,0}:new[]{0,0,1};
+        for(int raw=0;raw<sdk.Nodes.Count;raw++)Assert.Equal(expected[raw],source.FirstLiveVisit(component,raw));
     }
     [Fact]
-    public void AChangedRawNodeCountRefreshesTheProgressMappingEvenWhenGeometryIsUnchanged()
+    public void RepeatedIngressCopiesDoNotChangeGeometryCacheOrProgressMapping()
     {
         var a=new DirectedRoad("prefab:1:0:1",10,12,[Vector3.Zero,new(100,0,0)]);
         var source=new RoadPathSource(new TruckLib.ScsMap.Map(),[a]);
         var nodes=new RouteNode[]{new(10,100,10),new(12,0,0),new(12,0,0)};
-        source.GetRouteComponents(RouteSnapshot.Parse(nodes,DateTimeOffset.UtcNow));
+        var original=Assert.Single(source.GetRouteComponents(RouteSnapshot.Parse(nodes,DateTimeOffset.UtcNow)));
         var component=Assert.Single(source.GetRouteComponents(RouteSnapshot.Parse([..nodes,nodes[^1]],DateTimeOffset.UtcNow)));
-        Assert.Equal(2,source.RouteStructureBuildCount);Assert.Equal(0,source.FirstLiveVisit(component,3));
+        Assert.Same(original,component);
+        Assert.Equal(1,source.RouteStructureBuildCount);Assert.Equal(0,source.FirstLiveVisit(component,1));
     }
 
 }

@@ -7,10 +7,10 @@ public static class RouteStructureIdentity
 {
     public static ulong[] Nodes(RouteSnapshot route)=>SourceNodeIndices(route).Select(i=>route.Nodes[i].Uid).ToArray();
 
-    /// <summary>Original FullRoute node indices, ordered in the direction of travel.</summary>
+    /// <summary>FullRoute ingress-node indices, ordered in the direction of travel.</summary>
     public static int[] SourceNodeIndices(RouteSnapshot route)
     {
-        var indices=Enumerable.Range(0,route.Nodes.Count).Where(i=>i==0||route.Nodes[i]!=route.Nodes[i-1]).ToArray();
+        var indices=Enumerable.Range(0,route.Nodes.Count).ToArray();
         if(indices.Length<2)return [];
         bool descending=indices.Zip(indices.Skip(1)).All(p=>route.Nodes[p.First].DistanceToEndMeters>route.Nodes[p.Second].DistanceToEndMeters);
         bool ascending=indices.Zip(indices.Skip(1)).All(p=>route.Nodes[p.First].DistanceToEndMeters<route.Nodes[p.Second].DistanceToEndMeters);

@@ -85,9 +85,12 @@ public sealed class MainLoopMapRetryTests
         owner.Adopt(next,2);int completedLookups=lookups;old.Dispose();Assert.True(completedLookups>0);
         using var current=new RoadPathSource(full,retries:owner);
         var completed=Assert.Single(current.GetRouteComponents(route));
-        Assert.Equal(2,completed.Count);Assert.Equal([0,2],current.SourceNodeIndices(completed));
-        Assert.Equal(0,current.FirstLiveVisit(completed,1));Assert.Equal(1,current.FirstLiveVisit(completed,3));
-        Assert.Equal(1,current.GetRouteEntry(route,2)!.VisitIndex);
+        Assert.Equal(2,completed.Count);Assert.Equal([0,1],current.SourceNodeIndices(completed));
+        Assert.Equal(0,current.FirstLiveVisit(completed,1));Assert.Equal(1,current.FirstLiveVisit(completed,2));
+        Assert.Equal(1,current.GetRouteEntry(route,1)!.VisitIndex);
+        var stable=NavigationRouteState.Empty.Accept(route).Accept(RouteSnapshot.Parse(route.Nodes.Skip(1),DateTimeOffset.UtcNow));
+        Assert.Equal(1,stable.CurrentNodeIndex);Assert.Same(route,stable.FullRoute);
+        Assert.Equal(1,current.GetRouteEntry(stable.FullRoute,stable.CurrentNodeIndex)!.VisitIndex);
         Assert.Contains(current.MapIssues.OfType<MissingMapObjects>(),m=>m.Keys.Contains(new(MapObjectKind.Node,123456)));
         Assert.Equal(completedLookups,lookups);Assert.Single(Assert.Single(old.GetRouteComponents(route)));
     }

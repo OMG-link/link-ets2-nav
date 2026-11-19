@@ -21,7 +21,7 @@ public sealed class TrafficLightReminderOptions
 }
 
 public sealed record TrafficLightDiagnostic(string State,string? TargetId=null,SignalPhase? Phase=null,
-    float? Remaining=null,double? StopDistance=null,SignalPhase? NextPhase=null,bool ClockVerified=false,bool Queued=false);
+    float? Remaining=null,double? StopDistance=null,bool ClockVerified=false,bool Queued=false);
 public sealed record TrafficSignalSelection(TrafficSignalControl Control,TrafficSignalObservation Signal,DateTimeOffset ReceivedAt,double StopDistance);
 
 /// <summary>Matches a controlled PPD curve to its real SDK lamp, never the nearest arbitrary traffic light.</summary>
@@ -59,7 +59,6 @@ public sealed class TrafficSignalBinder
             if(alternatives.Length==0||alternatives.Select(p=>First(p,nearby.TrafficSignals)?.Id).Any(id=>id!=closest.Control.Id))
             {reason="无导航且前向延续不共享单一灯组";return null;}
         }
-        if(closest.Control.Timing is null){reason=closest.Control.Reason;return null;}
         var matches=game.TrafficSignals.Signals.Where(s=>closest.Control.Lamps.Any(l=>Vector3.Distance(l.Position,s.Position)<=1.5f
             &&Math.Abs(Quaternion.Dot(l.Rotation,s.Rotation))>=.985f)).ToArray();
         if(matches.Length==0){reason="没有匹配的实时灯组位置及朝向";return null;}
@@ -107,13 +106,13 @@ public sealed class TrafficLightReminderPolicy
         if(!data.IsVehicleUsable||data.Vehicle is not {SdkActive:true,Paused:false} vehicle)
         {ClearTiming();return new(new("暂停或定位失效，撤销准备提醒"));}
         if(selection is null){ClearTiming();return new(new(missingReason));}
-        var signal=selection.Signal;var timing=selection.Control.Timing;
+        var signal=selection.Signal;
         TrafficLightDiagnostic Diagnostic(string state,bool queued=false)=>new(state,selection.Control.Id,signal.Phase,
-            signal.PhaseRemaining,selection.StopDistance,timing?.NextAfterRed,clockVerified,queued);
+            signal.PhaseRemaining,selection.StopDistance,clockVerified,queued);
         if(now<selection.ReceivedAt||now-selection.ReceivedAt>TimeSpan.FromMilliseconds(500)
             ||now<vehicle.ReceivedAt||now-vehicle.ReceivedAt>TimeSpan.FromSeconds(1))
         {ClearTiming();return new(Diagnostic("实时灯色或车辆样本已过期"));}
-        string key=selection.Control.Id+":"+timing?.Source;
+        string key=selection.Control.Id;
         bool changed=target!=key;
         bool newRed=signal.Phase==SignalPhase.Red&&(changed||phase!=SignalPhase.Red
             ||remaining is {} old&&signal.PhaseRemaining>old+.5f);
@@ -135,11 +134,6 @@ public sealed class TrafficLightReminderPolicy
         {stoppedAt=null;return new(Diagnostic("车辆仍在移动，不提醒"));}
         stoppedAt??=now;
         if(signal.Phase!=SignalPhase.Red)return new(Diagnostic("当前不是红灯等待相位"));
-        // For a customized ordinary lamp the SDK red countdown ends at green or preparatory
-        // red/amber. Its exact variant is unknown; never invent it from the unmodified PPD.
-        if(timing?.NextAfterRed is not (SignalPhase.Green or SignalPhase.OrangeToGreen)
-            &&timing is not {CustomLayout:true,NextAfterRed:null})
-            return new(Diagnostic("红灯后的下一相位未知"));
         if(!clockVerified||now-progressAt>TimeSpan.FromMilliseconds(500))return new(Diagnostic("等待验证倒计时按现实秒连续更新"));
         if(now-stoppedAt<TimeSpan.FromMilliseconds(400))return new(Diagnostic("等待确认车辆完全停止"));
         if(signal.PhaseRemaining<=0)return new(Diagnostic("红灯转换时间已到，撤销准备提醒"));

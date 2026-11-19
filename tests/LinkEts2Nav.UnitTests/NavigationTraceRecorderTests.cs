@@ -16,7 +16,7 @@ public sealed class NavigationTraceRecorderTests : IDisposable
     public async Task CapturesSignalInputsAndTheReasonForAnExperimentalReminder()
     {
         var data=Data() with{TrafficSignals=new(Now,[new(7,new(1,2,3),System.Numerics.Quaternion.Identity,SignalPhase.Red,2.5f)])};
-        var diagnostic=Diagnostic() with{TrafficLight=new("已绑定", "prefab:0",SignalPhase.Red,2.5f,10,SignalPhase.Green,true)};
+        var diagnostic=Diagnostic() with{TrafficLight=new("已绑定", "prefab:0",SignalPhase.Red,2.5f,10,true)};
         await using(var writer=new NavigationTraceRecorder(root))Assert.True(writer.Record(data,Map(),diagnostic,"resource","game"));
         using var frame=JsonDocument.Parse(Assert.Single(File.ReadAllLines(Path.Combine(root,"motion.jsonl"))));
         Assert.Equal(2.5f,frame.RootElement.GetProperty("TrafficSignals").GetProperty("Signals")[0].GetProperty("PhaseRemaining").GetSingle());

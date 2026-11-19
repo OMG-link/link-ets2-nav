@@ -33,7 +33,6 @@ public sealed class GameDataManager:IDisposable
     private CompanyPlaceReader? companies;
     private FerryJourneyIndex? ferries;
     private RouteJourneyEstimator? estimator;
-    private readonly Lazy<TrafficSignalDefinitions> trafficSignals;
     private NativeMap? loadedWindow;
     private SectorCoordinate[] loadedSectors=[];
     private readonly ConditionalWeakTable<NativeMap,MapWindowReadiness> windowReadiness=new();
@@ -47,7 +46,6 @@ public sealed class GameDataManager:IDisposable
     public CompanyPlaceReader Companies=>companies??throw new InvalidOperationException("Dataset has not been prepared.");
     public FerryJourneyIndex? Ferries=>ferries;
     public RouteJourneyEstimator? JourneyEstimator=>estimator;
-    public TrafficSignalDefinitions TrafficSignals=>trafficSignals.Value;
 
     public GameDataManager(IFileSystem source,IReadOnlyList<string>? activeMods=null,NativeMap? map=null,string mapPath="/map/europe.mbd")
         :this(source,activeMods,map,mapPath,null) { }
@@ -55,7 +53,6 @@ public sealed class GameDataManager:IDisposable
     {
         mods=activeMods?.ToArray()??[];this.mapPath=mapPath;this.owner=owner;
         resources=new(this,()=>GameDefinitionFileSystem.Create(source,mods));
-        trafficSignals=new(()=>new(this),LazyThreadSafetyMode.ExecutionAndPublication);
         Map=new(map);world=new(()=>new WorldDefinitionIndex(this),LazyThreadSafetyMode.ExecutionAndPublication);
     }
     public static GameDataManager Open(string gamePath,IEnumerable<string> logLines,NativeMap? map=null)
@@ -151,7 +148,6 @@ public sealed class GameDataManager:IDisposable
             token.ThrowIfCancellationRequested();
             // Fixed catalogues are prepared before the first position-dependent scan.
             _=World;
-            _=TrafficSignals;
             speedLimits??=new SpeedLimitDefinitionReader(this);
             _=SignIndex("templates");_=SignIndex("boards");
             companies??=new CompanyPlaceReader(this);_=companies.ReadNames();

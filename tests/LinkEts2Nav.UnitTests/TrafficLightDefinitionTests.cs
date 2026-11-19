@@ -1,112 +1,65 @@
-using System.Text;
+using System.Numerics;
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Map;
 using LinkEts2Nav.Runtime;
-using TruckLib;
 using TruckLib.Models.Ppd;
-using Semaphore=TruckLib.Models.Ppd.Semaphore;
 using TruckLib.ScsMap;
+using NativeSignal=ETS2LA.Game.SDK.Semaphore;
+using NativeType=ETS2LA.Game.SDK.SemaphoreType;
 
 namespace LinkEts2Nav.UnitTests;
 
 public sealed class TrafficLightDefinitionTests
 {
+    private static readonly DateTimeOffset Now=DateTimeOffset.Parse("2026-11-19T00:00:00Z");
+    private static (TrafficSignalControl Control,NearbyMapSnapshot Map,NavigationDiagnostic Navigation) Fixture(SemaphoreType type,bool custom)
+    {
+        var descriptor=new PrefabDescriptor{Nodes=[new(){Position=Vector3.Zero},new(){Position=new(0,0,30)}],
+            NavCurves=[new(){Length=10,SemaphoreId=4,StartRotation=Quaternion.Identity}],
+            Semaphores=[new(){Type=type,SemaphoreId=4,Position=new(0,0,3),Rotation=Quaternion.Identity},
+                new(){Type=SemaphoreType.ModelOnly,SemaphoreId=4,Position=new(3,0,3),Rotation=Quaternion.Identity}]};
+        var prefab=new Prefab{Uid=7,CustomSemaphores=custom,SemaphoreProfile="cr_1x1",
+            Nodes=[new Node{Position=Vector3.Zero},new Node{Position=new(0,0,30)}]};
+        var control=Assert.Single(TrafficSignalMap.Build(prefab,descriptor));
+        var map=new NearbyMapSnapshot(new(),[],[],[]){TrafficSignals=new([control])};
+        var path=new PrefabLanePath(7,1,2,0,0,0,0,1,1,[0],[control.StopPoint,control.StopPoint+control.Forward*30],30);
+        var navigation=new NavigationDiagnostic("test"){LaneRoute=new([new("prefab:7:0",path)],[],true,null)};
+        return(control,map,navigation);
+    }
+    private static NativeSignal Live(TrafficSignalLamp lamp,NativeType type,int id=1,float left=1,SignalPhase phase=SignalPhase.Red)
+        =>new(){type=type,id=id,position=lamp.Position,
+            rotation=new(lamp.Rotation.W,lamp.Rotation.X,lamp.Rotation.Y,lamp.Rotation.Z),state=(int)phase,time_remaining=left};
+    private static GameDataSnapshot Data(TrafficSignalControl control,params NativeSignal[] signals)
+    {
+        var p=control.StopPoint-control.Forward*10;
+        var heading=Math.Atan2(-control.Forward.X,-control.Forward.Z)/Math.Tau;
+        return new(new(p.X,p.Y,p.Z,heading,0,100,true,false,1,Now),
+            RouteSnapshot.Parse([new(1,100,1),new(2,0,0)],Now),RouteAvailability.Available,"s",true)
+            {TrafficSignals=TrafficSignalAdapter.Copy(signals,Now)};
+    }
     [Theory]
-    [InlineData(SemaphoreType.TrafficLight,true)]
-    [InlineData(SemaphoreType.ModelOnly,false)]
     [InlineData(SemaphoreType.UseProfile,false)]
-    public void CustomizedLayoutsRetainOnlyProvenOrdinaryControlsForLiveConfirmation(SemaphoreType type,bool ordinary)
+    [InlineData(SemaphoreType.UseProfile,true)]
+    [InlineData(SemaphoreType.ModelOnly,false)]
+    [InlineData(SemaphoreType.TrafficLight,true)]
+    public void StaticProfilesAndVisualHeadsRequireActualSdkTrafficLightBinding(SemaphoreType type,bool custom)
     {
-        var descriptor=new PrefabDescriptor{Nodes=[new(){Position=System.Numerics.Vector3.Zero},new(){Position=new(0,0,30)}],
-            NavCurves=[new(){Length=10,SemaphoreId=0,StartRotation=System.Numerics.Quaternion.Identity}],
-            Semaphores=[new(){Type=type,SemaphoreId=0,Rotation=System.Numerics.Quaternion.Identity,Intervals=new(15,2,23,1)}]};
-        var prefab=new Prefab{CustomSemaphores=true,Nodes=[new Node{Position=System.Numerics.Vector3.Zero},new Node{Position=new(0,0,30)}]};
-        var control=Assert.Single(TrafficSignalMap.Build(prefab,descriptor,new GameDataManager(new Files()).TrafficSignals,SpeedLimitData.Empty));
-        if(!ordinary){Assert.Null(control.Timing);return;}
-        Assert.True(control.Timing!.CustomLayout);
-        Assert.Null(control.Timing.NextAfterRed);
-        Assert.Contains("实时",control.Reason);
-    }
-    [Theory]
-    [InlineData("1.0",SignalPhase.OrangeToGreen)]
-    [InlineData("0.0",SignalPhase.Green)]
-    public void RealSiiFloatQuadruplesUseScsQuaternionOrderForPhaseIntervals(string redAmber,SignalPhase expected)
-    {
-        var fs=new Files{Text=$$"""
-            SiiNunit {
-              tr_semaphore_profile : tr_sem_prof.base {
-                type[]: traffic_light_minor
-                interval[]: (24.0, 3.0, 32.0, {{redAmber}})
-              }
-              tr_semaphore_profile : tr_sem_prof.test { inherited: tr_sem_prof.base }
-              tr_semaphore_profile : tr_sem_prof.test.germany { inherited: tr_sem_prof.test }
-            }
-            """};
-        var manager=new GameDataManager(fs);
-        var unit=Assert.Single(manager.GetSii("/def/world/semaphore_profile.sii").Named("tr_sem_prof.base"));
-        object raw=unit.Attributes["interval"];
-        var items=Assert.IsAssignableFrom<System.Collections.IEnumerable>(raw);
-        var native=Assert.IsType<System.Numerics.Quaternion>(Assert.Single(items.Cast<object>()));
-        Assert.Equal(24,native.W);Assert.Equal(3,native.X);Assert.Equal(32,native.Y);Assert.Equal(float.Parse(redAmber,System.Globalization.CultureInfo.InvariantCulture),native.Z);
-        var result=manager.TrafficSignals.Resolve(new Prefab{SemaphoreProfile="test"},new Semaphore{Type=SemaphoreType.UseProfile},"germany",out _);
-        Assert.Equal(expected,result?.NextAfterRed);
-        Assert.Equal(1,fs.Reads);
-    }
-    [Theory]
-    [InlineData(0,SignalPhase.Green)]
-    [InlineData(2,SignalPhase.OrangeToGreen)]
-    public void ExplicitNativeIntervalsDetermineThePhaseAfterRed(float preparation,SignalPhase expected)
-    {
-        var reader=new GameDataManager(new Files()).TrafficSignals;
-        var signal=new Semaphore{Type=SemaphoreType.TrafficLight,Intervals=new(15,2,23,preparation)};
-        Assert.Equal(expected,reader.Resolve(new Prefab(),signal,"germany",out _)?.NextAfterRed);
-        signal.Intervals=new(0,2,23,preparation);
-        Assert.Null(reader.Resolve(new Prefab(),signal,"germany",out _));
-        signal.Type=SemaphoreType.ModelOnly;
-        Assert.Null(reader.Resolve(new Prefab(),signal,"germany",out _));
+        var f=Fixture(type,custom);var binder=new TrafficSignalBinder();
+        Assert.Equal(2,f.Control.Lamps.Count);
+        Assert.Null(binder.Match(Data(f.Control),f.Map,f.Navigation,out _));
+        var lamp=f.Control.Lamps[0];
+        Assert.NotNull(binder.Match(Data(f.Control,Live(lamp,NativeType.TRAFFICLIGHT)),f.Map,f.Navigation,out _));
+        Assert.Null(binder.Match(Data(f.Control,Live(lamp,NativeType.GATE)),f.Map,f.Navigation,out _));
+        // A gate at the same pose must not contaminate the matched traffic-light group's phase.
+        Assert.NotNull(binder.Match(Data(f.Control,Live(lamp,NativeType.GATE,2,20,SignalPhase.Green),
+            Live(lamp,NativeType.TRAFFICLIGHT)),f.Map,f.Navigation,out _));
     }
     [Fact]
-    public void CountryOverridesInheritanceAndRepeatedGroupValuesAreReadOnceThroughTheManager()
+    public void MultipleRealHeadsInAProfileGroupMustAgreeOnPhaseAndCountdown()
     {
-        var fs=new Files();fs.Text="""
-            SiiNunit {
-              tr_semaphore_profile : tr_sem_prof.base { type[]: traffic_light interval[]: (15, 2, 23, 0) }
-              tr_semaphore_profile : tr_sem_prof.test { inherited: tr_sem_prof.base }
-              tr_semaphore_profile : tr_sem_prof.test.germany { inherited: tr_sem_prof.test interval[]: (15, 2, 23, 2) }
-            }
-            """;
-        var manager=new GameDataManager(fs);var reader=manager.TrafficSignals;
-        var signal=new Semaphore{Type=SemaphoreType.UseProfile,SemaphoreId=5};
-        var prefab=new Prefab{SemaphoreProfile="test"};
-        Assert.Equal(SignalPhase.OrangeToGreen,reader.Resolve(prefab,signal,"germany",out _)?.NextAfterRed);
-        Assert.Equal(SignalPhase.Green,reader.Resolve(prefab,signal,"france",out _)?.NextAfterRed);
-        Assert.Null(reader.Resolve(prefab,signal,null,out _));
-        manager.GetSii("/def/world/semaphore_profile.sii");
-        Assert.Equal(1,fs.Reads);
-    }
-    [Fact]
-    public void MissingTypesAndInheritanceCyclesNeverInventTheNextPhase()
-    {
-        var fs=new Files{Text="""
-            SiiNunit {
-              tr_semaphore_profile : tr_sem_prof.test { interval[]: (15, 2, 23, 2) inherited: tr_sem_prof.cycle }
-              tr_semaphore_profile : tr_sem_prof.cycle { inherited: tr_sem_prof.test }
-            }
-            """};
-        Assert.Null(new GameDataManager(fs).TrafficSignals.Resolve(new Prefab{SemaphoreProfile="test"},
-            new Semaphore{Type=SemaphoreType.UseProfile},"germany",out _));
-    }
-    private sealed class Files:IFileSystem
-    {
-        private const string Name="/def/world/semaphore_profile.sii";
-        public string? Text;public int Reads;
-        public char DirectorySeparator=>'/';
-        public bool FileExists(string path)=>path==Name&&Text is not null;
-        public bool DirectoryExists(string path)=>path.TrimEnd('/')=="/def/world";
-        public IList<string> GetFiles(string path)=>path.TrimEnd('/')=="/def/world"&&Text is not null?[Name]:[];
-        public byte[] ReadAllBytes(string path){Reads++;return Encoding.UTF8.GetBytes(Text??throw new FileNotFoundException(path));}
-        public Stream Open(string path)=>new MemoryStream(ReadAllBytes(path));
-        public string ReadAllText(string path)=>Encoding.UTF8.GetString(ReadAllBytes(path));
-        public string ReadAllText(string path,Encoding encoding)=>encoding.GetString(ReadAllBytes(path));
-        public string GetParent(string path)=>path[..path.LastIndexOf('/')];
+        var f=Fixture(SemaphoreType.UseProfile,false);var a=f.Control.Lamps[0];var b=f.Control.Lamps[1];var binder=new TrafficSignalBinder();
+        Assert.NotNull(binder.Match(Data(f.Control,Live(a,NativeType.TRAFFICLIGHT),Live(b,NativeType.TRAFFICLIGHT,2)),f.Map,f.Navigation,out _));
+        Assert.Null(binder.Match(Data(f.Control,Live(a,NativeType.TRAFFICLIGHT),Live(b,NativeType.TRAFFICLIGHT,2,1,SignalPhase.Green)),f.Map,f.Navigation,out _));
+        Assert.Null(binder.Match(Data(f.Control,Live(a,NativeType.TRAFFICLIGHT),Live(b,NativeType.TRAFFICLIGHT,2,1.5f)),f.Map,f.Navigation,out _));
     }
 }

@@ -83,18 +83,61 @@ public sealed class WrapperRoundaboutProgressTests
         var source=new RoadPathSource(map,[pass,back]);
         var full=RouteSnapshot.Parse([new(10,300,30),new(12,200,20),new(10,100,10),new(12,0,0)],DateTimeOffset.UtcNow);
         var chunk=Assert.Single(source.GetRouteComponents(full));var matcher=new DirectedPathMatcher();
-        Assert.Null(matcher.ProjectDistance(new(50,0,0),Vector3.UnitX,chunk));
+        Assert.Equal(50,matcher.ProjectDistance(new(50,0,0),Vector3.UnitX,chunk));
         int first=source.FirstLiveVisit(chunk,2);Assert.Equal(1,first);
         Assert.Equal(250,matcher.ProjectDistance(new(50,0,0),Vector3.UnitX,chunk,first));
         Assert.Equal(300,chunk.Sum(RouteGeometry.Length));
     }
     [Fact]
-    public void FirstOccurrenceStillHasAnExplicitFutureVisitAmbiguity()
+    public void RepeatedDirectedRoadMatchesItsFirstQualifiedLiveVisit()
     {
         var pass=new DirectedRoad("pass",10,12,[Vector3.Zero,new(100,0,0)]);
         var back=new DirectedRoad("back",12,10,[new(100,0,0),Vector3.Zero]);
-        // The SDK has not yet consumed anything. Its lower bound cannot eliminate
-        // the future second pass: keep the current matcher's ambiguity result.
-        Assert.Null(new DirectedPathMatcher().ProjectDistance(new(50,0,0),Vector3.UnitX,[pass,back,pass],0));
+        var matcher=new DirectedPathMatcher();
+        Assert.Equal(50,matcher.ProjectDistance(new(50,0,0),Vector3.UnitX,[pass,back,pass],0));
+        Assert.Equal(250,matcher.ProjectDistance(new(50,0,0),Vector3.UnitX,[pass,back,pass],1));
     }
+    [Fact]
+    public void AnotherDirectedRoadWithTheSameGeometryIsStillAmbiguous()
+    {
+        var pass=new DirectedRoad("pass",10,12,[Vector3.Zero,new(100,0,0)]);
+        var back=new DirectedRoad("back",12,10,[new(100,0,0),Vector3.Zero]);
+        var other=pass with{Id="different-road"};
+        Assert.Null(new DirectedPathMatcher().ProjectDistance(new(50,0,0),Vector3.UnitX,[pass,back,other]));
+    }
+    [Fact]
+    public void ReverseTravelRemainsADifferentDirectedRoad()
+    {
+        var pass=new DirectedRoad("road",10,12,[Vector3.Zero,new(100,0,0)]);
+        var reverse=pass with{StartNodeUid=12,EndNodeUid=10,Points=pass.Points.Reverse().ToArray()};
+        var matcher=new DirectedPathMatcher();
+        Assert.Equal(50,matcher.ProjectDistance(new(50,0,0),Vector3.UnitX,[pass,reverse,pass]));
+        Assert.Equal(150,matcher.ProjectDistance(new(50,0,0),-Vector3.UnitX,[pass,reverse,pass]));
+    }
+
+    [Fact]
+    public void RuntimeQueuesBothRingVisitsAsSdkConsumptionMovesTheProgressBound()
+    {
+        var now=DateTimeOffset.UtcNow;var logs=new List<string>();
+        var pass=new DirectedRoad("prefab:1:0:1",10,12,[Vector3.Zero,new(80,0,0),new(100,0,0)]){NativeCurveSpans=[new(7,1)]};
+        var back=new DirectedRoad("prefab:2:0:1",12,10,[new(100,0,0),Vector3.Zero]);
+        var ring=new RoundaboutStructure("same-ring",[1],[],[],1,[]){RingLength=100,
+            EntryPorts=[new(10,Vector3.Zero){Bearing=0}],
+            ExitPorts=[new(12,new(100,0,0)){Bearing=1,DepartureBranches=[new(new(1,7),new(80,0,0))]}]};
+        var nearby=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=[pass,back],
+            RoadStructures=new Dictionary<ulong,RoundaboutStructure>{{1,ring}}};
+        var full=RouteSnapshot.Parse([new(10,300,30),new(12,200,20),new(10,100,10),new(12,0,0)],now);
+        var stable=NavigationRouteState.Empty.Accept(full);var runtime=new NavigationRuntime(log:logs.Add);
+        GameDataSnapshot Data(double x)=>new(new(x,0,0,.75,10,300,true,false,1,now),stable.CurrentSnapshot,
+            RouteAvailability.Available,"same-session",true){NavigationRoute=stable};
+        Assert.NotNull(runtime.Process(Data(0),nearby,now).LaneRoute);
+        runtime.Process(Data(60),nearby,now);
+        stable=stable.Accept(RouteSnapshot.Parse(full.Nodes.Skip(2).ToArray(),now));
+        Assert.Equal(2,stable.CurrentNodeIndex);
+        Assert.NotNull(runtime.Process(Data(0),nearby,now).LaneRoute);
+        runtime.Process(Data(60),nearby,now);
+        Assert.Equal(2,logs.Count(l=>l.StartsWith("\u5bfc\u822a\u6307\u4ee4")&&l.Contains("\u8fdb\u5165\u73af\u5c9b")));
+        Assert.Equal(2,logs.Count(l=>l.StartsWith("\u5bfc\u822a\u6307\u4ee4")&&l.Contains("\u9a76\u51fa\u73af\u5c9b")));
+    }
+
 }

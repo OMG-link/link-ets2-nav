@@ -183,29 +183,29 @@ public sealed class GameDataManager:IDisposable
     }
     internal MapWindowReadiness WindowReadiness(NativeMap window)=>windowReadiness.TryGetValue(window,out var value)?value:throw new InvalidOperationException("Unknown map read window.");
     public void Dispose()=>owner?.Dispose();
-    public MapQueryIssue DescribeMissingConnection(ulong boundaryUid,IReadOnlySet<ulong> representedItemUids,
-        IReadOnlySet<SectorCoordinate> publishedSectors)
+    internal static MapQueryIssue DescribeMissingNativeObjects(NativeMap window,ulong boundaryUid)
     {
-        if(Map.GetNode(boundaryUid) is not Node node)
-            return new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"Boundary {boundaryUid:X16} has no known native node.");
-        var missing=new HashSet<SectorCoordinate>();var unknown=new List<ulong>();var prefabs=new HashSet<ulong>();
+        if(!window.Nodes.TryGetValue(boundaryUid,out var raw)||raw is not Node node)
+            return new MissingMapObjects([new(MapObjectKind.Node,boundaryUid)],$"Native node {boundaryUid:X16} is not in the current window.");
+        var missing=new HashSet<MapObjectKey>();
         foreach(var reference in new[]{node.BackwardItem,node.ForwardItem}.Where(i=>i is not null).DistinctBy(i=>i.Uid))
         {
-            var item=Map.GetItem(reference.Uid)??reference as MapItem;
-            if(item is Prefab)prefabs.Add(reference.Uid);
-            if(representedItemUids.Contains(reference.Uid))continue;
-            System.Numerics.Vector3? center=item switch
-            {
-                Road r when r.Node is Node from&&r.ForwardNode is Node to=>(from.Position+to.Position)/2,
-                Prefab p when p.Nodes.Count>0&&p.Nodes.All(n=>n is Node)=>p.Nodes.Cast<Node>().Aggregate(System.Numerics.Vector3.Zero,(sum,n)=>sum+n.Position)/p.Nodes.Count,
-                _=>null
-            };
-            if(center is not {} position||!float.IsFinite(position.X)||!float.IsFinite(position.Y)||!float.IsFinite(position.Z))
-            {unknown.Add(reference.Uid);continue;}
-            var owner=NativeMap.GetSectorOfCoordinate(position);
-            if(!publishedSectors.Contains(owner))missing.Add(owner);
+            if(!window.MapItems.TryGetValue(reference.Uid,out var item))
+            {missing.Add(new(MapObjectKind.Item,reference.Uid));continue;}
+            foreach(var endpoint in HostMapView.NodesOf(item))
+                if(!window.Nodes.TryGetValue(endpoint.Uid,out var actual)||actual is not Node)
+                    missing.Add(new(MapObjectKind.Node,endpoint.Uid));
         }
-        if(missing.Count>0)return new MissingMapSectors(missing,$"Boundary {boundaryUid:X16} needs connected native item owners."){QueryAnchor=node.Position};
+        if(missing.Count>0)return new MissingMapObjects(missing,$"Boundary {boundaryUid:X16} needs missing native lookup keys."){QueryAnchor=node.Position};
+        return new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,$"Boundary {boundaryUid:X16} has no verified connection in the complete current window."){QueryAnchor=node.Position};
+    }
+    public MapQueryIssue DescribeMissingConnection(NativeMap window,ulong boundaryUid)
+    {
+        var result=DescribeMissingNativeObjects(window,boundaryUid);
+        if(result is MissingMapObjects)return result;
+        var node=(Node)window.Nodes[boundaryUid];
+        var prefabs=new[]{node.BackwardItem,node.ForwardItem}.Where(i=>i is not null).Select(i=>i.Uid)
+            .Where(uid=>window.MapItems.GetValueOrDefault(uid) is Prefab).Distinct();
         var details=new List<string>();
         foreach(var uid in prefabs)
         {
@@ -216,11 +216,11 @@ public sealed class GameDataManager:IDisposable
             if(prefab.Description is {} description&&description.NavCurves.Count==0)
                 details.Add($"Prefab {uid:X16} ({definition.Descriptor}) has no native navigation curves (NavCurves=0; SpawnPoints={description.SpawnPoints.Count}).");
         }
-        return new MapQueryFailure(unknown.Count>0?MapQueryFailureKind.UnresolvedReference:MapQueryFailureKind.DefinitionUnavailable,
-            (unknown.Count>0?$"Boundary {boundaryUid:X16} has unlocated references: {string.Join(',',unknown.Select(u=>u.ToString("X16")))}."
-                :$"Boundary {boundaryUid:X16} is inside published sectors; loading cannot establish this connection.")
-                +(details.Count==0?"":" "+string.Join(' ',details))){QueryAnchor=node.Position};
+        return new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,
+            $"Boundary {boundaryUid:X16} has no verified connection in the complete current window."
+            +(details.Count==0?"":" "+string.Join(' ',details))){QueryAnchor=node.Position};
     }
+
     private sealed class SupplementMap(NativeMap? basis,SectorReadEvidence evidence):NativeMap
     {
         protected override void OnSectorLoading(Sector sector,int current,int total)

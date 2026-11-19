@@ -100,6 +100,7 @@ public sealed class NavPlugin : Plugin
     {
         using var source = new Ets2LaGameDataSource(Events.Current);
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
+        (string Resource,string? Session,DateTimeOffset ReceivedAt)? lastScanSample=null;
         var logOutput = new NavigationLogReporter();
         await using var speechUsage=new SpeechUsageStore(Path.Combine(AppContext.BaseDirectory,"Cache","LinkEts2Nav","SpeechUsage"),
             message=>logOutput.Event(message,DateTimeOffset.UtcNow),
@@ -202,7 +203,17 @@ public sealed class NavPlugin : Plugin
                             signature = nextSignature;
                         }
                     }
-                    var preparation = mapScanner.Capture();
+                    if (session != data.SessionId)
+                    {
+                        logOutput.ResetTargets("车辆会话变化：已重置目标和预警状态（首次连接、读档或传送等）。", now);
+                        session = data.SessionId;
+                        mapScanner.Invalidate();
+                        pipeline.Reset(); navigation.Reset();
+                        if(!guidance.HasVerifiedFerryContinuation(data))guidance.Reset();
+                    }
+                    if(data.RouteAvailability is RouteAvailability.Available or RouteAvailability.None)
+                        mapScanner.ObserveRoute(data.RouteAvailability==RouteAvailability.Available?data.Route:null);
+                    var preparation = mapScanner.AdoptReady();
                     if (preparation.IsPrepared)
                         logOutput.Change("map-preparation", "全局地图准备已完成。", now);
                     else if (preparation.Error is not null)
@@ -225,27 +236,24 @@ public sealed class NavPlugin : Plugin
                                 data.RouteAvailability.ToString(), 0, []));
                         continue;
                     }
-                    if (session != data.SessionId)
-                    {
-                        logOutput.ResetTargets("车辆会话变化：已重置目标和预警状态（首次连接、读档或传送等）。", now);
-                        session = data.SessionId;
-                        mapScanner.Invalidate();
-                        pipeline.Reset(); navigation.Reset();
-                        if(!guidance.HasVerifiedFerryContinuation(data))guidance.Reset();
-                    }
                     // Announce after startup/session resets, before waiting for the nearby map scan.
                     guidance.Observe(data,now);
                     logOutput.Change("scan-coverage", data.RouteAvailability == RouteAvailability.Available
-                        ? "地图扫描范围：附近 1100 m，并沿游戏导航路线预读前方 5 km；后台优先准备附近地图。"
+                        ? "地图扫描范围：附近 1100 m，并沿游戏导航路线预读前方 "+(MapScanCoverage.LookaheadMeters/1000).ToString(System.Globalization.CultureInfo.InvariantCulture)+" km；后台优先准备附近地图。"
                         : "地图扫描范围：附近 1100 m（无有效导航路线）。", now);
                     var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
-                    if (mapScanner.Request(new(resourceVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    var scanSample=(resourceVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),session,vehicle.ReceivedAt);
+                    if(lastScanSample!=scanSample)
+                    {
+                    lastScanSample=scanSample;
+                    if (mapScanner.Request(new(scanSample.Item1,
                         session, currentInstallation.Path, gameLog, position) {
                         HostMap = currentInstallation.GetMapData(),
                         Route = data.RouteAvailability == RouteAvailability.Available ? data.Route : null,
                         NavigationRemainingMeters = vehicle.NavigationDistanceRemainingMeters }, now))
                         logOutput.ScanStarted(position, now);
-                    var scan = mapScanner.Capture();
+                    }
+                    var scan = mapScanner.AdoptReady();
                     if (!scan.IsScanning) scanBusySince = DateTimeOffset.MinValue;
                     else if (scanBusySince == DateTimeOffset.MinValue) scanBusySince = now;
                     var nearby = scan.Map;
@@ -274,6 +282,8 @@ public sealed class NavPlugin : Plugin
                     var latest = source.Capture();
                     if (latest.SessionId != session) { mapScanner.Invalidate(); speech?.ClearPlan(); continue; }
                     token.ThrowIfCancellationRequested();
+                    if(latest.RouteAvailability is RouteAvailability.Available or RouteAvailability.None)
+                        mapScanner.ObserveRoute(latest.RouteAvailability==RouteAvailability.Available?latest.Route:null);
                     guidance.Observe(latest,DateTimeOffset.UtcNow);
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var navigationDiagnostic=navigation.Process(latest,calibrated,DateTimeOffset.UtcNow);

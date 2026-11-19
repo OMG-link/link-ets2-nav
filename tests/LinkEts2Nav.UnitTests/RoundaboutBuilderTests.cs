@@ -193,7 +193,7 @@ public sealed class RoundaboutBuilderTests
         }
         Add(1,3000);Add(2,10);
         index.BuildNewSectors([new(0,0)],TestContext.Current.CancellationToken,
-            _=>new MissingMapSectors([new SectorCoordinate(1,0)],"shared missing owner"));
+            _=>new MissingMapObjects([new MapObjectKey(MapObjectKind.Item,10)],"shared missing owner"));
         Assert.Equal(2,index.MapIssues.Count);
         Assert.Equal(new float[]{10,3000},index.MapIssues.Select(i=>i.QueryAnchor!.Value.X).Order());
     }
@@ -215,7 +215,7 @@ public sealed class RoundaboutBuilderTests
         var sectors = new[] { new SectorCoordinate(0, 0), new SectorCoordinate(1, 0) };
         index.AddPrefab(new Prefab { Uid = 1, Nodes = [left, right] }, Half(left, right, MathF.PI, 0));
         index.BuildNewSectors(sectors, TestContext.Current.CancellationToken,
-            _=>new MissingMapSectors([new SectorCoordinate(1,0)],"missing next owner"){QueryAnchor=new(50000,0,0)});
+            _=>new MissingMapObjects([new MapObjectKey(MapObjectKind.Item,10)],"missing next owner"){QueryAnchor=new(50000,0,0)});
         Assert.Empty(index.Structures);
         Assert.Equal(2, index.BuiltSectorCount);
         Assert.Contains(20UL, index.UnresolvedBoundaryNodes[sectors[0]]);

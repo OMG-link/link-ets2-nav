@@ -84,9 +84,7 @@ public sealed class NearbyCameraScanner
         {
             var nextMap=data.ReadWindow(sectors);
             var typedIssues=new List<MapQueryIssue>();
-            var represented=nextMap.MapItems.Values.Where(i=>i is Road or Prefab).Select(i=>i.Uid).ToHashSet();
-            var readySet=sectors.ToHashSet();
-            Func<ulong,MapQueryIssue> need=uid=>data.DescribeMissingConnection(uid,represented,readySet);
+            Func<ulong,MapQueryIssue> need=uid=>data.DescribeMissingConnection(nextMap,uid);
             companies=data.Companies.Build(nextMap);
             cancellationToken.ThrowIfCancellationRequested();
             var junctions = new List<DirectedRoad>();
@@ -144,14 +142,6 @@ public sealed class NearbyCameraScanner
         }
         var diagnostics = new List<string>(data.Diagnostics);
         diagnostics.AddRange(data.Companies.Diagnostics);
-        foreach(var need in mapIssues.OfType<MissingMapSectors>())
-            if(need.QueryAnchor is {} anchor)
-                foreach(var sector in need.Sectors)
-                {
-                    double dx=(sector.X+.5)*ScsMap.SectorSize-anchor.X,dz=(sector.Z+.5)*ScsMap.SectorSize-anchor.Z;
-                    double estimate=Math.Sqrt(dx*dx+dz*dz);
-                    if(estimate>10000)diagnostics.Add($"Map dependency sector-center estimate {estimate:F0}m exceeds 10km: query {anchor.X:F1},{anchor.Z:F1}, sector {sector.X},{sector.Z}; this is not a measured geometry distance. {need.Reason}");
-                }
         diagnostics.AddRange(junctionDiagnostics);
         diagnostics.AddRange(roundaboutIndex.Diagnostics);
         diagnostics.AddRange(speedLimits.Diagnostics);

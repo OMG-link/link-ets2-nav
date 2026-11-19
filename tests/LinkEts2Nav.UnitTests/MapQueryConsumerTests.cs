@@ -8,13 +8,13 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class MapQueryConsumerTests
 {
-    private static readonly SectorCoordinate Required = new(8, -3);
-    private static MissingMapSectors Missing() => new([Required], "native referenced object owner");
+    private static readonly MapObjectKey Required = new(MapObjectKind.Item,83);
+    private static MissingMapObjects Missing() => new([Required], "native referenced object owner");
     private static PrefabLanePath Lane(int input) => new(42, 10, 20, input, 0, input, 0, 2, 1,
         [input], [Vector3.Zero, new(0, 0, 20)], 20);
 
     [Fact]
-    public void OriginRetainsTheExactMissingSectorWithoutInventingOneFromTheUid()
+    public void OriginRetainsTheExactMissingLookupWithoutInventingOneFromTheUid()
     {
         var ending = Lane(1); var main = Lane(0);
         var edge = new DirectedRoad("prefab:42:0:1", 10, 20, ending.Points) { LanePaths = [ending, main] };
@@ -23,7 +23,7 @@ public sealed class MapQueryConsumerTests
             .Classify(ending, 10, main, 10);
         Assert.Equal(10UL, requested);
         Assert.Equal(LaneMergeKind.Uncertain, result.Kind);
-        Assert.Equal([Required], Assert.IsType<MissingMapSectors>(result.MapIssue).Sectors);
+        Assert.Equal([Required], Assert.IsType<MissingMapObjects>(result.MapIssue).Keys);
         Assert.Equal(new Vector3(0,0,10),result.MapIssue!.QueryAnchor);
         var unlocated = new LaneMergeOriginClassifier(new([edge])).Classify(ending, 10, main, 10);
         Assert.Equal(MapQueryFailureKind.UnresolvedReference, Assert.IsType<MapQueryFailure>(unlocated.MapIssue).Kind);
@@ -33,7 +33,7 @@ public sealed class MapQueryConsumerTests
     public void SlopeGapReturnsDependencyButActualBranchAmbiguityDoesNotRequestMoreMap()
     {
         var gap = new RoadSlopeWindowSampler(new Dictionary<ulong, List<Road>>(), [], _ => Missing()).Sample(10, true);
-        Assert.Equal([Required], Assert.IsType<MissingMapSectors>(gap.MapIssue).Sectors);
+        Assert.Equal([Required], Assert.IsType<MissingMapObjects>(gap.MapIssue).Keys);
         var map = new TruckLib.ScsMap.Map();
         var first = Road.Add(map, Vector3.Zero, new(0, 0, 30), default);
         var second = Road.Add(map, Vector3.Zero, new(30, 0, 0), default);
@@ -61,7 +61,7 @@ public sealed class MapQueryConsumerTests
         var source = new RoadPathSource(new(), missingConnection: _ => Missing(), reportMapIssue: reported.Add);
         var route = RouteSnapshot.Parse([new(10, 100, 0), new(20, 0, 0)], DateTimeOffset.UtcNow);
         Assert.Empty(source.GetRouteComponents(route));
-        Assert.All(source.MapIssues, issue => Assert.Equal([Required], Assert.IsType<MissingMapSectors>(issue).Sectors));
+        Assert.All(source.MapIssues, issue => Assert.Equal([Required], Assert.IsType<MissingMapObjects>(issue).Keys));
         Assert.NotEmpty(reported);
         // Cached topology is not a repeated load request on every position tick.
         int count = reported.Count;
@@ -78,8 +78,8 @@ public sealed class MapQueryConsumerTests
         var none=RouteSnapshot.Parse([],DateTimeOffset.UtcNow);
         var path=source.GetPath(new(10,0,0),Vector3.UnitX,none,RouteAvailability.None);
         Assert.Single(path);
-        var dependency=Assert.Single(source.MapIssues.OfType<MissingMapSectors>());
-        Assert.Equal([Required],dependency.Sectors);
+        var dependency=Assert.Single(source.MapIssues.OfType<MissingMapObjects>());
+        Assert.Equal([Required],dependency.Keys);
         Assert.Equal(road.ForwardNode.Position,dependency.QueryAnchor);
     }
 

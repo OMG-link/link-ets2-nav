@@ -106,11 +106,11 @@ public sealed class RoadSlopePrefabWindowTests
     {
         var complete=Prefab(1,10,30,new(0,0,0),new(0,0,30));
         var incomplete=OtherPort(Prefab(1,20,30,new(3,0,25),new(3,0,30)),"prefab:0000000000000001:2:1");
-        var missing=new MissingMapSectors([new(9,9)],"missing continuation");
+        var missing=new MissingMapObjects([new(MapObjectKind.Item,99)],"missing continuation");
         var sample=new RoadSlopeWindowSampler(Roads(),[complete,incomplete],_=>missing).Sample(30,true);
         Assert.Null(sample.AngleDegrees);Assert.Equal(5,sample.CoveredMeters);
-        var issue=Assert.IsType<MissingMapSectors>(sample.MapIssue);
-        Assert.Equal(missing.Sectors,issue.Sectors);Assert.Equal(missing.Reason,issue.Reason);Assert.NotNull(sample.Failure);
+        var issue=Assert.IsType<MissingMapObjects>(sample.MapIssue);
+        Assert.Equal(missing.Keys,issue.Keys);Assert.Equal(missing.Reason,issue.Reason);Assert.NotNull(sample.Failure);
     }
 
     [Fact]

@@ -31,7 +31,7 @@ public sealed class BackgroundMapScannerTests
         public void Dispose() { }
     }
     [Fact]
-    public async Task PublishesNearbyBeforeSlowRouteExpansionAndRerouteSupersedesOldWork()
+    public async Task PublishesNearbyBeforeSlowRouteExpansionAndPositionUpdateQueuesTheReroute()
     {
         using var release = new ManualResetEventSlim();
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -48,14 +48,14 @@ public sealed class BackgroundMapScannerTests
         await started.Task.WaitAsync(TimeSpan.FromSeconds(8),TestContext.Current.CancellationToken);
         try
         {
-            Assert.Same(near.Map,scanner.Capture().Map?.Map);
-            Assert.True(scanner.Capture().IsScanning);
+            Assert.Same(near.Map,scanner.AdoptReady().Map?.Map);
+            Assert.True(scanner.AdoptReady().IsScanning);
             // Same position/time must not suppress a changed route.
-            Assert.True(scanner.Request(Request() with{Route=route with{Revision="new",Nodes=[new(2,0,0)]}},now));
+            Assert.True(scanner.Request(Request(x:50) with{Route=route with{Revision="new",Nodes=[new(2,0,0)]}},now));
         }
         finally { release.Set(); }
-        await WaitFor(()=>ReferenceEquals(updated.Map,scanner.Capture().Map?.Map));
-        Assert.Equal(2,scanner.Capture().Revision); // nearby + new route; old result was discarded
+        await WaitFor(()=>ReferenceEquals(updated.Map,scanner.AdoptReady().Map?.Map));
+        Assert.Equal(3,scanner.AdoptReady().Revision); // nearby + completed old coverage + new route; only route waits are reset.
     }
 
     [Fact]
@@ -71,12 +71,12 @@ public sealed class BackgroundMapScannerTests
             Assert.True(scanner.Request(Request(), DateTimeOffset.UtcNow));
             await WaitFor(() =>
             {
-                try { scanner.ThrowIfFaulted(); return scanner.Capture().Error is not null; }
+                try { scanner.ThrowIfFaulted(); return scanner.AdoptReady().Error is not null; }
                 catch (MapSectorReadException error) { Assert.Same(failure, error); return true; }
             });
             Assert.Same(failure, Assert.Throws<MapSectorReadException>(() => scanner.ThrowIfFaulted()));
-            Assert.Null(scanner.Capture().Map);
-            Assert.Null(scanner.Capture().Error);
+            Assert.Null(scanner.AdoptReady().Map);
+            Assert.Null(scanner.AdoptReady().Error);
         }
         finally
         {
@@ -90,8 +90,8 @@ public sealed class BackgroundMapScannerTests
         var estimator=new RouteJourneyEstimator(new TruckLib.ScsMap.Map(),(_,_)=>new(80,"test"));
         await using var scanner=new BackgroundMapScanner(_=>new Backend((_,_)=>throw new InvalidOperationException("No map scan should run."),estimator:estimator));
         Assert.True(scanner.Prepare(Request(),DateTimeOffset.UtcNow));
-        await WaitFor(()=>scanner.Capture().IsPrepared);
-        Assert.Null(scanner.Capture().Map);Assert.Same(estimator,scanner.Capture().JourneyEstimator);
+        await WaitFor(()=>scanner.AdoptReady().IsPrepared);
+        Assert.Null(scanner.AdoptReady().Map);Assert.Same(estimator,scanner.AdoptReady().JourneyEstimator);
     }
     [Fact]
     public async Task PreparationWithoutPositionCreatesBackendButDoesNotScanAndIsReused()
@@ -103,13 +103,13 @@ public sealed class BackgroundMapScannerTests
             return new Backend((_, _) => { Interlocked.Increment(ref reads); return Map("ready"); });
         }, TestContext.Current.CancellationToken);
         Assert.True(scanner.Prepare(Request(), DateTimeOffset.UtcNow));
-        await WaitFor(() => scanner.Capture().Revision == 1);
+        await WaitFor(() => scanner.AdoptReady().Revision == 1);
         Assert.Equal(1, created);
         Assert.Equal(0, reads);
-        Assert.Null(scanner.Capture().Map);
+        Assert.Null(scanner.AdoptReady().Map);
         Assert.False(scanner.Prepare(Request(), DateTimeOffset.UtcNow));
         scanner.Request(Request(x: 100), DateTimeOffset.UtcNow);
-        await WaitFor(() => scanner.Capture().Map is not null);
+        await WaitFor(() => scanner.AdoptReady().Map is not null);
         Assert.Equal(1, created);
         Assert.Equal(1, reads);
     }
@@ -130,7 +130,7 @@ public sealed class BackgroundMapScannerTests
             return second;
         }), TestContext.Current.CancellationToken);
         scanner.Request(Request(), DateTimeOffset.UtcNow);
-        await WaitFor(() => scanner.Capture().Map is not null);
+        await WaitFor(() => scanner.AdoptReady().Map is not null);
         scanner.Request(Request(x: 30), DateTimeOffset.UtcNow);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(8), TestContext.Current.CancellationToken);
         try
@@ -144,10 +144,10 @@ public sealed class BackgroundMapScannerTests
             var now = DateTimeOffset.UtcNow;
             Assert.Single(engine.Update(new("session", "", false, true, now,
                 [new("first", CameraApproach.UnavoidableAhead, 499, 499)]), now));
-            Assert.Same(first.Map, scanner.Capture().Map?.Map);
+            Assert.Same(first.Map, scanner.AdoptReady().Map?.Map);
         }
         finally { release.Set(); }
-        await WaitFor(() => ReferenceEquals(scanner.Capture().Map?.Map, second.Map));
+        await WaitFor(() => ReferenceEquals(scanner.AdoptReady().Map?.Map, second.Map));
     }
 
     [Theory]
@@ -172,15 +172,15 @@ public sealed class BackgroundMapScannerTests
         try
         {
             scanner.Request(resourceChange ? Request(resource: "new") : Request(session: "new"), DateTimeOffset.UtcNow);
-            Assert.Null(scanner.Capture().Map);
+            Assert.Null(scanner.AdoptReady().Map);
             Assert.Equal(0, disposed);
             Assert.Equal(1, calls); // no parallel reads, including across resource changes
         }
         finally { release.Set(); }
-        await WaitFor(() => scanner.Capture().Map is not null);
-        Assert.Same(current.Map, scanner.Capture().Map?.Map);
+        await WaitFor(() => scanner.AdoptReady().Map is not null);
+        Assert.Same(current.Map, scanner.AdoptReady().Map?.Map);
         Assert.Equal(resourceChange ? 1 : 0, disposed);
-        Assert.Equal(1, scanner.Capture().Revision); // stale completion never published
+        Assert.Equal(1, scanner.AdoptReady().Revision); // stale completion never published
     }
 
     [Fact]
@@ -204,7 +204,7 @@ public sealed class BackgroundMapScannerTests
             scanner.Request(Request(x: 90), DateTimeOffset.UtcNow);
         }
         finally { release.Set(); }
-        await WaitFor(() => scanner.Capture().Position.X == 90);
+        await WaitFor(() => scanner.AdoptReady().Position.X == 90);
         Assert.Equal(new[] { 0f, 90f }, seen.ToArray());
     }
 
@@ -216,14 +216,14 @@ public sealed class BackgroundMapScannerTests
         await using var scanner = new BackgroundMapScanner(_ => new Backend((_, _) =>
             Interlocked.Increment(ref calls) == 2 ? throw new IOException("failed") : ready), TestContext.Current.CancellationToken);
         scanner.Request(Request(), DateTimeOffset.UtcNow);
-        await WaitFor(() => scanner.Capture().Map is not null);
+        await WaitFor(() => scanner.AdoptReady().Map is not null);
         scanner.Request(Request(x: 30), DateTimeOffset.UtcNow);
-        await WaitFor(() => scanner.Capture().Error is not null);
-        Assert.Same(ready.Map, scanner.Capture().Map?.Map);
+        await WaitFor(() => scanner.AdoptReady().Error is not null);
+        Assert.Same(ready.Map, scanner.AdoptReady().Map?.Map);
         Assert.False(scanner.Request(Request(x: 60), DateTimeOffset.UtcNow));
         Assert.True(scanner.Request(Request(x: 60), DateTimeOffset.UtcNow.AddSeconds(6)));
-        await WaitFor(() => scanner.Capture().Error is null);
-        Assert.Same(ready.Map, scanner.Capture().Map?.Map);
+        await WaitFor(() => scanner.AdoptReady().Error is null);
+        Assert.Same(ready.Map, scanner.AdoptReady().Map?.Map);
     }
 
     [Fact]
@@ -243,9 +243,9 @@ public sealed class BackgroundMapScannerTests
         await started.Task.WaitAsync(TimeSpan.FromSeconds(8), TestContext.Current.CancellationToken);
         scanner.Invalidate();
         var stopping = scanner.DisposeAsync().AsTask();
-        try { Assert.False(stopping.IsCompleted); Assert.False(disposed); Assert.Null(scanner.Capture().Map); }
+        try { Assert.False(stopping.IsCompleted); Assert.False(disposed); Assert.Null(scanner.AdoptReady().Map); }
         finally { release.Set(); await stopping.WaitAsync(TimeSpan.FromSeconds(8), TestContext.Current.CancellationToken); }
         Assert.True(disposed);
-        Assert.Null(scanner.Capture().Map);
+        Assert.Null(scanner.AdoptReady().Map);
     }
 }

@@ -1,250 +1,118 @@
-using System.Threading.Channels;
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Map;
-using TruckLib.ScsMap;
 namespace LinkEts2Nav.Runtime;
 
-/// <summary>Queries consume published snapshots and return values; they must not publish external state.
-/// Loader demand notifications are asynchronous, coalesced, and serialized independently of query callbacks.</summary>
-public sealed class MapRetryCoordinator:IMapRetryScheduler,IAsyncDisposable
+/// <summary>Main-loop-owned waits. Adopt the whole completed window before executing its ready queries serially.</summary>
+public sealed class MapRetryCoordinator:IMapRetryScheduler
 {
-    // The worker owns one reference. Deferred cancellation actions reserve
-    // another under gate, so completion cannot dispose a source before Cancel.
-    private sealed class Attempt
-    {
-        public required CancellationTokenSource Source;
-        public int References=1;
-    }
     private sealed class Entry
     {
-        public required (string Key,Type Type) Key;public required MissingMapSectors Missing;
-        public required Func<MapRetryContext,CancellationToken,ValueTask<(object Value,MapQueryIssue? Issue)>> Query;
-        public required object Result;public long ResultRevision=-1,LastAttempt=-1,Serial;public MapQueryIssue? Error;
-        public bool Running,Finished;public HashSet<long> Subscribers=[];public Attempt? Cancellation;
+        public required (string,Type) Key;
+        public required MissingMapObjects Missing;
+        public required Func<MapRetryContext,object> Query;
+        public required object Result;
+        public required Func<object,MissingMapObjects?> Dependency;
+        public long Revision=-1,LastAttempt=-1;
+        public bool Running,Finished;
+        public HashSet<long> Subscribers=[];
     }
-    private readonly object gate=new();
     private readonly Dictionary<(string,Type),Entry> entries=[];
-    private readonly Dictionary<string,MissingMapSectors> reported=[];
-    private readonly Action<IReadOnlyList<SectorCoordinate>> request;
-    private readonly Action<string>? log;
-    private readonly Channel<bool> wake=Channel.CreateBounded<bool>(new BoundedChannelOptions(1){SingleReader=true,FullMode=BoundedChannelFullMode.DropWrite});
-    // Notifications carry no captured sector list. A single consumer reads the
-    // latest scope immediately before calling the loader, so a delayed old
-    // notification cannot overwrite a newer Reset/Release demand.
-    private readonly Channel<bool> demandWake=Channel.CreateBounded<bool>(new BoundedChannelOptions(1){SingleReader=true,FullMode=BoundedChannelFullMode.DropWrite});
-    private readonly CancellationTokenSource stop=new();private readonly Task worker;
-    private readonly Task demandWorker;
-    private MapRetryContext? current;private long subscriber,epoch,scopeRevision;private bool disposed;
-    public long ScopeRevision {get{lock(gate)return scopeRevision;}}
-    public long Generation {get{lock(gate)return epoch;}}
-    public MapRetryCoordinator(Action<IReadOnlyList<SectorCoordinate>> request,Action<string>? log=null)
-    {this.request=request;this.log=log;worker=Task.Run(WorkAsync);demandWorker=Task.Run(PublishDemandsAsync);}
-    /// <summary>The owning driver observes both background entry points at its fatal boundary.</summary>
-    public void ThrowIfFaulted()
+    // A cancellation token may fire off-loop. Only the owning loop changes the registry.
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(Entry Entry,long Id)> released=[];
+    private MapRetryContext? current;
+    private long subscriber;
+    public void Reset(bool clearWindow=true)
+    {DrainReleased();entries.Clear();if(clearWindow)current=null;}
+    public void Adopt(NearbyMapSnapshot snapshot,long revision)
     {
-        if(worker.IsCompleted)worker.GetAwaiter().GetResult();
-        if(demandWorker.IsCompleted)demandWorker.GetAwaiter().GetResult();
-    }
-    private bool Local(MissingMapSectors missing)=>current?.Snapshot.Coverage is {} coverage
-        &&missing.QueryAnchor is {} anchor&&coverage.ContainsQueryAnchor(anchor);
-    private bool Ready(MissingMapSectors missing)=>current is {} context&&missing.Sectors.All(context.Snapshot.ReadySectors.Contains);
-    private IReadOnlyList<SectorCoordinate> Demands()=>reported.Values.Concat(entries.Values.Select(e=>e.Missing))
-        .Where(Local).SelectMany(m=>m.Sectors).Distinct().OrderBy(s=>s.X).ThenBy(s=>s.Z).ToArray();
-    public void Report(MapQueryIssue issue)
-        =>Report(issue,Generation);
-    public void Report(MapQueryIssue issue,long expectedGeneration)
-    {
-        if(issue is not MissingMapSectors missing)return;
-        lock(gate)
+        DrainReleased();
+        foreach(var key in entries.Where(p=>p.Value.Subscribers.Count==0).Select(p=>p.Key).ToArray())entries.Remove(key);
+        current=new(snapshot,revision);
+        foreach(var entry in entries.Values.Where(e=>!e.Finished&&e.LastAttempt!=revision&&Ready(current,e.Missing)).ToArray())
         {
-            if(disposed||epoch!=expectedGeneration||!Local(missing))return;
-            string identity=missing.Reason+"@"+missing.QueryAnchor+":"+string.Join(';',missing.Sectors.Select(s=>$"{s.X},{s.Z}"));
-            if(reported.ContainsKey(identity)||Ready(missing))return;
-            reported[identity]=missing;
-        }
-        LogSpan(missing);
-        DemandChanged();
-    }
-    private void LogSpan(MissingMapSectors missing)
-    {
-        if(log is null||missing.QueryAnchor is not {} anchor)return;
-        foreach(var sector in missing.Sectors)
-        {
-            double dx=(sector.X+.5)*TruckLib.ScsMap.Map.SectorSize-anchor.X,dz=(sector.Z+.5)*TruckLib.ScsMap.Map.SectorSize-anchor.Z;
-            double estimate=Math.Sqrt(dx*dx+dz*dz);
-            if(estimate>10000)log($"Map dependency sector-center estimate {estimate:F0}m exceeds 10km: query {anchor.X:F1},{anchor.Z:F1}, sector {sector.X},{sector.Z}; not a measured geometry distance. {missing.Reason}");
-        }
-    }
-    public MapRetryHandle<T> Register<T>(string key,MissingMapSectors missing,
-        Func<MapRetryContext,CancellationToken,ValueTask<MapQueryResult<T>>> retry,CancellationToken cancellationToken=default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(key);ArgumentNullException.ThrowIfNull(retry);
-        Entry entry;long id;
-        lock(gate)
-        {
-            ObjectDisposedException.ThrowIf(disposed,this);var identity=(key,typeof(T));
-            if(entries.TryGetValue(identity,out var completed)&&completed.Finished&&completed.ResultRevision!=current?.Revision)
-                entries.Remove(identity); // Completed results are one-shot and version-scoped; a new registration gets a new query.
-            if(!entries.TryGetValue(identity,out entry!))
+            entry.Running=true;entry.LastAttempt=revision;
+            try
             {
-                entry=new(){Key=identity,Missing=missing,Result=MapQueryResult<T>.Unavailable(missing),Query=async(c,t)=>
-                    {var value=await retry(c,t).ConfigureAwait(false);return(value,value.Issue);}};
-                entries.Add(identity,entry);
+                var result=entry.Query(current);
+                if(entries.GetValueOrDefault(entry.Key)!=entry)continue;
+                entry.Result=result;entry.Revision=revision;
+                if(entry.Dependency(result) is {} missing)
+                {AssertMissing(current,missing);entry.Missing=missing;}
+                else entry.Finished=true;
             }
-            else if(!entry.Finished)
-                entry.Missing=new MissingMapSectors(entry.Missing.Sectors.Concat(missing.Sectors),missing.Reason){QueryAnchor=missing.QueryAnchor??entry.Missing.QueryAnchor};
-            id=++subscriber;entry.Subscribers.Add(id);
+            finally{entry.Running=false;}
         }
-        var handle=new MapRetryHandle<T>(()=>Capture<T>(entry,id),()=>Release(entry,id));
-        handle.CancelWith(cancellationToken);LogSpan(missing);DemandChanged();wake.Writer.TryWrite(true);return handle;
     }
-    private MapRetryStatus<T> Capture<T>(Entry entry,long id)
+    // Each missing key is a wakeup for the whole operation. Waiting for every
+    // distant SDK key at once would prevent useful local prefixes from updating.
+    private static bool Ready(MapRetryContext context,MissingMapObjects missing)=>missing.Keys.Any(context.Contains);
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void AssertMissing(MapRetryContext context,MissingMapObjects missing)
     {
-        lock(gate)
+        if(missing.Keys.Any(context.Contains))throw new NavigationContractException("A retry dependency must be absent from the complete current query window.");
+    }
+    public MapQueryOperation<T> Query<T>(string key,Func<MapRetryContext,MapQueryResult<T>> query,CancellationToken cancellationToken=default)
+    {
+        DrainReleased();
+#if DEBUG
+        if(current is null)throw new NavigationContractException("A map query requires an adopted complete window.");
+#endif
+        cancellationToken.ThrowIfCancellationRequested();
+        var identity=(key,typeof(T));
+        if(entries.TryGetValue(identity,out var previous)&&previous.Revision==current!.Revision)
+            return new((MapQueryResult<T>)previous.Result,Lease<T>(previous,cancellationToken));
+        var result=query(current!);
+        if(result.Issue is not MissingMapObjects missing)return new(result,null);
+        AssertMissing(current!,missing);
+        var entry=new Entry{Key=identity,Missing=missing,Query=c=>query(c),Result=result,
+            Revision=current!.Revision,LastAttempt=current.Revision,Dependency=r=>((MapQueryResult<T>)r).Issue as MissingMapObjects};
+        entries[identity]=entry;
+        return new(result,Lease<T>(entry,cancellationToken));
+    }
+    private MapRetryHandle<T> Lease<T>(Entry entry,CancellationToken token)
+    {
+        long id=++subscriber;entry.Subscribers.Add(id);int disposed=0;
+        var handle=new MapRetryHandle<T>(()=>
         {
-            bool active=!disposed&&entries.GetValueOrDefault(entry.Key)==entry&&entry.Subscribers.Contains(id);
+            bool active=Volatile.Read(ref disposed)==0&&entries.GetValueOrDefault(entry.Key)==entry&&entry.Subscribers.Contains(id);
             var result=(MapQueryResult<T>)entry.Result;
-            if(entry.Error is {} error)result=MapQueryResult<T>.Unavailable(error);
-            if(!active||result.IsSuccess&&entry.ResultRevision!=current?.Revision)
-                result=MapQueryResult<T>.Unavailable(new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,"Retry lease or map generation is no longer current."));
-            return new(active,entry.Running,entry.ResultRevision,result);
+            if(!active||entry.Revision!=current?.Revision)result=MapQueryResult<T>.Unavailable(new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,"Map retry lease is no longer current."));
+            return new(active,entry.Running,entry.Revision,result);
+        },()=>{Interlocked.Exchange(ref disposed,1);released.Enqueue((entry,id));});
+        handle.CancelWith(token);return handle;
+    }
+    /// <summary>Attach a dependency discovered later in the same main-loop operation, retaining its known local result.</summary>
+    public MapRetryHandle<T> WaitFor<T>(string key,MissingMapObjects missing,T localValue,Func<MapRetryContext,MapQueryResult<T>> query)
+    {
+        DrainReleased();
+#if DEBUG
+        if(current is null)throw new NavigationContractException("A wait requires an adopted complete window.");
+#endif
+        AssertMissing(current!,missing);
+        var identity=(key,typeof(T));
+        if(entries.TryGetValue(identity,out var entry)&&entry.Revision==current!.Revision)
+        {
+            entry.Missing=entry.Finished?missing:new MissingMapObjects(entry.Missing.Keys.Concat(missing.Keys),missing.Reason);
+            entry.Finished=false;entry.Query=c=>query(c);entry.Result=new MapQueryResult<T>(localValue,entry.Missing);
         }
-    }
-    private void Release(Entry entry,long id)
-    {
-        Action? cancel=null;
-        lock(gate)
+        else
         {
-            entry.Subscribers.Remove(id);
-            if(entry.Subscribers.Count==0&&entries.GetValueOrDefault(entry.Key)==entry)
-            {entries.Remove(entry.Key);entry.Serial++;cancel=ReserveCancellation(entry.Cancellation is {} attempt?[attempt]:[]);}
+            entry=new(){Key=identity,Missing=missing,Query=c=>query(c),Result=new MapQueryResult<T>(localValue,missing),
+                Revision=current!.Revision,LastAttempt=current.Revision,Dependency=r=>((MapQueryResult<T>)r).Issue as MissingMapObjects};
+            entries[identity]=entry;
         }
-        cancel?.Invoke();DemandChanged();
+        return Lease<T>(entry,default);
     }
-    public void Reset()=>ResetScope()();
-    // Invalidate under an owner's lifecycle lock, then cancel callers after all owner locks exit.
-    internal Action ResetScope()
+    private void DrainReleased()
     {
-        Action cancel;
-        lock(gate)
+        while(released.TryDequeue(out var release))
         {
-            epoch++;scopeRevision++;current=null;cancel=ReserveCancellation(entries.Values.Select(e=>e.Cancellation).OfType<Attempt>());
-            entries.Clear();reported.Clear();
-        }
-        DemandChanged();
-        return cancel;
-    }
-    /// <summary>Only call after a successful full derived snapshot became visible to consumers.</summary>
-    public void Publish(NearbyMapSnapshot snapshot,long revision)
-        =>Publish(snapshot,revision,Generation);
-    /// <summary>Reject an in-flight load if its resource/session generation was reset before publication.</summary>
-    public bool Publish(NearbyMapSnapshot snapshot,long revision,long expectedGeneration)
-    {
-        Action cancel;
-        lock(gate)
-        {
-            if(disposed||epoch!=expectedGeneration)return false;scopeRevision++;current=new(snapshot,revision);
-            cancel=ReserveCancellation(entries.Values.Where(e=>e.Running).Select(e=>e.Cancellation).OfType<Attempt>());
-            foreach(var entry in entries.Values.Where(e=>e.Running)){entry.Serial++;entry.Running=false;}
-        }
-        cancel();DemandChanged();wake.Writer.TryWrite(true);
-        return true;
-    }
-    private void DemandChanged()=>demandWake.Writer.TryWrite(true);
-    private async Task PublishDemandsAsync()
-    {
-        // Separate from query callbacks: a slow retry cannot delay cancellation
-        // or prevent the loader from receiving newly required sectors.
-        while(await demandWake.Reader.WaitToReadAsync().ConfigureAwait(false))
-        {
-            while(demandWake.Reader.TryRead(out _)){}
-            IReadOnlyList<SectorCoordinate> demands;
-            lock(gate)demands=disposed?[]:Demands();
-            request(demands);
-        }
-    }
-    private async Task WorkAsync()
-    {
-        try
-        {
-            while(await wake.Reader.WaitToReadAsync(stop.Token).ConfigureAwait(false))
-            {
-                while(wake.Reader.TryRead(out _)){}
-                while(true)
-                {
-                    Entry? job;MapRetryContext context;long serial,scope;Attempt cancellation;
-                    lock(gate)
-                    {
-                        if(current is null)break;
-                        job=entries.Values.FirstOrDefault(e=>!e.Finished&&!e.Running&&e.LastAttempt!=current.Revision&&Local(e.Missing)&&Ready(e.Missing));
-                        if(job is null)break;
-                        context=current;scope=epoch;serial=++job.Serial;job.Running=true;job.LastAttempt=context.Revision;
-                        // Shutdown reserves and cancels attempts through Reset;
-                        // do not add an unowned linked-source cancellation path.
-                        cancellation=new(){Source=new CancellationTokenSource()};job.Cancellation=cancellation;
-                    }
-                    try
-                    {
-                        object result;MapQueryIssue? issue;
-                        try{(result,issue)=await job.Query(context,cancellation.Source.Token).ConfigureAwait(false);}
-                        catch(OperationCanceledException) when(cancellation.Source.IsCancellationRequested){continue;}
-                        bool demandsChanged=false;
-                        lock(gate)
-                        {
-                            if(!disposed&&scope==epoch&&job.Serial==serial&&current?.Revision==context.Revision&&entries.GetValueOrDefault(job.Key)==job)
-                            {
-                                job.Running=false;job.Error=null;job.Result=result;job.ResultRevision=context.Revision;
-                                if(issue is MissingMapSectors missing&&!Ready(missing)){job.Missing=missing;demandsChanged=true;}
-                                else
-                                {
-                                    job.Finished=true;
-                                    if(issue is MissingMapSectors)job.Error=new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,
-                                        "Query still requires sectors already in this published snapshot; loading alone cannot resolve it.");
-                                }
-                            }
-                        }
-                        if(demandsChanged)DemandChanged();
-                    }
-                    finally
-                    {
-                        lock(gate)
-                            if(ReferenceEquals(job.Cancellation,cancellation)){job.Cancellation=null;job.Running=false;}
-                        ReleaseAttempt(cancellation);
-                    }
-                }
-            }
-        }
-        catch(OperationCanceledException error) when(stop.IsCancellationRequested&&error.CancellationToken==stop.Token){}
-    }
-    // Called under gate; the returned single-use action runs outside all owner locks.
-    private Action ReserveCancellation(IEnumerable<Attempt> attempts)
-    {
-        var reserved=attempts.Distinct().ToArray();
-        foreach(var attempt in reserved)attempt.References++;
-        return ()=>
-        {
-            try{foreach(var attempt in reserved)attempt.Source.Cancel();}
-            finally{foreach(var attempt in reserved)ReleaseAttempt(attempt);}
-        };
-    }
-    private void ReleaseAttempt(Attempt attempt)
-    {
-        bool release;
-        lock(gate)release=--attempt.References==0;
-        if(release)attempt.Source.Dispose();
-    }
-    public async ValueTask DisposeAsync()
-    {
-        lock(gate){if(disposed)return;disposed=true;}
-        try{Reset();}
-        finally
-        {
-            try{stop.Cancel();}
-            finally
-            {
-                wake.Writer.TryComplete();demandWake.Writer.TryComplete();
-                try{await Task.WhenAll(worker,demandWorker).ConfigureAwait(false);}
-                finally{stop.Dispose();}
-            }
+            release.Entry.Subscribers.Remove(release.Id);
+            // Retain this publication's local result across the old/new source
+            // handoff, even when far-away route keys are still missing. With no
+            // subscriber it is only a cache: Adopt removes it before dispatch.
+            if(release.Entry.Subscribers.Count==0&&release.Entry.Revision!=current?.Revision&&entries.GetValueOrDefault(release.Entry.Key)==release.Entry)
+                entries.Remove(release.Entry.Key);
         }
     }
 }

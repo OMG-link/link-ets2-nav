@@ -12,7 +12,6 @@ public sealed record MapScanRequest(string ResourceId, string SessionId, string 
     public bool PreparationOnly { get; init; }
     public RouteSnapshot? Route { get; init; }
     public double NavigationRemainingMeters { get; init; }
-    public IReadOnlyList<TruckLib.ScsMap.SectorCoordinate> RequiredSectors {get;init;}=[];
 }
 
 public interface IMapScanBackend : IDisposable
@@ -37,13 +36,12 @@ public sealed record MapScanState(NearbyMapSnapshot? Map, Vector3 Position, Time
 public sealed class BackgroundMapScanner : IAsyncDisposable
 {
     private readonly object gate = new();
-    private readonly object lifecycleGate=new();
     private readonly MapRetryCoordinator retries;
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string,byte> retryDiagnostics=new();
     public IMapRetryScheduler Retries=>retries;
-    private MapScanRequest? latestRequest;
-    private IReadOnlyList<TruckLib.ScsMap.SectorCoordinate> requiredSectors=[];
-    private long retryGeneration;
+    private RouteSnapshot? routeScope;
+    private MapScanRequest? inFlight;
+    private readonly Queue<MapScanState> completedWindows=[];
+    private long producedRevision;
     private readonly Func<MapScanRequest, IMapScanBackend> factory;
     private readonly CancellationTokenSource stop;
     private readonly Channel<bool> wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
@@ -61,7 +59,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        retries=new MapRetryCoordinator(SetDependencies,message=>retryDiagnostics.TryAdd(message,0));
+        retries=new MapRetryCoordinator();
         this.factory = factory ?? (request => new OfficialBackend(request, stop.Token));
         worker = Task.Run(WorkAsync);
     }
@@ -70,7 +68,6 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     public void ThrowIfFaulted()
     {
         if(worker.IsCompleted)worker.GetAwaiter().GetResult();
-        retries.ThrowIfFaulted();
     }
 
     public MapScanState Capture() { lock (gate) return state; }
@@ -86,99 +83,81 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         return Request(request,now);
     }
 
-    /// <summary>Latest requested position replaces queued work; at most one scan runs at a time.</summary>
-    public bool Request(MapScanRequest request, DateTimeOffset now)
-    {
-        // Reset query lifetimes outside the scanner gate: cancellation belongs to callers.
-        Action? cancel=null;
-        try
-        {
-        lock (lifecycleGate)
-        {
-            bool reset;
-            lock (gate) reset=resourceId!=request.ResourceId||sessionId!=request.SessionId
-                ||(requestedRoute!=request.Route?.Revision
-                   && !(latestRequest?.Route is {} previous&&request.Route is {} next&&RouteContinuity.IsForwardExtension(previous,next)));
-            if(reset) cancel=retries.ResetScope();
-            lock (gate)
-            {
-                if (stop.IsCancellationRequested) return false;
-                if(reset) requiredSectors=[];
-                if (resourceId != request.ResourceId || sessionId != request.SessionId)
-                {
-                    generation++;
-                    resourceId = request.ResourceId;
-                    sessionId = request.SessionId;
-                    pending = null;
-                    requestedAt = DateTimeOffset.MinValue;
-                    requestedPosition = new(float.PositiveInfinity);
-                    retryAfter = DateTimeOffset.MinValue;
-                    state = new(null, default, default, state.Revision, null, false);
-                }
-                if (now < retryAfter) return false;
-                string? routeRevision = request.Route?.Revision;
-                bool changedRoute = requestedRoute != routeRevision;
-                if (reset) generation++;
-                if (!changedRoute && Vector3.Distance(request.Position, requestedPosition) < 25
-                    && now - requestedAt < TimeSpan.FromSeconds(3)) return false;
-                requestedRoute = routeRevision;
-                requestedPosition = request.Position;
-                requestedAt = now;
-                latestRequest=request;
-                retryGeneration=retries.Generation;
-                pending = (request with {RequiredSectors=requiredSectors}, generation);
-                state = state with { IsScanning = true };
-                wake.Writer.TryWrite(true);
-                return true;
-            }
-        }
-        }
-        finally{cancel?.Invoke();}
-    }
-
-    public void Invalidate()
-    {
-        Action? cancel=null;
-        try
-        {
-        lock(lifecycleGate)
-        {
-            cancel=retries.ResetScope();
-            lock (gate)
-            {
-                generation++;
-                resourceId = sessionId = requestedRoute = null;
-                latestRequest=null; requiredSectors=[];
-                pending = null;
-                requestedAt = retryAfter = DateTimeOffset.MinValue;
-                requestedPosition = new(float.PositiveInfinity);
-                state = new(null, default, default, state.Revision, null, false);
-            }
-        }
-        }
-        finally{cancel?.Invoke();}
-    }
-
-    private void SetDependencies(IReadOnlyList<TruckLib.ScsMap.SectorCoordinate> sectors)
+    /// <summary>Only position updates enqueue scans; pending work coalesces to the latest placement.</summary>
+    public bool Request(MapScanRequest request,DateTimeOffset now)
     {
         lock(gate)
         {
-            if(stop.IsCancellationRequested||requiredSectors.SequenceEqual(sectors))return;
-            requiredSectors=sectors.ToArray();
-            if(latestRequest is not {PreparationOnly:false} request)return;
-            pending=(request with {RequiredSectors=requiredSectors},generation);
-            state=state with {IsScanning=true};
-            wake.Writer.TryWrite(true);
+            bool newSession=resourceId!=request.ResourceId||sessionId!=request.SessionId;
+            bool changedRoute=requestedRoute!=request.Route?.Revision;
+            if(newSession){retries.Reset();routeScope=request.Route;}
+            else ObserveRoute(request.Route);
+            if(newSession)
+            {
+                generation++;resourceId=request.ResourceId;sessionId=request.SessionId;
+                pending=null;completedWindows.Clear();requestedPosition=new(float.PositiveInfinity);
+                requestedAt=retryAfter=DateTimeOffset.MinValue;
+                state=new(null,default,default,state.Revision,null,false);
+            }
+            requestedRoute=request.Route?.Revision;
+            if(stop.IsCancellationRequested||now<retryAfter)return false;
+            if(inFlight is {} active&&active.ResourceId==request.ResourceId&&active.SessionId==request.SessionId
+                &&active.Position==request.Position&&active.Route?.Revision==request.Route?.Revision)
+            {pending=null;requestedPosition=request.Position;requestedAt=now;return false;}
+            if(!changedRoute&&!request.PreparationOnly&&request.Position==requestedPosition)return false;
+            if(!changedRoute&&!newSession&&!request.PreparationOnly&&Vector3.Distance(request.Position,requestedPosition)<25
+                &&now-requestedAt<TimeSpan.FromSeconds(3))return false;
+            requestedPosition=request.Position;requestedAt=now;
+            pending=(request,generation);state=state with{IsScanning=true};wake.Writer.TryWrite(true);return true;
         }
     }
-
-    private NearbyMapSnapshot Decorate(NearbyMapSnapshot snapshot)=>snapshot with
-    {Retries=retries,Diagnostics=snapshot.Diagnostics.Concat(retryDiagnostics.Keys).Distinct().ToArray()};
-
-    private void Publish(NearbyMapSnapshot snapshot,long revision,long expectedGeneration)
+    /// <summary>Cancel obsolete route operations without requesting a scan. Called on the main loop even without a new position sample.</summary>
+    public void ObserveRoute(RouteSnapshot? route)
     {
-        if(!retries.Publish(snapshot,revision,expectedGeneration))return;
-        foreach(var issue in snapshot.MapIssues)retries.Report(issue,expectedGeneration);
+        if(routeScope?.Revision!=route?.Revision
+            &&!(routeScope is {} previous&&route is {} next&&RouteContinuity.IsForwardExtension(previous,next)))retries.Reset(false);
+        routeScope=route;
+    }
+    public void Invalidate()
+    {
+        lock(gate)
+        {
+            retries.Reset();generation++;resourceId=sessionId=requestedRoute=null;routeScope=null;
+            pending=null;completedWindows.Clear();requestedPosition=new(float.PositiveInfinity);
+            requestedAt=retryAfter=DateTimeOffset.MinValue;
+            state=new(null,default,default,state.Revision,null,false);
+        }
+    }
+    /// <summary>Main-loop boundary: adopt each complete window, then execute its ready callbacks before any judgement.</summary>
+    public MapScanState AdoptReady()
+    {
+        while(true)
+        {
+            MapScanState adopted;long mapRevision;
+            lock(gate)
+            {
+                if(!completedWindows.TryDequeue(out var next))return state;
+                mapRevision=next.Revision;
+                // A nearby window may have completed before the route scan's
+                // recoverable I/O error. Adopting it must retain that newer error.
+                adopted=next with{IsScanning=state.IsScanning,
+                    Error=state.Revision>next.Revision?state.Error:next.Error,
+                    Revision=Math.Max(state.Revision,next.Revision)};state=adopted;
+            }
+            if(adopted.Map is {} map)retries.Adopt(map,mapRevision);
+        }
+    }
+    private NearbyMapSnapshot Decorate(NearbyMapSnapshot snapshot)=>snapshot with{Retries=retries};
+    private void EnqueueWindow(NearbyMapSnapshot? snapshot,MapScanRequest request,TimeSpan elapsed,bool scanning,
+        RouteJourneyEstimator? estimator,long expectedGeneration)
+    {
+        lock(gate)
+        {
+            if(expectedGeneration!=generation||stop.IsCancellationRequested)return;
+            completedWindows.Enqueue(new(snapshot,request.Position,elapsed,++producedRevision,null,scanning)
+                {IsPrepared=true,JourneyEstimator=estimator});
+            state=state with{IsScanning=scanning};
+        }
     }
 
     private async Task WorkAsync()
@@ -191,8 +170,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
             {
                 while (wake.Reader.TryRead(out _)) { }
                 (MapScanRequest Request, long Generation)? job;
-                long expectedRetryGeneration;
-                lock (gate) { job = pending; pending = null;expectedRetryGeneration=retryGeneration; }
+                lock (gate) { job = pending; pending = null;inFlight=job?.Request; }
                 if (job is not { } item) continue;
                 var watch = Stopwatch.StartNew();
                 NearbyMapSnapshot? completed = null;
@@ -210,18 +188,14 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                 {
                     var readyBackend=backend??throw new InvalidOperationException("Map scan backend was not initialized.");
                     bool needsNearby;
-                    lock (gate) needsNearby = state.Map is null && item.Request.Route is not null;
+                    lock (gate) needsNearby = state.Map is null && !completedWindows.Any(p=>p.Map is not null) && item.Request.Route is not null;
                     if (needsNearby)
                     {
                         var read=ReadResource(()=>readyBackend.Read(item.Request with { Route = null },stop.Token),out error);
                         if(error is null)
                         {
                             var nearby=Decorate(read!);
-                            long published=0;
-                            lock (gate)
-                                if (item.Generation == generation && !stop.IsCancellationRequested)
-                                    { state = new(nearby, item.Request.Position, watch.Elapsed, state.Revision + 1, null, true) { IsPrepared = true, JourneyEstimator = readyBackend.JourneyEstimator }; published=state.Revision; }
-                            if(published!=0)Publish(nearby,published,expectedRetryGeneration);
+                            EnqueueWindow(nearby,item.Request,watch.Elapsed,true,readyBackend.JourneyEstimator,item.Generation);
                             watch.Restart();
                         }
                     }
@@ -232,26 +206,21 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                     }
                 }
                 stop.Token.ThrowIfCancellationRequested();
-                long completedRevision=0;
                 lock (gate)
                 {
-                    // A load, teleport or mount change invalidates an in-flight result.
-                    if (stop.IsCancellationRequested || item.Generation != generation) continue;
-                    if (error is null)
-                    {
-                        state = new(completed, item.Request.Position, watch.Elapsed, state.Revision + 1, null, pending.HasValue) { IsPrepared = true, JourneyEstimator = backend?.JourneyEstimator };
-                        if(completed is not null)completedRevision=state.Revision;
-                    }
+                    inFlight=null;
+                    if(stop.IsCancellationRequested||item.Generation!=generation)continue;
+                    if(error is null)
+                        EnqueueWindow(completed,item.Request,watch.Elapsed,pending.HasValue,backend?.JourneyEstimator,item.Generation);
                     else
                     {
                         // Keep an already usable snapshot when a refresh fails. Retry without
                         // sleeping the warning loop or spinning on a broken resource.
                         retryAfter = DateTimeOffset.UtcNow.AddSeconds(5);
                         pending = null;
-                        state = state with { Revision = state.Revision + 1, Error = error, IsScanning = false };
+                        state = state with { Revision = ++producedRevision, Error = error, IsScanning = false };
                     }
                 }
-                if(completed is not null&&completedRevision!=0)Publish(completed,completedRevision,expectedRetryGeneration);
             }
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
@@ -281,8 +250,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
             try { await worker.ConfigureAwait(false); }
             finally
             {
-                try { await retries.DisposeAsync().ConfigureAwait(false); }
-                finally { stop.Dispose(); }
+                stop.Dispose();
             }
         }
     }
@@ -309,7 +277,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         public NearbyMapSnapshot Read(MapScanRequest request, CancellationToken cancellationToken)
         {
             var coverage = MapScanCoverage.CreateFromData(request.Position, 1100, data.Map,
-                request.Route, request.NavigationRemainingMeters).WithAdditionalSectors(request.RequiredSectors);
+                request.Route, request.NavigationRemainingMeters);
             return scanner.ReadNearby(request.Position, 1100, cancellationToken, coverage);
         }
         public void Dispose() => data.Dispose();

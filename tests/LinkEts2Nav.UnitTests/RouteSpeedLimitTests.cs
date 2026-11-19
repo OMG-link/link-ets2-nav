@@ -95,13 +95,13 @@ public sealed class RouteSpeedLimitTests
     [Fact]
     public void ProjectionOwnerEvidenceCanSupplyAnExactScopedRetry()
     {
-        var required=new TruckLib.ScsMap.SectorCoordinate(8,-3);
+        var required=new MapObjectKey(MapObjectKind.Item,83);
         var reported=new List<MapQueryIssue>();
         var source=new RoadPathSource(new TruckLib.ScsMap.Map(),reportMapIssue:reported.Add);
         var resolver=new SpeedLimitResolver(Build(Source([])),source,
-            _=>new MissingMapSectors([required],"known metadata owner") with{QueryAnchor=P(50000)});
+            _=>new MissingMapObjects([required],"known metadata owner") with{QueryAnchor=P(50000)});
         var result=resolver.ResolveOnPath(P(0),Vector3.UnitX,80,new("camera",P(900),Vector3.UnitX),[Road]);
-        Assert.Equal([required],Assert.IsType<MissingMapSectors>(result.MapIssue).Sectors);
+        Assert.Equal([required],Assert.IsType<MissingMapObjects>(result.MapIssue).Keys);
         Assert.Equal(P(900),result.MapIssue!.QueryAnchor);
         Assert.Contains(result.MapIssue,reported);
     }

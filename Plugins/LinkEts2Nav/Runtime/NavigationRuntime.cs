@@ -46,7 +46,6 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private readonly DirectedPathMatcher matcher = new();
     private TruckLib.ScsMap.Map? map;
     private RoadPathSource? paths;
-    private long mapRequestScope=long.MinValue;
     private string? lastSpoken, signature;
     private string? connectionFailureSignature;
     private DateTimeOffset reportedAt;
@@ -66,14 +65,12 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         if (mapIdentity is null || !mapIdentity.Matches(nearby))
         {
             mapIdentity=new(nearby);map=nearby.Map;
-            mapRequestScope=long.MinValue;
+            paths?.Dispose();
             paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log,nearby.NativeGraph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null,
-                missingConnection:nearby.MissingConnection,reportMapIssue:issue=>nearby.Retries?.Report(issue));
+                missingConnection:nearby.MissingConnection,retries:nearby.Retries,ferries:nearby.Ferries);
             structures.Clear();publishedStructure=null;routeBuildGeneration=0;
         }
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
-        if(nearby.Retries is {} retries&&mapRequestScope!=retries.ScopeRevision)
-        {mapRequestScope=retries.ScopeRevision;paths!.ReconsiderMapIssues();}
         var route = paths!.GetPath(position, vehicle.ForwardDirection, data.Route, data.RouteAvailability);
         var along = matcher.ProjectDistance(position, vehicle.ForwardDirection, route);
         bool yardApproach=false;double exitDistance=0;
@@ -300,7 +297,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         connectionFailureSignature=null;
         speech?.ClearPlan("navigation");
         map = null;
-        paths = null;
+        paths?.Dispose();paths = null;
         lastSpoken = signature = null;
     }
 }

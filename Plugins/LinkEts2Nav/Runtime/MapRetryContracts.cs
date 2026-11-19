@@ -2,14 +2,21 @@ using LinkEts2Nav.Map;
 using TruckLib.ScsMap;
 namespace LinkEts2Nav.Runtime;
 
-public sealed record MapRetryContext(NearbyMapSnapshot Snapshot,long Revision);
+public sealed record MapRetryContext(NearbyMapSnapshot Snapshot,long Revision)
+{
+    public bool Contains(MapObjectKey key)=>key.Kind switch
+    {
+        MapObjectKind.Node=>Snapshot.Map.Nodes.TryGetValue(key.Uid,out var node)&&node is Node,
+        MapObjectKind.Item=>Snapshot.Map.MapItems.ContainsKey(key.Uid),
+        _=>throw new ArgumentOutOfRangeException(nameof(key))
+    };
+}
+public sealed record MapQueryOperation<T>(MapQueryResult<T> Result,MapRetryHandle<T>? Retry);
 public sealed record MapRetryStatus<T>(bool Active,bool Running,long Revision,MapQueryResult<T> Result);
 public interface IMapRetryScheduler
 {
-    long ScopeRevision {get;}
-    void Report(MapQueryIssue issue);
-    MapRetryHandle<T> Register<T>(string key,MissingMapSectors missing,
-        Func<MapRetryContext,CancellationToken,ValueTask<MapQueryResult<T>>> retry,CancellationToken cancellationToken=default);
+    MapQueryOperation<T> Query<T>(string key,Func<MapRetryContext,MapQueryResult<T>> query,CancellationToken cancellationToken=default);
+    MapRetryHandle<T> WaitFor<T>(string key,MissingMapObjects missing,T localValue,Func<MapRetryContext,MapQueryResult<T>> query);
 }
 public sealed class MapRetryHandle<T>:IDisposable
 {

@@ -204,8 +204,8 @@ public sealed class ComponentContinuityIndex
         }
         private ComponentPassageContinuity Unknown(DirectedRoad edge,RoadJoinPriority? priority,string reason)
         {
-            var missingSectors=(priority?.MapIssues??[]).OfType<MissingMapSectors>().SelectMany(i=>i.Sectors).Distinct().ToArray();
-            MapQueryIssue issue=missingSectors.Length>0?new MissingMapSectors(missingSectors,reason)
+            var missingObjects=(priority?.MapIssues??[]).OfType<MissingMapObjects>().SelectMany(i=>i.Keys).Distinct().ToArray();
+            MapQueryIssue issue=missingObjects.Length>0?new MissingMapObjects(missingObjects,reason)
                 :priority?.MapIssues.FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason);
             issue=issue with{QueryAnchor=edge.Points.FirstOrDefault()};Issues.Add(issue);
             return new(edge.Id,edge.LanePaths[0].PrefabUid,edge.StartNodeUid,edge.EndNodeUid,false,ComponentContinuityKind.Unknown,

@@ -7,8 +7,15 @@ using GameMap = TruckLib.ScsMap.Map;
 namespace LinkEts2Nav.Map;
 
 /// <summary>Builds provable directed road paths; unknown prefab geometry is never invented.</summary>
-public sealed class RoadPathSource
+public sealed class RoadPathSource:IDisposable
 {
+    private sealed record RouteChunks(GameMap Window,List<List<DirectedRoad>> Chunks,IReadOnlyList<MapQueryIssue> Issues,IReadOnlyList<string> Diagnostics);
+    private readonly IMapRetryScheduler? retries;
+    private readonly FerryJourneyIndex? ferries;
+    private MapRetryHandle<RouteChunks>? routeRetry;
+    private HashSet<MapObjectKey>? routeKeys;
+    private Func<MapRetryContext,MapQueryResult<RouteChunks>>? routeQuery;
+    private string? routeOperationKey;
     private readonly Dictionary<(ulong, ulong), Road> links = new();
     private readonly Dictionary<ulong, DirectedRoad> samples = new();
     private readonly Dictionary<ulong, List<Road>> incidentRoads = new();
@@ -26,22 +33,25 @@ public sealed class RoadPathSource
     private readonly List<MapQueryIssue> mapIssues=[];
     public IReadOnlyList<MapQueryIssue> MapIssues=>mapIssues;
     public MapQueryIssue DescribeMissingConnection(ulong node)=>missingConnection?.Invoke(node)
-        ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"地图接口{node:X16}没有可定位的加载依赖");
+        ??GameDataManager.DescribeMissingNativeObjects(sourceMap,node);
     public void ReportMapIssue(MapQueryIssue issue)
     {
         bool Same(MapQueryIssue existing)=>existing.Reason==issue.Reason&&existing.QueryAnchor==issue.QueryAnchor&&(existing,issue) switch
         {
-            (MissingMapSectors a,MissingMapSectors b)=>a.Sectors.SequenceEqual(b.Sectors),
+            (MissingMapObjects a,MissingMapObjects b)=>a.Keys.SequenceEqual(b.Keys),
             (MapQueryFailure a,MapQueryFailure b)=>a.Kind==b.Kind,
             _=>false
         };
         if(!mapIssues.Any(Same))
-        {mapIssues.Add(issue);reportMapIssue?.Invoke(issue);}
-    }
-    /// <summary>Reconsider cached demands in the current local request scope without rebuilding route topology.</summary>
-    public void ReconsiderMapIssues()
-    {
-        foreach(var issue in mapIssues)reportMapIssue?.Invoke(issue);
+        {
+            mapIssues.Add(issue);reportMapIssue?.Invoke(issue);
+            if(issue is MissingMapObjects missing&&retries is not null&&routeQuery is not null)
+            {
+                routeKeys!.UnionWith(missing.Keys);
+                var lease=retries.WaitFor(routeOperationKey!,missing,new RouteChunks(sourceMap,cachedChunks,mapIssues.ToArray(),[]),routeQuery);
+                routeRetry?.Dispose();routeRetry=lease;
+            }
+        }
     }
     private readonly HashSet<(ulong,ulong)> reportedAmbiguities = new();
     private readonly HashSet<(ulong,ulong)> reportedLoadedConnectionFailures = new();
@@ -53,8 +63,9 @@ public sealed class RoadPathSource
     private readonly IReadOnlyDictionary<NativeRoadKey,DirectedRoad>? preparedEdges;
 
     public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null,Func<Road,bool,bool?>? playerAccess=null,Func<Road,double?>? roadHalfWidth=null,
-        Func<ulong,MapQueryIssue>? missingConnection=null,Action<MapQueryIssue>? reportMapIssue=null)
+        Func<ulong,MapQueryIssue>? missingConnection=null,Action<MapQueryIssue>? reportMapIssue=null,IMapRetryScheduler? retries=null,FerryJourneyIndex? ferries=null)
     {
+        this.retries=retries;this.ferries=ferries;
         diagnosticLog=log;
         sourceMap=map;
         this.missingConnection=missingConnection;this.reportMapIssue=reportMapIssue;
@@ -175,6 +186,40 @@ public sealed class RoadPathSource
     /// <summary>Build topology once per directed UID sequence. Position only selects a cached component.</summary>
     public List<List<DirectedRoad>> GetRouteComponents(RouteSnapshot route)
     {
+        if(retries is null)return BuildRouteComponents(route);
+        var ids=RouteStructureIdentity.Nodes(route);
+        var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
+        var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
+        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning)return cachedChunks;
+        routeRetry?.Dispose();
+        var operationKeys=new HashSet<MapObjectKey>();routeKeys=operationKeys;
+        routeOperationKey="route-components:"+route.Revision+":"+meaning;
+        routeQuery=context=>
+        {
+            var window=context.Snapshot;
+            var diagnostics=new List<string>();
+            using var query=new RoadPathSource(window.Map,window.PrefabPaths,diagnostics.Add,native:window.NativeGraph,
+                playerAccess:window.Data is {} data?data.SpeedLimits.RoadPlayerAccess:null,
+                missingConnection:window.MissingConnection,ferries:window.Ferries);
+            var chunks=query.BuildRouteComponents(route);
+            var value=new RouteChunks(window.Map,chunks,query.MapIssues.ToArray(),diagnostics);
+            var keys=query.MapIssues.OfType<MissingMapObjects>().SelectMany(i=>i.Keys)
+                .Concat(operationKeys.Where(k=>!context.Contains(k))).Distinct().ToArray();
+            return new MapQueryResult<RouteChunks>(value,keys.Length==0?null:new MissingMapObjects(keys,"Route connections need native lookup keys."));
+        };
+        var operation=retries.Query(routeOperationKey,routeQuery);
+        routeRetry=operation.Retry;
+        var result=operation.Result.Value!;
+#if DEBUG
+        if(!ReferenceEquals(result.Window,sourceMap))throw new NavigationContractException("Route components and the consuming native graph must belong to the same adopted window.");
+#endif
+        cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=result.Chunks;
+        foreach(var issue in result.Issues)ReportMapIssue(issue);
+        foreach(var message in result.Diagnostics)diagnosticLog?.Invoke(message);
+        return cachedChunks;
+    }
+    private List<List<DirectedRoad>> BuildRouteComponents(RouteSnapshot route)
+    {
         var ids=RouteStructureIdentity.Nodes(route);
         var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
         var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
@@ -209,6 +254,10 @@ public sealed class RoadPathSource
             }
             if (directed is null)
             {
+                // Verified transport has no ordinary road edge. It remains a
+                // normal boundary between the two drivable route components.
+                if(ferries?.Connects(key.Item1,key.Item2)==true||ferries?.TryPortPassage(key.Item1,key.Item2,out _)==true)
+                {chunk=null;continue;}
                 if(ambiguous.Contains(key))ReportMapIssue(new MapQueryFailure(MapQueryFailureKind.Ambiguous,
                     $"已加载导航连接冲突：{key.Item1:X16}/{key.Item2:X16}"));
                 else
@@ -220,7 +269,7 @@ public sealed class RoadPathSource
                     Vector3? anchor=sourceMap.Nodes.TryGetValue(key.Item1,out var seed)?seed.Position:firstIssue.QueryAnchor;
                     ReportMapIssue(firstIssue with{QueryAnchor=anchor});
                     if(key.Item2!=key.Item1)ReportMapIssue(secondIssue with{QueryAnchor=anchor});
-                    if(firstIssue is not MissingMapSectors&&secondIssue is not MissingMapSectors
+                    if(firstIssue is not MissingMapObjects&&secondIssue is not MissingMapObjects
                         &&sourceMap.Nodes.ContainsKey(key.Item1)&&sourceMap.Nodes.ContainsKey(key.Item2)
                         &&reportedLoadedConnectionFailures.Add(key))
                         diagnosticLog?.Invoke($"导航连接解析错误：已加载的 SDK 相邻节点 {key.Item1:X16} → {key.Item2:X16} 无可验证的行驶连接；起点：{firstIssue.Reason}；终点：{secondIssue.Reason}");
@@ -232,6 +281,7 @@ public sealed class RoadPathSource
         }
         return cachedChunks;
     }
+    public void Dispose()=>routeRetry?.Dispose();
 
     /// <summary>Uses all nearby roads so a parallel non-route road cannot borrow route geometry.</summary>
     public bool IsPositionOnPath(Vector3 position, IReadOnlyList<DirectedRoad> path)

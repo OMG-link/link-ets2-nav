@@ -19,7 +19,7 @@ public sealed class GameDataManagerTests
         map.Nodes.Add(node.Uid,node);map.MapItems.Add(prefab.Uid,prefab);
         using var data=new GameDataManager(fs,map:map);
         data.Projection("ppd","/prefab/port.ppd",()=>new TruckLib.Models.Ppd.PrefabDescriptor{NavCurves=[]});
-        var failure=Assert.IsType<MapQueryFailure>(data.DescribeMissingConnection(node.Uid,new HashSet<ulong>{42},new HashSet<SectorCoordinate>{new(0,0)}));
+        var failure=Assert.IsType<MapQueryFailure>(data.DescribeMissingConnection(map,node.Uid));
         Assert.Equal(MapQueryFailureKind.DefinitionUnavailable,failure.Kind);
         Assert.Contains("000000000000002A",failure.Reason);Assert.Contains("/prefab/port.ppd",failure.Reason);
         Assert.Contains("NavCurves=0",failure.Reason);
@@ -153,7 +153,7 @@ public sealed class GameDataManagerTests
         var prefab=new Prefab{Uid=42,Model=new Token("test"),Nodes=[node]};node.ForwardItem=prefab;
         map.Nodes.Add(10,node);map.MapItems.Add(42,prefab);
         using var data=new GameDataManager(fs,map:map);
-        MapQueryIssue Query()=>data.DescribeMissingConnection(10,new HashSet<ulong>{42},new HashSet<SectorCoordinate>{new(0,0)});
+        MapQueryIssue Query()=>data.DescribeMissingConnection(map,10);
         if(absent)
         {
             Assert.Contains("/prefab/test.ppd is missing",Assert.IsType<MapQueryFailure>(Query()).Reason);

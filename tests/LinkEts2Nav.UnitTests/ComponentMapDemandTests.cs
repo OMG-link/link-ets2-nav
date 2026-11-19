@@ -22,25 +22,25 @@ public sealed class ComponentMapDemandTests
         return [Edge(0,first),Edge(1,first+1)];
     }
     [Fact]
-    public void StaticPriorityAndComponentConstructionDoNotDemandUnvisitedSectors()
+    public void StaticPriorityAndComponentConstructionDoNotWaitForUnvisitedObjects()
     {
-        var local=new SectorCoordinate(8,-3);var remote=new SectorCoordinate(30,20);
+        var local=new MapObjectKey(MapObjectKind.Item,83);var remote=new MapObjectKey(MapObjectKind.Item,3020);
         var source=Family(42,10,0).Concat(Family(43,100,15000)).ToArray();
         var reported=new List<MapQueryIssue>();
-        var paths=new RoadPathSource(new(),source,missingConnection:uid=>new MissingMapSectors(
+        var paths=new RoadPathSource(new(),source,missingConnection:uid=>new MissingMapObjects(
             [uid<100?local:remote],"known missing owner"),reportMapIssue:reported.Add);
         var graph=paths.GetNavigationGraph();
         Assert.Empty(reported);Assert.Empty(paths.MapIssues);
         Assert.All(graph,e=>Assert.NotEmpty(e.JoinPriority!.MapIssues));
         var index=ComponentContinuityIndex.Build(new(graph));
-        Assert.Contains(index.Issues.OfType<MissingMapSectors>(),i=>i.Sectors.Contains(remote));
+        Assert.Contains(index.Issues.OfType<MissingMapObjects>(),i=>i.Keys.Contains(remote));
         Assert.Empty(reported); // Keeping static diagnostics is not a load request.
         var planner=new ComponentManeuverPlanner();planner.UseIndex(graph,index);
         planner.Build([graph.Single(e=>e.StartNodeUid==10)],graph);
         foreach(var issue in planner.Issues)paths.ReportMapIssue(issue);
         Assert.NotEmpty(reported);
-        Assert.All(reported.OfType<MissingMapSectors>(),i=>Assert.Equal([local],i.Sectors));
-        Assert.DoesNotContain(reported.OfType<MissingMapSectors>(),i=>i.Sectors.Contains(remote));
+        Assert.All(reported.OfType<MissingMapObjects>(),i=>Assert.Equal([local],i.Keys));
+        Assert.DoesNotContain(reported.OfType<MissingMapObjects>(),i=>i.Keys.Contains(remote));
         Assert.Equal(Vector3.Zero,Assert.Single(reported).QueryAnchor);
     }
 }

@@ -33,9 +33,9 @@ public sealed class LoadedConnectionDiagnosticTests
     public void GloballyKnownNodesWithMissingOwnerStillRequestMapWithoutError()
     {
         var s=Roads();var log=new List<string>();var requests=new List<MapQueryIssue>();
-        var source=new RoadPathSource(s.Map,log:log.Add,missingConnection:_=>new MissingMapSectors([new(8,3)],"owner not loaded"),reportMapIssue:requests.Add);
+        var source=new RoadPathSource(s.Map,log:log.Add,missingConnection:_=>new MissingMapObjects([new(MapObjectKind.Item,83)],"owner not loaded"),reportMapIssue:requests.Add);
         source.GetRouteComponents(Route(s.First.ForwardNode.Uid,s.Second.Node.Uid));
-        Assert.Empty(log);Assert.NotEmpty(requests);Assert.All(requests,x=>Assert.IsType<MissingMapSectors>(x));
+        Assert.Empty(log);Assert.NotEmpty(requests);Assert.All(requests,x=>Assert.IsType<MissingMapObjects>(x));
     }
     [Fact]
     public void OrdinaryRouteEndDoesNotInventAnUnresolvedContinuation()

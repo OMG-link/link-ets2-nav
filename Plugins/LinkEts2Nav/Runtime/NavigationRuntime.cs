@@ -71,10 +71,18 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 missingConnection:nearby.MissingConnection,reportMapIssue:issue=>nearby.Retries?.Report(issue));
             structures.Clear();publishedStructure=null;routeBuildGeneration=0;
         }
+        var stable=data.NavigationRoute;
+        var sdkRoute=stable.FullRoute;
+#if DEBUG
+        if(sdkRoute.Availability!=RouteAvailability.Available)
+            throw new NavigationContractException("Available navigation requires the atomically captured stable route.");
+#endif
+        int currentNode=stable.CurrentNodeIndex;
+        string routeRevision=stable.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture)+":"+sdkRoute.Revision;
         var position = new Vector3((float)vehicle.X, (float)vehicle.Y, (float)vehicle.Z);
         if(nearby.Retries is {} retries&&mapRequestScope!=retries.ScopeRevision)
         {mapRequestScope=retries.ScopeRevision;paths!.ReconsiderMapIssues();}
-        var components=paths!.GetRouteComponents(data.Route);
+        var components=paths!.GetRouteComponents(sdkRoute);
         if(routeBuildGeneration!=paths.RouteStructureBuildCount)
         {
             structures.Clear();publishedStructure=null;routeBuildGeneration=paths.RouteStructureBuildCount;
@@ -86,19 +94,19 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         {
             if(structures.ContainsKey(component))continue;
             var selectedLanes=lanePlanner.Build(component);
-            structures.Add(component,structurePlanner.Build(component,data.Route,nearby,paths,selectedLanes));
+            structures.Add(component,structurePlanner.Build(component,sdkRoute,nearby,paths,selectedLanes));
             StructureBuildCount++;
         }
-        var route = paths!.GetPath(position, vehicle.ForwardDirection, data.Route, data.RouteAvailability);
-        var along = matcher.ProjectDistance(position, vehicle.ForwardDirection, route);
+        var route = paths!.GetPath(position, vehicle.ForwardDirection, sdkRoute, data.RouteAvailability,currentNode);
+        var along = matcher.ProjectDistance(position, vehicle.ForwardDirection, route,paths.FirstLiveVisit(route,currentNode));
         bool yardApproach=false;double exitDistance=0;
         if(along is null)
         {
             var areas=nearby.FreeNavigationAreas.Where(a=>a.Contains(position)).ToArray();
-            var first=data.Route.Nodes.OrderByDescending(n=>n.DistanceToEndMeters).FirstOrDefault();
+            var first=sdkRoute.Nodes.OrderByDescending(n=>n.DistanceToEndMeters).FirstOrDefault();
             if(areas.Length==1 && first is not null && areas[0].ExitNodes.Contains(first.Uid))
             {
-                var prefix=paths.GetRoutePrefix(position,data.Route,first.Uid);
+                var prefix=paths.GetRoutePrefix(position,sdkRoute,first.Uid);
                 if(prefix.Count>0 && prefix[0].Id.StartsWith("prefab:",StringComparison.Ordinal))
                 {
                     var exit=prefix[0].Points[0];var delta=exit-position;
@@ -147,21 +155,21 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 // Ordinary progress never calls any event planner or geometry recognizer.
                 double? initialEnd=componentEnd is {} end?routeOrigin+end:null;
                 bool tail=!yardApproach&&(lastActionEnd??0)<continuationEnd;
-                guidance.Publish(eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
+                guidance.Publish(eventPlanner.Build(data.SessionId,routeRevision,vehicle.ReceivedAt,
                     playerAlong,upcoming,true,false,tail,guidance.Scheduler,progress.Frame,initialEnd,
-                    guidance.WillReplaceSource("navigation",data.Route.Revision),routeOrigin+continuationEnd));
+                    guidance.WillReplaceSource("navigation",routeRevision),routeOrigin+continuationEnd));
                 var entries=cityEntries.Build(route,playerAlong,nearby.SpeedLimits,routeOrigin,nearby.PrefabPaths)
                     .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
-                if(guidance.WillReplaceSource(CityEntryEventBuilder.Kind,data.Route.Revision))
+                if(guidance.WillReplaceSource(CityEntryEventBuilder.Kind,routeRevision))
                     cityPlanner.Reconcile(entries.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,guidance.Scheduler,CityEntryEventBuilder.Kind);
                 var city=cityPlanner.Build(CityEntryEventBuilder.Kind,playerAlong,entries,guidance.Scheduler,true);
-                guidance.Publish(new(CityEntryEventBuilder.Kind,data.SessionId,data.Route.Revision,playerAlong,true,vehicle.ReceivedAt,city.Sequences){CoordinateFrame=progress.Frame});
+                guidance.Publish(new(CityEntryEventBuilder.Kind,data.SessionId,routeRevision,playerAlong,true,vehicle.ReceivedAt,city.Sequences){CoordinateFrame=progress.Frame});
                 var narrow=NarrowRoadEventBuilder.Build(route,nearby.SpeedLimits,routeOrigin)
                     .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
-                if(guidance.WillReplaceSource(NarrowRoadEventBuilder.Kind,data.Route.Revision))
+                if(guidance.WillReplaceSource(NarrowRoadEventBuilder.Kind,routeRevision))
                     narrowPlanner.Reconcile(narrow.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,guidance.Scheduler,NarrowRoadEventBuilder.Kind);
                 var narrowPlan=narrowPlanner.Build(NarrowRoadEventBuilder.Kind,playerAlong,narrow,guidance.Scheduler,true);
-                guidance.Publish(new(NarrowRoadEventBuilder.Kind,data.SessionId,data.Route.Revision,playerAlong,true,vehicle.ReceivedAt,narrowPlan.Sequences){CoordinateFrame=progress.Frame});
+                guidance.Publish(new(NarrowRoadEventBuilder.Kind,data.SessionId,routeRevision,playerAlong,true,vehicle.ReceivedAt,narrowPlan.Sequences){CoordinateFrame=progress.Frame});
                 publishedStructure=structure;EventPlanBuildCount++;
             }
             cityEntries.Advance(playerAlong);
@@ -176,9 +184,9 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 double? initialEnd=componentEnd is {} end?routeOrigin+end:null;
                 bool tail=!yardApproach&&(lastActionEnd??0)<continuationEnd;
                 bool replaced=analysisRoute is {} previous
-                    &&!RouteStructureIdentity.Nodes(previous).SequenceEqual(RouteStructureIdentity.Nodes(data.Route))
-                    &&!RouteContinuity.IsForwardExtension(previous,data.Route);
-                var plan=eventPlanner.Build(data.SessionId,data.Route.Revision,vehicle.ReceivedAt,
+                    &&!RouteStructureIdentity.Nodes(previous).SequenceEqual(RouteStructureIdentity.Nodes(sdkRoute))
+                    &&!RouteContinuity.IsForwardExtension(previous,sdkRoute);
+                var plan=eventPlanner.Build(data.SessionId,routeRevision,vehicle.ReceivedAt,
                     playerAlong,upcoming,true,false,tail,analysisScheduler,progress.Frame,initialEnd,
                     replaceRoute:replaced,confirmedContinuationEndAlong:routeOrigin+continuationEnd);
                 if(replaced)
@@ -188,7 +196,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                     if(old is not null)analysisScheduler.ForgetEvents("navigation",old.Events.Where(e=>!retained.Contains(e.Id)&&e.AlongMeters>old.PlayerAlongMeters).Select(e=>e.Id));
                     analysisTimeline.Clear("navigation");
                 }
-                analysisTimeline.Publish(plan);analysisRoute=data.Route;
+                analysisTimeline.Publish(plan);analysisRoute=sdkRoute;
                 EventPlanBuildCount++;
             }
             analysisTimeline.UpdateProgress("navigation",data.SessionId,playerAlong,vehicle.ReceivedAt,true);

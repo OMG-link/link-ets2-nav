@@ -74,7 +74,7 @@ public sealed class StaticLaneRouteTests
         var nearby=new NearbyMapSnapshot(map,[],[],[]){PrefabPaths=[turn,through]};
         var sdk=RouteSnapshot.Parse([new(incoming.Node.Uid,1300,60),new(incoming.ForwardNode.Uid,600,30),
             new(right.Node.Uid,570,28),new(right.ForwardNode.Uid,0,0)],now);
-        GameDataSnapshot Data(double x,double z)=>new(new(x,0,z,.5,20,1000,true,false,1,now),sdk,RouteAvailability.Available,"same-session",true);
+        GameDataSnapshot Data(double x,double z)=>new(new(x,0,z,.5,20,1000,true,false,1,now),sdk,RouteAvailability.Available,"same-session",true){NavigationRoute=NavigationRouteState.Empty.Accept(sdk)};
         var runtime=new NavigationRuntime();
         var first=runtime.Process(Data(0,100),nearby,now);int builds=runtime.StructureBuildCount;
         var second=runtime.Process(Data(-3.5,300),nearby,now);
@@ -97,7 +97,7 @@ public sealed class StaticLaneRouteTests
             new(second.Node.Uid,1000,30),new(second.ForwardNode.Uid,0,0)],now);
         var nearby=new NearbyMapSnapshot(map,[],[],[])
             {MissingConnection=_=>new MissingMapSectors([new(1,0)],"fixture known SDK gap")};
-        GameDataSnapshot Data(double x)=>new(new(x,0,100,.5,20,1000,true,false,1,now),sdk,RouteAvailability.Available,"same-session",true);
+        GameDataSnapshot Data(double x)=>new(new(x,0,100,.5,20,1000,true,false,1,now),sdk,RouteAvailability.Available,"same-session",true){NavigationRoute=NavigationRouteState.Empty.Accept(sdk)};
         var runtime=new NavigationRuntime();
         runtime.Process(Data(0),nearby,now);
         Assert.Equal(2,runtime.StructureBuildCount);

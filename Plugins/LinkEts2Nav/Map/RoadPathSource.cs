@@ -47,6 +47,7 @@ public sealed class RoadPathSource
     private readonly HashSet<(ulong,ulong)> reportedLoadedConnectionFailures = new();
     private ulong[]? cachedNodes;
     private (bool Truncated,ulong? Terminal) cachedRouteMeaning;
+    private readonly Dictionary<IReadOnlyList<DirectedRoad>,List<(int Start,int End)>> sdkVisits=new(ReferenceEqualityComparer.Instance);
     public int RouteStructureBuildCount { get; private set; }
     private List<List<DirectedRoad>> cachedChunks = [];
     private IReadOnlyList<DirectedRoad>? navigationGraph;
@@ -98,12 +99,12 @@ public sealed class RoadPathSource
     }
 
     public IReadOnlyList<DirectedRoad> GetPath(Vector3 position, Vector3 heading, RouteSnapshot route,
-        RouteAvailability availability)
+        RouteAvailability availability,int currentNodeIndex=0)
     {
         if (availability == RouteAvailability.None) return CurrentRoad(position, heading);
         if (availability != RouteAvailability.Available) return [];
         var matches = GetRouteChunks(position, route)
-            .Where(chunk => IsPositionOnPath(position, chunk) && matcher.ProjectDistance(position, heading, chunk).HasValue)
+            .Where(chunk => IsPositionOnPath(position, chunk) && matcher.ProjectDistance(position, heading, chunk,FirstLiveVisit(chunk,currentNodeIndex)).HasValue)
             .ToArray();
         return matches.Length == 1 ? matches[0] : [];
     }
@@ -179,11 +180,12 @@ public sealed class RoadPathSource
         var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
         var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
         if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning)return cachedChunks;
-        cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];
+        cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];sdkVisits.Clear();
         var nodes=ids.Select(uid=>new RouteNode(uid,0,0)).ToArray();
         List<DirectedRoad>? chunk = null;
         for (int i = 1; i < nodes.Length; i++)
         {
+            int sdkStart=i-1;
             var key = (nodes[i - 1].Uid, nodes[i].Uid);
             DirectedRoad? directed = null;
             if(ambiguous.Contains(key)&&reportedAmbiguities.Add(key))
@@ -227,10 +229,19 @@ public sealed class RoadPathSource
                 }
                 chunk = null; continue;
             }
-            if (chunk is null) { chunk = new(); cachedChunks.Add(chunk); }
-            chunk.Add(directed);
+            if (chunk is null) { chunk = new(); cachedChunks.Add(chunk);sdkVisits.Add(chunk,[]); }
+            chunk.Add(directed);sdkVisits[chunk].Add((sdkStart,i));
         }
         return cachedChunks;
+    }
+
+    /// <summary>Excludes consumed SDK visits from position matching, preserving full path mileage and geometry.</summary>
+    public int FirstLiveVisit(IReadOnlyList<DirectedRoad> component,int currentNodeIndex)
+    {
+        if(component.Count==0)return 0;
+        var visits=sdkVisits[component];
+        int index=visits.FindIndex(v=>v.End>=currentNodeIndex);
+        return index<0?component.Count:index;
     }
 
     /// <summary>Uses all nearby roads so a parallel non-route road cannot borrow route geometry.</summary>

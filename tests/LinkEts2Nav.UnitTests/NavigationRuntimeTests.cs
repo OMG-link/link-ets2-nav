@@ -24,7 +24,7 @@ public sealed class NavigationRuntimeTests
     private static GameDataSnapshot Data(RouteSnapshot route,float z,RouteAvailability availability=RouteAvailability.Available,
         bool paused=false,bool stale=false,double speed=20)=>new(
         new(0,0,z,.5,speed,1000,true,paused,1,stale?Now.AddSeconds(-3):Now),
-        route,availability,"session",!paused);
+        route,availability,"session",!paused){NavigationRoute=NavigationRouteState.Empty.Accept(route)};
     private static NavigationRuntime ObserveDiagnostics(Action cue,Action<string>? log=null)=>new(log:line=>
     {
         if(line.StartsWith("\u5bfc\u822a\u6307\u4ee4\uff1a",StringComparison.Ordinal))cue();

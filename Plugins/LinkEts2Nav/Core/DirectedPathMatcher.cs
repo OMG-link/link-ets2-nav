@@ -115,12 +115,12 @@ public sealed class DirectedPathMatcher
     }
 
     /// <summary>Returns an unambiguous forward-oriented arc coordinate on a continuous path.</summary>
-    public double? ProjectDistance(Vector3 position, Vector3 direction, IReadOnlyList<DirectedRoad> path)
+    public double? ProjectDistance(Vector3 position, Vector3 direction, IReadOnlyList<DirectedRoad> path,int firstVisitIndex=0)
     {
         ArgumentNullException.ThrowIfNull(path);
         if (!Finite(position) || !TryNormalizeHorizontal(direction, out var heading)) return null;
         var segments = BuildSegments(path);
-        return segments is null ? null : Project(position, heading, segments)?.AlongDistance;
+        return segments is null ? null : Project(position, heading, segments,firstVisitIndex)?.AlongDistance;
     }
     private List<Segment>? BuildSegments(IReadOnlyList<DirectedRoad> roads)
     {
@@ -129,8 +129,9 @@ public sealed class DirectedPathMatcher
         var segments = new List<Segment>();
         double offset = 0;
         DirectedRoad? previous = null;
-        foreach (var road in roads)
+        for(int visit=0;visit<roads.Count;visit++)
         {
+            var road=roads[visit];
             if (road.Points.Count < 2 || road.StartNodeUid == 0 || road.EndNodeUid == 0
                 || road.Points.Any(point => !Finite(point)))
                 return null;
@@ -151,7 +152,7 @@ public sealed class DirectedPathMatcher
                     return null;
                 double tolerance=road.ReferenceHalfWidthMeters is {} width&&double.IsFinite(width)&&width>0
                     ?Math.Max(_horizontalTolerance,width):_horizontalTolerance;
-                segments.Add(new Segment(start, end, heading, offset, length,tolerance));
+                segments.Add(new Segment(start, end, heading, offset, length,tolerance,visit));
                 offset += length;
             }
             if (segments.Count == countBeforeRoad)
@@ -161,12 +162,13 @@ public sealed class DirectedPathMatcher
         return segments;
     }
 
-    private Projection? Project(Vector3 position, Vector2 heading, List<Segment> segments)
+    private Projection? Project(Vector3 position, Vector2 heading, List<Segment> segments,int firstVisitIndex=0)
     {
         var candidates = new List<Projection>();
         for (int index = 0; index < segments.Count; index++)
         {
             var segment = segments[index];
+            if(segment.VisitIndex<firstVisitIndex)continue;
             if (Vector2.Dot(heading, segment.Heading) < _minimumDirectionDot)
                 continue;
             var start = new Vector2(segment.Start.X, segment.Start.Z);
@@ -224,6 +226,6 @@ public sealed class DirectedPathMatcher
         return true;
     }
 
-    private readonly record struct Segment(Vector3 Start, Vector3 End, Vector2 Heading, double Offset, double Length,double LateralTolerance);
+    private readonly record struct Segment(Vector3 Start, Vector3 End, Vector2 Heading, double Offset, double Length,double LateralTolerance,int VisitIndex);
     private readonly record struct Projection(double AlongDistance, double Error,double LateralTolerance);
 }

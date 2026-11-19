@@ -23,7 +23,7 @@ public sealed class TrafficLightDefinitionTests
         var control=Assert.Single(TrafficSignalMap.Build(prefab,descriptor));
         var map=new NearbyMapSnapshot(new(),[],[],[]){TrafficSignals=new([control])};
         var path=new PrefabLanePath(7,1,2,0,0,0,0,1,1,[0],[control.StopPoint,control.StopPoint+control.Forward*30],30);
-        var navigation=new NavigationDiagnostic("test"){LaneRoute=new([new("prefab:7:0",path)],[],true,null)};
+        var navigation=new NavigationDiagnostic("test"){LaneRoute=new([new("prefab:7:0",path,0)],[],true,null)};
         return(control,map,navigation);
     }
     private static NativeSignal Live(TrafficSignalLamp lamp,NativeType type,int id=1,float left=1,SignalPhase phase=SignalPhase.Red)

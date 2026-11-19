@@ -18,9 +18,9 @@ public sealed class RoundaboutSeriesTests
     [Fact]
     public void DetectorUsesOneSeriesFromEntranceThroughAllDepartures()
     {
-        var road=new DirectedRoad("ring",10,20,[Vector3.Zero,new(200,0,0)])
-            {Roundabout=new("physical",3){Exits=[new(1,50),new(2,100),new(3,150)]}};
-        var actions=new NavigationManeuverDetector().FindSequence([road],0,[]);
+        var road=new DirectedRoad("ring",10,20,[Vector3.Zero,new(200,0,0)]);
+        var range=RoundaboutNavigationTests.FixtureRange(road,[50,100,150]);
+        var actions=RoundaboutNavigationTests.Detect([road],[range]);
         Assert.Single(actions.Select(m=>m.SpeechSequenceId).Distinct());
         Assert.All(actions,m=>Assert.Equal(0,m.SpeechSequenceStartDistanceMeters));
         Assert.Equal(new double[]{0,1,2,3},actions.Select(m=>m.SpeechSequenceOrder));

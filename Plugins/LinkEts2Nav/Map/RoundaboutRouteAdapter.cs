@@ -3,25 +3,34 @@ using System.Numerics;
 using LinkEts2Nav.Core;
 namespace LinkEts2Nav.Map;
 
-/// <summary>Collapses each selected ring passage, preserving its actual route geometry and length.</summary>
+/// <summary>Marks roundabout visits and creates their actions without replacing any route edge.</summary>
 public static class RoundaboutRouteAdapter
 {
-    public static IReadOnlyList<DirectedRoad> Apply(IReadOnlyList<DirectedRoad> route,
-        IReadOnlyDictionary<ulong, RoundaboutStructure> annotations)
+    public static IReadOnlyList<RoundaboutRouteRange> Build(IReadOnlyList<DirectedRoad> route,
+        IReadOnlyDictionary<ulong, RoundaboutStructure> annotations,IReadOnlyList<int> sourceNodeIndices)
     {
-        var result = new List<DirectedRoad>();
+        ValidateSourceNodes(route,sourceNodeIndices);
+        var result = new List<RoundaboutRouteRange>();
+        var offsets=new double[route.Count+1];
+        for(int i=0;i<route.Count;i++)offsets[i+1]=offsets[i]+RouteGeometry.Length(route[i]);
         for (int i = 0; i < route.Count; i++)
         {
             if (!TryOwner(route[i], out ulong uid) || !annotations.TryGetValue(uid, out var ring))
-            { result.Add(route[i]); continue; }
+                continue;
             int last = i;
             while (last + 1 < route.Count && TryOwner(route[last + 1], out var nextUid)
-                && annotations.TryGetValue(nextUid, out var nextRing) && nextRing.Id == ring.Id) last++;
+                && annotations.TryGetValue(nextUid, out var nextRing) && nextRing.Id == ring.Id
+                && !ring.ExitPorts.Any(p=>p.BoundaryNodeUid==route[last].EndNodeUid)) last++;
             var entry = ring.EntryPorts.SingleOrDefault(p => p.NodeUid == route[i].StartNodeUid);
             var exitMatches = ring.ExitPorts.Where(p => p.BoundaryNodeUid == route[last].EndNodeUid)
                 .GroupBy(p => p.BoundaryNodeUid).ToArray();
-            if (entry is null || exitMatches.Length != 1 || ring.RingLength <= 0)
-            { result.AddRange(route.Skip(i).Take(last - i + 1)); i = last; continue; }
+            if(entry is null)
+            {
+                if(i==0)throw new NotSupportedException($"Roundabout {ring.Id}: route starts at {route[i].StartNodeUid:X16} without a retained entry interface; the entry-relative exit ordinal cannot be derived.");
+                throw new InvalidDataException($"Roundabout {ring.Id}: route entry {route[i].StartNodeUid:X16} is not a declared entry interface.");
+            }
+            if(exitMatches.Length!=1||exitMatches[0].Count()!=1||!double.IsFinite(ring.RingLength)||ring.RingLength<=0)
+                throw new InvalidDataException($"Roundabout {ring.Id}: invalid exit interface {route[last].EndNodeUid:X16} or reference length {ring.RingLength}.");
             // Bearings already follow the ring's native circulation direction.
             double Ahead(RoundaboutExitPort port)
             { return (port.Bearing - entry.Bearing + 2 * Math.PI) % (2 * Math.PI); }
@@ -29,8 +38,8 @@ public static class RoundaboutRouteAdapter
                 .Select(g => (g.Key, Along: g.Min(p => Ahead(p)))).OrderBy(p => p.Along).ToArray();
             bool ambiguous = ordered.Zip(ordered.Skip(1)).Any(p => Math.Abs(p.First.Along - p.Second.Along) < 1e-6);
             int ordinal = Array.FindIndex(ordered, p => p.Key == exitMatches[0].Key) + 1;
-            if (ambiguous || ordinal == 0)
-            { result.AddRange(route.Skip(i).Take(last - i + 1)); i = last; continue; }
+            if(ambiguous)throw new NotSupportedException($"Roundabout {ring.Id}: distinct exits have indistinguishable entry-relative bearings.");
+            if(ordinal==0)throw new InvalidDataException($"Roundabout {ring.Id}: selected exit has no entry-relative ordinal.");
             var points = route.Skip(i).Take(last - i + 1).SelectMany(e => e.Points).ToArray();
             var starts=new List<int>();int pointOffset=0;
             foreach(var edge in route.Skip(i).Take(last-i+1))
@@ -38,12 +47,11 @@ public static class RoundaboutRouteAdapter
                 if(pointOffset>0)starts.Add(pointOffset);
                 starts.AddRange(edge.SegmentStarts.Select(n=>n+pointOffset));pointOffset+=edge.Points.Count;
             }
-            double length=route.Skip(i).Take(last-i+1).Sum(RouteGeometry.Length);
+            double length=offsets[last+1]-offsets[i];
             var selectedPort=exitMatches[0].Single();
             double departure=NativeDeparture(selectedPort,route.Skip(i).Take(last-i+1))
                 ??Project(selectedPort.DepartureCandidates,points,starts,0,length,true);
-            double connector=length-departure;
-            var cues=new List<RoundaboutExitCue>();double previous=0;
+            var cues=new List<(int Number,double AlongMeters)>();double previous=0;
             for(int n=0;n<ordinal-1;n++)
             {
                 var port=ring.ExitPorts.Where(p=>p.BoundaryNodeUid==ordered[n].Key)
@@ -52,11 +60,42 @@ public static class RoundaboutRouteAdapter
                 cues.Add(new(n+1,along));previous=along;
             }
             cues.Add(new(ordinal,departure));
-            result.Add(new("roundabout:" + ring.Id, route[i].StartNodeUid, route[last].EndNodeUid, points)
-            { SegmentStarts=starts, Roundabout = new(ring.Id, ordinal, connector){Exits=cues} });
+            var actions=BuildActions(ring.Id,sourceNodeIndices[i],route[i],route[last],offsets[i],offsets[last+1],ordinal,cues);
+            result.Add(new(ring.Id,i,last+1,offsets[i],offsets[last+1],actions));
             i = last;
         }
         return result;
+    }
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void ValidateSourceNodes(IReadOnlyList<DirectedRoad> route,IReadOnlyList<int> sourceNodeIndices)
+    {
+        if(sourceNodeIndices.Count!=route.Count||sourceNodeIndices.Any(i=>i<0)||sourceNodeIndices.Distinct().Count()!=route.Count)
+            throw new NavigationContractException("Each raw route visit requires its unique original SDK source-node index.");
+    }
+    private static IReadOnlyList<NavigationManeuver> BuildActions(string ringId,int sourceNodeIndex,DirectedRoad entry,
+        DirectedRoad exit,double start,double end,int exitNumber,IReadOnlyList<(int Number,double AlongMeters)> cues)
+    {
+        // Use the complete SDK route occurrence, not this active component's
+        // local visit index, which changes when earlier map geometry unloads.
+        string sequence=$"roundabout:{ringId}:{entry.StartNodeUid:X16}:visit:{sourceNodeIndex}";
+        string id=sequence+$":{exit.EndNodeUid:X16}";
+        var actions=new List<NavigationManeuver>
+        {
+            new(id+":enter",ManeuverKind.EnterRoundabout,start,entry.Id,exit.Id)
+            {EndDistanceMeters=end,JunctionId="roundabout:"+ringId,SpeechSequenceId=sequence,
+                SpeechSequenceStartDistanceMeters=start,Instruction="进入环岛",
+                NearInstruction="进入环岛，请从第"+NavigationPrompts.Number(exitNumber)+"出口驶出"}
+        };
+        foreach(var cue in cues)
+        {
+            bool selected=cue.Number==exitNumber;
+            actions.Add(new(id+":exit:"+cue.Number,selected?ManeuverKind.ExitRoundabout:ManeuverKind.PassRoundaboutExit,
+                start+cue.AlongMeters,entry.Id,exit.Id)
+            {EndDistanceMeters=end,JunctionId="roundabout:"+ringId,ExecutionOnly=true,SpeechSequenceId=sequence,
+                SpeechSequenceStartDistanceMeters=start,SpeechSequenceOrder=cue.Number,
+                Instruction=selected?"驶出环岛":"经过第"+NavigationPrompts.Number(cue.Number)+"出口"});
+        }
+        return actions.ToArray();
     }
     // A target exit must use the actual selected native branch, not another lane
     // ring's spatially close departure near the entrance. Mileage follows the
@@ -85,7 +124,7 @@ public static class RoundaboutRouteAdapter
     private static double Project(IReadOnlyList<Vector3> candidates,IReadOnlyList<Vector3> path,IReadOnlyList<int> starts,
         double minimum,double maximum,bool preferLater=false)
     {
-        double offset=0,bestAlong=minimum,bestDistance=double.PositiveInfinity;
+        double offset=0,bestAlong=double.NaN,bestDistance=double.PositiveInfinity;
         for(int i=1;i<path.Count;i++)
         {
             if(starts.Contains(i))continue;
@@ -103,6 +142,8 @@ public static class RoundaboutRouteAdapter
             }
             offset+=length;
         }
+        if(!double.IsFinite(bestAlong))
+            throw new InvalidDataException($"Roundabout departure has no projection onto a usable route segment in [{minimum}, {maximum}].");
         return bestAlong;
     }
     private static bool TryOwner(DirectedRoad road, out ulong uid)

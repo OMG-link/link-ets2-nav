@@ -170,7 +170,7 @@ public sealed class ComponentContinuityIndex
         public Dictionary<string,ComponentPassageContinuity> Build()
         {
             var result=new Dictionary<string,ComponentPassageContinuity>(StringComparer.Ordinal);
-            foreach(var group in graph.Edges.Where(e=>e.LanePaths.Count>0&&e.Junction?.IsJunction!=true&&e.Roundabout is null)
+            foreach(var group in graph.Edges.Where(e=>e.LanePaths.Count>0&&e.Junction?.IsJunction!=true)
                 .GroupBy(e=>(e.LanePaths[0].PrefabUid,e.EndNodeUid)))
             {
                 token.ThrowIfCancellationRequested();
@@ -324,7 +324,7 @@ public sealed class ComponentContinuityIndex
                 }
                 var component=(starts.GetValueOrDefault(node)??[]).Where(e=>NativeLaneGraph.Prefab(e) is not null&&NativeLaneGraph.Prefab(e)!=previousPrefab).ToArray();
                 if(component.Length==0)return Missing("500米窗口内相接组件尚未加载",node);
-                if(component.Any(e=>e.Junction?.IsJunction==true||e.Roundabout is not null))
+                if(component.Any(e=>e.Junction?.IsJunction==true))
                     return Result(ComponentLaneFate.Continues,false,distance);
                 if(component.Select(e=>NativeLaneGraph.Prefab(e)).Distinct().Count()!=1)
                     return Missing("相接预制件不唯一",node,new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接预制件不唯一"));

@@ -75,7 +75,7 @@ public sealed class NavigationDestinationTests
         var map=new TruckLib.ScsMap.Map();var road=TruckLib.ScsMap.Road.Add(map,Vector3.Zero,new(0,0,200),default);
         var route=RouteSnapshot.Parse([new(road.Node.Uid,3800,60),new(road.ForwardNode.Uid,0,0)],Now);
         var spoken=new List<string>();var runtime=new NavigationRuntime(log:spoken.Add);var nearby=new NearbyMapSnapshot(map,[],[],[]);
-        GameDataSnapshot Data(double z)=>new(new(0,0,z,.5,0,380,true,false,1,Now),route,RouteAvailability.Available,"s",true);
+        GameDataSnapshot Data(double z)=>new(new(0,0,z,.5,0,380,true,false,1,Now),route,RouteAvailability.Available,"s",true){NavigationRoute=NavigationRouteState.Empty.Accept(route)};
         var first=runtime.Process(Data(50),nearby,Now);
         Assert.Equal(150,Assert.Single(first.Upcoming).DistanceMeters,1);
         Assert.Equal(ManeuverKind.Destination,first.Next!.Kind);

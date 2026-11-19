@@ -1,4 +1,4 @@
-﻿using LinkEts2Nav.Map;
+using LinkEts2Nav.Map;
 using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 using LinkEts2Nav.Runtime;
@@ -44,7 +44,7 @@ public sealed class MapIdentifierTests
         var route=RouteSnapshot.Parse([new(road.Node.Uid,3800,60),new(road.ForwardNode.Uid,0,0)],now);
         var nearby=new NearbyMapSnapshot(map,[],[],[]){Companies=new([new(91,90,"brand","city","Stórmarkaður")],[prefab])};
         var runtime=new NavigationRuntime();
-        GameDataSnapshot Data(double z)=>new(new(0,0,z,.5,0,380,true,false,1,now),route,RouteAvailability.Available,"s",true);
+        GameDataSnapshot Data(double z)=>new(new(0,0,z,.5,0,380,true,false,1,now),route,RouteAvailability.Available,"s",true){NavigationRoute=NavigationRouteState.Empty.Accept(route)};
         Assert.Equal("一百五十米后，到达目的地。",runtime.Process(Data(50),nearby,now).LastSpoken);
         Assert.Equal("到达Stórmarkaður货场附近，本次导航结束。",runtime.Process(Data(180),nearby,now).LastSpoken);
     }

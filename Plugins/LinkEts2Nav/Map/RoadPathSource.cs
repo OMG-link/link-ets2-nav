@@ -6,10 +6,18 @@ using GameMap = TruckLib.ScsMap.Map;
 
 namespace LinkEts2Nav.Map;
 
+/// <summary>A concrete SDK entry in a complete known geometry component.</summary>
+public sealed record RouteComponentEntry(IReadOnlyList<DirectedRoad> Route,int VisitIndex,double AlongMeters);
+
 /// <summary>Builds provable directed road paths; unknown prefab geometry is never invented.</summary>
 public sealed class RoadPathSource:IDisposable
 {
-    private sealed record RouteChunks(GameMap Window,List<List<DirectedRoad>> Chunks,IReadOnlyList<MapQueryIssue> Issues,IReadOnlyList<string> Diagnostics);
+    private sealed record RouteChunks(GameMap Window,List<List<DirectedRoad>> Chunks,
+        int[] SourceIndices,int[] RawNodeOrdinals,
+        Dictionary<IReadOnlyList<DirectedRoad>,List<(int Start,int End,int SourceNodeIndex)>> SdkVisits,
+        IReadOnlyList<MapQueryIssue> Issues,IReadOnlyList<string> Diagnostics);
+    private RouteChunks CaptureRouteChunks(IReadOnlyList<string> diagnostics)=>new(sourceMap,cachedChunks,
+        cachedSourceNodeIndices!,rawNodeOrdinals,new(sdkVisits,ReferenceEqualityComparer.Instance),mapIssues.ToArray(),diagnostics);
     private readonly IMapRetryScheduler? retries;
     private readonly FerryJourneyIndex? ferries;
     private MapRetryHandle<RouteChunks>? routeRetry;
@@ -49,7 +57,7 @@ public sealed class RoadPathSource:IDisposable
             if(issue is MissingMapObjects missing&&retries is not null&&routeQuery is not null)
             {
                 routeKeys!.UnionWith(missing.Keys);
-                var lease=retries.WaitFor(routeOperationKey!,missing,new RouteChunks(sourceMap,cachedChunks,mapIssues.ToArray(),[]),routeQuery);
+                var lease=retries.WaitFor(routeOperationKey!,missing,CaptureRouteChunks([]),routeQuery);
                 routeRetry?.Dispose();routeRetry=lease;
             }
         }
@@ -58,6 +66,9 @@ public sealed class RoadPathSource:IDisposable
     private readonly HashSet<(ulong,ulong)> reportedLoadedConnectionFailures = new();
     private ulong[]? cachedNodes;
     private (bool Truncated,ulong? Terminal) cachedRouteMeaning;
+    private int[]? cachedSourceNodeIndices;
+    private int[] rawNodeOrdinals=[];
+    private readonly Dictionary<IReadOnlyList<DirectedRoad>,List<(int Start,int End,int SourceNodeIndex)>> sdkVisits=new(ReferenceEqualityComparer.Instance);
     public int RouteStructureBuildCount { get; private set; }
     private List<List<DirectedRoad>> cachedChunks = [];
     private IReadOnlyList<DirectedRoad>? navigationGraph;
@@ -110,21 +121,32 @@ public sealed class RoadPathSource:IDisposable
     }
 
     public IReadOnlyList<DirectedRoad> GetPath(Vector3 position, Vector3 heading, RouteSnapshot route,
-        RouteAvailability availability)
+        RouteAvailability availability,int currentNodeIndex=0)
     {
         if (availability == RouteAvailability.None) return CurrentRoad(position, heading);
         if (availability != RouteAvailability.Available) return [];
         var matches = GetRouteChunks(position, route)
-            .Where(chunk => IsPositionOnPath(position, chunk) && matcher.ProjectDistance(position, heading, chunk).HasValue)
+            .Where(chunk => IsPositionOnPath(position, chunk) && matcher.ProjectDistance(position, heading, chunk,FirstLiveVisit(chunk,currentNodeIndex)).HasValue)
             .ToArray();
         return matches.Length == 1 ? matches[0] : [];
     }
 
 
-    public IReadOnlyList<DirectedRoad> GetRoutePrefix(Vector3 position,RouteSnapshot route,ulong firstNode)
+    /// <summary>Locates a current SDK entry without clipping its full geometry component.</summary>
+    public RouteComponentEntry? GetRouteEntry(RouteSnapshot route,int sourceNodeIndex)
     {
-        var matches=GetRouteChunks(position,route).Where(p=>p.Count>0 && p[0].StartNodeUid==firstNode).ToArray();
-        return matches.Length==1 ? matches[0] : [];
+        var components=GetRouteComponents(route);
+        int ordinal=rawNodeOrdinals[sourceNodeIndex];
+        foreach(var component in components)
+        {
+            double along=0;var visits=sdkVisits[component];
+            for(int i=0;i<component.Count;i++)
+            {
+                if(visits[i].Start==ordinal)return new(component,i,along);
+                along+=RouteGeometry.Length(component[i]);
+            }
+        }
+        return null;
     }
 
     /// <summary>Nearby directed geometry, preserving the PPD's explicit junction connections.</summary>
@@ -188,10 +210,11 @@ public sealed class RoadPathSource:IDisposable
     public List<List<DirectedRoad>> GetRouteComponents(RouteSnapshot route)
     {
         if(retries is null)return BuildRouteComponents(route);
-        var ids=RouteStructureIdentity.Nodes(route);
+        var sourceIndices=RouteStructureIdentity.SourceNodeIndices(route);
+        var ids=sourceIndices.Select(i=>route.Nodes[i].Uid).ToArray();
         var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
         var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
-        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning&&routeWaitScope==retries.ScopeVersion)return cachedChunks;
+        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedSourceNodeIndices!.SequenceEqual(sourceIndices)&&rawNodeOrdinals.Length==route.Nodes.Count&&cachedRouteMeaning==meaning&&routeWaitScope==retries.ScopeVersion)return cachedChunks;
         routeRetry?.Dispose();
         routeWaitScope=retries.ScopeVersion;mapIssues.Clear();
         var operationKeys=new HashSet<MapObjectKey>();routeKeys=operationKeys;
@@ -204,7 +227,7 @@ public sealed class RoadPathSource:IDisposable
                 playerAccess:window.Data is {} data?data.SpeedLimits.RoadPlayerAccess:null,
                 missingConnection:window.MissingConnection,ferries:window.Ferries);
             var chunks=query.BuildRouteComponents(route);
-            var value=new RouteChunks(window.Map,chunks,query.MapIssues.ToArray(),diagnostics);
+            var value=query.CaptureRouteChunks(diagnostics);
             var keys=query.MapIssues.OfType<MissingMapObjects>().SelectMany(i=>i.Keys)
                 .Concat(operationKeys.Where(k=>!context.Contains(k))).Distinct().ToArray();
             return new MapQueryResult<RouteChunks>(value,keys.Length==0?null:new MissingMapObjects(keys,"Route connections need native lookup keys."));
@@ -215,22 +238,31 @@ public sealed class RoadPathSource:IDisposable
 #if DEBUG
         if(!ReferenceEquals(result.Window,sourceMap))throw new NavigationContractException("Route components and the consuming native graph must belong to the same adopted window.");
 #endif
-        cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=result.Chunks;
+        cachedNodes=ids;cachedSourceNodeIndices=result.SourceIndices;rawNodeOrdinals=result.RawNodeOrdinals;
+        sdkVisits.Clear();foreach(var pair in result.SdkVisits)sdkVisits.Add(pair.Key,pair.Value);
+        cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=result.Chunks;
         foreach(var issue in result.Issues)ReportMapIssue(issue);
         foreach(var message in result.Diagnostics)diagnosticLog?.Invoke(message);
         return cachedChunks;
     }
     private List<List<DirectedRoad>> BuildRouteComponents(RouteSnapshot route)
     {
-        var ids=RouteStructureIdentity.Nodes(route);
+        var sourceIndices=RouteStructureIdentity.SourceNodeIndices(route);
+        var ids=sourceIndices.Select(i=>route.Nodes[i].Uid).ToArray();
         var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
         var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
-        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning)return cachedChunks;
-        cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];
+        if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedSourceNodeIndices!.SequenceEqual(sourceIndices)&&rawNodeOrdinals.Length==route.Nodes.Count&&cachedRouteMeaning==meaning)return cachedChunks;
+        cachedNodes=ids;cachedSourceNodeIndices=sourceIndices;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];sdkVisits.Clear();
+        rawNodeOrdinals=new int[route.Nodes.Count];
+        for(int i=0;i<sourceIndices.Length;i++)rawNodeOrdinals[sourceIndices[i]]=i;
+        // Adjacent identical SDK entries normalize to the same traversal node.
+        for(int i=1;i<route.Nodes.Count;i++)
+            if(route.Nodes[i]==route.Nodes[i-1])rawNodeOrdinals[i]=rawNodeOrdinals[i-1];
         var nodes=ids.Select(uid=>new RouteNode(uid,0,0)).ToArray();
         List<DirectedRoad>? chunk = null;
         for (int i = 1; i < nodes.Length; i++)
         {
+            int sdkStart=i-1;
             var key = (nodes[i - 1].Uid, nodes[i].Uid);
             DirectedRoad? directed = null;
             if(ambiguous.Contains(key)&&reportedAmbiguities.Add(key))
@@ -278,12 +310,26 @@ public sealed class RoadPathSource:IDisposable
                 }
                 chunk = null; continue;
             }
-            if (chunk is null) { chunk = new(); cachedChunks.Add(chunk); }
-            chunk.Add(directed);
+            if (chunk is null) { chunk = new(); cachedChunks.Add(chunk);sdkVisits.Add(chunk,[]); }
+            chunk.Add(directed);sdkVisits[chunk].Add((sdkStart,i,sourceIndices[sdkStart]));
         }
         return cachedChunks;
     }
     public void Dispose()=>routeRetry?.Dispose();
+
+    /// <summary>Stable identities of this component's visits in the untrimmed SDK route.</summary>
+    public IReadOnlyList<int> SourceNodeIndices(IReadOnlyList<DirectedRoad> component)
+        =>sdkVisits[component].Select(v=>v.SourceNodeIndex).ToArray();
+
+    /// <summary>Excludes consumed SDK visits from position matching, preserving full path mileage and geometry.</summary>
+    public int FirstLiveVisit(IReadOnlyList<DirectedRoad> component,int currentNodeIndex)
+    {
+        if(component.Count==0)return 0;
+        var visits=sdkVisits[component];
+        int ordinal=rawNodeOrdinals[currentNodeIndex];
+        int index=visits.FindIndex(v=>v.End>=ordinal);
+        return index<0?component.Count:index;
+    }
 
     /// <summary>Uses all nearby roads so a parallel non-route road cannot borrow route geometry.</summary>
     public bool IsPositionOnPath(Vector3 position, IReadOnlyList<DirectedRoad> path)

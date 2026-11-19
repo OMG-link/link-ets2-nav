@@ -100,10 +100,15 @@ public sealed class NavigationManeuverDetector
         IReadOnlyList<DirectedRoad> graph, out double confirmedUntil, out bool hasUnresolvedJoin)
         => FindSequence(route, vehicleAlong, graph, out confirmedUntil, out hasUnresolvedJoin, out _);
 
-    /// <summary>Unresolved join position is an absolute route distance, or infinity when none is ahead.</summary>
+    /// <summary>
+    /// Unresolved join position is an absolute route distance, or infinity when none is ahead.
+    /// Roundabout ranges must be ordered, disjoint visits of this exact route;
+    /// their actions share the range's absolute start and end positions.
+    /// </summary>
     public IReadOnlyList<NavigationManeuver> FindSequence(IReadOnlyList<DirectedRoad> route, double vehicleAlong,
         IReadOnlyList<DirectedRoad> graph, out double confirmedUntil, out bool hasUnresolvedJoin,
-        out double firstUnresolvedJoinAlong,LaneNavigationPlan? selectedLanes=null)
+        out double firstUnresolvedJoinAlong,LaneNavigationPlan? selectedLanes=null,
+        IReadOnlyList<RoundaboutRouteRange>? roundaboutRanges=null)
     {
         confirmedUntil = 0;
         hasUnresolvedJoin = false;
@@ -113,17 +118,20 @@ public sealed class NavigationManeuverDetector
         ArgumentNullException.ThrowIfNull(graph);
         var result = new List<NavigationManeuver>();
         var forkIssues=new List<RoadForkDiagnostic>();ForkDiagnostics=forkIssues;
+        var ranges=roundaboutRanges??[];
+        ValidateRoundaboutRanges(route,ranges);
+        bool InRoundabout(int visit)=>ranges.Any(r=>r.ContainsVisit(visit));
         if (!double.IsFinite(vehicleAlong) || vehicleAlong < 0 || route.Count == 0) return result;
         if (route.Any(r => !Valid(r))) return result;
         for (int i = 1; i < route.Count; i++)
             if (!Connected(route[i - 1], route[i])) return result;
-        if (route.Count == 1 && PrefabKey(route[0]) is null&&route[0].Roundabout is null)
+        if (route.Count == 1 && PrefabKey(route[0]) is null&&!InRoundabout(0))
         {
             if (PrefabKey(route[0]) is null) confirmedUntil = Length(route[0]);
             return result;
         }
         Index(graph);
-        var componentActions=Components.Build(route,graph,selectedLanes,MissingConnection);
+        var componentActions=Components.Build(route,graph,selectedLanes,MissingConnection,InRoundabout);
         foreach(var issue in Components.Unresolved)
         {hasUnresolvedJoin=true;firstUnresolvedJoinAlong=Math.Min(firstUnresolvedJoinAlong,issue.StartMeters);unresolvedSpans.Add(issue);}
         foreach(var issue in Components.Issues)forkIssues.Add(new("component",0,0,issue.Reason));
@@ -133,28 +141,12 @@ public sealed class NavigationManeuverDetector
         {
             var current = route[i];
             double end = offset + Length(current);
-            if (current.Roundabout is { } ring)
+            if (ranges.FirstOrDefault(r=>r.StartVisitIndex==i) is {} ring)
             {
-                string sequence = $"roundabout:{ring.Id}:{current.StartNodeUid:X16}";
-                string id = sequence + $":{current.EndNodeUid:X16}";
-                if (offset >= vehicleAlong)
-                    result.Add(new(id + ":enter", ManeuverKind.EnterRoundabout, offset - vehicleAlong, current.Id, current.Id)
-                    { EndDistanceMeters = end - vehicleAlong, JunctionId = "roundabout:" + ring.Id,
-                        SpeechSequenceId=sequence,SpeechSequenceStartDistanceMeters=offset-vehicleAlong,
-                        Instruction = "进入环岛", NearInstruction="进入环岛，请从第"+NavigationPrompts.Number(ring.ExitNumber)+"出口驶出" });
-                var exits=ring.Exits.Count>0 ? ring.Exits : new[]{new RoundaboutExitCue(ring.ExitNumber,Math.Max(0,end-offset-ring.ExitConnectorMeters))};
-                foreach(var exit in exits)
-                {
-                    double location=offset+exit.AlongMeters;
-                    if(location<vehicleAlong)continue;
-                    bool selected=exit.Number==ring.ExitNumber;
-                    result.Add(new(id+":exit:"+exit.Number,selected?ManeuverKind.ExitRoundabout:ManeuverKind.PassRoundaboutExit,
-                        location-vehicleAlong,current.Id,current.Id)
-                    {EndDistanceMeters=end-vehicleAlong,JunctionId="roundabout:"+ring.Id,ExecutionOnly=true,
-                        SpeechSequenceId=sequence,SpeechSequenceStartDistanceMeters=offset-vehicleAlong,SpeechSequenceOrder=exit.Number,
-                        Instruction=selected?"驶出环岛":"经过第"+NavigationPrompts.Number(exit.Number)+"出口"});
-                }
-                confirmedUntil = end; offset = end; continue;
+                result.AddRange(ring.Actions.Where(a=>a.DistanceMeters>=vehicleAlong).Select(a=>a with
+                {DistanceMeters=a.DistanceMeters-vehicleAlong,EndDistanceMeters=a.EndDistanceMeters-vehicleAlong,
+                    SpeechSequenceStartDistanceMeters=a.SpeechSequenceStartDistanceMeters-vehicleAlong}));
+                confirmedUntil=ring.EndMeters;offset=ring.EndMeters;i=ring.EndVisitIndexExclusive-1;continue;
             }
             // An explicitly selected native return is a structural instruction,
             // not an angle-derived turn at an ordinary crossing junction.
@@ -302,7 +294,7 @@ public sealed class NavigationManeuverDetector
                 }
             }
             else if (PrefabKey(current) is null && i + 1 < route.Count
-                && PrefabKey(route[i + 1]) is null && route[i + 1].Roundabout is null && end >= vehicleAlong)
+                && PrefabKey(route[i + 1]) is null && !InRoundabout(i+1) && end >= vehicleAlong)
             {
                 // Ordinary road joins still validate continuity, but are not junction rules.
                 var exits = (roadStarts.GetValueOrDefault(current.EndNodeUid) ?? [])
@@ -314,6 +306,21 @@ public sealed class NavigationManeuverDetector
             offset = end;
         }
         return result.OrderBy(a=>a.DistanceMeters).ToArray();
+    }
+
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void ValidateRoundaboutRanges(IReadOnlyList<DirectedRoad> route,IReadOnlyList<RoundaboutRouteRange> ranges)
+    {
+        int previousEnd=0;
+        foreach(var range in ranges)
+        {
+            if(range.StartVisitIndex<previousEnd||range.EndVisitIndexExclusive<=range.StartVisitIndex||range.EndVisitIndexExclusive>route.Count
+                ||!double.IsFinite(range.StartMeters)||!double.IsFinite(range.EndMeters)||range.EndMeters<=range.StartMeters
+                ||range.Actions.Count==0||range.Actions.Any(a=>a.DistanceMeters<range.StartMeters||a.DistanceMeters>range.EndMeters
+                    ||!double.IsFinite(a.DistanceMeters)||a.EndDistanceMeters!=range.EndMeters||a.SpeechSequenceStartDistanceMeters!=range.StartMeters))
+                throw new NavigationContractException($"Roundabout {range.RingId}: visit range or actions do not match the original route contract.");
+            previousEnd=range.EndVisitIndexExclusive;
+        }
     }
 
     private void Index(IReadOnlyList<DirectedRoad> graph)

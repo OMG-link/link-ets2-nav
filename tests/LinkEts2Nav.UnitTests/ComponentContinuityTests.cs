@@ -69,7 +69,8 @@ public sealed class ComponentContinuityTests
         return [Passage(1,10,30,0,0,[0],independent,1,2),Passage(1,20,30,0,1,[1],independent,1,2),
             new("road",30,40,[new(100,0,0),new((float)(100+nextRoad),0,0)])];
     }
-    private static DirectedRoad[] Soft(double roadLength=50)
+    // Shared native synthetic topology for static guidance integration checks.
+    internal static DirectedRoad[] Soft(double roadLength=50)
     {
         var first=Join(false,roadLength);float x=(float)(100+roadLength);
         var geometry=NativeLaneFixture.WithInterfaces(2,[Curve(0,new(x,0,0),new(x+100,0,0),[2],[]),

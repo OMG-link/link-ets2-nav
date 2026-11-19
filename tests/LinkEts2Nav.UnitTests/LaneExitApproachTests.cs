@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using LinkEts2Nav.Core;
 namespace LinkEts2Nav.UnitTests;
 public sealed class LaneExitApproachTests
@@ -13,8 +13,8 @@ public sealed class LaneExitApproachTests
         var action=scene.Action with{Kind=ManeuverKind.ChooseLanes};
         var retained=scene.Route[0].LanePaths.Single(p=>p.ExitLane==1);
         var side=scene.Route[0].LanePaths.Single(p=>p.ExitLane==2);
-        var kept=new LaneNavigationPlan([new(scene.Route[0].Id,retained)],[],true,null);
-        var entering=kept with{Sections=[new(scene.Route[0].Id,side)]};
+        var kept=new LaneNavigationPlan([new(scene.Route[0].Id,retained,0)],[],true,null);
+        var entering=kept with{Sections=[new(scene.Route[0].Id,side,0)]};
         var main=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,kept,index));
         Assert.Equal(ManeuverKind.Straight,main.Kind);Assert.Equal(NavigationAnnouncementMode.Silent,main.AnnouncementMode);
         var baseActions=AuxiliaryLaneGuidance.Apply([action],route,entering,index);
@@ -81,8 +81,13 @@ public sealed class LaneExitApproachTests
     public void RecognizedRoundaboutDoesNotGainDedicatedExitLaneGuidance()
     {
         var s=Scene();
-        var route=s.Route.Select(e=>e.Id==s.Route[^1].Id?e with{Roundabout=new("ring",1,0)}:e).ToArray();
-        Assert.Empty(new LaneExitApproach().Apply([],route,s.Graph,0));
+        var end=s.Route.Sum(RouteGeometry.Length);
+        var ringAction=new NavigationManeuver("ring:enter",ManeuverKind.EnterRoundabout,0,"in","out")
+            {JunctionId="ring",EndDistanceMeters=end,SpeechSequenceStartDistanceMeters=0};
+        var range=new RoundaboutRouteRange("ring",0,s.Route.Length,0,end,[ringAction]);
+        var actual=new NavigationManeuverDetector().FindSequence(s.Route,0,s.Graph,out _,out _,out _,
+            new LaneRoutePlanner().Build(s.Route),[range]);
+        Assert.Equal(ringAction,Assert.Single(actual));
     }
 
     [Fact]
@@ -158,7 +163,7 @@ public sealed class LaneExitApproachTests
         var action=s.Action with{Id="main",Kind=ManeuverKind.ChooseLanes,Instruction="走左侧两车道",ForkInstruction=RoadForkRules.Decide(info,22)};
         var route=new[]{s.Route[0],s.Route[1],main};
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph([s.Route[0],s.Route[1],main,side]),TestContext.Current.CancellationToken);
-        var lanes=new LaneNavigationPlan([new(s.Route[0].Id,s.Route[0].LanePaths.Single(p=>p.ExitLane==1))],[],true,null);
+        var lanes=new LaneNavigationPlan([new(s.Route[0].Id,s.Route[0].LanePaths.Single(p=>p.ExitLane==1),0)],[],true,null);
         var result=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,lanes,index));
         Assert.Equal(ManeuverKind.Straight,result.Kind);Assert.True(result.IsMainRoadContinuation);
         Assert.True(result.ForkInstruction!.Silent);Assert.Equal(NavigationAnnouncementMode.Silent,result.AnnouncementMode);
@@ -179,7 +184,7 @@ public sealed class LaneExitApproachTests
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph([s.Route[0],road,side,main]),TestContext.Current.CancellationToken);
         var action=s.Action with{Kind=ManeuverKind.ChooseLanes,Instruction="分岔口靠右，走最右侧车道",
             ForkInstruction=RoadForkRules.Decide(info,21),DistanceMeters=300+shift};
-        var lanes=new LaneNavigationPlan([new(s.Route[0].Id,s.Route[0].LanePaths.Single(p=>p.ExitLane==2))],[],true,null);
+        var lanes=new LaneNavigationPlan([new(s.Route[0].Id,s.Route[0].LanePaths.Single(p=>p.ExitLane==2),0)],[],true,null);
         var result=Assert.Single(AuxiliaryLaneGuidance.Apply([action],route,lanes,index));
         Assert.Equal(auxiliary?ManeuverKind.KeepRight:ManeuverKind.ChooseLanes,result.Kind);
         if(auxiliary){Assert.Null(result.Instruction);Assert.NotNull(result.ApproachInterval);}

@@ -45,7 +45,6 @@ public sealed record DirectedRoad(
     public IReadOnlyList<PrefabLanePath> LanePaths { get; init; } = [];
     /// <summary>Native curve starts in this exact representative polyline, including its first control-node join.</summary>
     public IReadOnlyList<PrefabCurveSpan> NativeCurveSpans { get; init; } = [];
-    public RoundaboutPassage? Roundabout { get; init; }
     public IReadOnlyList<LaneConnection>? LaneConnections { get; init; }
     /// <summary>Snapshot-local decision for independent entrance groups adding disjoint exit lanes.</summary>
     public RoadJoinPriority? JoinPriority { get; init; }
@@ -55,12 +54,6 @@ public sealed record DirectedRoad(
 }
 
 public sealed record PrefabCurveSpan(int CurveIndex,int PointIndex);
-
-public sealed record RoundaboutPassage(string Id, int ExitNumber, double ExitConnectorMeters = 0)
-{
-    public IReadOnlyList<RoundaboutExitCue> Exits { get; init; } = [];
-}
-public sealed record RoundaboutExitCue(int Number,double AlongMeters);
 
 public sealed record LaneConnection(ulong EntryNode, int EntryLane, ulong ExitNode, int ExitLane);
 
@@ -122,12 +115,12 @@ public sealed class DirectedPathMatcher
     }
 
     /// <summary>Returns an unambiguous forward-oriented arc coordinate on a continuous path.</summary>
-    public double? ProjectDistance(Vector3 position, Vector3 direction, IReadOnlyList<DirectedRoad> path)
+    public double? ProjectDistance(Vector3 position, Vector3 direction, IReadOnlyList<DirectedRoad> path,int firstVisitIndex=0)
     {
         ArgumentNullException.ThrowIfNull(path);
         if (!Finite(position) || !TryNormalizeHorizontal(direction, out var heading)) return null;
         var segments = BuildSegments(path);
-        return segments is null ? null : Project(position, heading, segments)?.AlongDistance;
+        return segments is null ? null : Project(position, heading, segments,firstVisitIndex)?.AlongDistance;
     }
     private List<Segment>? BuildSegments(IReadOnlyList<DirectedRoad> roads)
     {
@@ -136,14 +129,16 @@ public sealed class DirectedPathMatcher
         var segments = new List<Segment>();
         double offset = 0;
         DirectedRoad? previous = null;
-        foreach (var road in roads)
+        for(int visit=0;visit<roads.Count;visit++)
         {
+            var road=roads[visit];
             if (road.Points.Count < 2 || road.StartNodeUid == 0 || road.EndNodeUid == 0
                 || road.Points.Any(point => !Finite(point)))
                 return null;
             if (previous is not null && previous.EndNodeUid != road.StartNodeUid)
                 return null;
             var countBeforeRoad = segments.Count;
+            var roadKey=NativeRoadKey.Of(road);
             for (var i = 1; i < road.Points.Count; i++)
             {
                 if (road.SegmentStarts.Contains(i)) continue;
@@ -158,7 +153,7 @@ public sealed class DirectedPathMatcher
                     return null;
                 double tolerance=road.ReferenceHalfWidthMeters is {} width&&double.IsFinite(width)&&width>0
                     ?Math.Max(_horizontalTolerance,width):_horizontalTolerance;
-                segments.Add(new Segment(start, end, heading, offset, length,tolerance));
+                segments.Add(new Segment(start, end, heading, offset, length,tolerance,visit,roadKey));
                 offset += length;
             }
             if (segments.Count == countBeforeRoad)
@@ -168,12 +163,14 @@ public sealed class DirectedPathMatcher
         return segments;
     }
 
-    private Projection? Project(Vector3 position, Vector2 heading, List<Segment> segments)
+    private Projection? Project(Vector3 position, Vector2 heading, List<Segment> segments,int firstVisitIndex=0)
     {
         var candidates = new List<Projection>();
+        var firstQualifiedVisit=new Dictionary<NativeRoadKey,int>();
         for (int index = 0; index < segments.Count; index++)
         {
             var segment = segments[index];
+            if(segment.VisitIndex<firstVisitIndex)continue;
             if (Vector2.Dot(heading, segment.Heading) < _minimumDirectionDot)
                 continue;
             var start = new Vector2(segment.Start.X, segment.Start.Z);
@@ -194,6 +191,11 @@ public sealed class DirectedPathMatcher
             var verticalError = Math.Abs(position.Y - projected.Y);
             if (horizontalError > segment.LateralTolerance || verticalError > _verticalTolerance)
                 continue;
+            // An ordered route may revisit the same physical directed road.
+            // Keep all geometric candidates in its first qualified live visit,
+            // but do not let future visits duplicate that physical projection.
+            if(firstQualifiedVisit.TryGetValue(segment.Road,out int first)&&first!=segment.VisitIndex)continue;
+            firstQualifiedVisit.TryAdd(segment.Road,segment.VisitIndex);
             candidates.Add(new Projection(segment.Offset + segment.Length * t,
                 Math.Sqrt(horizontalError * horizontalError + verticalError * verticalError),segment.LateralTolerance));
         }
@@ -201,8 +203,8 @@ public sealed class DirectedPathMatcher
             return null;
         var best = candidates.MinBy(projection => projection.Error);
         // Nearby segments at a normal bend/join represent the same projection. A second
-        // similarly close location far along the path indicates a loop, parallel return
-        // or overlapping level; choosing a path occurrence would be a guess.
+        // similarly close location far along a single visit or on a different
+        // directed road remains a loop/parallel/level ambiguity.
         if (candidates.Any(candidate => candidate.Error <= best.Error + 2
             && Math.Abs(candidate.AlongDistance - best.AlongDistance) > Math.Max(candidate.LateralTolerance,best.LateralTolerance) * 2 + 1))
             return null;
@@ -231,6 +233,6 @@ public sealed class DirectedPathMatcher
         return true;
     }
 
-    private readonly record struct Segment(Vector3 Start, Vector3 End, Vector2 Heading, double Offset, double Length,double LateralTolerance);
+    private readonly record struct Segment(Vector3 Start, Vector3 End, Vector2 Heading, double Offset, double Length,double LateralTolerance,int VisitIndex,NativeRoadKey Road);
     private readonly record struct Projection(double AlongDistance, double Error,double LateralTolerance);
 }

@@ -47,7 +47,7 @@ public sealed class ComponentNavigationIntegrationTests
         var paths=new RoadPathSource(snapshot.Map,snapshot.PrefabPaths,native:snapshot.NativeGraph);
         Assert.Same(graph.Edges,paths.GetNavigationGraph());
         var planner=new ComponentManeuverPlanner();planner.UseIndex(graph.Edges,components);
-        var selected=graph.Edges[1];var actions=planner.Build([selected],paths.GetNavigationGraph());
+        var selected=graph.Edges[1];var actions=planner.Build([selected],paths.GetNavigationGraph(),new([new(selected.Id,selected.LanePaths[0],0)],[],true,null));
         Assert.Equal(ManeuverKind.KeepRight,Assert.Single(actions[0]).Kind);
         Assert.Empty(planner.Issues);
     }
@@ -55,7 +55,7 @@ public sealed class ComponentNavigationIntegrationTests
     public void ProductionDetectorConsumesHardComponentWithoutCrossingOrBlinkerFallback()
     {
         var graph=HardJoin();var detector=new NavigationManeuverDetector();
-        var actions=detector.FindSequence([graph[1]],0,graph);
+        var actions=detector.FindSequence([graph[1]],0,graph,out _,out _,out _,new([new(graph[1].Id,graph[1].LanePaths[0],0)],[],true,null));
         var action=Assert.Single(actions);
         Assert.StartsWith("component:",action.Id);Assert.Equal(ManeuverKind.KeepRight,action.Kind);
         Assert.Equal("向右前方行驶，注意左侧来车",action.ExecutionInstruction);
@@ -67,7 +67,7 @@ public sealed class ComponentNavigationIntegrationTests
         var graph=HardJoin(true);
         var facts=ComponentContinuityIndex.Build(new(graph)).ForEntry(graph[0].Id)!;
         Assert.True(facts.IsMain);Assert.Equal(ComponentContinuityKind.Hard,facts.Kind);
-        var action=Assert.Single(new NavigationManeuverDetector().FindSequence([graph[0]],0,graph));
+        var action=Assert.Single(new NavigationManeuverDetector().FindSequence([graph[0]],0,graph,out _,out _,out _,new([new(graph[0].Id,graph[0].LanePaths[0],0)],[],true,null)));
         Assert.NotEqual(ManeuverKind.Straight,action.Kind);Assert.False(action.IsMainRoadContinuation);
     }
     [Fact]
@@ -83,9 +83,9 @@ public sealed class ComponentNavigationIntegrationTests
         var graph=HardJoin();var route=new[]{graph[1]};var native=new NativeLaneGraph(graph);
         var auxiliary=AuxiliaryLaneIndex.Build(native);var source=new RoadPathSource(new(),graph,native:native);
         var scene=new NearbyMapSnapshot(new(),[],[],[]){PrefabPaths=graph,AuxiliaryLanes=auxiliary};
-        var lanes=new LaneNavigationPlan([new(route[0].Id,route[0].LanePaths[0])],[],true,null);
+        var lanes=new LaneNavigationPlan([new(route[0].Id,route[0].LanePaths[0],0)],[],true,null);
         var sdk=new RouteSnapshot([new(20,100,1),new(30,0,0)],"test",RouteAvailability.Available,DateTimeOffset.UtcNow);
-        var plan=new NavigationStructurePlanner().Build(route,sdk,scene,source,lanes,auxiliary);
+        var plan=new NavigationStructurePlanner().Build(route,sdk,scene,source,lanes,Enumerable.Range(0,route.Length).ToArray(),auxiliary);
         Assert.Single(plan.Actions,a=>a.Id.StartsWith("component:")&&a.Kind==ManeuverKind.KeepRight);
         Assert.DoesNotContain(plan.Actions,a=>a.Id.StartsWith("direct-join:")||a.Id.StartsWith("entrance-merge:"));
     }

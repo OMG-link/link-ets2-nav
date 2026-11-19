@@ -73,7 +73,7 @@ public sealed class MainLoopMapRetryTests
     {
         var full=new TruckLib.ScsMap.Map();var a=Road.Add(full,Vector3.Zero,new(100,0,0),default);var b=a.Append(new(200,0,0));
         var partial=new TruckLib.ScsMap.Map();partial.MapItems.Add(a.Uid,a);foreach(var n in full.Nodes)partial.Nodes.Add(n.Key,n.Value);
-        var route=RouteSnapshot.Parse([new(a.Node.Uid,200,0),new(a.ForwardNode.Uid,100,0),new(b.ForwardNode.Uid,50,0),new(123456,0,0)],DateTimeOffset.UtcNow);
+        var route=RouteSnapshot.Parse([new(a.Node.Uid,200,0),new(a.Node.Uid,200,0),new(a.ForwardNode.Uid,100,0),new(b.ForwardNode.Uid,50,0),new(123456,0,0)],DateTimeOffset.UtcNow);
         var owner=new MapRetryCoordinator();var first=new NearbyMapSnapshot(partial,[],[],[]){Retries=owner};owner.Adopt(first,1);
         var old=new RoadPathSource(partial,retries:owner);Assert.Single(Assert.Single(old.GetRouteComponents(route)));
         Assert.Contains(old.MapIssues.OfType<MissingMapObjects>(),m=>m.Keys.Contains(new(MapObjectKind.Item,b.Uid)));
@@ -84,7 +84,10 @@ public sealed class MainLoopMapRetryTests
         var next=new NearbyMapSnapshot(full,[],[],[]){Retries=owner,MissingConnection=uid=>{lookups++;return GameDataManager.DescribeMissingNativeObjects(full,uid);}};
         owner.Adopt(next,2);int completedLookups=lookups;old.Dispose();Assert.True(completedLookups>0);
         using var current=new RoadPathSource(full,retries:owner);
-        Assert.Equal(2,Assert.Single(current.GetRouteComponents(route)).Count);
+        var completed=Assert.Single(current.GetRouteComponents(route));
+        Assert.Equal(2,completed.Count);Assert.Equal([0,2],current.SourceNodeIndices(completed));
+        Assert.Equal(0,current.FirstLiveVisit(completed,1));Assert.Equal(1,current.FirstLiveVisit(completed,3));
+        Assert.Equal(1,current.GetRouteEntry(route,2)!.VisitIndex);
         Assert.Contains(current.MapIssues.OfType<MissingMapObjects>(),m=>m.Keys.Contains(new(MapObjectKind.Node,123456)));
         Assert.Equal(completedLookups,lookups);Assert.Single(Assert.Single(old.GetRouteComponents(route)));
     }

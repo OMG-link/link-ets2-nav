@@ -9,21 +9,22 @@ public sealed class AuxiliaryLaneDirectionTests
     private static IReadOnlyList<NavigationManeuver> Guidance(IReadOnlyList<NavigationManeuver> actions,
         IReadOnlyList<DirectedRoad> route,LaneNavigationPlan lanes,AuxiliaryLaneIndex index)
     {
-        if(lanes.Sections.Count==0&&lanes.InitialTransfer is null)
-            lanes=new LaneRoutePlanner().Build(route,graph:index.Graph.ThroughTraffic.Edges);
+        if(lanes.Sections.Count==0)
+            lanes=new LaneRoutePlanner().Build(route);
         var baseActions=AuxiliaryLaneGuidance.Apply(actions,route,lanes,index);
-        var physical=new LaneMergeDetector().Find(route,index.Graph.ThroughTraffic.Edges,lanes,0);
+        var physical=new LaneMergeDetector().Find(route,index.Graph.ThroughTraffic.Edges,lanes);
         var selected=LaneContractionView.Build(route,index).Select(physical,lanes);
         return LaneContractionGuidance.Apply(baseActions,selected);
     }
 
     [Fact]
-    public void ARecognizedRoundaboutIsAQuietExclusionRatherThanMissingMapData()
+    public void MarkedRoundaboutVisitsAreExcludedBeforeOrdinaryComponentSelection()
     {
         var scene=Corridor([0,1],[2],[2]);
-        var graph=scene.Graph.Select(e=>e.Id.StartsWith("prefab:2:")?e with{Roundabout=new("known-ring",1)}:e).ToArray();
-        var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(graph),TestContext.Current.CancellationToken);
-        Assert.Empty(index.Corridors);Assert.Empty(index.Diagnostics);
+        var range=new RoundaboutRouteRange("known-ring",0,scene.Route.Length,0,scene.Route.Sum(RouteGeometry.Length),[]);
+        var planner=new ComponentManeuverPlanner();
+        Assert.Empty(planner.Build(scene.Route,scene.Graph,excludeVisit:range.ContainsVisit));
+        Assert.Empty(planner.Issues);
     }
 
     [Fact]
@@ -100,15 +101,11 @@ public sealed class AuxiliaryLaneDirectionTests
         Assert.Equal(200,required.ApproachInterval!.EndMeters-required.DistanceMeters,5);
         Assert.Equal(mainRoute.Sum(RouteGeometry.Length)-RouteGeometry.Length(mainRoute[0])+RouteGeometry.Length(sideBirth),required.EndDistanceMeters!.Value,5);
         Assert.DoesNotContain(Guidance([scene.Action],[sideBirth,..scene.Route.Skip(1)],empty,index),a=>a.Id==required.Id);
-        var middle=new LaneNavigationPlan([],[],true,null){InitialTransfer=new("road",mainExit.Id,[scene.Route[1].Id],left?0:2,1,false){AllowedLaneChange=true}};
-        var midway=Assert.Single(Guidance([mainAction with{EndDistanceMeters=RouteGeometry.Length(scene.Route[1])+RouteGeometry.Length(mainExit)}],
-            [scene.Route[1],mainExit],middle,index));
-        Assert.Equal(required.Kind,midway.Kind);Assert.Same(immutable,index.Corridors);
-        Assert.Equal(required.ApproachInterval!.LengthMeters,midway.ApproachInterval!.LengthMeters,5);
-        var alreadyMain=new LaneNavigationPlan([new(mainExit.Id,mainExit.LanePaths[0])],[],true,null);
-        Assert.Null(alreadyMain.InitialTransfer);
-        var silentMiddle=Assert.Single(Guidance([mainAction],[scene.Route[1],mainExit],alreadyMain,index));
-        Assert.Equal(NavigationAnnouncementMode.Silent,silentMiddle.AnnouncementMode);
+        // Static SDK plans have no initial transfer from a player's actual lane.
+        // A missing route origin does not invent an earlier entrance selection.
+        var midway=Guidance([mainAction],[scene.Route[1],mainExit],new([],[],true,null),index);
+        Assert.DoesNotContain(midway,a=>a.Id==required.Id);
+        Assert.Same(immutable,index.Corridors);
         Assert.All(corridor.Sections,s=>Assert.Same(scene.Graph.Single(e=>e.Id==s.Edge.Id),s.Edge));
     }
 
@@ -140,7 +137,7 @@ public sealed class AuxiliaryLaneDirectionTests
         }
         var native=new NativeLaneGraph(graph);var index=AuxiliaryLaneIndex.Build(native,TestContext.Current.CancellationToken);
         var side=graph.Single(e=>e.StartNodeUid==99);DirectedRoad[] route=[side,scene.Route[1],main];
-        var lanes=new LaneRoutePlanner().Build(route,graph:native.Edges);
+        var lanes=new LaneRoutePlanner().Build(route);
         var original=native.Edges.ToArray();var view=LaneContractionView.Build(route,index);
         var candidate=Assert.Single(view.Select([],lanes));
         Assert.True(candidate.EntranceBased);Assert.False(candidate.RouteConstrained);
@@ -162,7 +159,7 @@ public sealed class AuxiliaryLaneDirectionTests
         var side=scene.Graph.Single(e=>e.StartNodeUid==99);
         var main=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
         DirectedRoad[] route=[side,scene.Route[1],main];
-        var lanes=new LaneRoutePlanner().Build(route,graph:index.Graph.Edges);
+        var lanes=new LaneRoutePlanner().Build(route);
         Assert.Empty(LaneContractionView.Build(route,index).Select([],lanes));
         var kept=Assert.Single(Guidance([scene.Action],route,lanes,index));
         Assert.Equal(scene.Action.Kind,kept.Kind);Assert.Equal(scene.Action.Instruction,kept.Instruction);
@@ -188,7 +185,7 @@ public sealed class AuxiliaryLaneDirectionTests
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph),TestContext.Current.CancellationToken);
         var side=scene.Graph.Single(e=>e.StartNodeUid==99);var main=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
         DirectedRoad[] route=[side,scene.Route[1],main];
-        var lanes=new LaneRoutePlanner().Build(route,graph:index.Graph.Edges);
+        var lanes=new LaneRoutePlanner().Build(route);
         var candidates=LaneContractionView.Build(route,index).Select([],lanes);
         Assert.Equal(expected,candidates.Count==1);
         if(expected)
@@ -199,7 +196,7 @@ public sealed class AuxiliaryLaneDirectionTests
             Assert.True(candidate.EndDistanceMeters>candidate.ApproachInterval!.EndMeters);
         }
         Assert.Empty(LaneContractionView.Build([],index).Select([],new([],[],true,null)));
-        Assert.Empty(LaneContractionView.Build(scene.Route,index).Select([],new LaneRoutePlanner().Build(scene.Route,graph:index.Graph.Edges)));
+        Assert.Empty(LaneContractionView.Build(scene.Route,index).Select([],new LaneRoutePlanner().Build(scene.Route)));
     }
 
     [Fact]
@@ -209,7 +206,7 @@ public sealed class AuxiliaryLaneDirectionTests
         var index=AuxiliaryLaneIndex.Build(new NativeLaneGraph(scene.Graph),TestContext.Current.CancellationToken);
         var side=scene.Graph.Single(e=>e.StartNodeUid==99);var main=scene.Graph.Single(e=>e.Id=="prefab:2:0:2");
         DirectedRoad[] route=[side,scene.Route[1],main];
-        var selected=LaneContractionView.Build(route,index).Select([],new LaneRoutePlanner().Build(route,graph:index.Graph.Edges));
+        var selected=LaneContractionView.Build(route,index).Select([],new LaneRoutePlanner().Build(route));
         var merge=Assert.Single(LaneContractionGuidance.Apply([],selected));
         double end=merge.EndDistanceMeters!.Value;
         Assert.True(merge.DistanceMeters<merge.ApproachInterval!.EndMeters);

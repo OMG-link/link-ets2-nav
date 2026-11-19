@@ -24,7 +24,7 @@ public sealed class TrafficLightRuntimeTests
                 [new(new(100,0,4),Quaternion.Identity)]);
             var map=new NearbyMapSnapshot(new(),[],[],[]){TrafficSignals=new([control])};
             var path=new PrefabLanePath(7,1,2,0,0,0,0,1,1,[0],[new(100,0,0),new(130,0,0)],30);
-            var navigation=new NavigationDiagnostic("test"){LaneRoute=new([new("prefab:7:0",path)],[],true,null)};
+            var navigation=new NavigationDiagnostic("test"){LaneRoute=new([new("prefab:7:0",path,0)],[],true,null)};
             GameDataSnapshot Sample(double seconds,SignalPhase phase=SignalPhase.Red,double speed=0)
             {
                 var now=begin.AddSeconds(seconds);

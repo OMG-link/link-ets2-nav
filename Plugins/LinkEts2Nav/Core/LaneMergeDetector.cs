@@ -6,6 +6,7 @@ public sealed record LaneMergeObservation(string Id,ulong PrefabUid,ulong? Endin
     ulong? MainEntryNode,int? MainEntryLane,Vector3 Position,bool? MoveLeft,int RecommendedLaneCount,
     double? ParallelDistanceMeters,LaneMergeKind Kind,double DistanceMeters,string Reason)
 {
+    public int SourceVisitIndex {get;init;}
     public double? EndDistanceMeters { get; init; }
     public LaneActionInterval? ApproachInterval { get; init; }
     public LaneMergeOriginDecision? Origin { get; init; }
@@ -23,18 +24,18 @@ public sealed class LaneMergeDetector
 {
     private IReadOnlyList<DirectedRoad>? indexed;
     private IReadOnlyList<Model> models=[];
-    private readonly HashSet<string> approaching=new(StringComparer.Ordinal);
     private sealed record Model(PrefabLanePath Ending,PrefabLanePath Main,Vector3 Position,bool? Left,int Count,
         double? Parallel,LaneMergeKind Kind,string Reason,LaneMergeOriginDecision Origin,
         IReadOnlyList<int> SurvivingOrders,bool AllIncomingDie);
     public IReadOnlyList<LaneMergeObservation> Find(IReadOnlyList<DirectedRoad> route,IReadOnlyList<DirectedRoad> graph,
-        LaneNavigationPlan plan,double vehicleAlong,Func<ulong,LinkEts2Nav.Map.MapQueryIssue>? missingConnection=null)
+        LaneNavigationPlan plan,Func<ulong,LinkEts2Nav.Map.MapQueryIssue>? missingConnection=null)
     {
         if(!ReferenceEquals(indexed,graph)){indexed=graph;models=Build(graph,missingConnection);}
         var result=new List<LaneMergeObservation>();double offset=0;
-        foreach(var edge in route)
+        for(int visit=0;visit<route.Count;visit++)
         {
-            var selected=plan.Sections.FirstOrDefault(s=>s.EdgeId==edge.Id)?.Path;
+            var edge=route[visit];
+            var selected=plan.Sections.SingleOrDefault(s=>s.SourceVisitIndex==visit)?.Path;
             foreach(var m in models.Where(m=>edge.LanePaths.Any(p=>p.PrefabUid==m.Ending.PrefabUid
                 &&(p.EntryNodeUid==m.Ending.EntryNodeUid||p.EntryNodeUid==m.Main.EntryNodeUid)&&p.ExitNodeUid==m.Ending.ExitNodeUid)))
             {
@@ -43,25 +44,21 @@ public sealed class LaneMergeDetector
                     ||!m.Origin.ApplicableEntryLanes.Contains(selected.EntryLane)))continue;
                 bool usesEnding=selected is not null&&selected.EntryNodeUid==m.Ending.EntryNodeUid
                     &&selected.EntryLane==m.Ending.EntryLane&&selected.ExitNodeUid==m.Ending.ExitNodeUid;
-                string id=$"lane-merge:{m.Ending.PrefabUid:X16}:{m.Ending.CurveIndices[^1]}:{m.Ending.EntryNodeUid:X16}:{m.Ending.EntryLane}";
-                if(m.Left is not null&&m.Kind!=LaneMergeKind.LaneReduction&&!usesEnding&&!approaching.Contains(id))continue;
+                string id=$"lane-merge:{m.Ending.PrefabUid:X16}:{m.Ending.CurveIndices[^1]}:{m.Ending.EntryNodeUid:X16}:{m.Ending.EntryLane}:visit:{visit}";
+                if(m.Left is not null&&m.Kind!=LaneMergeKind.LaneReduction&&!usesEnding)continue;
                 var projected=new LanePolyline(edge.Points).Project(m.Position);
-                double distance=offset+projected.Along-vehicleAlong;
-                if(distance<0){approaching.Remove(id);continue;}
+                double distance=offset+projected.Along;
                 if(projected.Error>15)continue;
-                if(usesEnding)approaching.Add(id);
                 result.Add(new(id,m.Ending.PrefabUid,m.Left is null?null:m.Ending.EntryNodeUid,m.Left is null?null:m.Ending.EntryLane,
                     m.Left is null?null:m.Main.EntryNodeUid,m.Left is null?null:m.Main.EntryLane,
                     m.Position,m.Left,m.Count,m.Parallel,m.Kind,distance,m.Reason)
-                    {EndDistanceMeters=distance,ApproachLaneCount=ApproachCount(m),Origin=m.Origin,JunctionId="prefab:"+NativeLaneGraph.Prefab(edge),
+                    {SourceVisitIndex=visit,EndDistanceMeters=distance,ApproachLaneCount=ApproachCount(m),Origin=m.Origin,JunctionId="prefab:"+NativeLaneGraph.Prefab(edge),
                         SurvivingEntryOrders=m.SurvivingOrders,AllIncomingLanesDie=m.AllIncomingDie});
             }
             offset+=new LanePolyline(edge.Points).Length;
         }
-        approaching.IntersectWith(result.Select(m=>m.Id));
         return result.DistinctBy(m=>m.Id).OrderBy(m=>m.DistanceMeters).ToArray();
     }
-    public void Reset()=>approaching.Clear();
     private static int? ApproachCount(Model model)
     {
         int ending=model.Ending.EntryLaneCount,main=model.Main.EntryLaneCount;

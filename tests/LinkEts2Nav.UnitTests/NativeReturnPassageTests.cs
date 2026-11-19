@@ -118,8 +118,13 @@ public sealed class NativeReturnPassageTests
     [Fact]
     public void KnownRoundaboutReturnKeepsItsExistingExitNumberInsteadOfBecomingUTurn()
     {
-        var returning=Return() with{Roundabout=new("known",4){Exits=[new(4,20)]}};
-        var actions=new NavigationManeuverDetector().FindSequence([returning],0,[returning]);
+        var returning=Return();double end=RouteGeometry.Length(returning);
+        var range=new RoundaboutRouteRange("known",0,1,0,end,
+        [new("enter",ManeuverKind.EnterRoundabout,0,returning.Id,returning.Id)
+            {EndDistanceMeters=end,SpeechSequenceStartDistanceMeters=0,NearInstruction="进入环岛，请从第四出口驶出"},
+         new("exit",ManeuverKind.ExitRoundabout,20,returning.Id,returning.Id)
+            {EndDistanceMeters=end,SpeechSequenceStartDistanceMeters=0,ExecutionOnly=true}]);
+        var actions=new NavigationManeuverDetector().FindSequence([returning],0,[returning],out _,out _,out _,roundaboutRanges:[range]);
         Assert.Equal(ManeuverKind.EnterRoundabout,actions[0].Kind);
         Assert.Contains("第四出口",actions[0].NearInstruction);
         Assert.DoesNotContain(actions,a=>a.Kind==ManeuverKind.UTurn);

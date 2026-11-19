@@ -24,7 +24,7 @@ public sealed class NavigationRuntimeTests
     private static GameDataSnapshot Data(RouteSnapshot route,float z,RouteAvailability availability=RouteAvailability.Available,
         bool paused=false,bool stale=false,double speed=20)=>new(
         new(0,0,z,.5,speed,1000,true,paused,1,stale?Now.AddSeconds(-3):Now),
-        route,availability,"session",!paused);
+        route,availability,"session",!paused){NavigationRoute=NavigationRouteState.Empty.Accept(route)};
     private static NavigationRuntime ObserveDiagnostics(Action cue,Action<string>? log=null)=>new(log:line=>
     {
         if(line.StartsWith("\u5bfc\u822a\u6307\u4ee4\uff1a",StringComparison.Ordinal))cue();
@@ -135,6 +135,20 @@ public sealed class NavigationRuntimeTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
+
+    [Fact]
+    public void YardApproachUsesRemainingSdkEntryInsideTheFullRouteComponent()
+    {
+        var scene=Scene();var remaining=RouteSnapshot.Parse(scene.Route.Nodes.Skip(1).ToArray(),Now);
+        var stable=NavigationRouteState.Empty.Accept(scene.Route).Accept(remaining);
+        var area=new FreeNavigationArea("later-yard",[new(20,0,650),new(40,0,650),new(40,0,690),new(20,0,690)],
+            [remaining.Nodes[0].Uid]);
+        var data=Data(remaining,670);data=data with{Vehicle=data.Vehicle! with{X=30},NavigationRoute=stable};
+        var result=new NavigationRuntime().Process(data,scene.Map with{FreeNavigationAreas=[area]},Now);
+        Assert.NotNull(result.Next);Assert.Equal(ManeuverKind.TurnRight,result.Next.Kind);
+        Assert.Equal(Math.Sqrt(30*30+30*30),result.Next.DistanceMeters,3);
+        Assert.Same(scene.Route,stable.FullRoute);Assert.Equal(1,stable.CurrentNodeIndex);
+    }
     [Theory]
     [InlineData(true,true,true)]
     [InlineData(false,true,false)]
@@ -155,7 +169,7 @@ public sealed class NavigationRuntimeTests
             Assert.NotNull(first.Next);Assert.Equal(30,first.Next.DistanceMeters,1);
             // At 20 m/s, the two-second cue is already due 30 m before the exit.
             Assert.Equal("右转。",first.LastSpoken);Assert.Equal(1,calls);
-            var prefix=new RoadPathSource(scene.Map.Map,scene.Map.PrefabPaths).GetRoutePrefix(new(0,0,670),route,source[0].Uid);
+            var prefix=new RoadPathSource(scene.Map.Map,scene.Map.PrefabPaths).GetRouteEntry(route,0)!.Route;
             double prefixWorldLength=prefix.Sum(e=>e.Points.Zip(e.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)));
             Assert.Equal(prefixWorldLength+30,Assert.Single(first.Upcoming,m=>m.Kind==ManeuverKind.Destination).DistanceMeters,1);
             var near=data with{Vehicle=data.Vehicle! with{Z=680}};
@@ -271,7 +285,11 @@ public sealed class NavigationRuntimeTests
             new(outgoing.Node.Uid,3550,175),new(outgoing.ForwardNode.Uid,0,0)],Now);
         int calls = 0;
         var runtime = ObserveDiagnostics(()=>calls++);
-        var result = runtime.Process(Data(route,100),new(map,[],[],[]),Now);
+        // The SDK gap is a known not-yet-loaded dependency, not an unexplained
+        // pair of already loaded disconnected roads (which is invalid input).
+        var nearby=new NearbyMapSnapshot(map,[],[],[])
+        {MissingConnection=_=>new MissingMapObjects([new(MapObjectKind.Item,999)],"fixture missing junction sector")};
+        var result = runtime.Process(Data(route,100),nearby,Now);
         Assert.Equal(NavigationPrompts.Continue(),result.LastSpoken);
         Assert.Equal(300,result.ConfirmedAheadMeters!.Value,1);
         Assert.Equal(1,calls);

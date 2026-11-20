@@ -109,9 +109,9 @@ public sealed class GameDataManager:IDisposable
     {
         var prefab=Map.GetItem<Prefab>(uid);if(prefab is null)return null;
         var definition=World.Prefabs.GetValueOrDefault(prefab.Model.ToString());
-        return new(prefab,definition,()=>definition is null?null:GetPrefabDescription(definition.Descriptor));
+        return new(prefab,definition,()=>GetPrefabNavigationDescription(prefab,definition?.Descriptor));
     }
-    /// <summary>Native passage lengths after the normal player-permission projection; unknown permissions retain native connectivity.</summary>
+    /// <summary>Effective passage lengths after the normal player-permission projection.</summary>
     public IReadOnlyList<double> GetPrefabPassageLengths(ulong prefabUid,ulong entry,ulong exit)
     {
         var prefab=GetPrefab(prefabUid);
@@ -123,6 +123,15 @@ public sealed class GameDataManager:IDisposable
             ()=>PrefabPassageLengths.Read(prefab.Instance,projected.Descriptor,entry,exit));
     }
     public PrefabDescriptor GetPrefabDescription(string path)=>Projection("ppd",GameResourceStore.Key(path),()=>PrefabDescriptor.Open(path,resources));
+    /// <summary>The effective navigation descriptor for a particular loaded instance.</summary>
+    internal PrefabDescriptor? GetPrefabNavigationDescription(Prefab prefab,string? resource)
+    {
+        if(PrefabNavigationOverrides.Find(prefab.Uid) is not {} correction)
+            return resource is null?null:GetPrefabDescription(resource);
+        correction.ValidateInstance(prefab,resource);
+        return Projection("prefab-navigation-instance",prefab.Uid.ToString("X16"),
+            ()=>correction.Apply(prefab,GetPrefabDescription(correction.Resource)));
+    }
     public TruckLib.Models.Model GetModelDescription(string path)=>Projection("model-description",GameResourceStore.Key(path),()=>TruckLib.Models.Model.Open(path,resources));
     /// <summary>All named model anchors and hookups, before instance variant visibility is applied.</summary>
     public IReadOnlyList<ModelLocator> GetNamedModelLocators(string descriptor)=>Projection("named-model-locators",GameResourceStore.Key(descriptor),()=>

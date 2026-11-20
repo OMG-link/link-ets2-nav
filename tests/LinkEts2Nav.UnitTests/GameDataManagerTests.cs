@@ -4,10 +4,133 @@ using System.Text;
 using LinkEts2Nav.Map;
 using TruckLib;
 using TruckLib.ScsMap;
+using ControlNode = TruckLib.Models.Ppd.ControlNode;
+using NavCurve = TruckLib.Models.Ppd.NavCurve;
+using PrefabDescriptor = TruckLib.Models.Ppd.PrefabDescriptor;
 namespace LinkEts2Nav.UnitTests;
 
 public sealed class GameDataManagerTests
 {
+    private const ulong OverridePrefab = 0x4F84385F6C870001;
+    private const string OverrideResource = "/prefab2/fork_temp/invis/invis_r1_mage_left_tmpl.ppd";
+
+    [Fact]
+    public void InstanceNavigationOverridePreservesTheSharedNativeDescriptorAndOriginalPassages()
+    {
+        var (data, prefab, other, native) = OverrideScene();
+        using (data)
+        {
+            var effective = data.GetPrefab(prefab.Uid)!.Description!;
+            Assert.NotSame(native, effective);
+            Assert.Same(effective, data.GetPrefabNavigationDescription(prefab, OverrideResource));
+            Assert.Same(native, data.GetPrefabDescription(OverrideResource));
+            Assert.Same(native, data.GetPrefab(other.Uid)!.Description);
+            Assert.All(native.NavCurves.Zip(effective.NavCurves), pair => Assert.Same(pair.First, pair.Second));
+            Assert.Same(native.MapPoints, effective.MapPoints);
+            Assert.Same(native.Intersections, effective.Intersections);
+            Assert.Equal(-1, native.Nodes[0].InputLines[1]);
+            Assert.Equal(-1, native.Nodes[2].OutputLines[1]);
+            Assert.Equal(6, effective.Nodes[0].InputLines[1]);
+            Assert.Equal(6, effective.Nodes[2].OutputLines[1]);
+            var added = Assert.Single(effective.NavCurves.Skip(native.NavCurves.Count));
+            Assert.Empty(added.PreviousLines);
+            Assert.Empty(added.NextLines);
+            Assert.Equal(-1, added.SemaphoreId);
+            Assert.Equal(new Vector3(2.25f, 0, 0), added.StartPosition);
+            Assert.Equal(new Vector3(2.25f, 0, -15), added.EndPosition);
+            Assert.Equal(15, added.Length);
+            var passages = PrefabPathGeometry.Build(prefab, effective);
+            var main = passages.Single(e => e.StartNodeUid == prefab.Nodes[0].Uid);
+            var ramp = passages.Single(e => e.StartNodeUid == prefab.Nodes[1].Uid);
+            Assert.Equal(new[] { 0, 3, 5 }, main.LanePaths.Single(l => l.EntryOrder == 0).CurveIndices);
+            var right = main.LanePaths.Single(l => l.EntryOrder == 1);
+            Assert.Equal(1, right.ExitOrder);
+            Assert.Equal(new[] { 6 }, right.CurveIndices);
+            Assert.Equal(new[] { 1, 4, 2, 5 }, Assert.Single(ramp.LanePaths).CurveIndices);
+            Assert.Equal(2, data.GetPrefabPassageLengths(prefab.Uid, main.StartNodeUid, main.EndNodeUid).Count);
+        }
+    }
+
+    [Fact]
+    public void InstanceNavigationOverrideRejectsChangedIdentityEvenAfterItsDescriptorWasCached()
+    {
+        var (data, prefab, _, _) = OverrideScene();
+        using (data)
+        {
+            Assert.NotNull(data.GetPrefab(prefab.Uid)!.Description);
+            Assert.Throws<InvalidDataException>(() => data.GetPrefabNavigationDescription(prefab, "/prefab/other.ppd"));
+            prefab.Nodes[2].Uid++;
+            var failure = Assert.Throws<InvalidDataException>(() => data.GetPrefab(prefab.Uid)!.Description);
+            Assert.Contains("control node UIDs", failure.Message);
+        }
+    }
+
+    [Fact]
+    public void InstanceNavigationOverrideRejectsChangedNativeConnectivity()
+    {
+        var (data, prefab, _, native) = OverrideScene();
+        using (data)
+        {
+            native.NavCurves[0].NextLines.Clear();
+            var failure = Assert.Throws<InvalidDataException>(() => data.GetPrefab(prefab.Uid)!.Description);
+            Assert.Contains("connectivity changed at curve 0", failure.Message);
+        }
+    }
+
+    private static (GameDataManager Data, Prefab Prefab, Prefab Other, PrefabDescriptor Native) OverrideScene()
+    {
+        var fs = new Files();
+        fs.Content["/def/world/prefab.test.sii"] =
+            $"SiiNunit {{ prefab_model : prefab.test {{ prefab_desc: \"{OverrideResource}\" }} }}";
+        var map = new TruckLib.ScsMap.Map();
+        Vector3[] positions = [Vector3.Zero, new(-8, 0, -1.5f), new(0, 0, -15)];
+        Prefab Add(ulong uid, ulong[] controls)
+        {
+            var prefab = new Prefab
+            {
+                Uid = uid, Model = new Token("test"),
+                Nodes = controls.Select((id, i) => new Node { Uid = id, Position = positions[i] }).Cast<INode>().ToList()
+            };
+            map.MapItems.Add(uid, prefab);
+            foreach (var node in prefab.Nodes) map.Nodes.Add(node.Uid, node);
+            return prefab;
+        }
+        var prefab = Add(OverridePrefab, [0x4F84385E34070008, 0x4F84385F83070009, 0x4F84385D1F87000A]);
+        var other = Add(42, [10, 20, 30]);
+        var data = new GameDataManager(fs, map: map);
+        var native = data.Projection("ppd", OverrideResource, () => new PrefabDescriptor
+        {
+            Nodes = [Control(0, 0, -1), Control(1, 1, -1), Control(2, -1, 5)],
+            NavCurves = [
+                Curve(new(-2.25f, 0, 0), new(-2.25f, 0, -1), [3], []),
+                Curve(new(-8, 0, -1.5f), new(-7, 0, -3), [4], []),
+                Curve(new(-5, 0, -5), new(-2.25f, 0, -14), [5], [4]),
+                Curve(new(-2.25f, 0, -1), new(-2.25f, 0, -14), [5], [0]),
+                Curve(new(-7, 0, -3), new(-5, 0, -5), [2], [1]),
+                Curve(new(-2.25f, 0, -14), new(-2.25f, 0, -15), [], [2, 3])
+            ]
+        });
+        // PPD-declared mileage can differ from endpoint distance, as it does
+        // for the original terminal curve. Keep the two lengths distinguishable.
+        native.NavCurves[5].Length = 1.05f;
+        return (data, prefab, other, native);
+
+        ControlNode Control(int i, int input, int output)
+            => new() { Position = positions[i], Direction = -Vector3.UnitZ,
+                InputLines = [input, -1], OutputLines = [output, -1] };
+        static NavCurve Curve(Vector3 a, Vector3 b, int[] next, int[] previous)
+        {
+            var curve = new NavCurve
+            {
+                StartPosition = a, EndPosition = b, Length = Vector3.Distance(a, b),
+                StartRotation = Quaternion.Identity, EndRotation = Quaternion.Identity, SemaphoreId = -1
+            };
+            foreach (int index in next) curve.NextLines.Add(index);
+            foreach (int index in previous) curve.PreviousLines.Add(index);
+            return curve;
+        }
+    }
+
     [Fact]
     public void LoadedPrefabWithoutNavigationCurvesExplainsTheConnectionFailure()
     {

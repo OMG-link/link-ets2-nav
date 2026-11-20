@@ -96,9 +96,9 @@ public sealed class NearbyCameraScanner
             foreach(var prefab in nextMap.MapItems.Values.OfType<Prefab>())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if(!data.World.Prefabs.TryGetValue(prefab.Model.ToString(),out var definition))continue;
-                var descriptor=data.GetPrefabDescription(definition.Descriptor);
-                prefabSources.Add(new(prefab,descriptor));prefabResources[prefab.Uid]=definition.Descriptor;
+                var resource=data.World.Prefabs.GetValueOrDefault(prefab.Model.ToString())?.Descriptor;
+                if(data.GetPrefabNavigationDescription(prefab,resource) is not {} descriptor)continue;
+                prefabSources.Add(new(prefab,descriptor));prefabResources[prefab.Uid]=resource!;
             }
             var permissions=PrefabPlayerAccessWindow.Build(prefabSources,speedReader,data.Map,issues.Add,cancellationToken);
             foreach(var source in prefabSources)

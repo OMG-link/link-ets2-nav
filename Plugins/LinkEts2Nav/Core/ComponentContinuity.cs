@@ -148,7 +148,7 @@ public static class ComponentContinuity
             var earliest=soft.MinBy(l=>l.TerminalDistanceFromExitMeters)!;
             var approachEnd=new ComponentBoundary(edge.Id,0,edge.Points[0])
                 {StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid,Interface=ComponentBoundaryInterface.Start};
-            return Result(ComponentContinuityKind.Soft,soft,first,first.SoftAction,earliest.Terminal,approachEnd);
+            return Result(ComponentContinuityKind.Soft,soft,first,first.SoftAction,earliest.Terminal,approachEnd,first.Issue);
         }
         var firstHard=hard.MinBy(l=>l.Terminal!.OffsetMeters)!;
         return Result(ComponentContinuityKind.Hard,hard,firstHard,firstHard.Terminal);

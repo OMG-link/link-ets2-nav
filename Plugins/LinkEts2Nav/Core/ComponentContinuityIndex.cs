@@ -170,10 +170,11 @@ public sealed class ComponentContinuityIndex
                 }
 
                 var localPaths=group.SelectMany(edge=>edge.LanePaths.Select(path=>(Edge:edge,Path:path,Split:FirstSideSplit(path)))).ToArray();
+                var mainPassage=main is {} mainOutlet?group.Single(e=>e.EndNodeUid==mainOutlet):null;
                 var origins=new Dictionary<int,ComponentLaneOutcome>();
-                if(main is {} mainOutlet)
+                if(mainPassage is not null)
                 {
-                    var referenceOrders=localPaths.Where(p=>p.Edge.EndNodeUid==mainOutlet&&p.Split is null)
+                    var referenceOrders=localPaths.Where(p=>p.Edge.EndNodeUid==mainPassage.EndNodeUid&&p.Split is null)
                         .Select(p=>p.Path.EntryOrder).Distinct().ToArray();
                     foreach(var family in localPaths.GroupBy(p=>p.Path.EntryOrder))
                     {
@@ -189,7 +190,7 @@ public sealed class ComponentContinuityIndex
                 foreach(var paths in localPaths.GroupBy(p=>p.Edge.Id))
                 {
                     var edge=paths.First().Edge;
-                    var lanes=paths.Select(p=>OutletLane(edge,p.Path,p.Split,origins.GetValueOrDefault(p.Path.EntryOrder),originals)).ToArray();
+                    var lanes=paths.Select(p=>OutletLane(edge,p.Path,p.Split,origins.GetValueOrDefault(p.Path.EntryOrder),mainPassage,originals)).ToArray();
                     var fact=ComponentContinuity.AggregateOutlet(edge,edge.EndNodeUid==main,lanes,exitCount);
                     if(fact.Issue is {} issue)Issues.Add(issue);
                     result[edge.Id]=fact;
@@ -212,7 +213,7 @@ public sealed class ComponentContinuityIndex
 
         private ComponentLaneOutcome OutletLane(DirectedRoad edge,PrefabLanePath path,
             (int Index,LaneContinuityPoint Point,LaneContinuityBranch Branch)? split,ComponentLaneOutcome? origin,
-            IReadOnlyDictionary<NativeRoadKey,DirectedRoad> originals)
+            DirectedRoad? mainPassage,IReadOnlyDictionary<NativeRoadKey,DirectedRoad> originals)
         {
             double length=Length(path);
             var entry=At(edge,path,0);var midpoint=At(edge,path,length/2);var exit=At(edge,path,length);
@@ -238,19 +239,29 @@ public sealed class ComponentContinuityIndex
             if(origin.Issue is not null||origin.Fate==ComponentLaneFate.Unresolved)
                 return lane with{Fate=ComponentLaneFate.Unresolved,Issue=origin.Issue};
             if(origin.Fate is not (ComponentLaneFate.Dies or ComponentLaneFate.Separates))return lane;
+            var (turn,issue)=SoftOutletTurn(mainPassage!,edge);
             return lane with{Fate=origin.Fate==ComponentLaneFate.Dies?ComponentLaneFate.Born:ComponentLaneFate.Joins,
                 Terminal=Restore(origin.Terminal,originals),SoftAction=Restore(origin.SoftAction,originals),
-                Turn=OriginalTurn(origin),TerminalDistanceFromExitMeters=-origin.TerminalDistanceFromExitMeters,
+                Turn=turn,Issue=issue,TerminalDistanceFromExitMeters=-origin.TerminalDistanceFromExitMeters,
                 SoftActionDistanceFromExitMeters=-origin.SoftActionDistanceFromExitMeters,StructuralConstraintId=origin.StructuralConstraintId};
         }
 
-        private ComponentTurn? OriginalTurn(ComponentLaneOutcome reversed)
+        private static (ComponentTurn? Turn,MapQueryIssue? Issue) SoftOutletTurn(DirectedRoad main,DirectedRoad side)
         {
-            if(reversed.TurnPrefabUid is not {} uid||reversed.TurnSharedCurveIndex is not {} shared||reversed.TurnBranchCurveIndex is not {} branch)
-                return reversed.Turn;
-            var native=continuity[uid].Points.First(p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==shared)
-                .Branches.First(p=>p.CurveIndex==branch);
-            return ConvertTurn(native.Turn);
+            var mainPort=main.Points[^1];
+            var sidePort=side.Points[^1];
+            bool HorizontalFinite(Vector3 point)=>float.IsFinite(point.X)&&float.IsFinite(point.Z);
+            if(main.NativeExitTangent is not {} tangent||!HorizontalFinite(tangent)||(tangent.X==0&&tangent.Z==0)
+                ||!HorizontalFinite(mainPort)||!HorizontalFinite(sidePort))
+                return (null,new MapQueryFailure(MapQueryFailureKind.InvalidData,
+                    $"Soft outlet {side.Id}: invalid downstream port coordinates or main outlet tangent."){QueryAnchor=side.Points[0]});
+            // PPD path tangents point in the forward travel direction. With the
+            // map's X/Z axes, a positive determinant is to the driver's right.
+            double cross=tangent.X*((double)sidePort.Z-mainPort.Z)-tangent.Z*((double)sidePort.X-mainPort.X);
+            if(cross==0)
+                return (null,new MapQueryFailure(MapQueryFailureKind.Ambiguous,
+                    $"Soft outlet {side.Id}: downstream outlet is collinear with the main outlet heading."){QueryAnchor=side.Points[0]});
+            return (new(cross>0?NavigationSide.Right:NavigationSide.Left,ComponentTurnKind.Forward),null);
         }
 
         private ComponentPassageContinuity Unknown(DirectedRoad edge,RoadJoinPriority? priority,string reason)
@@ -385,6 +396,9 @@ public sealed class ComponentContinuityIndex
                 if(nearest.Length>0&&localLane.Lane.ExitNodeUid!=nearest[0].Main.Lane.ExitNodeUid)
                 {
                     var terminal=At(localLane.Edge,localLane.Lane,0);
+                    // The upstream trace establishes a boundary. A soft outlet
+                    // uses its own downstream ports to describe the direction.
+                    if(reverse)return Result(ComponentLaneFate.Separates,current,distance,terminal,terminal);
                     var (direction,directionIssue)=Toward(localLane.Lane,nearest[0].Main.Lane);
                     return Result(ComponentLaneFate.Separates,current,distance,terminal,terminal,direction,
                         directionIssue);
@@ -397,7 +411,8 @@ public sealed class ComponentContinuityIndex
                     // observation range ending there.
                     if(at<=ComponentContinuity.WindowMeters&&(at<=referenceEnd||sameDeath))
                         return Result(ComponentLaneFate.Dies,current,at,At(localLane.Edge,localLane.Lane,local),
-                        At(localLane.Edge,localLane.Lane,Length(localLane.Lane)),ConvertTurn(dead.Turn),dead.MapIssue);
+                        At(localLane.Edge,localLane.Lane,Length(localLane.Lane)),reverse?null:ConvertTurn(dead.Turn),
+                        reverse?localLane.Merge!.MapIssue:dead.MapIssue);
                     if(referenceEnd>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,at);
                 }
                 if(referenceEnd<=ComponentContinuity.WindowMeters)

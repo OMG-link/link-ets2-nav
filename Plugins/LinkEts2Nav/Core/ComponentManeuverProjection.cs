@@ -95,7 +95,7 @@ public static class ComponentManeuverProjection
             }
             else
             {
-                var selectedTurn=SelectedTurn(fact);
+                var selectedTurn=outgoing&&fact.Kind==ComponentContinuityKind.Soft?fact.Turn:SelectedTurn(fact);
                 actualTurn=selectedTurn;
                 if(selectedTurn is not {Side:NavigationSide.Left or NavigationSide.Right} turn||turn.Kind==ComponentTurnKind.Unknown)
                 {Fail(fact,"组件转向侧无法判定，不能推测播报方向");return;}
@@ -132,8 +132,6 @@ public static class ComponentManeuverProjection
             var lane=fact.Lanes.FirstOrDefault(l=>l.EntryOrder==selectedPath.EntryOrder&&l.ExitOrder==selectedPath.ExitOrder
                 &&(l.CurveIndices.Count==0||l.CurveIndices.SequenceEqual(selectedPath.CurveIndices)))
                 ??throw new ArgumentException($"Component {fact.EdgeId} ({fact.Kind}) has no outcome for selected lane {selectedPath.EntryOrder}->{selectedPath.ExitOrder}.",nameof(selectedPath));
-            // A hard lane can reach a soft outlet. The outlet chooses the
-            // announcement tier and timing; the selected lane determines direction.
             return lane.Turn??throw new ArgumentException($"Component {fact.EdgeId} ({fact.Kind}) selected lane {selectedPath.EntryOrder}->{selectedPath.ExitOrder} has no turn result.",nameof(fact));
         }
         void AddPassage(ComponentPassageContinuity fact,double end)

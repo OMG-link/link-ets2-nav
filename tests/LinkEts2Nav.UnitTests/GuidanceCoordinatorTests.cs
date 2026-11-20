@@ -171,7 +171,7 @@ public sealed class GuidanceCoordinatorTests
         var c=new GuidanceCoordinator(playback:manager);
         GameDataSnapshot Route(params ulong[] nodes)
         {
-            var route=RouteSnapshot.Parse(nodes.Select(uid=>new RouteNode(uid,1000,10)).ToArray(),Now);
+            var route=RouteSnapshot.Parse(nodes.Select((uid, index)=>new RouteNode(uid,(nodes.Length-index-1)*1000,10)),Now);
             return Data() with{Route=route,RouteAvailability=RouteAvailability.Available};
         }
         void Publish(GameDataSnapshot data,params string[] ids)

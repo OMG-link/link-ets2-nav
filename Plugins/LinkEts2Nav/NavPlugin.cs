@@ -306,7 +306,7 @@ public sealed class NavPlugin : Plugin
             try
             {
                 source.Dispose();
-                logOutput.ReportFines(source.Store.DrainFines(), source.Capture().DroppedFineCount, DateTimeOffset.UtcNow);
+                logOutput.ReportFines(source.Store.DrainFines(), source.Store.Capture(DateTimeOffset.UtcNow).DroppedFineCount, DateTimeOffset.UtcNow);
             }
             finally
             {

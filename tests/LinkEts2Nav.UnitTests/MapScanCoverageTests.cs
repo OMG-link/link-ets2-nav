@@ -102,17 +102,6 @@ public sealed class MapScanCoverageTests
         Assert.Equal(first.Sectors,second.Sectors);
         Assert.Equal(second.Sectors.Count,second.Sectors.Distinct().Count());
     }
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void NondecreasingOrMixedSdkOrderKeepsOnlyTheNearbyCoverage(bool increasing)
-    {
-        var (host,route)=Scene();
-        route=route with{Nodes=increasing?route.Nodes.Reverse().ToArray():[route.Nodes[0],route.Nodes[2],route.Nodes[1],route.Nodes[3]]};
-        var coverage=MapScanCoverage.Create(default,1100,host,route,15000);
-        Assert.Empty(coverage.RouteSegments);Assert.True(coverage.Contains(new(0,0,100)));
-        Assert.False(coverage.Contains(new(6999,0,3000)));
-    }
     [Fact]
     public void AParsedSingleDestinationStillHasItsKnownLocalCoverage()
     {

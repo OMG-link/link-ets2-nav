@@ -114,11 +114,10 @@ public sealed class RoadPathSourceTests
     public void SameDistanceDifferentUidOrConflictingRepeatedNodeIsNotSilentlyRemoved()
     {
         var map=new GameMap();var road=AddRoad(map,Point(0),Point(500));
-        var source=new RoadPathSource(map);
-        foreach(var route in new[]{
-            Route((road.Node.Uid,500),(999,500),(road.ForwardNode.Uid,0)),
-            Route((road.Node.Uid,500),(road.Node.Uid,600),(road.ForwardNode.Uid,0))})
-            Assert.Empty(source.GetPath(Point(50),Vector3.UnitX,route,route.Availability));
+        Assert.Throws<InvalidRouteOrderException>(() =>
+            Route((road.Node.Uid,500),(999,500),(road.ForwardNode.Uid,0)));
+        Assert.Throws<InvalidRouteOrderException>(() =>
+            Route((road.Node.Uid,500),(road.Node.Uid,600),(road.ForwardNode.Uid,0)));
     }
 
     [Fact]
@@ -153,16 +152,6 @@ public sealed class RoadPathSourceTests
     }
 
     [Fact]
-    public void IncreasingPayloadOrderDoesNotDefineATravelOrder()
-    {
-        var map = new GameMap();
-        var road = AddRoad(map, Point(0), Point(500));
-        var route = Route((road.ForwardNode.Uid, 0), (road.Node.Uid, 500));
-        Assert.Empty(RouteStructureIdentity.Nodes(route));
-        Assert.Empty(new RoadPathSource(map).GetPath(Point(50),Vector3.UnitX,route,route.Availability));
-    }
-
-    [Fact]
     public void ReverseRouteReversesRoadGeometryAndEndpointUids()
     {
         var map = new GameMap();
@@ -171,25 +160,6 @@ public sealed class RoadPathSourceTests
         var selected = Assert.Single(new RoadPathSource(map).GetPath(Point(450), -Vector3.UnitX, route, route.Availability));
         Assert.Equal(road.ForwardNode.Uid, selected.StartNodeUid);
         Assert.True(Vector3.Distance(Point(500), selected.Points[0]) < 0.01f);
-    }
-
-    [Fact]
-    public void EqualDistanceNodesCannotEstablishRouteOrder()
-    {
-        var map = new GameMap();
-        var road = AddRoad(map, Point(0), Point(500));
-        var route = Route((road.Node.Uid, 0), (road.ForwardNode.Uid, 0));
-        Assert.Empty(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
-    }
-
-    [Fact]
-    public void NonMonotonicRouteIsRejected()
-    {
-        var map = new GameMap();
-        var first = AddRoad(map, Point(0), Point(250));
-        var second = first.Append(Point(500));
-        var route = Route((first.Node.Uid, 500), (first.ForwardNode.Uid, 0), (second.ForwardNode.Uid, 250));
-        Assert.Empty(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
     }
 
     [Theory]
@@ -294,15 +264,7 @@ public sealed class RoadPathSourceTests
         Assert.False(source.IsPositionOnPath(Point(350, y: 8), path));
     }
 
-    [Fact]
-    public void RouteDistancePlateauIsRejectedRatherThanGuessed()
-    {
-        var map = new GameMap();
-        var road = AddRoad(map, Point(0), Point(250));
-        var second = road.Append(Point(500));
-        var route = Route((road.Node.Uid, 500), (road.ForwardNode.Uid, 500), (second.ForwardNode.Uid, 0));
-        Assert.Empty(new RoadPathSource(map).GetPath(Point(50), Vector3.UnitX, route, route.Availability));
-    }    private static RouteSnapshot GapRoute(Road first, Road second) => Route(
+    private static RouteSnapshot GapRoute(Road first, Road second) => Route(
         (first.Node.Uid, 500), (first.ForwardNode.Uid, 300),
         (second.Node.Uid, 250), (second.ForwardNode.Uid, 0));
 

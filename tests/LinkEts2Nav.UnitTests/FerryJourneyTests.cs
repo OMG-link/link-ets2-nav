@@ -38,10 +38,9 @@ public sealed class FerryJourneyTests
         Assert.True(result.Ready,result.Failure);Assert.Equal(0,result.WorldMeters);Assert.Equal(60,result.RealSeconds);
     }
     [Fact]
-    public void RepeatedCrossingsAreChargedOncePerOccurrenceAndEqualSdkDistancesAreAllowed()
+    public void RepeatedCrossingsAreChargedOncePerOccurrence()
     {
-        var s=Scene();var route=RouteSnapshot.Parse(new[]{s.A.Node.Uid,s.B.Node.Uid,s.A.Node.Uid,s.B.Node.Uid}
-            .Select(id=>new RouteNode(id,0,0)),Now);
+        var s=Scene();var route=Route(s.A.Node.Uid,s.B.Node.Uid,s.A.Node.Uid,s.B.Node.Uid);
         var result=new RouteJourneyEstimator(s.Map,(_,_)=>new(80,"category"),1,new(s.Map,[("a","b")])).Estimate(route);
         Assert.True(result.Ready,result.Failure);Assert.Equal(0,result.WorldMeters);Assert.Equal(180,result.RealSeconds);
     }

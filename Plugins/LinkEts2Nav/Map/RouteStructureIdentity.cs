@@ -2,15 +2,12 @@ using LinkEts2Nav.Runtime;
 
 namespace LinkEts2Nav.Map;
 
-/// <summary>The ingress node sequence is topology; only strictly decreasing remaining distances define forward order.</summary>
+/// <summary>The topology uses the route node sequence validated at ingress.</summary>
 public static class RouteStructureIdentity
 {
-    public static bool HasForwardOrder(RouteSnapshot route)=>route.Nodes.Zip(route.Nodes.Skip(1))
-        .All(p=>p.First.DistanceToEndMeters>p.Second.DistanceToEndMeters);
-
     public static ulong[] Nodes(RouteSnapshot route)
     {
-        if(route.Nodes.Count<2||!HasForwardOrder(route))return [];
+        if(route.Nodes.Count<2)return [];
         return route.Nodes.Select(n=>n.Uid).ToArray();
     }
 }

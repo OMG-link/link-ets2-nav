@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using ETS2LA.Game.SDK;
 using ETS2LA.Game.Telemetry;
 using ETS2LA.Shared;
@@ -14,6 +15,7 @@ public sealed class Ets2LaGameDataSource : IDisposable
     private readonly TimeProvider clock;
     private readonly object gate = new();
     private bool disposed;
+    private ExceptionDispatchInfo? navigationInputFailure;
     public GameSnapshotStore Store { get; } = new();
 
     public Ets2LaGameDataSource(IEventBus events, TimeProvider? clock = null)
@@ -75,11 +77,27 @@ public sealed class Ets2LaGameDataSource : IDisposable
         // Store serializes its updates; do not hold the source lock while its
         // route-change subscribers run.
         lock (gate) { if (disposed) return; }
-        Store.UpdateRoute(RouteSnapshot.Parse(data.entries.Select(e =>
-            new RouteNode(e.nodeUid, e.distanceToEnd, e.timeToEnd)), clock.GetUtcNow()));
+        RouteSnapshot route;
+        try
+        {
+            route = RouteSnapshot.Parse(data.entries.Select(e =>
+                new RouteNode(e.nodeUid, e.distanceToEnd, e.timeToEnd)), clock.GetUtcNow());
+        }
+        catch (InvalidRouteOrderException ex)
+        {
+            // The host catches subscriber exceptions. Deliver this error to the
+            // plugin worker on capture, even when another payload arrives first.
+            lock (gate) navigationInputFailure ??= ExceptionDispatchInfo.Capture(ex);
+            return;
+        }
+        Store.UpdateRoute(route);
     }
 
-    public GameDataSnapshot Capture() => Store.Capture(clock.GetUtcNow());
+    public GameDataSnapshot Capture()
+    {
+        lock (gate) navigationInputFailure?.Throw();
+        return Store.Capture(clock.GetUtcNow());
+    }
 
     public void Dispose()
     {

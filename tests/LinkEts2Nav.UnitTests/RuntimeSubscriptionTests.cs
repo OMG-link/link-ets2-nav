@@ -14,7 +14,7 @@ public sealed class RuntimeSubscriptionTests
         int changed = 0;
         source.Store.RouteChanged += _ => changed++;
         bus.Publish(Ets2LaGameDataSource.NavigationTopic, new NavigationData
-        { entries = [new() { nodeUid = 7 }, new() { nodeUid = 8 }] });
+        { entries = [new() { nodeUid = 7, distanceToEnd = 100 }, new() { nodeUid = 8 }] });
         bus.Publish(Ets2LaGameDataSource.NavigationTopic, new NavigationData
         { entries = [new() { nodeUid = 8 }] });
         var snapshot = source.Capture();
@@ -24,6 +24,36 @@ public sealed class RuntimeSubscriptionTests
         bus.Publish(Ets2LaGameDataSource.NavigationTopic, new NavigationData
         { entries = [new() { nodeUid = 9 }] });
         Assert.Equal(2, changed);
+    }
+
+    [Theory]
+    [InlineData(0, 100, 200)]
+    [InlineData(200, 100, 100)]
+    [InlineData(100, 200, 0)]
+    public void InvalidRouteOrderThrowsOnPluginCaptureEvenAfterAnotherPayload(float first, float second, float last)
+    {
+        var bus = new FakeBus();
+        using var source = new Ets2LaGameDataSource(bus, new FixedClock());
+
+        void Publish(float a, float b, float c) =>
+            bus.Publish(Ets2LaGameDataSource.NavigationTopic, new NavigationData
+            {
+                entries = [
+                    new() { nodeUid = 7, distanceToEnd = a },
+                    new() { nodeUid = 8, distanceToEnd = b },
+                    new() { nodeUid = 9, distanceToEnd = c },
+                ]
+            });
+
+        Publish(200, 100, 0);
+        var original = source.Capture();
+        Publish(first, second, last);
+        Assert.Same(original.Route, source.Store.Capture(original.Route.ReceivedAt).Route);
+        Publish(300, 150, 0);
+
+        var error = Assert.Throws<InvalidRouteOrderException>(() => source.Capture());
+        Assert.Contains("distances must strictly decrease", error.Message);
+        Assert.Contains(nameof(RouteSnapshot.Parse), error.StackTrace);
     }
 
     [Fact]

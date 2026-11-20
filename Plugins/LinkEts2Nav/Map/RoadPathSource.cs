@@ -217,8 +217,7 @@ public sealed class RoadPathSource:IDisposable
         routeRetry?.Dispose();
         routeWaitScope=retries.ScopeVersion;mapIssues.Clear();
         var operationKeys=new HashSet<MapObjectKey>();routeKeys=operationKeys;
-        // UID revisions do not encode metric ordering. Invalid sequences must not reuse a valid cached query.
-        routeOperationKey="route-components:"+route.Revision+":"+meaning+":"+ids.Length;
+        routeOperationKey="route-components:"+route.Revision+":"+meaning;
         routeQuery=context=>
         {
             var window=context.Snapshot;

@@ -44,11 +44,19 @@ public sealed record RouteSnapshot(
             return new(Array.Empty<RouteNode>(), string.Empty, RouteAvailability.None, receivedAt);
         var bytes = new byte[nodes.Count * sizeof(ulong)];
         for (int i = 0; i < nodes.Count; i++)
-            BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(i * sizeof(ulong)), nodes[i].Uid);
+        {
+            var node = nodes[i];
+            if (i > 0 && nodes[i - 1].DistanceToEndMeters <= node.DistanceToEndMeters)
+                throw new InvalidRouteOrderException(i, nodes[i - 1], node);
+            BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(i * sizeof(ulong)), node.Uid);
+        }
         return new(nodes.AsReadOnly(), Convert.ToHexString(SHA256.HashData(bytes)),
             RouteAvailability.Available, receivedAt, validCount >= 6000);
     }
 }
+
+internal sealed class InvalidRouteOrderException(int index, RouteNode previous, RouteNode current)
+    : FormatException($"SDK navigation distances must strictly decrease. Normalized node indices {index - 1} and {index}: {previous.Uid:X16} ({previous.DistanceToEndMeters:R} m) -> {current.Uid:X16} ({current.DistanceToEndMeters:R} m).");
 
 public enum FineObservationSignal { Toggle, PayloadChange }
 

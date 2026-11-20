@@ -30,8 +30,8 @@ public sealed class RouteJourneyEstimator(GameMapData map,Func<Road,bool,SpeedLi
         if(route.Availability!=RouteAvailability.Available||route.MayBeTruncated||route.Nodes.Count<2)
             return Missing("完整导航路线尚未就绪或已截断");
         var nodes=route.Nodes;
-        if(!RouteStructureIdentity.HasForwardOrder(route)||nodes[^1].DistanceToEndMeters>.01f)
-            return Missing("导航终端或节点顺序未确认");
+        if(nodes[^1].DistanceToEndMeters>.01f)
+            return Missing("导航终端未确认");
         var spans=new List<Span>();
         for(int i=0;i<nodes.Count-1;i++)
         {

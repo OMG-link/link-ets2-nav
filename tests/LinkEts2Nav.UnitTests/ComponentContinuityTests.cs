@@ -286,6 +286,44 @@ public sealed class ComponentContinuityTests
         Assert.Equal(NavigationSide.Right,result.Turn!.Side);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UpstreamTraceStopsAtAConfirmedSplitWithoutASurvivor(bool malformed)
+    {
+        var upstream=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,new(0,0,-12),new(80,0,4),[3],[]),
+            Curve(1,new(0,0,20),new(80,0,4),malformed?[]:[3],[]),
+            Curve(2,Vector3.Zero,new(100,0,0),[],[]),
+            Curve(3,new(80,0,4),new(100,0,4),[],[0,1])]);
+        var through=Passage(1,10,30,0,0,[2],upstream,2,2);
+        var tied=Passage(1,10,30,1,1,[0,3],upstream,2,2);
+        var first=through with{LanePaths=[through.LanePaths[0],tied.LanePaths[0]]};
+        var second=Passage(1,20,30,0,1,[1,3],upstream,1,2);
+        var road=new DirectedRoad("approach",30,40,[new(100,0,0),new(150,0,0)]);
+        var split=NativeLaneFixture.WithInterfaces(2,[
+            Curve(0,new(150,0,0),new(250,0,0),[],[]),Curve(1,new(150,0,4),new(250,0,30),[],[])]);
+        var priority=new RoadJoinPriority(50,[],[],8,"main outlet");
+        var main=Passage(2,40,50,0,0,[0],split,2,1) with{SplitPriority=priority};
+        var side=Passage(2,40,60,1,0,[1],split,2,1) with{SplitPriority=priority};
+        var graph=new NativeLaneGraph([first,second,road,main,side]);
+        var index=ComponentContinuityIndex.Build(graph);
+
+        var outlet=index.ForExit(side.Id)!;
+        if(malformed)
+        {
+            Assert.Equal(ComponentContinuityKind.Unknown,outlet.Kind);
+            Assert.Equal(MapQueryFailureKind.InvalidData,Assert.IsType<MapQueryFailure>(outlet.Issue).Kind);
+        }
+        else
+        {
+            Assert.Equal(ComponentContinuityKind.Natural,outlet.Kind);
+            Assert.Equal(ComponentLaneFate.Continues,Assert.Single(outlet.Lanes).Fate);
+            Assert.Null(outlet.Issue);
+            Assert.True(index.ForExit(main.Id)!.HasNaturalAlternative);
+        }
+    }
+
     [Fact]
     public void ExistingDeathAndLaterDeathCombineAsSoftRatherThanNatural()
     {

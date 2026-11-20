@@ -96,7 +96,10 @@ public sealed class ComponentContinuityIndex
         public List<MapQueryIssue> Issues {get;}=[];
         private sealed record Segment(DirectedRoad Edge,PrefabLanePath? Lane,double Start,double Length);
         private sealed record Local(DirectedRoad Edge,PrefabLanePath Lane,LaneContinuityBranch? Death,
-            LaneContinuityPoint? Merge,bool IdentityPreserved,MapQueryIssue? Issue);
+            LaneContinuityPoint? Merge,bool IdentityPreserved,MapQueryIssue? Issue)
+        {
+            public int? NoMainSplitIndex {get;init;}
+        }
         // Each comparable lane keeps its own measured progress. Different lane
         // arcs need not have the side lane's length between common interfaces.
         private sealed record Reference(Local Local,double StartDistance);
@@ -277,7 +280,15 @@ public sealed class ComponentContinuityIndex
                     var split=facts.Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==curve);
                     var branch=split?.Branches.FirstOrDefault(b=>b.CurveIndex==path.CurveIndices[i+1]);
                     if(branch is {Role:LaneContinuityRole.Unknown})return new(edge,path,null,null,false,branch.MapIssue??split?.MapIssue);
-                    if(branch is {Role:LaneContinuityRole.Newborn})return new(edge,path,null,null,false,null);
+                    if(branch is {Role:LaneContinuityRole.Newborn})
+                    {
+                        // An issue-free split with every branch explicitly non-surviving
+                        // proves where this lane's identity ends in the reverse graph.
+                        bool noMain=reverse&&split!.MapIssue is null&&split.Branches.All(b=>
+                            b.Role==LaneContinuityRole.Newborn&&b.MapIssue is null);
+                        return new(edge,path,null,null,false,reverse?branch.MapIssue:null)
+                            {NoMainSplitIndex=noMain?i+1:null};
+                    }
                 }
             }
             return new(edge,path,null,null,true,null);
@@ -419,6 +430,18 @@ public sealed class ComponentContinuityIndex
                     return Missing("相接预制件不唯一",node,new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接预制件不唯一"));
                 var options=component.SelectMany(e=>e.LanePaths.Where(p=>p.EntryOrder==lane).Select(p=>Inspect(e,p))).ToArray();
                 chosen=Choose(options);
+                if(chosen is null&&upstreamReferenceOrders is not null&&referenceIssue is null
+                    &&options.All(o=>!o.IdentityPreserved&&o.Issue is null))
+                {
+                    // Discarded side branches may have lost identity before the confirmed stop.
+                    var stopped=options.Where(o=>o.NoMainSplitIndex.HasValue).ToArray();
+                    if(stopped.Length>0)
+                    {
+                        double boundary=stopped.Min(o=>CurveOffset(o.Lane,o.NoMainSplitIndex!.Value));
+                        return Result(ComponentLaneFate.Continues,false,
+                            Math.Min(ComponentContinuity.WindowMeters,LaneTraceDistance.Advance(distance,boundary)));
+                    }
+                }
                 if(chosen is null)return Missing("相接组件车道没有唯一原生延续",node,
                     options.Select(p=>p.Issue).OfType<MapQueryIssue>().FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接组件车道没有唯一原生延续"));
                 var mainCandidates=component.SelectMany(e=>e.LanePaths.Where(p=>mainOrders.Contains(p.EntryOrder)).Select(p=>Inspect(e,p))).ToArray();

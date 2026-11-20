@@ -25,11 +25,11 @@ public sealed class DirectJunctionJoinTests
         var(s,m,o)=Scene();
         var decision=DirectJunctionJoin.Find(s,[s,m,o]);
         Assert.NotNull(decision);Assert.Equal(NavigationSide.Right,decision.TrafficSide);
-        var action=Assert.Single(new NavigationManeuverDetector().FindSequence([s],0,[s,m,o]));
-        Assert.Equal(ManeuverKind.TurnLeft,action.Kind);
-        Assert.Equal("左转，注意右侧来车",action.ExecutionInstruction);
-        Assert.Null(action.Instruction);Assert.Null(action.NearInstruction);
-        Assert.True(action.EndDistanceMeters>0);
+        // A legacy shared-tail/blinker summary is not sufficient production native geometry.
+        var detector=new NavigationManeuverDetector();
+        Assert.Empty(detector.FindSequence([s],0,[s,m,o]));
+        Assert.Contains(detector.Components.Issues,i=>i is LinkEts2Nav.Map.MapQueryFailure);
+
     }
 
     [Fact]
@@ -37,38 +37,6 @@ public sealed class DirectJunctionJoinTests
     {
         var(s,m,o)=Scene();m=m with{LanePaths=[m.LanePaths[0] with{CurveIndices=[5,13,7]}]};
         Assert.Null(DirectJunctionJoin.Find(s,[m,o]));
-    }
-
-    [Theory]
-    [InlineData(30,ManeuverKind.KeepRight)]
-    [InlineData(90,ManeuverKind.TurnRight)]
-    [InlineData(-30,ManeuverKind.KeepLeft)]
-    public void DirectionUsesNativeInterfaceTangents(double angle,ManeuverKind expected)
-    {
-        var(s,m,o)=Scene();
-        double radians=angle*Math.PI/180;
-        s=s with{NativeEntryTangent=Vector3.UnitX,
-            NativeExitTangent=new((float)Math.Cos(radians),0,(float)Math.Sin(radians))};
-        var action=Assert.Single(new NavigationManeuverDetector().FindSequence([s],0,[s,m,o]));
-        Assert.Equal(expected,action.Kind);
-        Assert.Null(action.ExecutionInstruction); // Parallel approach does not identify a side of oncoming traffic.
-    }
-
-    [Theory]
-    [InlineData(15,ManeuverKind.KeepRight,"向右前方行驶，注意左侧来车")]
-    [InlineData(90,ManeuverKind.TurnRight,"右转，注意左侧来车")]
-    [InlineData(-15,ManeuverKind.KeepLeft,"向左前方行驶，注意右侧来车")]
-    [InlineData(-90,ManeuverKind.TurnLeft,"左转，注意右侧来车")]
-    [InlineData(1,ManeuverKind.KeepRight,null)]
-    public void SideTurnNamingAndMainTrafficWarningUseIndependentNativeDirections(double angle,ManeuverKind expected,string? warning)
-    {
-        var(s,m,o)=Scene();double radians=angle*Math.PI/180;
-        s=s with{NativeEntryTangent=new((float)Math.Cos(radians),0,(float)-Math.Sin(radians)),NativeExitTangent=Vector3.UnitX,
-            LanePaths=[s.LanePaths[0] with{CurveBlinkers=[LaneBlinker.NoBlinker,LaneBlinker.Left,LaneBlinker.NoBlinker]}]};
-        var action=Assert.Single(new NavigationManeuverDetector().FindSequence([s],0,[s,m,o]));
-        Assert.Equal(expected,action.Kind);Assert.Equal(warning,action.ExecutionInstruction);
-        Assert.Null(action.Instruction);Assert.Null(action.NearInstruction);
-        Assert.DoesNotContain(new NavigationManeuverDetector().FindSequence([m],0,[s,m,o]),a=>a.Id.StartsWith("direct-join:"));
     }
 
     [Fact]

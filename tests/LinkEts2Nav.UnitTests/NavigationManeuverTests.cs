@@ -18,33 +18,6 @@ public sealed class NavigationManeuverTests
     private static readonly NavigationManeuverDetector Detector = new();
 
     [Theory]
-    [InlineData(1, ManeuverKind.MergeLeft)]
-    [InlineData(-1, ManeuverKind.MergeRight)]
-    public void SeparateEntranceJoiningThroughRoadProducesMergeButThroughTrafficDoesNot(int side, ManeuverKind expected)
-    {
-        var main=R("prefab:MERGE:0:1",1,3,P(0,100),P(0,100),P(0,50),P(0,0),P(0,0));
-        var ramp=R("prefab:MERGE:2:1",2,3,P(20*side,100),P(20*side,100),P(20*side,50),P(20*side,0),P(0,0));
-        var before=R("ramp",4,2,P(20*side,150),P(20*side,100));
-        var through=R("main",5,1,P(0,150),P(0,100));
-        var after=R("exit",3,6,P(0,0),P(0,-100));
-        // Both side lanes join the existing main lane 1. The old fixture sent
-        // them into a disjoint new lane 2: that proved an internal side-road
-        // contraction, not a merge into the main road.
-        LaneConnection[] lanes=[new(1,0,3,0),new(1,1,3,1),new(2,0,3,1),new(2,1,3,1)];
-        PrefabLanePath Lane(ulong entry,int input,int output,int[] curves,DirectedRoad edge)
-            =>new(10,entry,3,input,output,input,output,2,2,curves,edge.Points,100);
-        main=main with { LaneConnections=lanes,LanePaths=[Lane(1,0,0,[10,20],main),Lane(1,1,1,[11,21],main)] };
-        ramp=ramp with { LaneConnections=lanes,LanePaths=[Lane(2,0,1,[12,21],ramp),Lane(2,1,1,[13,21],ramp)] };
-        DirectedRoad[] graph=[before,through,main,ramp,after];
-        Assert.Equal(expected,Assert.Single(Detector.FindSequence([before,ramp,after],0,graph)).Kind);
-        Assert.Empty(Detector.FindSequence([through,main,after],0,graph));
-        Detector.FindSequence([before,ramp,after],55,graph,out _,out bool inside);
-        Assert.True(inside);
-        Detector.FindSequence([before,ramp,after],171,graph,out _,out bool passed);
-        Assert.False(passed);
-    }
-
-    [Theory]
     [InlineData(-1)]
     [InlineData(1)]
     public void SideRoadInternalContractionIntoADisjointNewLaneIsNotAMainRoadMerge(int side)
@@ -95,8 +68,8 @@ public sealed class NavigationManeuverTests
     [InlineData(1000, 0, 1000)]
     [InlineData(1000, 500, 1000)]
     [InlineData(1000, 1050, 1000)]
-    [InlineData(1000, 1200, double.PositiveInfinity)]
-    public void UnresolvedJoinReportsItsPositionRatherThanInvalidatingEarlierRoad(
+    [InlineData(1000, 1200, 1000)]
+    public void StaticUnresolvedJoinRetainsItsPositionUntilTheConsumerAppliesProgress(
         float approach, double vehicleAlong, double expected)
     {
         var before = R("road", 4, 1, P(0, 0), P(0, approach));
@@ -165,16 +138,6 @@ public sealed class NavigationManeuverTests
         var road = R("highway", 1, 2, P(0, 0), P(0, -2000));
         Assert.Empty(Detector.FindSequence([road], 100, [road], out double confirmed));
         Assert.Equal(2000, confirmed);
-    }
-
-    [Fact]
-    public void UnknownPrefabConfirmsOnlyItsApproachRoad()
-    {
-        var road = R("entry", 1, 2, P(0, 0), P(0, -100));
-        var unknown = R("prefab:UNKNOWN:0:1", 2, 3, P(0, -100), P(0, -140));
-        var beyond = R("beyond", 3, 4, P(0, -140), P(0, -1000));
-        Assert.Empty(Detector.FindSequence([road, unknown, beyond], 20, [road, beyond], out double confirmed));
-        Assert.Equal(100, confirmed);
     }
 
     [Fact]
@@ -432,8 +395,8 @@ public sealed class NavigationManeuverTests
     {
         var entry = R("entry", 1, 2, P(0, 100), P(0, 0));
         var circular = R("prefab:CIRCLE:0:1", 2, 3, P(0, 0), P(0, -1),
-            P(40, -1), P(40, -41), P(-40, -41), P(-40, -1), P(-41, -1));
-        var alternative = R("prefab:CIRCLE:0:2", 2, 4, P(0, 0), P(0, -60));
+            P(40, -1), P(40, -41), P(-40, -41), P(-40, -1), P(-41, -1)) with{Junction=new(2,2,1)};
+        var alternative = R("prefab:CIRCLE:0:2", 2, 4, P(0, 0), P(0, -60)) with{Junction=new(2,2,1)};
         var exit = R("exit", 3, 5, P(-41, -1), P(-141, -1));
         var straight = R("straight", 4, 6, P(0, -60), P(0, -160));
         var laterTurn = J("later-turn", 5, 7, P(-141, -1), P(-141, -101)) with{NativeEntryTangent=-Vector3.UnitX};

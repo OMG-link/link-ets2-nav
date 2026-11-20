@@ -22,12 +22,9 @@ public sealed class ComponentContinuityIndex
         var forward=new Builder(graph.ThroughTraffic,missingConnection,false,cancellationToken);
         var entries=forward.Build();
         var reverseGeometry=new Dictionary<NativeLaneGeometry,NativeLaneGeometry>(ReferenceEqualityComparer.Instance);
-        var originals=graph.Edges.GroupBy(NativeRoadKey.Of).ToDictionary(g=>g.Key,g=>g.First());
-        var originalContinuity=forward.LocalContinuity;
-        var outletCounts=graph.Edges.Where(e=>e.LanePaths.Count>0).GroupBy(e=>(e.LanePaths[0].PrefabUid,e.StartNodeUid))
-            .ToDictionary(g=>g.Key,g=>g.Select(e=>e.EndNodeUid).Distinct().Count());
-        var backward=new Builder(new NativeLaneGraph(graph.ThroughTraffic.Edges.Select(e=>Reverse(e,reverseGeometry)).ToArray()),missingConnection,true,cancellationToken);
-        var exits=backward.Build().ToDictionary(p=>p.Key,p=>Restore(p.Value,originals,originalContinuity,outletCounts));
+        var reverseEdges=graph.ThroughTraffic.Edges.Select(e=>Reverse(e,reverseGeometry)).ToArray();
+        var backward=new Builder(new NativeLaneGraph(reverseEdges),missingConnection,true,cancellationToken);
+        var exits=forward.BuildExits(backward);
         foreach(var fact in exits.Values.Where(f=>f.Kind==ComponentContinuityKind.Natural))
             foreach(var main in exits.Values.Where(f=>f.IsMain&&f.EntryNodeUid==fact.EntryNodeUid&&f.PrefabUid==fact.PrefabUid).ToArray())
                 exits[main.EdgeId]=main with{HasNaturalAlternative=true};
@@ -65,72 +62,17 @@ public sealed class ComponentContinuityIndex
         };
     }
 
-    private static ComponentPassageContinuity Restore(ComponentPassageContinuity fact,IReadOnlyDictionary<NativeRoadKey,DirectedRoad> originals,
-        IReadOnlyDictionary<ulong,LaneContinuityResult> continuity,IReadOnlyDictionary<(ulong,ulong),int> outletCounts)
+    private static ComponentBoundary? Restore(ComponentBoundary? point,
+        IReadOnlyDictionary<NativeRoadKey,DirectedRoad> originals)
     {
-        var edge=originals[new(fact.EdgeId,fact.ExitNodeUid,fact.EntryNodeUid)];
-        ComponentBoundary? Point(ComponentBoundary? point)
-        {
-            if(point is null)return null;
-            var original=originals[new(point.EdgeId,point.EndNodeUid,point.StartNodeUid)];
-            return point with{OffsetMeters=Math.Max(0,RouteGeometry.Length(original)-point.OffsetMeters),
-                Interface=point.Interface switch{ComponentBoundaryInterface.Start=>ComponentBoundaryInterface.End,
-                    ComponentBoundaryInterface.End=>ComponentBoundaryInterface.Start,_=>ComponentBoundaryInterface.None},
-                StartNodeUid=original.StartNodeUid,EndNodeUid=original.EndNodeUid};
-        }
-        // A reverse search discovers the beginning of a deceleration lane. Its
-        // spoken action is nevertheless measured in the actual travel direction.
-        var start=Point(fact.IntervalEnd);var end=Point(fact.IntervalStart);
-        ComponentBoundary? action=Point(fact.ActionPoint);
-        var exit=new ComponentBoundary(edge.Id,RouteGeometry.Length(edge),edge.Points[^1]){StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid,Interface=ComponentBoundaryInterface.End};
-        ComponentTurn? ActualTurn(ComponentLaneOutcome lane)
-        {
-            if(lane.TurnPrefabUid is {} uid&&lane.TurnSharedCurveIndex is {} shared&&lane.TurnBranchCurveIndex is {} branch)
-            {
-                var native=continuity.GetValueOrDefault(uid)?.Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==shared)
-                    ?.Branches.FirstOrDefault(b=>b.CurveIndex==branch);
-                return native is null?new(NavigationSide.None,ComponentTurnKind.Unknown,"实际分岔缺少原生转向结果"):ConvertTurn(native.Turn);
-            }
-            // A reverse separation is a forward joining of parallel lane groups.
-            // Its physical side is unchanged by reversing both travel and transfer.
-            return lane.Turn;
-        }
-        bool Same(ComponentBoundary? a,ComponentBoundary? b)=>a is not null&&b is not null&&a.EdgeId==b.EdgeId
-            &&a.StartNodeUid==b.StartNodeUid&&a.EndNodeUid==b.EndNodeUid&&Math.Abs(a.OffsetMeters-b.OffsetMeters)<1e-6;
-        // Aggregate chooses its action from exactly one of these original
-        // lane anchors. Restore that same owner, never an arbitrary first lane.
-        ComponentBoundary? OwnerPoint(ComponentLaneOutcome lane)=>fact.Kind switch
-        {
-            ComponentContinuityKind.Main or ComponentContinuityKind.Natural=>lane.InitialMidpoint,
-            ComponentContinuityKind.Hard=>lane.Terminal,
-            ComponentContinuityKind.Soft=>lane.InComponent&&lane.Fate==ComponentLaneFate.Dies?lane.Terminal:lane.SoftAction,
-            _=>null
-        };
-        var owner=fact.Kind is ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular?null:
-            fact.Lanes.FirstOrDefault(l=>Same(OwnerPoint(l),fact.ActionPoint))
-                ??throw new ArgumentException($"Reverse component {fact.EdgeId} ({fact.Kind}) has no lane owning its action anchor.",nameof(fact));
-        var turns=fact.Lanes.Select(ActualTurn).ToArray();
-        var directions=turns.Where(t=>t?.Side is NavigationSide.Left or NavigationSide.Right).Select(t=>t!.Side).Distinct().ToArray();
-        var issue=fact.Issue;
-        if(issue?.Reason=="同一组件入口的车道动作方向冲突")issue=fact.Lanes.Select(l=>l.Issue).OfType<MapQueryIssue>().FirstOrDefault();
-        if(directions.Length>1)issue=new MapQueryFailure(MapQueryFailureKind.Ambiguous,"同一组件出口的车道动作方向冲突");
-        return fact with
-        {
-            EntryNodeUid=edge.StartNodeUid,ExitNodeUid=edge.EndNodeUid,
-            EntryOrders=fact.ExitOrders,ExitOrders=fact.EntryOrders,
-            EntryLaneCount=fact.ExitLaneCount,ExitLaneCount=fact.EntryLaneCount,
-            LegalExitCount=outletCounts.GetValueOrDefault((fact.PrefabUid,edge.StartNodeUid)),
-            ActionPoint=action,LifecycleEnd=exit,IntervalStart=start,IntervalEnd=end,
-            Turn=directions.Length>1?null:owner is null?null:ActualTurn(owner),Issue=issue,
-            Lanes=fact.Lanes.Select((l,i)=>l with
-            {
-                EntryOrder=l.ExitOrder,ExitOrder=l.EntryOrder,
-                Fate=l.Fate==ComponentLaneFate.Dies?ComponentLaneFate.Born:l.Fate==ComponentLaneFate.Separates?ComponentLaneFate.Joins:l.Fate,
-                InitialMidpoint=Point(l.InitialMidpoint)!,InitialExit=exit,Terminal=Point(l.Terminal),LifecycleEnd=exit,
-                SoftAction=Point(l.SoftAction),Turn=turns[i]
-            }).ToArray()
-        };
+        if(point is null)return null;
+        var edge=originals[new(point.EdgeId,point.EndNodeUid,point.StartNodeUid)];
+        return point with{OffsetMeters=Math.Max(0,RouteGeometry.Length(edge)-point.OffsetMeters),
+            Interface=point.Interface switch{ComponentBoundaryInterface.Start=>ComponentBoundaryInterface.End,
+                ComponentBoundaryInterface.End=>ComponentBoundaryInterface.Start,_=>ComponentBoundaryInterface.None},
+            StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid};
     }
+
     private static ComponentTurn ConvertTurn(LaneTurnKind turn)=>turn switch
     {
         LaneTurnKind.ForwardLeft=>new(NavigationSide.Left,ComponentTurnKind.Forward),
@@ -149,13 +91,15 @@ public sealed class ComponentContinuityIndex
         private readonly bool reverse;
         private readonly CancellationToken token;
         private readonly Dictionary<ulong,LaneContinuityResult> continuity=[];
-        public IReadOnlyDictionary<ulong,LaneContinuityResult> LocalContinuity=>continuity;
         private readonly Dictionary<ulong,IReadOnlyList<DirectedRoad>> prefabs;
         private readonly Dictionary<ulong,IReadOnlyList<DirectedRoad>> starts;
         public List<MapQueryIssue> Issues {get;}=[];
         private sealed record Segment(DirectedRoad Edge,PrefabLanePath? Lane,double Start,double Length);
         private sealed record Local(DirectedRoad Edge,PrefabLanePath Lane,LaneContinuityBranch? Death,
-            LaneContinuityPoint? Merge,bool IdentityPreserved,MapQueryIssue? Issue);
+            LaneContinuityPoint? Merge,bool IdentityPreserved,MapQueryIssue? Issue)
+        {
+            public int? NoMainSplitIndex {get;init;}
+        }
         // Each comparable lane keeps its own measured progress. Different lane
         // arcs need not have the side lane's length between common interfaces.
         private sealed record Reference(Local Local,double StartDistance);
@@ -197,7 +141,7 @@ public sealed class ComponentContinuityIndex
                     var outcomes=rootLanes.Select(order=>Walk(first,order,mainPaths,family.Key==main)).ToArray();
                     foreach(var edge in family)
                     {
-                        var fact=ComponentContinuity.Aggregate(edge,family.Key==main,outcomes,exits,reverse);
+                        var fact=ComponentContinuity.Aggregate(edge,family.Key==main,outcomes,exits);
                         if(fact.Issue is {} issue)Issues.Add(issue);
                         result[edge.Id]=fact;
                     }
@@ -205,6 +149,121 @@ public sealed class ComponentContinuityIndex
             }
             return result;
         }
+        public Dictionary<string,ComponentPassageContinuity> BuildExits(Builder backward)
+        {
+            var result=new Dictionary<string,ComponentPassageContinuity>(StringComparer.Ordinal);
+            var originals=graph.Edges.GroupBy(NativeRoadKey.Of).ToDictionary(g=>g.Key,g=>g.First());
+            var reversed=backward.graph.Edges.GroupBy(NativeRoadKey.Of).ToDictionary(g=>g.Key,g=>g.First());
+            foreach(var group in graph.Edges.Where(e=>e.LanePaths.Count>0&&e.Junction?.IsJunction!=true)
+                .GroupBy(e=>(e.LanePaths[0].PrefabUid,e.StartNodeUid)))
+            {
+                token.ThrowIfCancellationRequested();
+                int exitCount=group.Select(e=>e.EndNodeUid).Distinct().Count();
+                if(exitCount<2)continue;
+                var priority=group.Select(e=>e.SplitPriority).OfType<RoadJoinPriority>().FirstOrDefault();
+                var main=priority?.MainEntry;
+                // Only complete scoring supplies a margin when there is no winner.
+                if(main is null&&priority?.WinningMargin is null)
+                {
+                    foreach(var edge in group)result[edge.Id]=Unknown(edge,priority,priority?.Reason??"Missing outlet priority");
+                    continue;
+                }
+
+                var localPaths=group.SelectMany(edge=>edge.LanePaths.Select(path=>(Edge:edge,Path:path,Split:FirstSideSplit(path)))).ToArray();
+                var mainPassage=main is {} mainOutlet?group.Single(e=>e.EndNodeUid==mainOutlet):null;
+                var origins=new Dictionary<int,ComponentLaneOutcome>();
+                if(mainPassage is not null)
+                {
+                    var referenceOrders=localPaths.Where(p=>p.Edge.EndNodeUid==mainPassage.EndNodeUid&&p.Split is null)
+                        .Select(p=>p.Path.EntryOrder).Distinct().ToArray();
+                    foreach(var family in localPaths.GroupBy(p=>p.Path.EntryOrder))
+                    {
+                        // The selected path only provides an anchor at the common approach port.
+                        // Upstream tracing starts at that port and never traverses this passage.
+                        if(referenceOrders.Contains(family.Key)||family.All(p=>p.Split is not null))continue;
+                        var root=family.First();
+                        var reverseEdge=reversed[new(root.Edge.Id,root.Edge.EndNodeUid,root.Edge.StartNodeUid)];
+                        var reversePath=reverseEdge.LanePaths.First(p=>p.ExitOrder==family.Key);
+                        origins.Add(family.Key,backward.Trace(reverseEdge,reversePath,null,[],false,referenceOrders));
+                    }
+                }
+                foreach(var paths in localPaths.GroupBy(p=>p.Edge.Id))
+                {
+                    var edge=paths.First().Edge;
+                    var lanes=paths.Select(p=>OutletLane(edge,p.Path,p.Split,origins.GetValueOrDefault(p.Path.EntryOrder),mainPassage,originals)).ToArray();
+                    var fact=ComponentContinuity.AggregateOutlet(edge,edge.EndNodeUid==main,lanes,exitCount);
+                    if(fact.Issue is {} issue)Issues.Add(issue);
+                    result[edge.Id]=fact;
+                }
+            }
+            return result;
+        }
+
+        private (int Index,LaneContinuityPoint Point,LaneContinuityBranch Branch)? FirstSideSplit(PrefabLanePath path)
+        {
+            if(!continuity.TryGetValue(path.PrefabUid,out var facts))return null;
+            for(int i=1;i<path.CurveIndices.Count;i++)
+            {
+                var split=facts.Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==path.CurveIndices[i-1]);
+                var branch=split?.Branches.FirstOrDefault(b=>b.CurveIndex==path.CurveIndices[i]);
+                if(branch is {Role:LaneContinuityRole.Newborn or LaneContinuityRole.Unknown})return (i,split!,branch);
+            }
+            return null;
+        }
+
+        private ComponentLaneOutcome OutletLane(DirectedRoad edge,PrefabLanePath path,
+            (int Index,LaneContinuityPoint Point,LaneContinuityBranch Branch)? split,ComponentLaneOutcome? origin,
+            DirectedRoad? mainPassage,IReadOnlyDictionary<NativeRoadKey,DirectedRoad> originals)
+        {
+            double length=Length(path);
+            var entry=At(edge,path,0);var midpoint=At(edge,path,length/2);var exit=At(edge,path,length);
+            var lane=new ComponentLaneOutcome(path.EntryOrder,path.ExitOrder,ComponentLaneFate.Continues,false,0,
+                midpoint,exit,null,exit,null){CurveIndices=path.CurveIndices,MidpointDistanceFromExitMeters=midpoint.OffsetMeters};
+            if(!continuity.TryGetValue(path.PrefabUid,out var facts))
+                return lane with{Fate=ComponentLaneFate.Unresolved,Issue=new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,
+                    "Native outlet lane geometry is unavailable."){QueryAnchor=entry.Position}};
+            if(facts.MapIssue is {} invalid)return lane with{Fate=ComponentLaneFate.Unresolved,Issue=invalid};
+            if(split is {} change)
+            {
+                if(change.Branch.MapIssue is not null||change.Branch.Role==LaneContinuityRole.Unknown)
+                    return lane with{Fate=ComponentLaneFate.Unresolved,Issue=change.Branch.MapIssue??change.Point.MapIssue
+                        ??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"Native outlet split is unresolved."){QueryAnchor=entry.Position}};
+                int index=change.Index;
+                var terminal=At(edge,path,CurveOffset(path,index));
+                return lane with{Fate=ComponentLaneFate.Born,InComponent=true,Terminal=terminal,
+                    Turn=ConvertTurn(change.Branch.Turn),TurnPrefabUid=path.PrefabUid,TurnSharedCurveIndex=change.Point.SharedCurveIndex,
+                    TurnBranchCurveIndex=change.Branch.CurveIndex,StructuralConstraintId=$"lane-split:{path.PrefabUid:X16}:{change.Point.SharedCurveIndex}",
+                    TerminalDistanceFromExitMeters=terminal.OffsetMeters};
+            }
+            if(origin is null)return lane;
+            if(origin.Issue is not null||origin.Fate==ComponentLaneFate.Unresolved)
+                return lane with{Fate=ComponentLaneFate.Unresolved,Issue=origin.Issue};
+            if(origin.Fate is not (ComponentLaneFate.Dies or ComponentLaneFate.Separates))return lane;
+            var (turn,issue)=SoftOutletTurn(mainPassage!,edge);
+            return lane with{Fate=origin.Fate==ComponentLaneFate.Dies?ComponentLaneFate.Born:ComponentLaneFate.Joins,
+                Terminal=Restore(origin.Terminal,originals),SoftAction=Restore(origin.SoftAction,originals),
+                Turn=turn,Issue=issue,TerminalDistanceFromExitMeters=-origin.TerminalDistanceFromExitMeters,
+                SoftActionDistanceFromExitMeters=-origin.SoftActionDistanceFromExitMeters,StructuralConstraintId=origin.StructuralConstraintId};
+        }
+
+        private static (ComponentTurn? Turn,MapQueryIssue? Issue) SoftOutletTurn(DirectedRoad main,DirectedRoad side)
+        {
+            var mainPort=main.Points[^1];
+            var sidePort=side.Points[^1];
+            bool HorizontalFinite(Vector3 point)=>float.IsFinite(point.X)&&float.IsFinite(point.Z);
+            if(main.NativeExitTangent is not {} tangent||!HorizontalFinite(tangent)||(tangent.X==0&&tangent.Z==0)
+                ||!HorizontalFinite(mainPort)||!HorizontalFinite(sidePort))
+                return (null,new MapQueryFailure(MapQueryFailureKind.InvalidData,
+                    $"Soft outlet {side.Id}: invalid downstream port coordinates or main outlet tangent."){QueryAnchor=side.Points[0]});
+            // PPD path tangents point in the forward travel direction. With the
+            // map's X/Z axes, a positive determinant is to the driver's right.
+            double cross=tangent.X*((double)sidePort.Z-mainPort.Z)-tangent.Z*((double)sidePort.X-mainPort.X);
+            if(cross==0)
+                return (null,new MapQueryFailure(MapQueryFailureKind.Ambiguous,
+                    $"Soft outlet {side.Id}: downstream outlet is collinear with the main outlet heading."){QueryAnchor=side.Points[0]});
+            return (new(cross>0?NavigationSide.Right:NavigationSide.Left,ComponentTurnKind.Forward),null);
+        }
+
         private ComponentPassageContinuity Unknown(DirectedRoad edge,RoadJoinPriority? priority,string reason)
         {
             var missingObjects=(priority?.MapIssues??[]).OfType<MissingMapObjects>().SelectMany(i=>i.Keys).Distinct().ToArray();
@@ -237,7 +296,15 @@ public sealed class ComponentContinuityIndex
                     var split=facts.Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==curve);
                     var branch=split?.Branches.FirstOrDefault(b=>b.CurveIndex==path.CurveIndices[i+1]);
                     if(branch is {Role:LaneContinuityRole.Unknown})return new(edge,path,null,null,false,branch.MapIssue??split?.MapIssue);
-                    if(branch is {Role:LaneContinuityRole.Newborn})return new(edge,path,null,null,false,null);
+                    if(branch is {Role:LaneContinuityRole.Newborn})
+                    {
+                        // An issue-free split with every branch explicitly non-surviving
+                        // proves where this lane's identity ends in the reverse graph.
+                        bool noMain=reverse&&split!.MapIssue is null&&split.Branches.All(b=>
+                            b.Role==LaneContinuityRole.Newborn&&b.MapIssue is null);
+                        return new(edge,path,null,null,false,reverse?branch.MapIssue:null)
+                            {NoMainSplitIndex=noMain?i+1:null};
+                    }
                 }
             }
             return new(edge,path,null,null,true,null);
@@ -248,18 +315,25 @@ public sealed class ComponentContinuityIndex
             var family=prefabs[initial.LanePaths[0].PrefabUid].Where(e=>e.StartNodeUid==initial.StartNodeUid)
                 .SelectMany(e=>e.LanePaths.Where(p=>p.EntryOrder==order).Select(p=>Inspect(e,p))).ToArray();
             var chosen=Choose(family);
-            var path=chosen?.Lane??family.First().Lane;
-            var originEdge=chosen?.Edge??initial;
-            double initialLength=Length(path);var trace=new List<Segment>{new(originEdge,path,-initialLength,initialLength)};
+            return Trace(initial,chosen?.Lane??family.First().Lane,chosen,mains,mainEntrance,
+                initialIssue:family.Select(p=>p.Issue).OfType<MapQueryIssue>().FirstOrDefault());
+        }
+
+        private ComponentLaneOutcome Trace(DirectedRoad initial,PrefabLanePath path,Local? chosen,Local[] mains,bool mainEntrance,
+            IReadOnlyList<int>? upstreamReferenceOrders=null,MapQueryIssue? initialIssue=null)
+        {
+            double initialLength=Length(path);var originEdge=chosen?.Edge??initial;
             var midpoint=At(originEdge,path,initialLength/2);var exit=At(originEdge,path,initialLength);
+            var trace=new List<Segment>();
+            if(upstreamReferenceOrders is null)trace.Add(new(originEdge,path,-initialLength,initialLength));
             ComponentLaneOutcome Result(ComponentLaneFate fate,bool current,double distance,ComponentBoundary? terminal=null,
                 ComponentBoundary? lifecycle=null,ComponentTurn? turn=null,MapQueryIssue? issue=null)
             {
                 double actionDistance=Math.Max(0,distance-ComponentContinuity.AdvanceMeters);
                 if(reverse&&fate is ComponentLaneFate.Dies or ComponentLaneFate.Separates)
                     actionDistance=Math.Min(Math.Max(0,distance),ComponentContinuity.AdvanceMeters);
-                return new(order,path.ExitOrder,fate,current,distance,midpoint,exit,terminal,lifecycle,
-                    At(trace,actionDistance),turn,issue)
+                return new(path.EntryOrder,path.ExitOrder,fate,current,distance,midpoint,exit,terminal,lifecycle,
+                    trace.Count==0?exit:At(trace,actionDistance),turn,issue)
                 {
                     MidpointDistanceFromExitMeters=-initialLength/2,
                     LifecycleDistanceFromExitMeters=current?0:distance+(lifecycle is not null&&terminal is not null&&lifecycle.EdgeId==terminal.EdgeId?lifecycle.OffsetMeters-terminal.OffsetMeters:0),
@@ -274,68 +348,89 @@ public sealed class ComponentContinuityIndex
             }
             ComponentLaneOutcome Missing(string reason,ulong node,MapQueryIssue? issue=null)
                 =>Result(ComponentLaneFate.Unresolved,false,0,issue:(issue??missing?.Invoke(node)
-                    ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason)) with{QueryAnchor=initial.Points[0]});
-            if(chosen is null)return Missing("原生车道没有唯一身份延续",initial.StartNodeUid,
-                family.Select(p=>p.Issue).OfType<MapQueryIssue>().FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"原生车道没有唯一身份延续"));
-            // The scored main entrance needs only its local identity proof.
-            // Its downstream graph is a dependency of side-lane classification,
-            // not of the already confirmed main continuation in this component.
-            if(mainEntrance&&chosen.Death is null)
-                return Result(ComponentLaneFate.Continues,true,0);
+                    ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason)) with{QueryAnchor=upstreamReferenceOrders is null?initial.Points[0]:exit.Position});
             double distance=-initialLength;bool current=true;
             var references=mains.Select(m=>new Reference(m,-Length(m.Lane))).ToArray();
             MapQueryIssue? referenceIssue=null;
+            if(upstreamReferenceOrders is not null)
+            {
+                distance=0;current=false;
+                var terminal=Advance(exit.EndNodeUid,path.ExitOrder,NativeLaneGraph.Prefab(initial)!,
+                    upstreamReferenceOrders.Select(order=>(Order:order,Distance:0d)).ToArray());
+                if(terminal is not null)return terminal;
+            }
+            else
+            {
+                if(chosen is null)return Missing("原生车道没有唯一身份延续",initial.StartNodeUid,
+                    initialIssue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"原生车道没有唯一身份延续"));
+                // The scored main entrance needs only its local identity proof.
+                // Its downstream graph is a dependency of side-lane classification,
+                // not of the already confirmed main continuation in this component.
+                if(mainEntrance&&chosen.Death is null)
+                    return Result(ComponentLaneFate.Continues,true,0);
+            }
             // A repeated edge is another measured occurrence. Positive lengths
             // make the finite-graph traversal advance to its distance budget.
             while(true)
             {
                 token.ThrowIfCancellationRequested();
-                if(mains.Length==0&&chosen.Death is null)return Missing("主线资格已丢失，无法确认最近主线",chosen.Edge.StartNodeUid,
+                var localLane=chosen!;
+                if(mains.Length==0&&localLane.Death is null)return Missing("主线资格已丢失，无法确认最近主线",localLane.Edge.StartNodeUid,
                     referenceIssue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"主线资格已丢失，无法确认最近主线"));
                 double referenceEnd=references.Length>0&&references.All(r=>r.Local.Death is not null)
                     ?references.Max(r=>LaneTraceDistance.Advance(r.StartDistance,DeathOffset(r.Local))):double.PositiveInfinity;
                 double limit=Math.Min(ComponentContinuity.WindowMeters,referenceEnd);
-                bool sameDeath=chosen.Death is not null&&references.Any(r=>r.Local.Death is not null
-                    &&r.Local.Lane.PrefabUid==chosen.Lane.PrefabUid
-                    &&r.Local.Merge!.SharedCurveIndex==chosen.Merge!.SharedCurveIndex);
-                bool sameBoundary=references.Any(r=>r.Local.Death is not null&&r.Local.Lane.PrefabUid==chosen.Lane.PrefabUid
-                    &&r.Local.Merge!.SharedCurveIndex==chosen.Lane.CurveIndices[0]);
+                bool sameDeath=localLane.Death is not null&&references.Any(r=>r.Local.Death is not null
+                    &&r.Local.Lane.PrefabUid==localLane.Lane.PrefabUid
+                    &&r.Local.Merge!.SharedCurveIndex==localLane.Merge!.SharedCurveIndex);
+                bool sameBoundary=references.Any(r=>r.Local.Death is not null&&r.Local.Lane.PrefabUid==localLane.Lane.PrefabUid
+                    &&r.Local.Merge!.SharedCurveIndex==localLane.Lane.CurveIndices[0]);
                 if(distance>limit&&!sameDeath&&!sameBoundary)
                     return referenceIssue is null?Result(ComponentLaneFate.Continues,false,limit)
-                        :Missing("主线参照结束，其余候选身份尚未确认",chosen.Edge.StartNodeUid,referenceIssue);
-                var nearest=mains.Select(m=>(Main:m,Distance:Vector3.DistanceSquared(chosen.Lane.Points[0],m.Lane.Points[0])))
+                        :Missing("主线参照结束，其余候选身份尚未确认",localLane.Edge.StartNodeUid,referenceIssue);
+                var nearest=mains.Select(m=>(Main:m,Distance:Vector3.DistanceSquared(localLane.Lane.Points[0],m.Lane.Points[0])))
                     .OrderBy(p=>p.Distance).ToArray();
                 if(nearest.Length>1&&Math.Abs(nearest[0].Distance-nearest[1].Distance)<1e-6
                     &&nearest[0].Main.Lane.ExitNodeUid!=nearest[1].Main.Lane.ExitNodeUid)
-                    return Missing("最近主线不唯一",chosen.Edge.StartNodeUid,new MapQueryFailure(MapQueryFailureKind.Ambiguous,"最近主线不唯一"));
-                if(nearest.Length>0&&chosen.Lane.ExitNodeUid!=nearest[0].Main.Lane.ExitNodeUid)
+                    return Missing("最近主线不唯一",localLane.Edge.StartNodeUid,new MapQueryFailure(MapQueryFailureKind.Ambiguous,"最近主线不唯一"));
+                if(nearest.Length>0&&localLane.Lane.ExitNodeUid!=nearest[0].Main.Lane.ExitNodeUid)
                 {
-                    var terminal=At(chosen.Edge,chosen.Lane,0);
-                    var (direction,directionIssue)=Toward(chosen.Lane,nearest[0].Main.Lane);
+                    var terminal=At(localLane.Edge,localLane.Lane,0);
+                    // The upstream trace establishes a boundary. A soft outlet
+                    // uses its own downstream ports to describe the direction.
+                    if(reverse)return Result(ComponentLaneFate.Separates,current,distance,terminal,terminal);
+                    var (direction,directionIssue)=Toward(localLane.Lane,nearest[0].Main.Lane);
                     return Result(ComponentLaneFate.Separates,current,distance,terminal,terminal,direction,
                         directionIssue);
                 }
-                if(chosen.Death is {} dead)
+                if(localLane.Death is {} dead)
                 {
-                    double local=DeathOffset(chosen);
+                    double local=DeathOffset(localLane);
                     double at=distance+local;
                     // The side's real death at the same origin wins over the
                     // observation range ending there.
                     if(at<=ComponentContinuity.WindowMeters&&(at<=referenceEnd||sameDeath))
-                        return Result(ComponentLaneFate.Dies,current,at,At(chosen.Edge,chosen.Lane,local),
-                        At(chosen.Edge,chosen.Lane,Length(chosen.Lane)),ConvertTurn(dead.Turn),dead.MapIssue);
+                        return Result(ComponentLaneFate.Dies,current,at,At(localLane.Edge,localLane.Lane,local),
+                        At(localLane.Edge,localLane.Lane,Length(localLane.Lane)),reverse?null:ConvertTurn(dead.Turn),
+                        reverse?localLane.Merge!.MapIssue:dead.MapIssue);
                     if(referenceEnd>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,at);
                 }
                 if(referenceEnd<=ComponentContinuity.WindowMeters)
                     return referenceIssue is null?Result(ComponentLaneFate.Continues,false,referenceEnd)
-                        :Missing("主线参照结束，其余候选身份尚未确认",chosen.Edge.StartNodeUid,referenceIssue);
-                distance=LaneTraceDistance.Advance(distance,Length(chosen.Lane));
+                        :Missing("主线参照结束，其余候选身份尚未确认",localLane.Edge.StartNodeUid,referenceIssue);
+                distance=LaneTraceDistance.Advance(distance,Length(localLane.Lane));
                 if(distance>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,distance);
-                ulong node=chosen.Edge.EndNodeUid;int lane=chosen.Lane.ExitOrder;
+                ulong node=localLane.Edge.EndNodeUid;int lane=localLane.Lane.ExitOrder;
                 var mainEnds=references.Where(r=>r.Local.Death is null&&r.Local.Lane.ExitNodeUid==node)
                     .Select(r=>(Order:r.Local.Lane.ExitOrder,Distance:LaneTraceDistance.Advance(r.StartDistance,Length(r.Local.Lane)))).ToArray();
+                var advance=Advance(node,lane,NativeLaneGraph.Prefab(localLane.Edge)!,mainEnds);
+                if(advance is not null)return advance;
+            }
+
+            ComponentLaneOutcome? Advance(ulong node,int lane,string previousPrefab,(int Order,double Distance)[] mainEnds)
+            {
                 var mainOrders=mainEnds.Select(r=>r.Order).ToHashSet();
-                string previousPrefab=NativeLaneGraph.Prefab(chosen.Edge)!;string? previousRoad=null;
+                string? previousRoad=null;
                 while(true)
                 {
                     var next=(starts.GetValueOrDefault(node)??[]).Where(e=>NativeLaneGraph.Prefab(e)!=previousPrefab&&e.Id!=previousRoad).ToArray();
@@ -355,6 +450,18 @@ public sealed class ComponentContinuityIndex
                     return Missing("相接预制件不唯一",node,new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接预制件不唯一"));
                 var options=component.SelectMany(e=>e.LanePaths.Where(p=>p.EntryOrder==lane).Select(p=>Inspect(e,p))).ToArray();
                 chosen=Choose(options);
+                if(chosen is null&&upstreamReferenceOrders is not null&&referenceIssue is null
+                    &&options.All(o=>!o.IdentityPreserved&&o.Issue is null))
+                {
+                    // Discarded side branches may have lost identity before the confirmed stop.
+                    var stopped=options.Where(o=>o.NoMainSplitIndex.HasValue).ToArray();
+                    if(stopped.Length>0)
+                    {
+                        double boundary=stopped.Min(o=>CurveOffset(o.Lane,o.NoMainSplitIndex!.Value));
+                        return Result(ComponentLaneFate.Continues,false,
+                            Math.Min(ComponentContinuity.WindowMeters,LaneTraceDistance.Advance(distance,boundary)));
+                    }
+                }
                 if(chosen is null)return Missing("相接组件车道没有唯一原生延续",node,
                     options.Select(p=>p.Issue).OfType<MapQueryIssue>().FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接组件车道没有唯一原生延续"));
                 var mainCandidates=component.SelectMany(e=>e.LanePaths.Where(p=>mainOrders.Contains(p.EntryOrder)).Select(p=>Inspect(e,p))).ToArray();
@@ -364,6 +471,7 @@ public sealed class ComponentContinuityIndex
                     .SelectMany(m=>mainEnds.Where(r=>r.Order==m.Lane.EntryOrder).Select(r=>new Reference(m,r.Distance))).ToArray();
                 mains=references.Select(r=>r.Local).ToArray();
                 trace.Add(new(chosen.Edge,chosen.Lane,distance,Length(chosen.Lane)));current=false;
+                return null;
             }
         }
         private static Local? Choose(IEnumerable<Local> paths)
@@ -412,8 +520,10 @@ public sealed class ComponentContinuityIndex
             int shared=local.Merge!.SharedCurveIndex;
             ValidateDeathVisit(local.Lane,shared);
             int index=local.Lane.CurveIndices.ToList().IndexOf(shared);
-            return new LanePolyline(local.Lane.Points).Along[local.Lane.CurveStartPointIndices[index]];
+            return CurveOffset(local.Lane,index);
         }
+        private static double CurveOffset(PrefabLanePath lane,int index)
+            =>new LanePolyline(lane.Points).Along[lane.CurveStartPointIndices[index]];
         [System.Diagnostics.Conditional("DEBUG")]
         private static void ValidateDeathVisit(PrefabLanePath lane,int shared)
         {

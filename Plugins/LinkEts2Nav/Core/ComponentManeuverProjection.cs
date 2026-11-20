@@ -17,6 +17,7 @@ public static class ComponentManeuverProjection
         var offsets=new double[route.Count+1];for(int i=0;i<route.Count;i++)offsets[i+1]=offsets[i]+RouteGeometry.Length(route[i]);
         var edge=route[visit];
         bool Selected(ComponentPassageContinuity fact)=>fact.EdgeId==edge.Id&&fact.EntryNodeUid==edge.StartNodeUid&&fact.ExitNodeUid==edge.EndNodeUid;
+        var selectedOutlet=exitFacts.FirstOrDefault(Selected);
         foreach(var fact in entryFacts.Where(Selected))Add(fact,false);
         foreach(var fact in exitFacts.Where(Selected))Add(fact,true);
         var projected=actions.GroupBy(a=>(Series:a.SpeechSequenceId??a.Id,Start:a.SpeechSequenceStartDistanceMeters))
@@ -48,6 +49,8 @@ public static class ComponentManeuverProjection
             if(fact.Kind==ComponentContinuityKind.Main&&!choose)
             {
                 if(outgoing&&entryFacts.Any(f=>Selected(f)&&f.Kind==ComponentContinuityKind.Main))return;
+                if(!outgoing&&selectedOutlet is { } outlet&&(outlet.Kind is ComponentContinuityKind.Natural
+                    or ComponentContinuityKind.Hard or ComponentContinuityKind.Soft||outlet.HasNaturalAlternative))return;
                 AddPassage(fact,offsets[visit+1]);
                 return;
             }
@@ -92,7 +95,7 @@ public static class ComponentManeuverProjection
             }
             else
             {
-                var selectedTurn=SelectedTurn(fact);
+                var selectedTurn=outgoing&&fact.Kind==ComponentContinuityKind.Soft?fact.Turn:SelectedTurn(fact);
                 actualTurn=selectedTurn;
                 if(selectedTurn is not {Side:NavigationSide.Left or NavigationSide.Right} turn||turn.Kind==ComponentTurnKind.Unknown)
                 {Fail(fact,"组件转向侧无法判定，不能推测播报方向");return;}
@@ -126,7 +129,8 @@ public static class ComponentManeuverProjection
         {
             if(selectedPath is null)
                 throw new ArgumentNullException(nameof(selectedPath),$"Component {fact.EdgeId} ({fact.Kind}) requires the selected lane to describe its turn.");
-            var lane=fact.Lanes.FirstOrDefault(l=>l.EntryOrder==selectedPath.EntryOrder&&l.ExitOrder==selectedPath.ExitOrder)
+            var lane=fact.Lanes.FirstOrDefault(l=>l.EntryOrder==selectedPath.EntryOrder&&l.ExitOrder==selectedPath.ExitOrder
+                &&(l.CurveIndices.Count==0||l.CurveIndices.SequenceEqual(selectedPath.CurveIndices)))
                 ??throw new ArgumentException($"Component {fact.EdgeId} ({fact.Kind}) has no outcome for selected lane {selectedPath.EntryOrder}->{selectedPath.ExitOrder}.",nameof(selectedPath));
             return lane.Turn??throw new ArgumentException($"Component {fact.EdgeId} ({fact.Kind}) selected lane {selectedPath.EntryOrder}->{selectedPath.ExitOrder} has no turn result.",nameof(fact));
         }
@@ -135,7 +139,7 @@ public static class ComponentManeuverProjection
             // A sole legal outlet is a merge/transition, not a ramp junction
             // to count or remind the driver to pass straight through.
             if(fact.LegalExitCount<2)return;
-            // The reverse classifier emits every outlet for this multi-outlet
+            // The classifier emits every outlet for this multi-outlet
             // entrance. A missing map dependency remains a typed query issue;
             // it does not turn an unfinished side query into unsupported input.
             var sideQuery=JunctionExitSides.OtherSides(exitFacts,fact.PrefabUid,edge.StartNodeUid,edge.EndNodeUid);

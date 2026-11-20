@@ -213,6 +213,154 @@ public sealed class ComponentContinuityTests
     }
 
     [Fact]
+    public void OutletTypesAndLaneOrdersBelongToTheOriginalEntrance()
+    {
+        var geometry=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,new(0,0,0),new(100,0,0),[],[]),Curve(1,new(0,0,4),new(100,0,24),[],[]),
+            Curve(2,new(120,0,34),new(100,0,8),[],[])]);
+        var priority=new RoadJoinPriority(20,[],[],8,"main outlet");
+        var main=Passage(1,10,20,0,0,[0],geometry,2,2) with{SplitPriority=priority};
+        var side=Passage(1,10,30,1,0,[1],geometry,2,2) with{SplitPriority=priority};
+        var other=Passage(1,20,30,0,1,[2],geometry,2,2);
+        var approach=new DirectedRoad("approach",9,10,[new(-600,0,0),Vector3.Zero]);
+        var index=ComponentContinuityIndex.Build(new([approach,main,side,other]));
+
+        var actual=index.ForExit(side.Id)!;
+        Assert.Equal(ComponentContinuityKind.Natural,actual.Kind);
+        Assert.Equal([1],actual.EntryOrders);
+        Assert.Equal([0],actual.ExitOrders);
+        Assert.Equal([1],Assert.Single(actual.Lanes).CurveIndices);
+        Assert.True(index.ForExit(main.Id)!.HasNaturalAlternative);
+        Assert.Null(index.ForExit(other.Id));
+        var mainOutlet=index.ForExit(main.Id)!;
+        var entry=mainOutlet with{HasNaturalAlternative=false};
+        var projected=ComponentManeuverProjection.Build([main],0,[entry],index.Exits,main.LanePaths[0]);
+        Assert.Equal(ManeuverKind.ChooseLanes,Assert.Single(projected.Actions).Kind);
+    }
+
+    [Fact]
+    public void NaturalOutletDominatesHardPathToTheSameOutlet()
+    {
+        var geometry=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),Curve(1,new(20,0,0),new(100,0,0),[],[0]),
+            Curve(2,new(20,0,0),new(100,0,24),[],[0]),Curve(3,new(0,0,4),new(100,0,28),[],[])]);
+        var priority=new RoadJoinPriority(20,[],[],8,"main outlet");
+        var main=Passage(1,10,20,0,0,[0,1],geometry,2,1) with{SplitPriority=priority};
+        var hard=Passage(1,10,30,0,0,[0,2],geometry,2,2) with{SplitPriority=priority};
+        var natural=Passage(1,10,30,1,1,[3],geometry,2,2);
+        var side=hard with{LanePaths=[hard.LanePaths[0],natural.LanePaths[0]]};
+        var upstream=new DirectedRoad("upstream",9,10,[new(-600,0,0),Vector3.Zero]);
+        var result=ComponentContinuityIndex.Build(new([upstream,main,side])).ForExit(side.Id)!;
+
+        Assert.Equal(ComponentContinuityKind.Natural,result.Kind);
+        Assert.Equal([1],result.EntryOrders);
+        Assert.Null(result.Issue);
+        Assert.Equal(20,Assert.Single(result.Lanes,l=>l.InComponent).Terminal!.Position.X,3);
+        Assert.Single(result.Lanes,l=>l.Fate==ComponentLaneFate.Continues);
+    }
+
+    [Fact]
+    public void SoftOutletDominatesHardPathToTheSameOutlet()
+    {
+        var birth=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),Curve(1,new(20,0,0),new(100,0,0),[],[0]),
+            Curve(2,new(20,0,0),new(100,0,4),[],[0])]);
+        var inherited=Passage(1,10,30,0,0,[0,1],birth,1,2);
+        var added=Passage(1,10,30,0,1,[0,2],birth,1,2);
+        var upstream=inherited with{LanePaths=[inherited.LanePaths[0],added.LanePaths[0]]};
+        var road=new DirectedRoad("parallel",30,40,[new(100,0,0),new(350,0,0)]);
+        var geometry=NativeLaneFixture.WithInterfaces(2,[
+            Curve(0,new(350,0,0),new(370,0,0),[1,2],[]),Curve(1,new(370,0,0),new(450,0,0),[],[0]),
+            Curve(2,new(370,0,0),new(450,0,24),[],[0]),Curve(3,new(350,0,4),new(450,0,28),[],[])]);
+        var priority=new RoadJoinPriority(50,[],[],8,"main outlet");
+        var main=Passage(2,40,50,0,0,[0,1],geometry,2,1) with{SplitPriority=priority};
+        var hard=Passage(2,40,60,0,0,[0,2],geometry,2,2) with{SplitPriority=priority};
+        var soft=Passage(2,40,60,1,1,[3],geometry,2,2);
+        var side=hard with{LanePaths=[hard.LanePaths[0],soft.LanePaths[0]]};
+        var result=ComponentContinuityIndex.Build(new([upstream,road,main,side])).ForExit(side.Id)!;
+
+        Assert.Equal(ComponentContinuityKind.Soft,result.Kind);
+        Assert.Equal([1],result.EntryOrders);
+        Assert.Equal(150,result.ActionPoint!.Position.X,3);
+        Assert.Equal(370,Assert.Single(result.Lanes,l=>l.InComponent).Terminal!.Position.X,3);
+        Assert.Equal(NavigationSide.Right,result.Turn!.Side);
+    }
+
+    [Fact]
+    public void FullyScoredOutletsWithoutAWinnerKeepNaturalAndHardPaths()
+    {
+        var geometry=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),Curve(1,new(20,0,0),new(100,0,0),[],[0]),
+            Curve(2,new(20,0,0),new(100,0,30),[],[0]),Curve(3,new(0,0,4),new(100,0,4),[],[])]);
+        var scored=RoadJoinPriorityScorer.Evaluate([new(20,2,0,0,5),new(30,1,0,0,5)]);
+        Assert.Null(scored.MainEntry);
+        Assert.NotNull(scored.WinningMargin);
+        var first=Passage(1,10,20,0,0,[0,1],geometry,2,2) with{SplitPriority=scored};
+        var second=Passage(1,10,20,1,1,[3],geometry,2,2);
+        var natural=first with{LanePaths=[first.LanePaths[0],second.LanePaths[0]]};
+        var hard=Passage(1,10,30,0,0,[0,2],geometry,2,1) with{SplitPriority=scored};
+        var index=ComponentContinuityIndex.Build(new([natural,hard]),_=>throw new InvalidOperationException("No upstream search"));
+
+        var naturalFact=index.ForExit(natural.Id)!;
+        Assert.Equal(ComponentContinuityKind.Natural,naturalFact.Kind);
+        Assert.False(naturalFact.IsMain);
+        Assert.Equal([0,1],naturalFact.EntryOrders);
+        var hardFact=index.ForExit(hard.Id)!;
+        Assert.Equal(ComponentContinuityKind.Hard,hardFact.Kind);
+        Assert.False(hardFact.IsMain);
+        Assert.Equal(NavigationSide.Right,hardFact.Turn!.Side);
+        Assert.Equal(20,hardFact.ActionPoint!.Position.X,3);
+
+        var entry=naturalFact with{Kind=ComponentContinuityKind.Main,IsMain=true};
+        var through=ComponentManeuverProjection.Build([natural],0,[entry],index.Exits,natural.LanePaths[0]);
+        var action=Assert.Single(through.Actions);
+        Assert.Equal(ManeuverKind.Straight,action.Kind);
+        Assert.Equal(NavigationSide.Right,action.StraightExitSides);
+        Assert.Empty(through.Issues);
+        var turning=ComponentManeuverProjection.Build([hard],0,[],index.Exits,hard.LanePaths[0]);
+        Assert.Equal(ManeuverKind.KeepRight,Assert.Single(turning.Actions).Kind);
+        Assert.Empty(turning.Issues);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UpstreamTraceStopsAtAConfirmedSplitWithoutASurvivor(bool malformed)
+    {
+        var upstream=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,new(0,0,-12),new(80,0,4),[3],[]),
+            Curve(1,new(0,0,20),new(80,0,4),malformed?[]:[3],[]),
+            Curve(2,Vector3.Zero,new(100,0,0),[],[]),
+            Curve(3,new(80,0,4),new(100,0,4),[],[0,1])]);
+        var through=Passage(1,10,30,0,0,[2],upstream,2,2);
+        var tied=Passage(1,10,30,1,1,[0,3],upstream,2,2);
+        var first=through with{LanePaths=[through.LanePaths[0],tied.LanePaths[0]]};
+        var second=Passage(1,20,30,0,1,[1,3],upstream,1,2);
+        var road=new DirectedRoad("approach",30,40,[new(100,0,0),new(150,0,0)]);
+        var split=NativeLaneFixture.WithInterfaces(2,[
+            Curve(0,new(150,0,0),new(250,0,0),[],[]),Curve(1,new(150,0,4),new(250,0,30),[],[])]);
+        var priority=new RoadJoinPriority(50,[],[],8,"main outlet");
+        var main=Passage(2,40,50,0,0,[0],split,2,1) with{SplitPriority=priority};
+        var side=Passage(2,40,60,1,0,[1],split,2,1) with{SplitPriority=priority};
+        var graph=new NativeLaneGraph([first,second,road,main,side]);
+        var index=ComponentContinuityIndex.Build(graph);
+
+        var outlet=index.ForExit(side.Id)!;
+        if(malformed)
+        {
+            Assert.Equal(ComponentContinuityKind.Unknown,outlet.Kind);
+            Assert.Equal(MapQueryFailureKind.InvalidData,Assert.IsType<MapQueryFailure>(outlet.Issue).Kind);
+        }
+        else
+        {
+            Assert.Equal(ComponentContinuityKind.Natural,outlet.Kind);
+            Assert.Equal(ComponentLaneFate.Continues,Assert.Single(outlet.Lanes).Fate);
+            Assert.Null(outlet.Issue);
+            Assert.True(index.ForExit(main.Id)!.HasNaturalAlternative);
+        }
+    }
+
+    [Fact]
     public void ExistingDeathAndLaterDeathCombineAsSoftRatherThanNatural()
     {
         var edge=Join(false)[1];ComponentBoundary P(float x)=>new(edge.Id,x,new(x,0,0));
@@ -225,8 +373,12 @@ public sealed class ComponentContinuityTests
         Assert.Equal(420,result.LifecycleEnd!.Position.X);
     }
 
-    [Fact]
-    public void SoftOutletMirrorsBirthButAdvancesItsActionInActualTravelDirection()
+    [Theory]
+    [InlineData(-30,NavigationSide.Left,null)]
+    [InlineData(30,NavigationSide.Right,null)]
+    [InlineData(0,NavigationSide.None,MapQueryFailureKind.Ambiguous)]
+    public void SoftOutletUsesUpstreamBirthForTimingAndDownstreamPortsForDirection(float outletZ,
+        NavigationSide sideDirection,MapQueryFailureKind? failure)
     {
         var birth=NativeLaneFixture.WithInterfaces(1,[Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),
             Curve(1,new(20,0,0),new(100,0,0),[],[0]),Curve(2,new(20,0,0),new(100,0,4),[],[0])]);
@@ -235,16 +387,32 @@ public sealed class ComponentContinuityTests
         var before=keep with{LanePaths=[keep.LanePaths[0],added.LanePaths[0]]};
         var road=new DirectedRoad("parallel",30,40,[new(100,0,0),new(350,0,0)]);
         var end=NativeLaneFixture.WithInterfaces(2,[Curve(0,new(350,0,0),new(450,0,0),[],[]),
-            Curve(1,new(350,0,4),new(450,0,30),[],[])]);
+            Curve(1,new(350,0,4),new(450,0,outletZ),[],[])]);
         var main=Passage(2,40,50,0,0,[0],end,2,1) with{SplitPriority=new(50,[],[],8,"main outlet")};
         var side=Passage(2,40,60,1,0,[1],end,2,1) with{SplitPriority=main.SplitPriority};
-        var result=ComponentContinuityIndex.Build(new([before,road,main,side])).ForExit(side.Id)!;
+        var index=ComponentContinuityIndex.Build(new([before,road,main,side]));
+        var result=index.ForExit(side.Id)!;
         Assert.Equal(ComponentContinuityKind.Soft,result.Kind);
         Assert.Equal(20,result.IntervalStart!.Position.X,3);
         Assert.Equal(350,result.IntervalEnd!.Position.X,3);
         Assert.Equal(150,result.ActionPoint!.Position.X,3);
         Assert.Equal(450,result.LifecycleEnd!.Position.X,3);
-        Assert.Equal(NavigationSide.Right,result.Turn!.Side);
+        var projection=ComponentManeuverProjection.Build([before,road,side],2,[],index.Exits,side.LanePaths[0]);
+        if(failure is { } expectedFailure)
+        {
+            Assert.Null(result.Turn);
+            Assert.Equal(expectedFailure,Assert.IsType<MapQueryFailure>(result.Issue).Kind);
+            Assert.Empty(projection.Actions);
+            Assert.Equal(expectedFailure,Assert.IsType<MapQueryFailure>(Assert.Single(projection.Issues)).Kind);
+        }
+        else
+        {
+            Assert.Equal(sideDirection,result.Turn!.Side);
+            Assert.Null(result.Issue);
+            Assert.Equal(sideDirection,JunctionExitSides.OtherSides(index.Exits,2,40,50).Sides);
+            Assert.Equal(sideDirection==NavigationSide.Left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight,
+                Assert.Single(projection.Actions).Kind);
+        }
     }
 
     [Fact]

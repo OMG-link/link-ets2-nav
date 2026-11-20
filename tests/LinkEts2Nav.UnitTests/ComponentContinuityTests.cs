@@ -286,6 +286,42 @@ public sealed class ComponentContinuityTests
         Assert.Equal(NavigationSide.Right,result.Turn!.Side);
     }
 
+    [Fact]
+    public void FullyScoredOutletsWithoutAWinnerKeepNaturalAndHardPaths()
+    {
+        var geometry=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),Curve(1,new(20,0,0),new(100,0,0),[],[0]),
+            Curve(2,new(20,0,0),new(100,0,30),[],[0]),Curve(3,new(0,0,4),new(100,0,4),[],[])]);
+        var scored=RoadJoinPriorityScorer.Evaluate([new(20,2,0,0,5),new(30,1,0,0,5)]);
+        Assert.Null(scored.MainEntry);
+        Assert.NotNull(scored.WinningMargin);
+        var first=Passage(1,10,20,0,0,[0,1],geometry,2,2) with{SplitPriority=scored};
+        var second=Passage(1,10,20,1,1,[3],geometry,2,2);
+        var natural=first with{LanePaths=[first.LanePaths[0],second.LanePaths[0]]};
+        var hard=Passage(1,10,30,0,0,[0,2],geometry,2,1) with{SplitPriority=scored};
+        var index=ComponentContinuityIndex.Build(new([natural,hard]),_=>throw new InvalidOperationException("No upstream search"));
+
+        var naturalFact=index.ForExit(natural.Id)!;
+        Assert.Equal(ComponentContinuityKind.Natural,naturalFact.Kind);
+        Assert.False(naturalFact.IsMain);
+        Assert.Equal([0,1],naturalFact.EntryOrders);
+        var hardFact=index.ForExit(hard.Id)!;
+        Assert.Equal(ComponentContinuityKind.Hard,hardFact.Kind);
+        Assert.False(hardFact.IsMain);
+        Assert.Equal(NavigationSide.Right,hardFact.Turn!.Side);
+        Assert.Equal(20,hardFact.ActionPoint!.Position.X,3);
+
+        var entry=naturalFact with{Kind=ComponentContinuityKind.Main,IsMain=true};
+        var through=ComponentManeuverProjection.Build([natural],0,[entry],index.Exits,natural.LanePaths[0]);
+        var action=Assert.Single(through.Actions);
+        Assert.Equal(ManeuverKind.Straight,action.Kind);
+        Assert.Equal(NavigationSide.Right,action.StraightExitSides);
+        Assert.Empty(through.Issues);
+        var turning=ComponentManeuverProjection.Build([hard],0,[],index.Exits,hard.LanePaths[0]);
+        Assert.Equal(ManeuverKind.KeepRight,Assert.Single(turning.Actions).Kind);
+        Assert.Empty(turning.Issues);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

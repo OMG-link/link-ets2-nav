@@ -161,25 +161,30 @@ public sealed class ComponentContinuityIndex
                 int exitCount=group.Select(e=>e.EndNodeUid).Distinct().Count();
                 if(exitCount<2)continue;
                 var priority=group.Select(e=>e.SplitPriority).OfType<RoadJoinPriority>().FirstOrDefault();
-                if(priority?.MainEntry is not {} main)
+                var main=priority?.MainEntry;
+                // Only complete scoring supplies a margin when there is no winner.
+                if(main is null&&priority?.WinningMargin is null)
                 {
                     foreach(var edge in group)result[edge.Id]=Unknown(edge,priority,priority?.Reason??"Missing outlet priority");
                     continue;
                 }
 
                 var localPaths=group.SelectMany(edge=>edge.LanePaths.Select(path=>(Edge:edge,Path:path,Split:FirstSideSplit(path)))).ToArray();
-                var referenceOrders=localPaths.Where(p=>p.Edge.EndNodeUid==main&&p.Split is null)
-                    .Select(p=>p.Path.EntryOrder).Distinct().ToArray();
                 var origins=new Dictionary<int,ComponentLaneOutcome>();
-                foreach(var family in localPaths.GroupBy(p=>p.Path.EntryOrder))
+                if(main is {} mainOutlet)
                 {
-                    // The selected path only provides an anchor at the common approach port.
-                    // Upstream tracing starts at that port and never traverses this passage.
-                    if(referenceOrders.Contains(family.Key)||family.All(p=>p.Split is not null))continue;
-                    var root=family.First();
-                    var reverseEdge=reversed[new(root.Edge.Id,root.Edge.EndNodeUid,root.Edge.StartNodeUid)];
-                    var reversePath=reverseEdge.LanePaths.First(p=>p.ExitOrder==family.Key);
-                    origins.Add(family.Key,backward.Trace(reverseEdge,reversePath,null,[],false,referenceOrders));
+                    var referenceOrders=localPaths.Where(p=>p.Edge.EndNodeUid==mainOutlet&&p.Split is null)
+                        .Select(p=>p.Path.EntryOrder).Distinct().ToArray();
+                    foreach(var family in localPaths.GroupBy(p=>p.Path.EntryOrder))
+                    {
+                        // The selected path only provides an anchor at the common approach port.
+                        // Upstream tracing starts at that port and never traverses this passage.
+                        if(referenceOrders.Contains(family.Key)||family.All(p=>p.Split is not null))continue;
+                        var root=family.First();
+                        var reverseEdge=reversed[new(root.Edge.Id,root.Edge.EndNodeUid,root.Edge.StartNodeUid)];
+                        var reversePath=reverseEdge.LanePaths.First(p=>p.ExitOrder==family.Key);
+                        origins.Add(family.Key,backward.Trace(reverseEdge,reversePath,null,[],false,referenceOrders));
+                    }
                 }
                 foreach(var paths in localPaths.GroupBy(p=>p.Edge.Id))
                 {

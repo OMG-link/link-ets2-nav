@@ -108,7 +108,10 @@ public sealed class NearbyCameraScanner
                 signalPrefabs.Add((prefab,access.Descriptor));
                 roundaboutIndex.AddPrefab(prefab,access.Descriptor,resource,access.CacheKey);
                 if(!geometryCache.TryGetValue(key,out var geometry))
-                    geometry=(PrefabPathGeometry.Build(prefab,access.Descriptor),FreeNavigationArea.Build(prefab,source.Descriptor));
+                {
+                    var continuity=PrefabNavigationOverrides.ContinuityFor(prefab,resource,source.Descriptor);
+                    geometry=(PrefabPathGeometry.Build(prefab,access.Descriptor,continuity),FreeNavigationArea.Build(prefab,source.Descriptor));
+                }
                 nextGeometry[key]=geometry;junctions.AddRange(geometry.Paths);areas.AddRange(geometry.Areas);
             }
             foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road,speedReader);

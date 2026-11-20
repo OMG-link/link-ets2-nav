@@ -42,7 +42,9 @@ public sealed class ComponentContinuityIndex
                 // This reverse merge represents an actual split, which deliberately ignores lamps.
                 original.Curves.Select(c=>new NativeLaneCurve(c.Index,c.End,c.Start,-c.EndTangent,-c.StartTangent,c.Previous,c.Next)
                     {MapIssue=c.MapIssue,Blinker=LaneBlinker.NoBlinker}).ToArray())
-                {InputCurveIndices=original.OutputCurveIndices,OutputCurveIndices=original.InputCurveIndices};
+                {InputCurveIndices=original.OutputCurveIndices,OutputCurveIndices=original.InputCurveIndices,
+                    ContinuationOverrides=original.ContinuationOverrides.Select(o=>o with
+                    {Kind=o.Kind==LaneContinuityPointKind.Split?LaneContinuityPointKind.Merge:LaneContinuityPointKind.Split}).ToArray()};
             return value;
         }
         return edge with

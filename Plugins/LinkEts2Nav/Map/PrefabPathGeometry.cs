@@ -8,6 +8,10 @@ namespace LinkEts2Nav.Map;
 public static class PrefabPathGeometry
 {
     public static IReadOnlyList<DirectedRoad> Build(Prefab prefab,PrefabDescriptor descriptor)
+        =>Build(prefab,descriptor,[]);
+
+    internal static IReadOnlyList<DirectedRoad> Build(Prefab prefab,PrefabDescriptor descriptor,
+        IReadOnlyList<NativeContinuationOverride> continuityOverrides)
     {
         int count=descriptor.Nodes.Count;
         PrefabPlacement.ValidateTopology(prefab,descriptor);
@@ -16,7 +20,7 @@ public static class PrefabPathGeometry
         var control=placement.ControlNodes;var curves=descriptor.NavCurves;
         bool Valid(int i)=>i>=0&&i<curves.Count&&Finite(curves[i].StartPosition)&&Finite(curves[i].EndPosition)
             &&float.IsFinite(curves[i].Length)&&curves[i].Length>.001f;
-        var nativeGeometry=BuildNativeGeometry(prefab.Uid,descriptor,placement);
+        var nativeGeometry=BuildNativeGeometry(prefab.Uid,descriptor,placement) with{ContinuationOverrides=continuityOverrides};
         var targets=control.SelectMany(n=>n.OutputLines).Where(Valid).ToHashSet();
         var searches=control.SelectMany(n=>n.InputLines).Where(Valid).Distinct()
             .ToDictionary(i=>i,i=>PrefabCurvePathfinder.FindEach(descriptor,i,targets));

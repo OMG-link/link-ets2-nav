@@ -73,6 +73,20 @@ public sealed class LaneContinuityTests
         Assert.Equal(LaneTurnKind.ForwardLeft,merge.Branches[1].Turn);
         Assert.Equal(Vector3.Zero,split.Origin);Assert.Equal(Vector3.Zero,merge.Origin);
     }
+    [Fact]
+    public void RegisteredSplitContinuationKeepsMeasuredAnglesAndReclassifiesTheOtherTurn()
+    {
+        var geometry=Split(10,35);
+        var standard=Point(geometry);
+        var corrected=Point(geometry with{ContinuationOverrides=[new(LaneContinuityPointKind.Split,2,1)]});
+
+        Assert.Equal(LaneContinuityRole.Survivor,standard.Branches[0].Role);
+        Assert.Equal(LaneContinuityRole.Survivor,corrected.Branches[1].Role);
+        Assert.Equal(LaneContinuityRole.Newborn,corrected.Branches[0].Role);
+        Assert.Equal(LaneTurnKind.ForwardRight,corrected.Branches[0].Turn);
+        Assert.Equal(standard.Branches.Select(b=>b.NormalizedAngle),corrected.Branches.Select(b=>b.NormalizedAngle));
+    }
+
     [Theory]
     [InlineData(-44,LaneTurnKind.ForwardRight)]
     [InlineData(-46,LaneTurnKind.Right)]

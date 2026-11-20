@@ -27,6 +27,7 @@ public sealed record ComponentLaneOutcome(int EntryOrder,int ExitOrder,Component
     ComponentBoundary? Terminal,ComponentBoundary? LifecycleEnd,
     ComponentBoundary? SoftAction,ComponentTurn? Turn=null,MapQueryIssue? Issue=null)
 {
+    public IReadOnlyList<int> CurveIndices {get;init;}=[];
     public double MidpointDistanceFromExitMeters {get;init;}
     public double LifecycleDistanceFromExitMeters {get;init;}
     public double SoftActionDistanceFromExitMeters {get;init;}
@@ -57,7 +58,7 @@ public static class ComponentContinuity
     public const double AdvanceMeters=200;
 
     public static ComponentPassageContinuity Aggregate(DirectedRoad edge,bool isMain,
-        IReadOnlyList<ComponentLaneOutcome> lanes,int legalExitCount,bool outgoing=false)
+        IReadOnlyList<ComponentLaneOutcome> lanes,int legalExitCount)
     {
         ulong uid=edge.LanePaths.FirstOrDefault()?.PrefabUid??0;
         int input=edge.LanePaths.Select(p=>p.EntryLaneCount).DefaultIfEmpty(0).Max();
@@ -90,7 +91,7 @@ public static class ComponentContinuity
             &&l.TerminalDistanceFromExitMeters<=WindowMeters);
         if(hard)
         {
-            var first=outgoing?lanes.MaxBy(l=>l.TerminalDistanceFromExitMeters)!:lanes.MinBy(l=>l.TerminalDistanceFromExitMeters)!;
+            var first=lanes.MinBy(l=>l.TerminalDistanceFromExitMeters)!;
             var last=lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!;
             return Result(ComponentContinuityKind.Hard,first.Terminal,last.LifecycleEnd,turn:first.Turn);
         }
@@ -98,17 +99,59 @@ public static class ComponentContinuity
         {
             double CandidateDistance(ComponentLaneOutcome lane)=>lane.InComponent&&lane.Fate==ComponentLaneFate.Dies
                 ?lane.TerminalDistanceFromExitMeters:lane.SoftActionDistanceFromExitMeters;
-            var first=outgoing?lanes.MaxBy(CandidateDistance)!:lanes.MinBy(CandidateDistance)!;
+            var first=lanes.MinBy(CandidateDistance)!;
             var last=lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!;
             var terminal=lanes.MaxBy(l=>l.TerminalDistanceFromExitMeters)!;
             return Result(ComponentContinuityKind.Soft,first.InComponent&&first.Fate==ComponentLaneFate.Dies?first.Terminal:first.SoftAction,last.LifecycleEnd,
                 lanes.First().InitialExit,terminal.Terminal,turn:first.Turn);
         }
         if(isMain)return Result(ComponentContinuityKind.Main,
-            (outgoing?lanes.MaxBy(l=>l.MidpointDistanceFromExitMeters):lanes.MinBy(l=>l.MidpointDistanceFromExitMeters))!.InitialMidpoint,
+            lanes.MinBy(l=>l.MidpointDistanceFromExitMeters)!.InitialMidpoint,
             lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!.InitialExit);
         return Result(ComponentContinuityKind.Natural,
-            (outgoing?lanes.MaxBy(l=>l.MidpointDistanceFromExitMeters):lanes.MinBy(l=>l.MidpointDistanceFromExitMeters))!.InitialMidpoint,
+            lanes.MinBy(l=>l.MidpointDistanceFromExitMeters)!.InitialMidpoint,
             lanes.MaxBy(l=>l.LifecycleDistanceFromExitMeters)!.InitialExit);
     }
+
+    public static ComponentPassageContinuity AggregateOutlet(DirectedRoad edge,bool isMain,
+        IReadOnlyList<ComponentLaneOutcome> lanes,int legalExitCount)
+    {
+        var path=edge.LanePaths[0];
+        var inherited=lanes.Where(l=>l.Fate==ComponentLaneFate.Continues).ToArray();
+        var uncertain=lanes.FirstOrDefault(l=>l.Fate==ComponentLaneFate.Unresolved);
+        var soft=lanes.Where(l=>!l.InComponent&&(l.Fate is ComponentLaneFate.Born or ComponentLaneFate.Joins)).ToArray();
+        var hard=lanes.Where(l=>l.InComponent&&l.Fate==ComponentLaneFate.Born).ToArray();
+        ComponentPassageContinuity Result(ComponentContinuityKind kind,IReadOnlyList<ComponentLaneOutcome> dominant,
+            ComponentLaneOutcome? owner,ComponentBoundary? action=null,ComponentBoundary? start=null,ComponentBoundary? end=null,
+            MapQueryIssue? issue=null)
+        {
+            var directions=dominant.Select(l=>l.Turn?.Side).Where(s=>s is NavigationSide.Left or NavigationSide.Right).Distinct().ToArray();
+            if(directions.Length>1)issue=new MapQueryFailure(MapQueryFailureKind.Ambiguous,"Outlet lanes disagree on turn side.")
+                {QueryAnchor=edge.Points[0]};
+            var constraints=dominant.Select(l=>l.StructuralConstraintId).OfType<string>().Distinct().Order().ToArray();
+            return new(edge.Id,path.PrefabUid,edge.StartNodeUid,edge.EndNodeUid,isMain,kind,action,owner?.InitialExit,start,end,
+                dominant.Select(l=>l.EntryOrder).Distinct().Order().ToArray(),dominant.Select(l=>l.ExitOrder).Distinct().Order().ToArray(),
+                path.EntryLaneCount,path.ExitLaneCount,legalExitCount,issue is null?owner?.Turn:null,lanes,issue)
+                {StructuralConstraintId=constraints.Length==0?null:string.Join('|',constraints)};
+        }
+        if(inherited.Length>0)
+        {
+            var first=inherited.MinBy(l=>l.InitialMidpoint.OffsetMeters)!;
+            return Result(isMain?ComponentContinuityKind.Main:ComponentContinuityKind.Natural,inherited,first,first.InitialMidpoint);
+        }
+        if(uncertain is not null)return Result(ComponentContinuityKind.Unknown,[],null,
+            issue:uncertain.Issue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"Outlet lane origin is unresolved.")
+                {QueryAnchor=edge.Points[0]});
+        if(soft.Length>0)
+        {
+            var first=soft.MinBy(l=>l.SoftActionDistanceFromExitMeters)!;
+            var earliest=soft.MinBy(l=>l.TerminalDistanceFromExitMeters)!;
+            var approachEnd=new ComponentBoundary(edge.Id,0,edge.Points[0])
+                {StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid,Interface=ComponentBoundaryInterface.Start};
+            return Result(ComponentContinuityKind.Soft,soft,first,first.SoftAction,earliest.Terminal,approachEnd);
+        }
+        var firstHard=hard.MinBy(l=>l.Terminal!.OffsetMeters)!;
+        return Result(ComponentContinuityKind.Hard,hard,firstHard,firstHard.Terminal);
+    }
+
 }

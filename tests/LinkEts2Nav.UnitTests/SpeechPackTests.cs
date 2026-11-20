@@ -130,7 +130,7 @@ public sealed class SpeechPackTests : IDisposable
     {
         Assert.Equal(expected, SpeechPack.Number(number));
         Assert.Equal(SpeechPack.DefaultTexts().Count(), SpeechPack.DefaultTexts().Distinct().Count());
-        Assert.InRange(SpeechPack.DefaultTexts().Count(), 1, 256);
+        Assert.NotEmpty(SpeechPack.DefaultTexts());
         Assert.Contains("两百米处，有测速照相，限速九十。", SpeechPack.DefaultTexts());
     }
 

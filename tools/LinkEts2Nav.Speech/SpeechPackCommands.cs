@@ -85,7 +85,7 @@ public static class SpeechPackCommands
     private static void Validate(SpeechJobs jobs)
     {
         if (jobs.Schema != 1 || jobs.Kind is not ("fixed" or "city-names") || jobs.Items is null
-            || jobs.Items.Length < 1 || jobs.Items.Length > (jobs.Kind == "fixed" ? 256 : 4096))
+            || jobs.Items.Length < 1 || jobs.Kind == "city-names" && jobs.Items.Length > 4096)
             throw new InvalidDataException("Invalid speech jobs schema, kind or count.");
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var job in jobs.Items)

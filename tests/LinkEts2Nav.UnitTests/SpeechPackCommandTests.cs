@@ -25,7 +25,7 @@ public sealed class SpeechPackCommandTests : IDisposable
         await SpeechPackCommands.RunAsync(["--export-jobs", "--output", Jobs]);
         var jobs = JsonSerializer.Deserialize<SpeechJobs>(File.ReadAllText(Jobs))!;
         Assert.Equal("fixed", jobs.Kind);
-        Assert.InRange(jobs.Items.Length, 1, 256);
+        Assert.NotEmpty(jobs.Items);
         Assert.Equal(SpeechPack.DefaultTexts(), jobs.Items.Select(j => j.Text));
         Assert.All(jobs.Items, j => Assert.Equal(SpeechPack.FileName(j.Text), j.File));
         Assert.Contains(jobs.Items, j => j.Text == SpeechPack.UncalibratedText);

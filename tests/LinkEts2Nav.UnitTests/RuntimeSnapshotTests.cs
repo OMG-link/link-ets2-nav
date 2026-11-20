@@ -73,7 +73,7 @@ public sealed class RuntimeSnapshotTests
     [Fact]
     public void FullSharedMemoryPayloadIsMarkedPotentiallyTruncated()
     {
-        var route = RouteSnapshot.Parse(Enumerable.Range(1, 6000).Select(i => new RouteNode((ulong)i, 0, 0)), Now);
+        var route = RouteSnapshot.Parse(Enumerable.Range(1, 6000).Select(i => new RouteNode((ulong)i, 6000-i, 0)), Now);
         Assert.True(route.MayBeTruncated);
     }
 
@@ -159,17 +159,17 @@ public sealed class RuntimeSnapshotTests
     public void IngressRemovesOnlyAdjacentRecordsWithAllThreeFieldsEqual()
     {
         var a=new RouteNode(7,100,20);var b=new RouteNode(8,50,10);
-        var parsed=RouteSnapshot.Parse([a,a,b,b,a],Now);
-        Assert.Equal(new[]{a,b,a},parsed.Nodes);
-        Assert.Equal(RouteSnapshot.Parse([a,b,a],Now).Revision,parsed.Revision);
+        var c=a with{DistanceToEndMeters=0};
+        var parsed=RouteSnapshot.Parse([a,a,b,b,c],Now);
+        Assert.Equal(new[]{a,b,c},parsed.Nodes);
+        Assert.Equal(RouteSnapshot.Parse([a,b,c],Now).Revision,parsed.Revision);
     }
     [Theory]
     [InlineData(101,20)]
     [InlineData(100,21)]
-    public void SameUidWithDifferentDistanceOrTimeIsPreserved(float distance,float time)
+    public void SameUidDoesNotExemptMetricsFromStrictDistanceOrdering(float distance,float time)
     {
-        var parsed=RouteSnapshot.Parse([new(7,100,20),new(7,distance,time)],Now);
-        Assert.Equal(2,parsed.Nodes.Count);
+        Assert.Throws<InvalidRouteOrderException>(()=>RouteSnapshot.Parse([new(7,100,20),new(7,distance,time)],Now));
     }
     [Theory]
     [InlineData(5999,false)]

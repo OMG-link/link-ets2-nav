@@ -22,7 +22,7 @@ public sealed class DiagnosticsInteractionTests
         var attributes=frames.Array.Take(frames.Count).Where(f=>f.FrameType==RenderTreeFrameType.Attribute).ToArray();
         Assert.DoesNotContain(attributes,a=>a.AttributeName.StartsWith("@",StringComparison.Ordinal));
         var buttons=attributes.Where(a=>a.AttributeName=="onclick").ToArray();
-        Assert.Equal(2,buttons.Length);
+        Assert.Equal(5,buttons.Length);
         Assert.All(buttons,b=>Assert.True(b.AttributeValue is MulticastDelegate or EventCallback<MouseEventArgs>));
         Assert.Contains(attributes,a=>a.AttributeName=="oninput" && a.AttributeValue is MulticastDelegate or EventCallback or EventCallback<ChangeEventArgs>);
     }

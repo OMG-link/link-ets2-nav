@@ -49,7 +49,7 @@ public sealed class ContextualSpeechTests : IDisposable
         var plan=ContextualSpeech.ReadPlan();Assert.Equal(25,plan.Items.Length);
         Assert.All(plan.Items,i=>Assert.EndsWith("。",i.CarrierText));
         var direct=File.ReadAllLines(Path.Combine(root,"direct-texts.txt"));
-        Assert.Equal(231,direct.Length);Assert.DoesNotContain(plan.Items,i=>direct.Contains(i.Text));
+        Assert.Equal(SpeechTextCatalog.DefaultTexts.Except(plan.Items.Select(i=>i.Text)),direct);Assert.DoesNotContain(plan.Items,i=>direct.Contains(i.Text));
         Assert.Contains("红灯即将变绿。",direct);
         Assert.Equal(22,File.ReadAllLines(Path.Combine(root,"carrier-texts.txt")).Length);
     }

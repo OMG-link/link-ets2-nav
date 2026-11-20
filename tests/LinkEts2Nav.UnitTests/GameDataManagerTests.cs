@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using System.Text;
 using LinkEts2Nav.Map;
+using LinkEts2Nav.Runtime;
 using TruckLib;
 using TruckLib.ScsMap;
 using ControlNode = TruckLib.Models.Ppd.ControlNode;
@@ -146,6 +147,115 @@ public sealed class GameDataManagerTests
         Assert.Equal(MapQueryFailureKind.DefinitionUnavailable,failure.Kind);
         Assert.Contains("000000000000002A",failure.Reason);Assert.Contains("/prefab/port.ppd",failure.Reason);
         Assert.Contains("NavCurves=0",failure.Reason);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SdkPassageThroughAnOrdinaryPrefabWithNoNativePathThrows(bool withRetryScheduler)
+    {
+        var (data,window,route)=MissingPrefabPassage();
+        using var dataset=data;
+        if(withRetryScheduler)
+        {
+            var scheduler=new MapRetryCoordinator();
+            scheduler.Adopt(window,1);
+            window=window with{Retries=scheduler};
+        }
+        using var paths=new RoadPathSource(window);
+        for(int attempt=0;attempt<2;attempt++)
+        {
+            var exception=Assert.Throws<InvalidDataException>(()=>paths.GetRouteComponents(route));
+            Assert.Contains("000000000000002A (/prefab/facility.ppd)",exception.Message);
+            Assert.Contains("000000000000000A → 000000000000000B",exception.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ExplicitFacilityMayHaveNoNativePath(bool ferry)
+    {
+        var (data,window,route)=MissingPrefabPassage(ferry:ferry,company:!ferry);
+        using var dataset=data;
+        using var paths=new RoadPathSource(window);
+        Assert.Empty(paths.GetRouteComponents(route));
+    }
+
+    [Fact]
+    public void KnownCompanyInANeighboringSectorDoesNotInvalidateItsPrefabPassage()
+    {
+        var (data,host,route)=MissingPrefabPassage(neighboringCompany:true);
+        using var dataset=data;
+        var prefab=data.GetPrefab(42)!.Instance;
+        var company=Assert.Single(prefab.SlaveItems.OfType<Company>());
+        Assert.Same(prefab,company.Prefab);
+        Assert.Same(company,data.Map.GetItem<Company>(company.Uid));
+
+        var window=new TruckLib.ScsMap.Map();
+        SectorCoordinate sector=new(0,0);
+        new HostMapView(host.Map).MergeInto(window,[sector]);
+        Assert.False(window.MapItems.ContainsKey(company.Uid));
+        var companies=data.Companies.Build(window);
+        Assert.Empty(companies.Places);
+        var snapshot=new NearbyMapSnapshot(window,[],[],[sector]){Data=data,Companies=companies,
+            MissingConnection=uid=>data.DescribeMissingConnection(window,uid)};
+        using var paths=new RoadPathSource(snapshot);
+        Assert.Empty(paths.GetRouteComponents(route));
+        Assert.DoesNotContain(paths.MapIssues,issue=>issue is MissingMapObjects);
+    }
+
+    [Fact]
+    public void AProjectedOutPathIsNotAMissingNativePath()
+    {
+        var (data,window,route)=MissingPrefabPassage(nativePath:true);
+        using var dataset=data;
+        var prefab=data.GetPrefab(42)!;
+        Assert.NotEmpty(PrefabPassageLengths.Read(prefab.Instance,prefab.Description!,10,11));
+        var access=PrefabPlayerAccess.Build(prefab.Description!,[false,null],[null,false]);
+        Assert.Empty(PrefabPassageLengths.Read(prefab.Instance,access.Descriptor,10,11));
+        window=window with{PrefabPaths=PrefabPathGeometry.Build(prefab.Instance,access.Descriptor)};
+        using var paths=new RoadPathSource(window);
+        Assert.Empty(paths.GetRouteComponents(route));
+        Assert.Contains(paths.MapIssues,i=>i is MapQueryFailure{Kind:MapQueryFailureKind.DefinitionUnavailable});
+    }
+
+    [Fact]
+    public void AnUnloadedPrefabInterfaceRemainsAMapDependency()
+    {
+        var (data,window,route)=MissingPrefabPassage();
+        using var dataset=data;
+        window.Map.Nodes.Remove(11);
+        using var paths=new RoadPathSource(window);
+        Assert.Empty(paths.GetRouteComponents(route));
+        Assert.Contains(paths.MapIssues.OfType<MissingMapObjects>(),i=>i.Keys.Contains(new(MapObjectKind.Node,11)));
+    }
+
+    private static (GameDataManager Data,NearbyMapSnapshot Window,RouteSnapshot Route) MissingPrefabPassage(
+        bool ferry=false,bool company=false,bool nativePath=false,bool neighboringCompany=false)
+    {
+        var fs=new Files();
+        fs.Content["/def/world/prefab.test.sii"]="SiiNunit { prefab_model : prefab.test { prefab_desc: \"/prefab/facility.ppd\" } }";
+        fs.Content["/prefab/facility.ppd"]="cached binary descriptor";
+        var map=new TruckLib.ScsMap.Map();
+        var entry=new Node{Uid=10,Position=Vector3.Zero};
+        var exit=new Node{Uid=11,Position=new(0,0,20)};
+        var prefab=new Prefab{Uid=42,Model=new Token("test"),Nodes=[entry,exit]};
+        entry.ForwardItem=prefab;exit.BackwardItem=prefab;
+        map.Nodes.Add(entry.Uid,entry);map.Nodes.Add(exit.Uid,exit);map.MapItems.Add(prefab.Uid,prefab);
+        if(ferry)prefab.Ferry=Ferry.Add(map,new(0,0,10),"terminal");
+        if(neighboringCompany)Company.Add(map,prefab,new(4100,0,0));
+        var data=new GameDataManager(fs,map:map);
+        data.Prepare();
+        data.Projection("ppd","/prefab/facility.ppd",()=>new PrefabDescriptor
+        {
+            Nodes=[new ControlNode{Position=entry.Position,InputLines=nativePath?[0]:[],OutputLines=[]},
+                new ControlNode{Position=exit.Position,InputLines=[],OutputLines=nativePath?[0]:[]}],
+            NavCurves=nativePath?[new NavCurve{StartPosition=entry.Position,EndPosition=exit.Position,Length=20}]:[]
+        });
+        var window=new NearbyMapSnapshot(map,[],[],[]){Data=data,MissingConnection=uid=>data.DescribeMissingConnection(map,uid),
+            Companies=new(company?[new(90,prefab.Uid,"terminal","",null)]:[],[prefab])};
+        return (data,window,RouteSnapshot.Parse([new(entry.Uid,20,1),new(exit.Uid,0,0)],DateTimeOffset.UtcNow));
     }
 
     [Fact]

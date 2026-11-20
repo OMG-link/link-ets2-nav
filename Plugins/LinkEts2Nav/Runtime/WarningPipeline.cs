@@ -30,8 +30,7 @@ public sealed class WarningPipeline(IWarningPlanner? planner = null,GuidanceCoor
         {
             previousMap = nearby.Map;
             paths?.Dispose();
-            paths = new RoadPathSource(nearby.Map, nearby.PrefabPaths,native:nearby.NativeGraph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null,
-                missingConnection:nearby.MissingConnection,retries:nearby.Retries,ferries:nearby.Ferries);
+            paths = new RoadPathSource(nearby);
             speedLimits = new SpeedLimitResolver(nearby.SpeedLimits, paths);
         }
         bool hasRoute = data.RouteAvailability == RouteAvailability.Available;

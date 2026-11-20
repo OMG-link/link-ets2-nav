@@ -37,6 +37,7 @@ public sealed class RoadPathSource:IDisposable
     private readonly Action<string>? diagnosticLog;
     private readonly Func<ulong,MapQueryIssue>? missingConnection;
     private readonly Action<MapQueryIssue>? reportMapIssue;
+    private readonly Action<Node,Node>? validateMissingPrefabPassage;
     private readonly GameMap sourceMap;
     private readonly List<MapQueryIssue> mapIssues=[];
     public IReadOnlyList<MapQueryIssue> MapIssues=>mapIssues;
@@ -70,6 +71,15 @@ public sealed class RoadPathSource:IDisposable
     private List<List<DirectedRoad>> cachedChunks = [];
     private IReadOnlyList<DirectedRoad>? navigationGraph;
     private readonly IReadOnlyDictionary<NativeRoadKey,DirectedRoad>? preparedEdges;
+
+    internal RoadPathSource(NearbyMapSnapshot window,Action<string>? log=null,bool retry=true)
+        :this(window.Map,window.PrefabPaths,log,window.NativeGraph,
+            playerAccess:window.Data is {} data?data.SpeedLimits.RoadPlayerAccess:null,
+            missingConnection:window.MissingConnection,retries:retry?window.Retries:null,ferries:window.Ferries)
+    {
+        if(window.Data is {} dataset)
+            validateMissingPrefabPassage=(entry,exit)=>dataset.ValidateMissingPrefabPassage(window.Map,window.Companies,entry,exit);
+    }
 
     public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null,Func<Road,bool,bool?>? playerAccess=null,Func<Road,double?>? roadHalfWidth=null,
         Func<ulong,MapQueryIssue>? missingConnection=null,Action<MapQueryIssue>? reportMapIssue=null,IMapRetryScheduler? retries=null,FerryJourneyIndex? ferries=null)
@@ -222,9 +232,7 @@ public sealed class RoadPathSource:IDisposable
         {
             var window=context.Snapshot;
             var diagnostics=new List<string>();
-            using var query=new RoadPathSource(window.Map,window.PrefabPaths,diagnostics.Add,native:window.NativeGraph,
-                playerAccess:window.Data is {} data?data.SpeedLimits.RoadPlayerAccess:null,
-                missingConnection:window.MissingConnection,ferries:window.Ferries);
+            using var query=new RoadPathSource(window,diagnostics.Add,retry:false);
             var chunks=query.BuildRouteComponents(route);
             var value=query.CaptureRouteChunks(diagnostics);
             var keys=query.MapIssues.OfType<MissingMapObjects>().SelectMany(i=>i.Keys)
@@ -250,7 +258,7 @@ public sealed class RoadPathSource:IDisposable
         var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
         var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
         if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning)return cachedChunks;
-        cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=[];sdkVisits.Clear();
+        cachedNodes=null;cachedChunks=[];sdkVisits.Clear();
         List<DirectedRoad>? chunk = null;
         for (int i = 1; i < ids.Length; i++)
         {
@@ -296,15 +304,20 @@ public sealed class RoadPathSource:IDisposable
                     ReportMapIssue(firstIssue with{QueryAnchor=anchor});
                     if(key.Item2!=key.Item1)ReportMapIssue(secondIssue with{QueryAnchor=anchor});
                     if(firstIssue is not MissingMapObjects&&secondIssue is not MissingMapObjects
-                        &&sourceMap.Nodes.ContainsKey(key.Item1)&&sourceMap.Nodes.ContainsKey(key.Item2)
-                        &&reportedLoadedConnectionFailures.Add(key))
-                        diagnosticLog?.Invoke($"导航连接解析错误：已加载的 SDK 相邻节点 {key.Item1:X16} → {key.Item2:X16} 无可验证的行驶连接；起点：{firstIssue.Reason}；终点：{secondIssue.Reason}");
+                        &&sourceMap.Nodes.TryGetValue(key.Item1,out var first)&&first is Node entry
+                        &&sourceMap.Nodes.TryGetValue(key.Item2,out var second)&&second is Node exit)
+                    {
+                        validateMissingPrefabPassage?.Invoke(entry,exit);
+                        if(reportedLoadedConnectionFailures.Add(key))
+                            diagnosticLog?.Invoke($"导航连接解析错误：已加载的 SDK 相邻节点 {key.Item1:X16} → {key.Item2:X16} 无可验证的行驶连接；起点：{firstIssue.Reason}；终点：{secondIssue.Reason}");
+                    }
                 }
                 chunk = null; continue;
             }
             if (chunk is null) { chunk = new(); cachedChunks.Add(chunk);sdkVisits.Add(chunk,[]); }
             chunk.Add(directed);sdkVisits[chunk].Add((sdkStart,i));
         }
+        cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;
         return cachedChunks;
     }
     public void Dispose()=>routeRetry?.Dispose();

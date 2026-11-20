@@ -69,9 +69,9 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
                 _=>ScoreOutlets()
             };
             foreach(var (edge,index) in group)result[index]=result[index] with{SplitPriority=priority};
-            log?.Invoke($"?????????prefab:{group.Key.Prefab}???={group.Key.Entry:X16}???={priority.MainEntry?.ToString("X16")??"??"}?"+
-                $"?????={outlets.Length-eligible.Length}?{priority.Reason}?"+
-                string.Join("?",priority.Scores.Select(s=>FormattableString.Invariant($"{s.Measurement.Entry:X16} ??={s.Measurement.SlopeDifferenceDegrees:F4}? ??={s.Measurement.DirectionDifferenceDegrees:F4}? ??={s.Measurement.LaneCount}???={s.Total:F3}"))));
+            log?.Invoke($"组件出口主路评分：prefab:{group.Key.Prefab}，入口={group.Key.Entry:X16}，主路={priority.MainEntry?.ToString("X16")??"未知"}；"+
+                $"硬出口排除={outlets.Length-eligible.Length}；{priority.Reason}；"+
+                string.Join("；",priority.Scores.Select(s=>FormattableString.Invariant($"{s.Measurement.Entry:X16} 坡差={s.Measurement.SlopeDifferenceDegrees:F4}° 角差={s.Measurement.DirectionDifferenceDegrees:F4}° 车道={s.Measurement.LaneCount}，分数={s.Total:F3}"))));
 
             RoadJoinPriority ScoreOutlets()
             {
@@ -86,7 +86,7 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
                     if(output.MapIssue is {} issue){dependencies.Add(issue);reportMapIssue?.Invoke(issue);}
                     double? angle=candidates.Length==1?DirectionDifference(candidates[0]):null;
                     string? failure=input.Failure??output.Failure;
-                    if(angle is null)failure=(failure is null?"":failure+"?")+"??????????????";
+                    if(angle is null)failure=(failure is null?"":failure+"；")+"竞争出口原生方向缺失或不唯一";
                     measurements.Add(new(outlet.Key,outlet.Select(p=>p.ExitLane).Distinct().Count(),
                         output.AngleDegrees is {} a?-a:null,input.AngleDegrees is {} b?-b:null,angle,failure));
                 }

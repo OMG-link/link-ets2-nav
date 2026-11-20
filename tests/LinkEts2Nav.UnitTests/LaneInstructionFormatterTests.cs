@@ -50,6 +50,13 @@ public sealed class LaneInstructionFormatterTests
         PrefabLanePath Lane(int lane,int exit,int curve,List<Vector3> points)=>new(42,10,20,lane,exit,lane,exit,3,2,[curve,exit==0?9:10],points,55)
             {CurveBlinkers=[lane==0?LaneBlinker.Right:LaneBlinker.NoBlinker,LaneBlinker.NoBlinker]};
         var left=Lane(0,0,0,ending);var center=Lane(1,0,1,main);var right=Lane(2,1,2,other);
+        NativeLaneCurve C(int id,Vector3 a,Vector3 b,int[] next,int[] previous)=>new(id,a,b,b-a,b-a,next,previous);
+        var geometry=NativeLaneFixture.WithInterfaces(42,[
+            C(0,ending[0],Vector3.Zero,[9],[]) with{Blinker=LaneBlinker.Right},
+            C(1,main[0],Vector3.Zero,[9],[]),C(9,Vector3.Zero,main[^1],[],[0,1]),
+            C(2,other[0],new(4.5f,0,0),[10],[]),C(10,new(4.5f,0,0),other[^1],[],[2])]);
+        PrefabLanePath Native(PrefabLanePath path)=>path with{NativeGeometry=geometry,CurveStartPointIndices=[0,45]};
+        left=Native(left);center=Native(center);right=Native(right);
         var edge=new DirectedRoad("prefab:000000000000002A:0:1",10,20,main){LanePaths=[left,center,right]};
         var road=new DirectedRoad("road",5,10,Enumerable.Range(0,651).Select(i=>new Vector3(0,0,695-i)).ToArray());
         DirectedRoad[] route=[road,edge];var lanes=new LaneNavigationPlan([new(edge.Id,left,1)],[],true,null);

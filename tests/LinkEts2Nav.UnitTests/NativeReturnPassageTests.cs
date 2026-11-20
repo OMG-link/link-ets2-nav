@@ -105,9 +105,7 @@ public sealed class NativeReturnPassageTests
     public void OptionalReturnDoesNotChangeOrdinaryForkOrAuxiliaryRecognition()
     {
         var returning=Return();
-        var info=new RoadForkInfo(10,2,[new(20,ForkSignal.None,[0],[0],[],true),new(30,ForkSignal.None,[1],[1],[],true)]);
-        var main=new DirectedRoad("prefab:000000000000002A:0:1",10,20,[Vector3.Zero,new(0,0,-20)]){ForkInfo=info};
-        var side=new DirectedRoad("prefab:000000000000002A:0:2",10,30,[Vector3.Zero,new(20,0,-20)]){ForkInfo=info};
+        var fork=SelectedStraightPassageTests.Fork();var main=fork[0];var side=fork[1];
         var detector=new NavigationManeuverDetector();
         var baseline=Assert.Single(detector.FindSequence([main],0,[main,side]));
         Assert.Equivalent(baseline,Assert.Single(detector.FindSequence([main],0,[main,side,returning])));

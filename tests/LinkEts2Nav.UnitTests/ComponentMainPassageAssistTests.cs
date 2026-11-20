@@ -62,9 +62,7 @@ public sealed class ComponentMainPassageAssistTests
     public void AnUnknownOutletDoesNotBecomeAnInventedLegalSide()
     {
         var scene=Fixture();var unknown=scene.SideFact with{Kind=ComponentContinuityKind.Unknown};
-        var straight=Assert.Single(ComponentManeuverProjection.Build([scene.Main],0,[],[scene.MainFact,unknown],scene.Main.LanePaths[0]).Actions);
-        Assert.Equal(NavigationSide.None,straight.StraightExitSides);
-        Assert.DoesNotContain(Plan(straight).Triggers,t=>t.Kind==SpeechTriggerKind.ActionAssist);
+        Assert.Throws<NotSupportedException>(()=>ComponentManeuverProjection.Build([scene.Main],0,[],[scene.MainFact,unknown],scene.Main.LanePaths[0]));
     }
     [Fact]
     public void AnEntryMainUsesTheSameOutletSideFacts()
@@ -81,11 +79,7 @@ public sealed class ComponentMainPassageAssistTests
         // Projection-only contract: the producer's role is not reconstructed
         // here, and a missing turn is not a statement about game reachability.
         var other=scene.SideFact with{Turn=null};
-        var result=ComponentManeuverProjection.Build([scene.Main],0,[],[scene.MainFact,other],scene.Main.LanePaths[0]);
-        var straight=Assert.Single(result.Actions);
-        Assert.Equal(NavigationSide.None,straight.StraightExitSides);
-        Assert.Empty(result.Issues);
-        Assert.DoesNotContain(Plan(straight).Triggers,t=>t.Kind==SpeechTriggerKind.ActionAssist);
+        Assert.Throws<NotSupportedException>(()=>ComponentManeuverProjection.Build([scene.Main],0,[],[scene.MainFact,other],scene.Main.LanePaths[0]));
     }
     [Theory]
     [InlineData(false)]

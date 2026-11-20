@@ -31,21 +31,17 @@ public sealed class JunctionStructureTests
     [InlineData(true)]
     public void SilentUnlitMainRoadRetainsRampStraightStructureAndItsRealEnd(bool minor)
     {
-        var info=new RoadForkInfo(10,2,[new(20,ForkSignal.None,[0,1],[0,1],[],true),
-            new(30,ForkSignal.Right,[1],[1],[],false)]);
-        DirectedRoad approach=new("road",1,10,[Vector3.Zero,new(0,0,100)]);
-        DirectedRoad main=new("prefab:1:0:1",10,20,[new(0,0,100),new(0,0,150)])
-        {Junction=new(1,2,0){InterfaceCount=3},ForkInfo=info,IsMinorStraight=minor};
-        DirectedRoad side=new("prefab:1:0:2",10,30,[new(0,0,100),new(100,0,150)]){ForkInfo=info};
+        var graph=SelectedStraightPassageTests.Fork();
+        var main=graph[0] with{IsMinorStraight=minor};var side=graph[1];
+        DirectedRoad approach=new("road",1,10,[new(0,0,-100),Vector3.Zero]);
         var detector=new NavigationManeuverDetector();
         var straight=Assert.Single(detector.FindSequence([approach,main],0,[approach,main,side]));
-        Assert.Equal(ManeuverKind.Straight,straight.Kind);
-        Assert.Equal(NavigationJunctionKind.Ramp,straight.JunctionKind);
-        Assert.False(straight.IsMinorStraight);
-        Assert.Equal(100,straight.DistanceMeters);Assert.Equal(150,straight.EndDistanceMeters);
-        Assert.True(straight.IsMainRoadContinuation);
+        Assert.Equal(ManeuverKind.Straight,straight.Kind);Assert.Equal(NavigationJunctionKind.Ramp,straight.JunctionKind);
+        Assert.False(straight.IsMinorStraight);Assert.True(straight.IsMainRoadContinuation);
+        Assert.Equal(100,straight.DistanceMeters);Assert.Equal(200,straight.EndDistanceMeters);
         var turn=Assert.Single(detector.FindSequence([approach,side],0,[approach,main,side]));
         Assert.Equal(ManeuverKind.KeepRight,turn.Kind);
+
     }
 
     [Fact]
@@ -106,14 +102,19 @@ public sealed class JunctionStructureTests
     [Fact]
     public void OtherApproachOfTheSamePrefabStillCountsWhenItHasTwoReachableExits()
     {
-        var info=new PrefabJunctionInfo(2,2,0){InterfaceCount=4};
-        DirectedRoad single=new("prefab:1:0:2",10,20,[new(0,0,100),new(0,0,150)]){Junction=info};
-        var fork=new RoadForkInfo(30,1,[new(20,ForkSignal.None,[0],[0],[],true),new(40,ForkSignal.Right,[0],[0],[],false)]);
-        DirectedRoad chosen=new("prefab:1:1:2",30,20,[new(0,0,100),new(0,0,150)]){Junction=info,ForkInfo=fork};
-        DirectedRoad branch=new("prefab:1:1:3",30,40,[new(0,0,100),new(50,0,150)]){Junction=info,ForkInfo=fork};
-        DirectedRoad approach=new("road",1,30,[Vector3.Zero,new(0,0,100)]);
-        var straight=Assert.Single(new NavigationManeuverDetector().FindSequence([approach,chosen],0,[approach,single,chosen,branch]));
-        Assert.Equal(ManeuverKind.Straight,straight.Kind);Assert.Equal(NavigationJunctionKind.Ramp,straight.JunctionKind);
+        var graph=SelectedStraightPassageTests.Fork();
+        var native=graph[0].LanePaths[0].NativeGeometry!;
+        var solo=new NativeLaneCurve(99,new(10,0,0),new(0,0,100),new(-10,0,100),new(-10,0,100),[],[]);
+        native=NativeLaneFixture.WithInterfaces(42,[..native.Curves,solo]);
+        var chosen=graph[0] with{Id="prefab:2A:40:20",StartNodeUid=40,LanePaths=graph[0].LanePaths.Select(p=>p with{EntryNodeUid=40,NativeGeometry=native}).ToArray()};
+        var branch=graph[1] with{Id="prefab:2A:40:30",StartNodeUid=40,LanePaths=graph[1].LanePaths.Select(p=>p with{EntryNodeUid=40,NativeGeometry=native}).ToArray()};
+        var lane=new PrefabLanePath(42,10,20,0,0,0,0,1,1,[99],[solo.Start,solo.End],101){NativeGeometry=native,CurveStartPointIndices=[0]};
+        var single=new DirectedRoad("prefab:2A:10:20",10,20,lane.Points){LanePaths=[lane]};
+        var detector=new NavigationManeuverDetector();
+        var straight=Assert.Single(detector.FindSequence([chosen],0,[single,chosen,branch]),a=>a.Kind==ManeuverKind.Straight);
+        Assert.Equal(NavigationJunctionKind.Ramp,straight.JunctionKind);
+        Assert.DoesNotContain(detector.FindSequence([single],0,[single,chosen,branch]),a=>a.Kind==ManeuverKind.Straight);
+
     }
 
     [Fact]

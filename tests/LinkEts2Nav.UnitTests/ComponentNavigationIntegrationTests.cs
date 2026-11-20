@@ -9,7 +9,7 @@ public sealed class ComponentNavigationIntegrationTests
     private static DirectedRoad[] HardJoin(bool allDie=false)
     {
         NativeLaneCurve Curve(int id,Vector3 a,Vector3 b,int[] next,int[] previous)=>new(id,a,b,b-a,b-a,next,previous);
-        var native=new NativeLaneGeometry(42,[Curve(0,new(0,0,allDie?-30:0),new(90,0,0),[2],[]),
+        var native=NativeLaneFixture.WithInterfaces(42,[Curve(0,new(0,0,allDie?-30:0),new(90,0,0),[2],[]),
             Curve(1,new(0,0,30),new(90,0,0),[2],[]),Curve(2,new(90,0,0),new(100,0,0),[],[0,1])]);
         DirectedRoad Path(int first,ulong input)
         {

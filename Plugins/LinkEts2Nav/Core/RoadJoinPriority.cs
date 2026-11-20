@@ -14,6 +14,7 @@ public sealed record RoadJoinPriority(ulong? MainEntry,IReadOnlyList<RoadJoinEnt
     IReadOnlyList<RoadJoinEntryScore> Scores,double? WinningMargin,string Reason)
 {
     public IReadOnlyList<MapQueryIssue> MapIssues {get;init;}=[];
+    public bool NoEligibleOutlet {get;init;}
 }
 
 /// <summary>Shared thirty-point priority scorer for component entrance and outlet candidates.</summary>

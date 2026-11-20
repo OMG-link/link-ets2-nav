@@ -42,7 +42,9 @@ public sealed class ComponentContinuityIndex
                 // This reverse merge represents an actual split, which deliberately ignores lamps.
                 original.Curves.Select(c=>new NativeLaneCurve(c.Index,c.End,c.Start,-c.EndTangent,-c.StartTangent,c.Previous,c.Next)
                     {MapIssue=c.MapIssue,Blinker=LaneBlinker.NoBlinker}).ToArray())
-                {InputCurveIndices=original.OutputCurveIndices,OutputCurveIndices=original.InputCurveIndices};
+                {InputCurveIndices=original.OutputCurveIndices,OutputCurveIndices=original.InputCurveIndices,
+                    ContinuationOverrides=original.ContinuationOverrides.Select(o=>o with
+                    {Kind=o.Kind==LaneContinuityPointKind.Split?LaneContinuityPointKind.Merge:LaneContinuityPointKind.Split}).ToArray()};
             return value;
         }
         return edge with
@@ -163,13 +165,13 @@ public sealed class ComponentContinuityIndex
                 var priority=group.Select(e=>e.SplitPriority).OfType<RoadJoinPriority>().FirstOrDefault();
                 var main=priority?.MainEntry;
                 // Only complete scoring supplies a margin when there is no winner.
-                if(main is null&&priority?.WinningMargin is null)
+                if(main is null&&priority?.WinningMargin is null&&priority?.NoEligibleOutlet!=true)
                 {
                     foreach(var edge in group)result[edge.Id]=Unknown(edge,priority,priority?.Reason??"Missing outlet priority");
                     continue;
                 }
 
-                var localPaths=group.SelectMany(edge=>edge.LanePaths.Select(path=>(Edge:edge,Path:path,Split:FirstSideSplit(path)))).ToArray();
+                var localPaths=group.SelectMany(edge=>edge.LanePaths.Select(path=>(Edge:edge,Path:path,Split:continuity.GetValueOrDefault(path.PrefabUid)?.FirstSideSplit(path.CurveIndices)))).ToArray();
                 var mainPassage=main is {} mainOutlet?group.Single(e=>e.EndNodeUid==mainOutlet):null;
                 var origins=new Dictionary<int,ComponentLaneOutcome>();
                 if(mainPassage is not null)
@@ -197,18 +199,6 @@ public sealed class ComponentContinuityIndex
                 }
             }
             return result;
-        }
-
-        private (int Index,LaneContinuityPoint Point,LaneContinuityBranch Branch)? FirstSideSplit(PrefabLanePath path)
-        {
-            if(!continuity.TryGetValue(path.PrefabUid,out var facts))return null;
-            for(int i=1;i<path.CurveIndices.Count;i++)
-            {
-                var split=facts.Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==path.CurveIndices[i-1]);
-                var branch=split?.Branches.FirstOrDefault(b=>b.CurveIndex==path.CurveIndices[i]);
-                if(branch is {Role:LaneContinuityRole.Newborn or LaneContinuityRole.Unknown})return (i,split!,branch);
-            }
-            return null;
         }
 
         private ComponentLaneOutcome OutletLane(DirectedRoad edge,PrefabLanePath path,

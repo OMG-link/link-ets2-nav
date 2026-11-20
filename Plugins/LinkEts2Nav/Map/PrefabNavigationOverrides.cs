@@ -1,4 +1,5 @@
 using System.Numerics;
+using LinkEts2Nav.Core;
 using TruckLib.Models.Ppd;
 using TruckLib.ScsMap;
 
@@ -17,6 +18,38 @@ internal static class PrefabNavigationOverrides
     };
 
     public static ParallelLane? Find(ulong uid) => instances.GetValueOrDefault(uid);
+
+    // The dual-lane outlet in this verified instance keeps both entrance
+    // lane identities across the two splits. Other placements of this PPD
+    // have different adjacent road usage, including recognized roundabouts.
+    private const ulong GermanContinuationInstance=0x5731AB8A060F2375;
+    private const string GermanContinuationResource="/prefab2/fork_temp/ger/ger_1lane_road_joint_short_tmpl_v02.ppd";
+    private static readonly ulong[] GermanControlNodes=[0x5731AB8EFC8F1AFC,0x5731AB8FC80F1AFD,0x5731AB8CBF0F1AFB];
+    private static readonly NativeContinuationOverride[] GermanContinuations=
+        [new(LaneContinuityPointKind.Split,5,1),new(LaneContinuityPointKind.Split,4,7)];
+    private static readonly int[][] GermanNextCurves=[[],[],[3],[0],[6,7],[1,2],[8],[],[0]];
+
+    public static IReadOnlyList<NativeContinuationOverride> ContinuityFor(Prefab prefab,string resource,PrefabDescriptor descriptor)
+    {
+        if(prefab.Uid!=GermanContinuationInstance)return [];
+        if(GameResourceStore.Key(resource)!=GermanContinuationResource||prefab.Nodes.Count!=GermanControlNodes.Length
+            ||prefab.Origin>=GermanControlNodes.Length||prefab.Nodes.Where((node,index)=>
+                node.Uid!=GermanControlNodes[(index+prefab.Origin)%GermanControlNodes.Length]).Any())
+            throw new InvalidDataException($"Prefab {prefab.Uid:X16} continuity override has a different resource or interface layout.");
+        if(descriptor.Nodes.Count!=GermanControlNodes.Length||descriptor.NavCurves.Count!=GermanNextCurves.Length
+            ||!descriptor.Nodes[0].InputLines.Where(i=>i>=0).SequenceEqual(new[]{5,4})
+            ||!descriptor.Nodes[1].OutputLines.Where(i=>i>=0).SequenceEqual(new[]{1,7})
+            ||!descriptor.Nodes[2].OutputLines.Where(i=>i>=0).SequenceEqual(new[]{0}))
+            throw new InvalidDataException($"Prefab {prefab.Uid:X16} continuity override has a different native port signature.");
+        for(int i=0;i<descriptor.NavCurves.Count;i++)
+        {
+            var curve=descriptor.NavCurves[i];
+            if(!curve.NextLines.Order().SequenceEqual(GermanNextCurves[i])||!curve.PreviousLines.Order().SequenceEqual(
+                GermanNextCurves.Select((next,from)=>(next,from)).Where(item=>item.next.Contains(i)).Select(item=>item.from)))
+                throw new InvalidDataException($"Prefab {prefab.Uid:X16} continuity override has different native links at curve {i}.");
+        }
+        return GermanContinuations;
+    }
 
     internal sealed record Passage(int InputNode, int OutputNode, int[] Curves);
 

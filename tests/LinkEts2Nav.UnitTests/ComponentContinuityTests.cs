@@ -286,6 +286,55 @@ public sealed class ComponentContinuityTests
         Assert.Equal(NavigationSide.Right,result.Turn!.Side);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ComponentScoreExcludesLocallyHardOutletsBeforeChoosingMain(bool bothHard)
+    {
+        var geometry=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),Curve(1,new(20,0,0),new(100,0,bothHard?-30:0),[],[0]),
+            Curve(2,new(20,0,0),new(100,0,30),[],[0])]);
+        var continuation=Passage(1,10,20,0,0,[0,1],geometry);
+        var side=Passage(1,10,30,0,0,[0,2],geometry);
+        var builder=new RoadJoinPriorityBuilder(new Dictionary<ulong,List<TruckLib.ScsMap.Road>>(),
+            missingConnection:_=>throw new InvalidOperationException("No competitive slope window needed"));
+        var annotated=builder.Annotate([continuation,side]);
+        var result=ComponentContinuityIndex.Build(new(annotated));
+
+        var priority=annotated[0].SplitPriority!;
+        Assert.Equal(bothHard?(ulong?)null:continuation.EndNodeUid,priority.MainEntry);
+        Assert.Equal(bothHard,priority.NoEligibleOutlet);
+        Assert.Empty(priority.Scores);
+        Assert.Equal(bothHard?ComponentContinuityKind.Hard:ComponentContinuityKind.Main,result.ForExit(continuation.Id)!.Kind);
+        Assert.Equal(ComponentContinuityKind.Hard,result.ForExit(side.Id)!.Kind);
+        Assert.False(result.ForExit(side.Id)!.IsMain);
+    }
+
+    [Fact]
+    public void RemainingOutletCandidatesAreRescoredWithoutTheHardOutlet()
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var approach=TruckLib.ScsMap.Road.Add(map,new(-80,0,0),Vector3.Zero,default);
+        var firstRoad=TruckLib.ScsMap.Road.Add(map,new(100,0,0),new(160,0,0),default);
+        var secondRoad=TruckLib.ScsMap.Road.Add(map,new(100,0,-30),new(160,3,-30),default);
+        var geometry=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,Vector3.Zero,new(20,0,0),[1,2],[]),Curve(1,new(20,0,0),new(100,0,0),[],[0]),
+            Curve(2,new(20,0,0),new(100,0,30),[],[0]), Curve(3,new(0,0,-3),new(100,0,-30),[],[])]);
+        ulong entry=approach.ForwardNode.Uid;
+        var first=Passage(1,entry,firstRoad.Node.Uid,0,0,[0,1],geometry,2);
+        var second=Passage(1,entry,secondRoad.Node.Uid,1,0,[3],geometry,2);
+        var hard=Passage(1,entry,900,0,0,[0,2],geometry,2);
+        var roads=new[]{approach,firstRoad,secondRoad}.SelectMany(r=>new[]{(r.Node.Uid,r),(r.ForwardNode.Uid,r)})
+            .ToDictionary(x=>x.Item1,x=>new List<TruckLib.ScsMap.Road>{x.r});
+        var builder=new RoadJoinPriorityBuilder(roads,missingConnection:_=>throw new InvalidOperationException("The hard outlet was excluded"));
+        var facts=builder.Annotate([first,second,hard]);
+        var priority=facts[0].SplitPriority!;
+        Assert.Equal(first.EndNodeUid,priority.MainEntry);
+        Assert.Equal([first.EndNodeUid,second.EndNodeUid],priority.Measurements.Select(m=>m.Entry));
+        Assert.Equal(30,priority.Scores.Sum(s=>s.Total),5);
+        Assert.Empty(priority.MapIssues);
+    }
+
     [Fact]
     public void FullyScoredOutletsWithoutAWinnerKeepNaturalAndHardPaths()
     {

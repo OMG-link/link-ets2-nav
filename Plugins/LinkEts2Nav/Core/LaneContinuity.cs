@@ -20,7 +20,9 @@ public sealed record NativeLaneGeometry(ulong PrefabUid,IReadOnlyList<NativeLane
 {
     public IReadOnlyList<int> InputCurveIndices {get;init;}=[];
     public IReadOnlyList<int> OutputCurveIndices {get;init;}=[];
+    internal IReadOnlyList<NativeContinuationOverride> ContinuationOverrides {get;init;}=[];
 }
+internal sealed record NativeContinuationOverride(LaneContinuityPointKind Kind,int SharedCurve,int SurvivingBranch);
 public enum LaneContinuityPointKind { Merge,Split }
 public enum LaneContinuityRole { Survivor,Dead,Newborn,Unknown }
 public enum LaneTurnKind { Unknown,ForwardLeft,ForwardRight,Left,Right,RearLeft,RearRight }
@@ -41,6 +43,17 @@ public sealed record LaneContinuityPoint(ulong PrefabUid,LaneContinuityPointKind
 public sealed record LaneContinuityResult(IReadOnlyList<LaneContinuityPoint> Points,IReadOnlyList<int> UnchangedCurveIndices)
 {
     public MapQueryIssue? MapIssue {get;init;}
+
+    internal (int Index,LaneContinuityPoint Point,LaneContinuityBranch Branch)? FirstSideSplit(IReadOnlyList<int> curves)
+    {
+        for(int i=1;i<curves.Count;i++)
+        {
+            var split=Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==curves[i-1]);
+            var branch=split?.Branches.FirstOrDefault(b=>b.CurveIndex==curves[i]);
+            if(branch is {Role:LaneContinuityRole.Newborn or LaneContinuityRole.Unknown})return (i,split!,branch);
+        }
+        return null;
+    }
 }
 
 /// <summary>Local N-to-one continuity, and its one-to-N counterpart. Physical links are never removed.</summary>
@@ -122,6 +135,13 @@ public static class LaneContinuity
         var zeros=candidates.Where(i=>angles[i]<=ZeroAngle).ToArray();
         var qualified=zeros.Length>0?zeros:candidates.Where(i=>angles[i]/minimum<2).ToArray();
         int survivor=qualified.Length==1?qualified[0]:-1;
+        if(geometry.ContinuationOverrides.Count>0&&geometry.ContinuationOverrides.FirstOrDefault(o=>
+            o.Kind==kind&&o.SharedCurve==shared.Index) is { } correction)
+        {
+            survivor=Array.IndexOf(indices,correction.SurvivingBranch);
+            if(survivor<0||vetoes[survivor].HasValue)
+                throw new InvalidDataException($"Prefab {prefab:X16} continuity override names unavailable curve {correction.SurvivingBranch} at {shared.Index}.");
+        }
         var result=new List<LaneContinuityBranch>();
         for(int i=0;i<indices.Length;i++)
         {

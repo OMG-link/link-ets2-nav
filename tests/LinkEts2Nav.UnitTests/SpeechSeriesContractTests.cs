@@ -90,24 +90,38 @@ public sealed class SpeechSeriesContractTests
     private sealed class NoPlayer:IGuidanceAudioPlayer
     {public Task PlayAsync(string file,CancellationToken token)=>throw new InvalidOperationException("Audio is deliberately unavailable.");}
     [Fact]
+    public void TimelineRejectsDuplicatePublishedSeries()
+    {
+        var series=new SpeechSequence("turn",new RouteSpeechEnd(150),[Event],[Point(0)]);
+        var plan=new GuidanceSourcePlan("navigation","s","r",0,true,Now,[series,series]);
+        Assert.Throws<ArgumentException>(()=>new GuidanceTimeline().Publish(plan));
+    }
+
+    [Fact]
     public async Task PublicationHoldsPendingPlaybackUntilTheNextCompletedTick()
     {
-        var player=new ReadyPlayer();bool ready=false;
-        await using var manager=new GuidancePlaybackManager(null,player,()=>ready?"ready.wav":null);
+        bool ready=false;
+        await using var manager=new GuidancePlaybackManager(null,new ReadyPlayer(),()=>ready?"ready.wav":null);
+        var notificationPlayed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var routePlayed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        manager.Played+=speech=>(speech.IsNotification?notificationPlayed:routePlayed).TrySetResult();
         var c=new GuidanceCoordinator(playback:manager);
         var series=new SpeechSequence("turn",new RouteSpeechEnd(150),[Event],[Point(0)]);
         var valid=new GuidanceSourcePlan("navigation","s","r",0,true,Now,[series]);
         var data=new GameDataSnapshot(new(0,0,0,0,10,1000,true,false,1,Now),RouteSnapshot.Parse([],Now),RouteAvailability.None,"s",true);
         c.Publish(valid);c.Tick(data,Now);Assert.Single(manager.Pending);
         c.Publish(valid);
-        ready=true;manager.SetActive(true);
-        Assert.False(player.Started.Task.IsCompleted);
+        ready=true;
+        // A lower-priority notification can play during the hold. Once it finishes,
+        // the worker has already considered the route cue, which would otherwise play first.
+        manager.Notify("test",new("probe","worker probe",int.MaxValue));
+        await notificationPlayed.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
+        Assert.Equal("turn",Assert.Single(manager.Pending).Text);
         c.Tick(data,Now);
-        await player.Started.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
+        await routePlayed.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
     }
     private sealed class ReadyPlayer:IGuidanceAudioPlayer
     {
-        public TaskCompletionSource Started {get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task PlayAsync(string file,CancellationToken token){Started.TrySetResult();return Task.CompletedTask;}
+        public Task PlayAsync(string file,CancellationToken token)=>Task.CompletedTask;
     }
 }

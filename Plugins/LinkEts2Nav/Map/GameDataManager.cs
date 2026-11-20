@@ -226,6 +226,28 @@ public sealed class GameDataManager:IDisposable
             +(details.Count==0?"":" "+string.Join(' ',details))){QueryAnchor=node.Position};
     }
 
+    /// <summary>Validate a requested SDK passage only when both map interfaces and their owning items are loaded.</summary>
+    internal void ValidateMissingPrefabPassage(NativeMap window,CompanyPlaceIndex companies,Node entry,Node exit)
+    {
+        var owners=new[]{exit.BackwardItem?.Uid,exit.ForwardItem?.Uid};
+        var shared=new[]{entry.BackwardItem,entry.ForwardItem}.OfType<IMapObject>()
+            .Where(item=>owners.Contains(item.Uid)).Select(item=>item.Uid).Distinct();
+        foreach(ulong uid in shared)
+        {
+            if(window.MapItems.GetValueOrDefault(uid) is not Prefab prefab)continue;
+            if(prefab.Ferry is not null||Ferries?.Ports.Any(port=>port.PrefabUid==uid)==true
+                ||prefab.SlaveItems.Any(item=>item is Company)
+                ||companies.Places.Any(company=>company.PrefabUid==uid))continue;
+            var source=GetPrefab(uid);
+            var resource=source?.Definition?.Descriptor;
+            var description=resource is not null&&FileExists(resource)?source!.Description:null;
+            // An unfiltered path can be absent from the player graph because of access rules.
+            if(description is not null&&PrefabPassageLengths.Read(prefab,description,entry.Uid,exit.Uid).Count>0)continue;
+            var definition=resource is null?$"model {prefab.Model}":resource;
+            throw new InvalidDataException($"Prefab {uid:X16} ({definition}) has no native lane path for SDK passage {entry.Uid:X16} → {exit.Uid:X16}.");
+        }
+    }
+
     private sealed class SupplementMap(NativeMap? basis,SectorReadEvidence evidence):NativeMap
     {
         protected override void OnSectorLoading(Sector sector,int current,int total)

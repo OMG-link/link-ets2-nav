@@ -67,8 +67,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         {
             mapIdentity=new(nearby);map=nearby.Map;
             paths?.Dispose();
-            paths=new RoadPathSource(nearby.Map,nearby.PrefabPaths,log,nearby.NativeGraph,playerAccess:nearby.Data is {} source?source.SpeedLimits.RoadPlayerAccess:null,
-                missingConnection:nearby.MissingConnection,retries:nearby.Retries,ferries:nearby.Ferries);
+            paths=new RoadPathSource(nearby,log);
             structures.Clear();publishedStructure=null;routeBuildGeneration=0;
         }
         var stable=data.NavigationRoute;

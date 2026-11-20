@@ -1,5 +1,6 @@
 using System.Numerics;
 using LinkEts2Nav.Core;
+using LinkEts2Nav.Core.Guidance;
 using LinkEts2Nav.Map;
 namespace LinkEts2Nav.UnitTests;
 public sealed class RoundaboutNavigationTests
@@ -104,6 +105,78 @@ public sealed class RoundaboutNavigationTests
         var ring=Ring();var edge=new DirectedRoad("prefab:1:0:1",999,12,[Vector3.Zero,Vector3.UnitX]);
         Assert.Throws<NotSupportedException>(()=>Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InternalStartOnlyCountsACoincidentExitIfItsDepartureIsAhead(bool departureAhead)
+    {
+        var tied=Exit(11,0,Polar(departureAhead?.2:-.2));
+        var target=Exit(12,Math.PI/2,Polar(Math.PI/2));
+        var exit=new DirectedRoad("prefab:1:0:2",50,12,
+            [Polar(0),Polar(.2),Polar(.7),Polar(Math.PI/2),Polar(Math.PI/2)*2]);
+        var ring=InternalStartRing(tied,target);
+        var range=Assert.Single(RoundaboutRouteAdapter.Build([exit],new Dictionary<ulong,RoundaboutStructure>{{1,ring}},[0],
+            uid=>uid==50?Polar(0):null));
+        Assert.True(range.StartsInside);
+        var expected=departureAhead?new[]{ManeuverKind.PassRoundaboutExit,ManeuverKind.ExitRoundabout}:[ManeuverKind.ExitRoundabout];
+        Assert.Equal(expected,range.Actions.Select(a=>a.Kind));
+        Assert.Equal(departureAhead?2:1,range.Actions[^1].SpeechSequenceOrder);
+        Assert.All(range.Actions,a=>
+        {
+            Assert.True(a.ExecutionOnly);
+            Assert.Equal("roundabout:ring:0000000000000032:visit:0",a.SpeechSequenceId);
+            Assert.Equal(range.EndMeters,a.EndDistanceMeters);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InternalStartDistinguishesCoincidentSelectedExitNowFromAnotherCircuit(bool circuit)
+    {
+        var target=Exit(12,0,Polar(0));
+        var ring=InternalStartRing(target,Exit(11,Math.PI/2,Polar(Math.PI/2)),Exit(13,-Math.PI/2,Polar(3*Math.PI/2)));
+        var points=(circuit?Enumerable.Range(0,9).Select(i=>Polar(i*Math.PI/4)):[Polar(0)]).Append(Polar(0)*2).ToArray();
+        var exit=new DirectedRoad("prefab:1:0:2",50,12,points){NativeCurveSpans=[new(12,points.Length-2)]};
+        var range=Assert.Single(RoundaboutRouteAdapter.Build([exit],new Dictionary<ulong,RoundaboutStructure>{{1,ring}},[0],_=>Polar(0)));
+        Assert.Equal(circuit?3:1,range.Actions.Count);
+        Assert.Equal(ManeuverKind.ExitRoundabout,range.Actions[^1].Kind);
+        Assert.Equal(circuit?3:1,range.Actions[^1].SpeechSequenceOrder);
+    }
+
+    [Fact]
+    public void AnInternalMapNodeCannotReplaceTheMissingPrefixOfALaterRouteFragment()
+    {
+        var ring=InternalStartRing(Exit(12,1,Polar(1)));
+        var exit=new DirectedRoad("prefab:1:0:2",50,12,[Polar(0),Polar(1)]);
+        Assert.Throws<NotSupportedException>(()=>RoundaboutRouteAdapter.Build([exit],
+            new Dictionary<ulong,RoundaboutStructure>{{1,ring}},[8],_=>Polar(0)));
+    }
+
+    [Fact]
+    public void InternalStartUsesTheMapBearingAndKeepsTheActiveSeriesExecutionWindow()
+    {
+        var ring=InternalStartRing(Exit(11,Math.PI/2,Polar(Math.PI/2)),Exit(12,Math.PI,Polar(Math.PI)));
+        var exit=new DirectedRoad("prefab:1:0:2",50,12,[Polar(Math.PI/4),Polar(Math.PI/2),Polar(Math.PI),Polar(Math.PI)*2]);
+        var range=Assert.Single(RoundaboutRouteAdapter.Build([exit],new Dictionary<ulong,RoundaboutStructure>{{1,ring}},[0],_=>Polar(3*Math.PI/4)));
+        var action=Assert.Single(range.Actions);
+        Assert.Equal(1,action.SpeechSequenceOrder);
+        var next=new NavigationManeuver("next",ManeuverKind.TurnRight,range.EndMeters+150,"in","out")
+            {EndDistanceMeters=range.EndMeters+160};
+        var plan=new NavigationEventPlanner().Build("s","r",DateTimeOffset.UtcNow,0,[action,next],true,false,false,new(),
+            initialBoundaryAlong:range.EndMeters);
+        Assert.Contains(plan.Triggers,t=>t.Kind==SpeechTriggerKind.Execution&&t.AlongMeters<range.EndMeters&&t.Text=="驶出环岛。");
+        Assert.All(plan.Triggers.Where(t=>t.EventId.StartsWith("next",StringComparison.Ordinal)),
+            t=>Assert.True(t.AlongMeters>=range.EndMeters));
+    }
+
+    private static RoundaboutStructure InternalStartRing(params RoundaboutExitPort[] exits)=>
+        new("ring",[1],[],[],1,[]){RingLength=126,ExitPorts=exits,BearingFrame=new(0,0,1),InternalNodes=new HashSet<ulong>{50}};
+    private static RoundaboutExitPort Exit(ulong uid,double bearing,Vector3 departure)=>
+        new(uid,Polar(bearing)*2){Bearing=bearing,DepartureBranches=[new(new(1,(int)uid),departure)]};
+    private static Vector3 Polar(double angle)=>new((float)(20*Math.Cos(angle)),0,(float)(20*Math.Sin(angle)));
+
     [Theory] [InlineData(false)] [InlineData(true)]
     public void EmptyCandidatesOrDegeneratePathCannotBecomeAProjectedZeroDeparture(bool emptyCandidates)
     {

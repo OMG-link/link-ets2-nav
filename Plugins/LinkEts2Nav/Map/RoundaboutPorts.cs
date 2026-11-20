@@ -16,10 +16,16 @@ public sealed record RoundaboutExitPort(ulong BoundaryNodeUid,Vector3 Position)
 
 public sealed record RoundaboutExitBranch(RoundaboutCurveKey Curve,Vector3 Position);
 
+public readonly record struct RoundaboutBearingFrame(double CenterX,double CenterZ,int Direction)
+{
+    public double Bearing(Vector3 p)=>Direction*Math.Atan2(p.Z-CenterZ,p.X-CenterX);
+}
+
 /// <summary>Physical directed interfaces ordered around one reference center, independent of ring connectivity.</summary>
 public static class RoundaboutPorts
 {
-    public static (RoundaboutEntryPort[] Entries,RoundaboutExitPort[] Exits,double Length) Build(
+    public static (RoundaboutEntryPort[] Entries,RoundaboutExitPort[] Exits,double Length,
+        RoundaboutBearingFrame Frame,IReadOnlySet<ulong> InternalNodes) Build(
         IReadOnlyDictionary<RoundaboutCurveKey,RoundaboutCurve> graph,
         IReadOnlyList<RoundaboutCurveKey> ring,IReadOnlyList<ulong> members,CancellationToken token=default)
     {
@@ -38,11 +44,11 @@ public static class RoundaboutPorts
                 area+=(double)(a.X-origin.X)*(b.Z-origin.Z)-(double)(b.X-origin.X)*(a.Z-origin.Z);
             }
         }
-        centerX/=weight;centerZ/=weight;double direction=area>=0?1:-1;
-        double Bearing(Vector3 p)=>direction*Math.Atan2(p.Z-centerZ,p.X-centerX);
+        var frame=new RoundaboutBearingFrame(centerX/weight,centerZ/weight,area>=0?1:-1);
         var departures=RoundaboutExitGeometry.Build(boundary,token);
-        return (boundary.Entries.Select(p=>new RoundaboutEntryPort(p.NodeUid,p.Position){Bearing=Bearing(p.Position)}).ToArray(),
+        return (boundary.Entries.Select(p=>new RoundaboutEntryPort(p.NodeUid,p.Position){Bearing=frame.Bearing(p.Position)}).ToArray(),
             boundary.Exits.Select(p=>new RoundaboutExitPort(p.NodeUid,p.Position)
-                {Bearing=Bearing(p.Position),Branches=p.Curves,DepartureBranches=departures[p.NodeUid]}).ToArray(),weight);
+                {Bearing=frame.Bearing(p.Position),Branches=p.Curves,DepartureBranches=departures[p.NodeUid]}).ToArray(),
+            weight,frame,boundary.InternalNodes);
     }
 }

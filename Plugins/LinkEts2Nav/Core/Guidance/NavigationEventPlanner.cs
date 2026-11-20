@@ -146,7 +146,8 @@ public sealed class NavigationEventPlanner
                 {
                     // Starting the plugin inside an existing component must not
                     // defer that component's own child cues to its external exit.
-                    bool insideOwnSeries=m.ExecutionOnly&&state.SequenceStartAlong<playerAlong;
+                    bool insideOwnSeries=m.ExecutionOnly&&(state.SequenceStartAlong<playerAlong
+                        ||state.SequenceStartAlong==playerAlong&&state.EndAlong==initialBoundaryAlong);
                     double? boundary=insideOwnSeries?null:initialBoundaryAlong;
                     state.BriefingAlong=Math.Max(playerAlong,boundary??playerAlong);
                     state.BriefingStrict=boundary is {} end&&state.BriefingAlong==end;

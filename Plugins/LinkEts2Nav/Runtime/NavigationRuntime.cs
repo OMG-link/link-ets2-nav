@@ -135,11 +135,14 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         bool confirmedContinuation=!yardApproach&&!upcoming.Any(NavigationEventPlanner.IsNavigationAction);
         double confirmedAhead=Math.Max(0,structure.ConfirmationEndAfter(along.Value)-along.Value);
         var next=upcoming.FirstOrDefault(NavigationEventPlanner.IsNavigationAction);
-        var currentJunction=yardApproach?null:CurrentJunction(structure,along.Value);
+        var currentRing=structure.RoundaboutRanges.SingleOrDefault(r=>
+            (along>r.StartMeters||r.StartsInside&&along==r.StartMeters)&&along<r.EndMeters);
+        var currentJunction=yardApproach?null:currentRing is {} ring?"roundabout:"+ring.RingId:CurrentJunction(structure,along.Value);
         double? lastActionEnd=structure.Actions.LastOrDefault(NavigationEventPlanner.IsNavigationAction)?.EndDistanceMeters;
         double continuationEnd=structure.ConfirmationEndAfter(lastActionEnd??along.Value);
         double? componentEnd=structure.Actions.Where(NavigationEventPlanner.IsNavigationAction)
             .Where(m=>m.DistanceMeters<along&&m.EndDistanceMeters>along).Select(m=>m.EndDistanceMeters).FirstOrDefault();
+        if(!yardApproach&&currentRing is {StartsInside:true})componentEnd=currentRing.EndMeters;
         bool defer=componentEnd is not null&&currentJunction is not null&&next is not null&&currentJunction!=next.JunctionId;
         if(guidance is not null)
         {
@@ -258,8 +261,6 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
 
     private static string? CurrentJunction(NavigationStructurePlan plan,double along)
     {
-        var ring=plan.RoundaboutRanges.SingleOrDefault(r=>along>r.StartMeters&&along<r.EndMeters);
-        if(ring is not null)return "roundabout:"+ring.RingId;
         double offset=0;
         foreach(var edge in plan.Route)
         {

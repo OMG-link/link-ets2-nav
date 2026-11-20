@@ -5,7 +5,7 @@ internal sealed record RoundaboutBoundaryPort(ulong NodeUid,Vector3 Position,IRe
 
 /// <summary>Physical, directed boundary interfaces of an already recognized member region.</summary>
 internal sealed record RoundaboutBoundary(IReadOnlyList<RoundaboutCurve> Curves,
-    IReadOnlyList<RoundaboutBoundaryPort> Entries,IReadOnlyList<RoundaboutBoundaryPort> Exits)
+    IReadOnlyList<RoundaboutBoundaryPort> Entries,IReadOnlyList<RoundaboutBoundaryPort> Exits,IReadOnlySet<ulong> InternalNodes)
 {
     public static RoundaboutBoundary Build(IReadOnlyDictionary<RoundaboutCurveKey,RoundaboutCurve> graph,
         IReadOnlyList<RoundaboutCurveKey> ring,IReadOnlyList<ulong> members)
@@ -23,6 +23,6 @@ internal sealed record RoundaboutBoundary(IReadOnlyList<RoundaboutCurve> Curves,
                 var lanes=g.OrderBy(c=>c.Key.ItemUid).ThenBy(c=>c.Key.CurveIndex).ToArray();
                 return new RoundaboutBoundaryPort(g.Key,entry?lanes[0].Points[0]:lanes[0].Points[^1],lanes.Select(c=>c.Key).ToArray());
             }).ToArray();
-        return new(local,Ports(true),Ports(false));
+        return new(local,Ports(true),Ports(false),internalNodes);
     }
 }

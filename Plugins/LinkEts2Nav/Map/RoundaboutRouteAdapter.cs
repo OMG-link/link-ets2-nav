@@ -6,8 +6,12 @@ namespace LinkEts2Nav.Map;
 /// <summary>Marks roundabout visits and creates their actions without replacing any route edge.</summary>
 public static class RoundaboutRouteAdapter
 {
+    private const double FullTurn=2*Math.PI;
+    private const double BearingTolerance=1e-6;
+
     public static IReadOnlyList<RoundaboutRouteRange> Build(IReadOnlyList<DirectedRoad> route,
-        IReadOnlyDictionary<ulong, RoundaboutStructure> annotations,IReadOnlyList<int> sourceNodeIndices)
+        IReadOnlyDictionary<ulong, RoundaboutStructure> annotations,IReadOnlyList<int> sourceNodeIndices,
+        Func<ulong,Vector3?>? mapNodePosition=null)
     {
         ValidateSourceNodes(route,sourceNodeIndices);
         var result = new List<RoundaboutRouteRange>();
@@ -21,25 +25,29 @@ public static class RoundaboutRouteAdapter
             while (last + 1 < route.Count && TryOwner(route[last + 1], out var nextUid)
                 && annotations.TryGetValue(nextUid, out var nextRing) && nextRing.Id == ring.Id
                 && !ring.ExitPorts.Any(p=>p.BoundaryNodeUid==route[last].EndNodeUid)) last++;
-            var entry = ring.EntryPorts.SingleOrDefault(p => p.NodeUid == route[i].StartNodeUid);
+            ulong firstNode=route[i].StartNodeUid;
+            var entry = ring.EntryPorts.SingleOrDefault(p => p.NodeUid == firstNode);
+            bool startsInside=entry is null;
+            double startBearing;
+            if(entry is not null)startBearing=entry.Bearing;
+            else if(i==0&&sourceNodeIndices[i]==0&&ring.InternalNodes.Contains(firstNode)
+                &&ring.BearingFrame is {} frame&&mapNodePosition?.Invoke(firstNode) is {} position
+                &&float.IsFinite(position.X)&&float.IsFinite(position.Z)
+                &&(position.X!=frame.CenterX||position.Z!=frame.CenterZ))
+                startBearing=frame.Bearing(position);
+            else if(i==0)
+                throw new NotSupportedException($"Roundabout {ring.Id}: route starts at {firstNode:X16} without a retained entry interface or a proven internal start position.");
+            else throw new InvalidDataException($"Roundabout {ring.Id}: route entry {firstNode:X16} is not a declared entry interface.");
             var exitMatches = ring.ExitPorts.Where(p => p.BoundaryNodeUid == route[last].EndNodeUid)
                 .GroupBy(p => p.BoundaryNodeUid).ToArray();
-            if(entry is null)
-            {
-                if(i==0)throw new NotSupportedException($"Roundabout {ring.Id}: route starts at {route[i].StartNodeUid:X16} without a retained entry interface; the entry-relative exit ordinal cannot be derived.");
-                throw new InvalidDataException($"Roundabout {ring.Id}: route entry {route[i].StartNodeUid:X16} is not a declared entry interface.");
-            }
             if(exitMatches.Length!=1||exitMatches[0].Count()!=1||!double.IsFinite(ring.RingLength)||ring.RingLength<=0)
                 throw new InvalidDataException($"Roundabout {ring.Id}: invalid exit interface {route[last].EndNodeUid:X16} or reference length {ring.RingLength}.");
             // Bearings already follow the ring's native circulation direction.
-            double Ahead(RoundaboutExitPort port)
-            { return (port.Bearing - entry.Bearing + 2 * Math.PI) % (2 * Math.PI); }
+            double Ahead(RoundaboutExitPort port)=>(port.Bearing-startBearing+FullTurn)%FullTurn;
             var ordered = ring.ExitPorts.GroupBy(p => p.BoundaryNodeUid)
-                .Select(g => (g.Key, Along: g.Min(p => Ahead(p)))).OrderBy(p => p.Along).ToArray();
-            bool ambiguous = ordered.Zip(ordered.Skip(1)).Any(p => Math.Abs(p.First.Along - p.Second.Along) < 1e-6);
-            int ordinal = Array.FindIndex(ordered, p => p.Key == exitMatches[0].Key) + 1;
+                .Select(g => (Port:g.MinBy(Ahead)!,Angle:g.Min(Ahead))).OrderBy(p => p.Angle).ToArray();
+            bool ambiguous = ordered.Zip(ordered.Skip(1)).Any(p => Math.Abs(p.First.Angle - p.Second.Angle) < BearingTolerance);
             if(ambiguous)throw new NotSupportedException($"Roundabout {ring.Id}: distinct exits have indistinguishable entry-relative bearings.");
-            if(ordinal==0)throw new InvalidDataException($"Roundabout {ring.Id}: selected exit has no entry-relative ordinal.");
             var points = route.Skip(i).Take(last - i + 1).SelectMany(e => e.Points).ToArray();
             var starts=new List<int>();int pointOffset=0;
             foreach(var edge in route.Skip(i).Take(last-i+1))
@@ -51,20 +59,60 @@ public static class RoundaboutRouteAdapter
             var selectedPort=exitMatches[0].Single();
             double departure=NativeDeparture(selectedPort,route.Skip(i).Take(last-i+1))
                 ??Project(selectedPort.DepartureCandidates,points,starts,0,length,true);
+            if(startsInside&&ordered.Any(p=>AtStartBearing(p.Angle)))
+                ordered=OrderTiedExits(ordered,selectedPort,departure,ring.BearingFrame!.Value,startBearing,points,starts,length);
+            int ordinal=Array.FindIndex(ordered,p=>p.Port.BoundaryNodeUid==selectedPort.BoundaryNodeUid)+1;
+            if(ordinal==0)throw new InvalidDataException($"Roundabout {ring.Id}: selected exit has no entry-relative ordinal.");
             var cues=new List<(int Number,double AlongMeters)>();double previous=0;
             for(int n=0;n<ordinal-1;n++)
             {
-                var port=ring.ExitPorts.Where(p=>p.BoundaryNodeUid==ordered[n].Key)
-                    .MinBy(p=>Ahead(p))!;
+                var port=ordered[n].Port;
                 double along=Project(port.DepartureCandidates,points,starts,previous,departure);
                 cues.Add(new(n+1,along));previous=along;
             }
             cues.Add(new(ordinal,departure));
-            var actions=BuildActions(ring.Id,sourceNodeIndices[i],route[i],route[last],offsets[i],offsets[last+1],ordinal,cues);
-            result.Add(new(ring.Id,i,last+1,offsets[i],offsets[last+1],actions));
+            var actions=BuildActions(ring.Id,sourceNodeIndices[i],route[i],route[last],offsets[i],offsets[last+1],ordinal,cues,startsInside);
+            result.Add(new(ring.Id,i,last+1,offsets[i],offsets[last+1],actions){StartsInside=startsInside});
             i = last;
         }
         return result;
+    }
+    private static bool AtStartBearing(double angle)=>Math.Min(angle,FullTurn-angle)<BearingTolerance;
+
+    // Coincident rays can be reached immediately or after one circuit. Use the
+    // departure on this route to choose the right side of the angular cut.
+    private static (RoundaboutExitPort Port,double Angle)[] OrderTiedExits(
+        IEnumerable<(RoundaboutExitPort Port,double Angle)> ports,RoundaboutExitPort selected,double departure,
+        RoundaboutBearingFrame frame,double startBearing,IReadOnlyList<Vector3> points,IReadOnlyList<int> starts,double length)
+    {
+        var ordered=new List<(RoundaboutExitPort Port,double Angle)>();
+        foreach(var port in ports)
+        {
+            if(!AtStartBearing(port.Angle)){ordered.Add(port);continue;}
+            bool target=port.Port.BoundaryNodeUid==selected.BoundaryNodeUid;
+            double along=target?departure:Project(port.Port.DepartureCandidates,points,starts,0,length);
+            if(!target&&(along<=0||along>=departure))continue;
+            double sweep=TravelledBearing(frame,startBearing,points,starts,along);
+            ordered.Add((port.Port,sweep>Math.PI?FullTurn:0));
+        }
+        return ordered.OrderBy(p=>p.Angle).ToArray();
+    }
+
+    private static double TravelledBearing(RoundaboutBearingFrame frame,double previous,
+        IReadOnlyList<Vector3> points,IReadOnlyList<int> starts,double remaining)
+    {
+        double sweep=0;
+        for(int i=0;i<points.Count&&remaining>0;i++)
+        {
+            var point=points[i];
+            double length=i==0||starts.Contains(i)?0:Vector3.Distance(points[i-1],point);
+            if(remaining<length)point=Vector3.Lerp(points[i-1],point,(float)(remaining/length));
+            double angle=frame.Bearing(point);
+            sweep+=Math.IEEERemainder(angle-previous,FullTurn);
+            previous=angle;
+            remaining-=length;
+        }
+        return sweep;
     }
     [System.Diagnostics.Conditional("DEBUG")]
     private static void ValidateSourceNodes(IReadOnlyList<DirectedRoad> route,IReadOnlyList<int> sourceNodeIndices)
@@ -73,19 +121,18 @@ public static class RoundaboutRouteAdapter
             throw new NavigationContractException("Each raw route visit requires its unique original SDK source-node index.");
     }
     private static IReadOnlyList<NavigationManeuver> BuildActions(string ringId,int sourceNodeIndex,DirectedRoad entry,
-        DirectedRoad exit,double start,double end,int exitNumber,IReadOnlyList<(int Number,double AlongMeters)> cues)
+        DirectedRoad exit,double start,double end,int exitNumber,IReadOnlyList<(int Number,double AlongMeters)> cues,bool startsInside)
     {
         // Use the complete SDK route occurrence, not this active component's
         // local visit index, which changes when earlier map geometry unloads.
         string sequence=$"roundabout:{ringId}:{entry.StartNodeUid:X16}:visit:{sourceNodeIndex}";
         string id=sequence+$":{exit.EndNodeUid:X16}";
-        var actions=new List<NavigationManeuver>
-        {
-            new(id+":enter",ManeuverKind.EnterRoundabout,start,entry.Id,exit.Id)
+        var actions=new List<NavigationManeuver>();
+        if(!startsInside)
+            actions.Add(new(id+":enter",ManeuverKind.EnterRoundabout,start,entry.Id,exit.Id)
             {EndDistanceMeters=end,JunctionId="roundabout:"+ringId,SpeechSequenceId=sequence,
                 SpeechSequenceStartDistanceMeters=start,Instruction="进入环岛",
-                NearInstruction="进入环岛，请从第"+NavigationPrompts.Number(exitNumber)+"出口驶出"}
-        };
+                NearInstruction="进入环岛，请从第"+NavigationPrompts.Number(exitNumber)+"出口驶出"});
         foreach(var cue in cues)
         {
             bool selected=cue.Number==exitNumber;

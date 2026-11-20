@@ -60,6 +60,10 @@ public sealed class RoundaboutBoundaryTests
         Assert.DoesNotContain(ports.Entries,p=>p.NodeUid==101);
         Assert.DoesNotContain(ports.Entries,p=>p.NodeUid==100);
         Assert.DoesNotContain(ports.Exits,p=>p.BoundaryNodeUid==100);
+        Assert.Contains(100UL,ports.InternalNodes);
+        Assert.DoesNotContain(90UL,ports.InternalNodes);
+        Assert.DoesNotContain(101UL,ports.InternalNodes);
+        Assert.All(ports.Exits,p=>Assert.Equal(p.Bearing,ports.Frame.Bearing(p.Position)));
     }
 
     [Fact]

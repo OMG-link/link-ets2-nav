@@ -11,6 +11,8 @@ public sealed record RoundaboutStructure(string Id, IReadOnlyList<ulong> PrefabU
 {
     public IReadOnlyList<RoundaboutEntryPort> EntryPorts { get; init; } = [];
     public IReadOnlyList<RoundaboutExitPort> ExitPorts { get; init; } = [];
+    public RoundaboutBearingFrame? BearingFrame { get; init; }
+    public IReadOnlySet<ulong> InternalNodes { get; init; } = new HashSet<ulong>();
     public double RingLength { get; init; }
     public string? SpecialDefinitionId { get; init; }
     public RoundaboutDirectionResult? DirectionCheck { get; init; }
@@ -106,7 +108,8 @@ public sealed class RoundaboutBuilder
         var ports = RoundaboutPorts.Build(graph, ring, members, token);
         var exits = ports.Exits.Select(p => new RoundaboutExit(p.BoundaryNodeUid, p.Branches)).ToArray();
         return new(id, members, ring, points, quality, exits)
-        { EntryPorts=ports.Entries, ExitPorts=ports.Exits, RingLength=ports.Length };
+        { EntryPorts=ports.Entries, ExitPorts=ports.Exits, RingLength=ports.Length,
+          BearingFrame=ports.Frame,InternalNodes=ports.InternalNodes };
     }
 
     private RoundaboutCurveKey[] Walk(RoundaboutCurveKey start, CancellationToken token)

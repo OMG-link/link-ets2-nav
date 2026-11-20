@@ -236,6 +236,7 @@ public sealed class GameDataManager:IDisposable
         {
             if(window.MapItems.GetValueOrDefault(uid) is not Prefab prefab)continue;
             if(prefab.Ferry is not null||Ferries?.Ports.Any(port=>port.PrefabUid==uid)==true
+                ||prefab.SlaveItems.Any(item=>item is Company)
                 ||companies.Places.Any(company=>company.PrefabUid==uid))continue;
             var source=GetPrefab(uid);
             var resource=source?.Definition?.Descriptor;

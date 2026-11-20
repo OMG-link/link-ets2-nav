@@ -183,6 +183,29 @@ public sealed class GameDataManagerTests
     }
 
     [Fact]
+    public void KnownCompanyInANeighboringSectorDoesNotInvalidateItsPrefabPassage()
+    {
+        var (data,host,route)=MissingPrefabPassage(neighboringCompany:true);
+        using var dataset=data;
+        var prefab=data.GetPrefab(42)!.Instance;
+        var company=Assert.Single(prefab.SlaveItems.OfType<Company>());
+        Assert.Same(prefab,company.Prefab);
+        Assert.Same(company,data.Map.GetItem<Company>(company.Uid));
+
+        var window=new TruckLib.ScsMap.Map();
+        SectorCoordinate sector=new(0,0);
+        new HostMapView(host.Map).MergeInto(window,[sector]);
+        Assert.False(window.MapItems.ContainsKey(company.Uid));
+        var companies=data.Companies.Build(window);
+        Assert.Empty(companies.Places);
+        var snapshot=new NearbyMapSnapshot(window,[],[],[sector]){Data=data,Companies=companies,
+            MissingConnection=uid=>data.DescribeMissingConnection(window,uid)};
+        using var paths=new RoadPathSource(snapshot);
+        Assert.Empty(paths.GetRouteComponents(route));
+        Assert.DoesNotContain(paths.MapIssues,issue=>issue is MissingMapObjects);
+    }
+
+    [Fact]
     public void AProjectedOutPathIsNotAMissingNativePath()
     {
         var (data,window,route)=MissingPrefabPassage(nativePath:true);
@@ -209,7 +232,7 @@ public sealed class GameDataManagerTests
     }
 
     private static (GameDataManager Data,NearbyMapSnapshot Window,RouteSnapshot Route) MissingPrefabPassage(
-        bool ferry=false,bool company=false,bool nativePath=false)
+        bool ferry=false,bool company=false,bool nativePath=false,bool neighboringCompany=false)
     {
         var fs=new Files();
         fs.Content["/def/world/prefab.test.sii"]="SiiNunit { prefab_model : prefab.test { prefab_desc: \"/prefab/facility.ppd\" } }";
@@ -221,6 +244,7 @@ public sealed class GameDataManagerTests
         entry.ForwardItem=prefab;exit.BackwardItem=prefab;
         map.Nodes.Add(entry.Uid,entry);map.Nodes.Add(exit.Uid,exit);map.MapItems.Add(prefab.Uid,prefab);
         if(ferry)prefab.Ferry=Ferry.Add(map,new(0,0,10),"terminal");
+        if(neighboringCompany)Company.Add(map,prefab,new(4100,0,0));
         var data=new GameDataManager(fs,map:map);
         data.Prepare();
         data.Projection("ppd","/prefab/facility.ppd",()=>new PrefabDescriptor

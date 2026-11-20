@@ -41,6 +41,17 @@ public sealed record LaneContinuityPoint(ulong PrefabUid,LaneContinuityPointKind
 public sealed record LaneContinuityResult(IReadOnlyList<LaneContinuityPoint> Points,IReadOnlyList<int> UnchangedCurveIndices)
 {
     public MapQueryIssue? MapIssue {get;init;}
+
+    internal (int Index,LaneContinuityPoint Point,LaneContinuityBranch Branch)? FirstSideSplit(IReadOnlyList<int> curves)
+    {
+        for(int i=1;i<curves.Count;i++)
+        {
+            var split=Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==curves[i-1]);
+            var branch=split?.Branches.FirstOrDefault(b=>b.CurveIndex==curves[i]);
+            if(branch is {Role:LaneContinuityRole.Newborn or LaneContinuityRole.Unknown})return (i,split!,branch);
+        }
+        return null;
+    }
 }
 
 /// <summary>Local N-to-one continuity, and its one-to-N counterpart. Physical links are never removed.</summary>

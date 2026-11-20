@@ -66,7 +66,7 @@ public sealed class ContinuationReplacementTests
         var distance=await played.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
         Assert.Equal("沿当前道路，继续行驶九点四公里。",distance.Text);
         coordinator.Publish(known);coordinator.Tick(Data(),Now);Assert.False(played.Reader.TryRead(out _));
-        Assert.Contains(known.Triggers,t=>t.Id.EndsWith(":2000"));
+        Assert.Contains(known.Triggers,t=>t.Id.EndsWith(":1000"));
         Assert.Contains(known.Triggers,t=>t.Kind==SpeechTriggerKind.Execution);
     }
 

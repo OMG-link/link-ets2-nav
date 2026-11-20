@@ -43,7 +43,7 @@ public sealed class NavigationSequenceWordingTests
         string Execute(ManeuverKind next)
         {
             var plan=new LinkEts2Nav.Core.Guidance.NavigationEventPlanner().Build("s","r",Now,0,
-                [M("first",ManeuverKind.TurnLeft,100),M("second",next,100+gap)],true,false,false,new());
+                [M("first",ManeuverKind.TurnLeft,100) with{EndDistanceMeters=100+gap/2},M("second",next,100+gap)],true,false,false,new());
             return Assert.Single(plan.Triggers,t=>t.Id.StartsWith("first@")&&t.Kind==LinkEts2Nav.Core.Guidance.SpeechTriggerKind.Execution).Text;
         }
         Assert.Equal(turn,Execute(ManeuverKind.TurnRight));
@@ -61,11 +61,11 @@ public sealed class NavigationSequenceWordingTests
     }
 
     [Fact]
-    public void HundredMeterGapAtExecutionAndSilentActionsAreNotCombined()
+    public void FirstPreviewWithinOneHundredMetresCombinesButSilentActionsDoNot()
     {
         var p=new NavigationInstructionPolicy();
         var first=M("first",ManeuverKind.TurnLeft,20);
-        Assert.Equal("左转。",Assert.Single(p.UpdateSequence([first,M("second",ManeuverKind.TurnRight,120)],"s",Now,Now,true)));
+        Assert.Equal("左转，然后一百米右转。",Assert.Single(p.UpdateSequence([first,M("second",ManeuverKind.TurnRight,120)],"s",Now,Now,true)));
         var q=new NavigationInstructionPolicy();
         Assert.Equal("左转。",Assert.Single(q.UpdateSequence([first,M("second",ManeuverKind.MergeLeft,70) with{AnnouncementMode=NavigationAnnouncementMode.Silent}],"s",Now,Now,true)));
     }

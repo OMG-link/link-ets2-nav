@@ -115,6 +115,17 @@ public sealed class SpeechFollowOnTests
         var harness=new Harness();harness.Manager.ApplyBatch(Due(First()),true);
         var first=await harness.Next();harness.Manager.ApplyBatch(Due(Helper()),true);
         first.Done.SetCanceled(TestContext.Current.CancellationToken);harness.Manager.ApplyBatch(End("first"),true);
+        // Observe the worker failure before Dispose requests its legitimate stop cancellation.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async()=>
+        {
+            using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            while(true)
+            {
+                harness.Manager.ThrowIfFaulted();
+                if(timeout.IsCancellationRequested)throw new TimeoutException("Playback worker fault was not observed.");
+                await Task.Delay(1,TestContext.Current.CancellationToken);
+            }
+        });
         await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>harness.DisposeAsync().AsTask());
         Assert.Equal("straight",Assert.Single(harness.Manager.Pending).Text);
     }

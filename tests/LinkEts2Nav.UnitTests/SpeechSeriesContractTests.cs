@@ -90,7 +90,7 @@ public sealed class SpeechSeriesContractTests
     private sealed class NoPlayer:IGuidanceAudioPlayer
     {public Task PlayAsync(string file,CancellationToken token)=>throw new InvalidOperationException("Audio is deliberately unavailable.");}
     [Fact]
-    public async Task RejectedPublicationReleasesTheAtomicPlaybackHold()
+    public async Task PublicationHoldsPendingPlaybackUntilTheNextCompletedTick()
     {
         var player=new ReadyPlayer();bool ready=false;
         await using var manager=new GuidancePlaybackManager(null,player,()=>ready?"ready.wav":null);
@@ -99,8 +99,10 @@ public sealed class SpeechSeriesContractTests
         var valid=new GuidanceSourcePlan("navigation","s","r",0,true,Now,[series]);
         var data=new GameDataSnapshot(new(0,0,0,0,10,1000,true,false,1,Now),RouteSnapshot.Parse([],Now),RouteAvailability.None,"s",true);
         c.Publish(valid);c.Tick(data,Now);Assert.Single(manager.Pending);
-        Assert.Throws<ArgumentException>(()=>c.Publish(valid with{Sequences=[series,series]}));
+        c.Publish(valid);
         ready=true;manager.SetActive(true);
+        Assert.False(player.Started.Task.IsCompleted);
+        c.Tick(data,Now);
         await player.Started.Task.WaitAsync(TimeSpan.FromSeconds(3),TestContext.Current.CancellationToken);
     }
     private sealed class ReadyPlayer:IGuidanceAudioPlayer

@@ -48,7 +48,7 @@ public sealed class JunctionExitSideMapDependencyTests
     }
 
     [Fact]
-    public void ReversePriorityMissingDoesNotInvalidateTheKnownEntrancePassage()
+    public void PendingExitDefersProjectionOfAKnownEntranceAtTheSameVisit()
     {
         var geometry=NativeLaneFixture.WithInterfaces(42,
             [Curve(0,Vector3.Zero,new(40,0,0),[2],[]),Curve(1,new(0,0,15),new(40,0,0),[2],[]),
@@ -67,9 +67,31 @@ public sealed class JunctionExitSideMapDependencyTests
         Assert.Equal(ComponentContinuityKind.NeedsMapObjects,index.ForExit(selected.Id)!.Kind);
         Assert.IsType<MissingMapObjects>(index.ForExit(selected.Id)!.Issue);
         var result=ComponentManeuverProjection.Build([selected],0,[entry],index.Exits,selected.LanePaths[0]);
-        Assert.Equal(ManeuverKind.Straight,Assert.Single(result.Actions).Kind);
+        Assert.Empty(result.Actions);
         Assert.NotEmpty(result.Issues);Assert.All(result.Issues,i=>Assert.IsType<MissingMapObjects>(i));
         Assert.NotEmpty(result.Unresolved);
+    }
+
+    [Fact]
+    public void PendingEntryAndExitCombineOnlyTheSelectedVisitsLookupKeys()
+    {
+        var geometry=NativeLaneFixture.WithInterfaces(42,
+            [Curve(0,Vector3.Zero,new(100,0,0),[],[])]);
+        var selected=Passage(10,20,[0],geometry);
+        var other=Passage(10,30,[0],geometry);
+        var entryKey=new MapObjectKey(MapObjectKind.Item,34);
+        var exitKey=new MapObjectKey(MapObjectKind.Node,35);
+        ComponentPassageContinuity Pending(DirectedRoad edge,MapObjectKey key)
+            =>new(edge.Id,42,edge.StartNodeUid,edge.EndNodeUid,false,ComponentContinuityKind.NeedsMapObjects,
+                null,null,null,null,[],[],1,1,2,null,[],new MissingMapObjects([key],"test dependency"));
+
+        var result=ComponentManeuverProjection.Build([selected],0,[Pending(selected,entryKey)],
+            [Pending(selected,exitKey),Pending(other,new(MapObjectKind.Item,36))]);
+
+        Assert.Empty(result.Actions);
+        var missing=Assert.IsType<MissingMapObjects>(Assert.Single(result.Issues));
+        Assert.Equal(new[]{entryKey,exitKey}.OrderBy(key=>key.Kind),missing.Keys);
+        Assert.Equal(new NavigationUnresolvedSpan(0,RouteGeometry.Length(selected)),Assert.Single(result.Unresolved));
     }
 
     [Fact]

@@ -17,6 +17,19 @@ public static class ComponentManeuverProjection
         var offsets=new double[route.Count+1];for(int i=0;i<route.Count;i++)offsets[i+1]=offsets[i]+RouteGeometry.Length(route[i]);
         var edge=route[visit];
         bool Selected(ComponentPassageContinuity fact)=>fact.EdgeId==edge.Id&&fact.EntryNodeUid==edge.StartNodeUid&&fact.ExitNodeUid==edge.EndNodeUid;
+        var pending=entryFacts.Concat(exitFacts).Where(Selected)
+            .Where(fact=>fact.Kind==ComponentContinuityKind.NeedsMapObjects).ToArray();
+        if(pending.Length>0)
+        {
+#if DEBUG
+            if(pending.Any(fact=>fact.Issue is not MissingMapObjects))
+                throw new NavigationContractException($"Pending component visit {edge.Id} requires the exact missing lookup keys.");
+#endif
+            var missing=pending.Select(fact=>(MissingMapObjects)fact.Issue!).ToArray();
+            var dependency=missing.Length==1?missing[0]:new MissingMapObjects(missing.SelectMany(issue=>issue.Keys),
+                "Component visit needs native lookup keys."){QueryAnchor=missing[0].QueryAnchor};
+            return new([], [dependency], [new(offsets[visit],offsets[visit+1])]);
+        }
         var selectedOutlet=exitFacts.FirstOrDefault(Selected);
         foreach(var fact in entryFacts.Where(Selected))Add(fact,false);
         foreach(var fact in exitFacts.Where(Selected))Add(fact,true);

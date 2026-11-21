@@ -17,6 +17,7 @@ public sealed class NearbyScannerExceptionTests
         fs.Content["/def/world/prefab.test.sii"]=Encoding.UTF8.GetBytes("SiiNunit { prefab_model : prefab.test { prefab_desc: \"/prefab/test.ppd\" } }");
         var map=new TruckLib.ScsMap.Map();var node=new Node{Uid=10,Position=Vector3.Zero};
         var prefab=new Prefab{Uid=42,Model=new Token("test"),Nodes=[node]};
+        node.ForwardItem=prefab;
         map.Nodes.Add(10,node);map.MapItems.Add(42,prefab);
         using var data=new GameDataManager(fs,map:map);var coverage=MapScanCoverage.Create(Vector3.Zero,100,null,null,0);
         // Model an already decoded native window, so this checks the descriptor

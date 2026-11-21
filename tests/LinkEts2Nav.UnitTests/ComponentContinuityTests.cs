@@ -118,20 +118,22 @@ public sealed class ComponentContinuityTests
         var edges=Join(false).Take(2).ToArray();
         var missing=new MissingMapObjects([new(MapObjectKind.Item,34)],"fixture owner");
         var side=ComponentContinuityIndex.Build(new(edges),_=>missing).ForEntry(edges[1].Id)!;
-        Assert.Equal(ComponentContinuityKind.Unknown,side.Kind);
+        Assert.Equal(ComponentContinuityKind.NeedsMapObjects,side.Kind);
         Assert.IsType<MissingMapObjects>(side.Issue);
     }
     [Fact]
-    public void KnownLocalMainContinuationDoesNotDependOnTheSidesMissingFuture()
+    public void MissingSideContinuationDefersTheWholeMergeAnalysis()
     {
         var edges=Join(false).Take(2).ToArray();
         var missing=new MissingMapObjects([new(MapObjectKind.Item,34)],"downstream fixture");
         var index=ComponentContinuityIndex.Build(new(edges),_=>missing);
-        var main=index.ForEntry(edges[0].Id)!;
-        Assert.True(main.IsMain);Assert.Equal(ComponentContinuityKind.Main,main.Kind);
-        Assert.Null(main.Issue);Assert.Equal(ComponentLaneFate.Continues,Assert.Single(main.Lanes).Fate);
-        var side=index.ForEntry(edges[1].Id)!;
-        Assert.Equal(ComponentContinuityKind.Unknown,side.Kind);Assert.IsType<MissingMapObjects>(side.Issue);
+        Assert.Equal(2,index.Entries.Count);
+        Assert.All(index.Entries,fact=>
+        {
+            Assert.Equal(ComponentContinuityKind.NeedsMapObjects,fact.Kind);
+            Assert.Equal(missing.Keys,Assert.IsType<MissingMapObjects>(fact.Issue).Keys);
+            Assert.Empty(fact.Lanes);
+        });
     }
     [Fact]
     public void MissingNativeGeometryCannotBeReplacedByBlinkerEvidence()

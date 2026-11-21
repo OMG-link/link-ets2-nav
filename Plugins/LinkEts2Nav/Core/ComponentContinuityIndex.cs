@@ -225,10 +225,10 @@ public sealed class ComponentContinuityIndex
                     TerminalDistanceFromExitMeters=terminal.OffsetMeters};
             }
             if(origin is null)return lane;
-            // Preserve the existing UID wait until the upstream trace exposes it separately.
-            if(origin.Issue is MissingMapObjects pending)
-                return lane with{Fate=ComponentLaneFate.Unresolved,Issue=pending};
-            ValidateLaneAnalysis(edge,path,origin.Issue,roleKnown:origin.Fate!=ComponentLaneFate.Unresolved);
+            // The upstream trace still carries pending map data and other unresolved causes together.
+            if(origin.Fate==ComponentLaneFate.Unresolved)
+                return lane with{Fate=origin.Fate,Issue=origin.Issue};
+            ValidateLaneAnalysis(edge,path,origin.Issue);
             if(origin.Fate is not (ComponentLaneFate.Dies or ComponentLaneFate.Separates))return lane;
             var (turn,issue)=SoftOutletTurn(mainPassage!,edge);
             return lane with{Fate=origin.Fate==ComponentLaneFate.Dies?ComponentLaneFate.Born:ComponentLaneFate.Joins,

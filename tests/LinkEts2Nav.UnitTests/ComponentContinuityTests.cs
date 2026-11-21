@@ -422,20 +422,48 @@ public sealed class ComponentContinuityTests
         Assert.Equal(missing.Keys,Assert.IsType<MissingMapObjects>(outlet.Issue).Keys);
     }
 
-#if DEBUG
     [Fact]
-    public void OutletTracingRejectsAnUpstreamIssueWithoutMissingObjects()
+    public void OutletWithNoUsableUpstreamComponentRemainsUnresolved()
     {
         var (graph,side)=SeparateOutletWithoutUpstream();
         const string detail="unusable upstream component";
 
-        var exception=Assert.Throws<NavigationContractException>(()=>ComponentContinuityIndex.Build(graph,
-            _=>new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,detail)));
+        var index=ComponentContinuityIndex.Build(graph,_=>new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,detail));
 
-        Assert.Contains(side.Id,exception.Message);
-        Assert.Contains(detail,exception.Message);
+        var outlet=index.ForExit(side.Id)!;
+        Assert.Equal(ComponentContinuityKind.Unknown,outlet.Kind);
+        Assert.Equal(ComponentLaneFate.Unresolved,Assert.Single(outlet.Lanes).Fate);
+        Assert.Equal(detail,Assert.IsType<MapQueryFailure>(outlet.Issue).Reason);
     }
-#endif
+
+    [Fact]
+    public void OutletWithEquidistantUpstreamReferencesAtDifferentPortsRemainsUnresolved()
+    {
+        var split=NativeLaneFixture.WithInterfaces(1,[
+            Curve(0,new(0,0,-4),new(100,0,-4),[],[]),
+            Curve(1,Vector3.Zero,new(100,0,30),[],[]),
+            Curve(2,new(0,0,4),new(100,0,4),[],[])]);
+        var priority=new RoadJoinPriority(20,[],[],8,"main outlet");
+        var main=Passage(1,10,20,0,0,[0],split,3,2) with{SplitPriority=priority};
+        main=main with{LanePaths=[main.LanePaths[0],Passage(1,10,20,2,1,[2],split,3,2).LanePaths[0]]};
+        var side=Passage(1,10,30,1,0,[1],split,3,1) with{SplitPriority=priority};
+        var shared=new DirectedRoad("approach",40,10,[new(-50,0,0),Vector3.Zero]);
+        // The side lane is central when viewed upstream, between two equally
+        // close continuations which lead to different upstream interfaces.
+        var upstream=NativeLaneFixture.WithInterfaces(2,[
+            Curve(0,new(-150,0,-30),new(-50,0,-4),[],[]),
+            Curve(1,new(-150,0,0),new(-50,0,0),[],[]),
+            Curve(2,new(-150,0,30),new(-50,0,4),[],[])]);
+        var left=Passage(2,50,40,0,0,[0],upstream,1,3) with{JoinPriority=null};
+        var centre=Passage(2,60,40,0,1,[1],upstream,1,3) with{JoinPriority=null};
+        var right=Passage(2,70,40,0,2,[2],upstream,1,3) with{JoinPriority=null};
+
+        var outlet=ComponentContinuityIndex.Build(new([left,centre,right,shared,main,side])).ForExit(side.Id)!;
+
+        Assert.Equal(ComponentContinuityKind.Unknown,outlet.Kind);
+        Assert.Equal(ComponentLaneFate.Unresolved,Assert.Single(outlet.Lanes).Fate);
+        Assert.Equal("最近主线不唯一",Assert.IsType<MapQueryFailure>(outlet.Issue).Reason);
+    }
 
     private static (NativeLaneGraph Graph,DirectedRoad Side) SeparateOutletWithoutUpstream()
     {

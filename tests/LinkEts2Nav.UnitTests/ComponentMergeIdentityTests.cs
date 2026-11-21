@@ -23,12 +23,19 @@ public sealed class ComponentMergeIdentityTests
                 {LanePaths=[path],JoinPriority=new(10,[],[],8,"known main")};
         }
         var selected=Edge(11,20,0,3);
-        var index=ComponentContinuityIndex.Build(new([Edge(10,20,1,3),selected,Edge(10,30,1,2),Edge(11,30,0,2)]));
         var merges=LaneContinuity.Analyze(geometry).Points.Where(p=>p.Kind==LaneContinuityPointKind.Merge).ToArray();
         Assert.Equal(2,merges.Length);Assert.All(merges,p=>Assert.Equal(origin,p.Origin));
+        var graph=new NativeLaneGraph([Edge(10,20,1,3),selected,Edge(10,30,1,2),Edge(11,30,0,2)]);
+#if DEBUG
+        // The coincident topology origins leave no complete segment for the turn description.
+        var exception=Assert.Throws<NavigationContractException>(()=>ComponentContinuityIndex.Build(graph));
+        Assert.Contains("no complete segment between topology origins",exception.Message);
+#else
+        var index=ComponentContinuityIndex.Build(graph);
         var fact=index.ForEntry(selected.Id)!;Assert.Equal(ComponentContinuityKind.Hard,fact.Kind);
         var lane=Assert.Single(fact.Lanes);
         Assert.Equal(3,lane.TurnSharedCurveIndex);
         Assert.Equal("lane-merge:000000000000002A:3",fact.StructuralConstraintId);
+#endif
     }
 }

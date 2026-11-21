@@ -212,12 +212,11 @@ public sealed class ComponentContinuityIndex
             if(!continuity.TryGetValue(path.PrefabUid,out var facts))
                 return lane with{Fate=ComponentLaneFate.Unresolved,Issue=new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,
                     "Native outlet lane geometry is unavailable."){QueryAnchor=entry.Position}};
-            if(facts.MapIssue is {} invalid)return lane with{Fate=ComponentLaneFate.Unresolved,Issue=invalid};
+            ValidateLaneAnalysis(edge,path,facts.MapIssue);
             if(split is {} change)
             {
-                if(change.Branch.MapIssue is not null||change.Branch.Role==LaneContinuityRole.Unknown)
-                    return lane with{Fate=ComponentLaneFate.Unresolved,Issue=change.Branch.MapIssue??change.Point.MapIssue
-                        ??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"Native outlet split is unresolved."){QueryAnchor=entry.Position}};
+                ValidateLaneAnalysis(edge,path,change.Branch.MapIssue??change.Point.MapIssue,change.Branch.CurveIndex,
+                    change.Branch.Role==LaneContinuityRole.Newborn);
                 int index=change.Index;
                 var terminal=At(edge,path,CurveOffset(path,index));
                 return lane with{Fate=ComponentLaneFate.Born,InComponent=true,Terminal=terminal,
@@ -226,8 +225,10 @@ public sealed class ComponentContinuityIndex
                     TerminalDistanceFromExitMeters=terminal.OffsetMeters};
             }
             if(origin is null)return lane;
-            if(origin.Issue is not null||origin.Fate==ComponentLaneFate.Unresolved)
-                return lane with{Fate=ComponentLaneFate.Unresolved,Issue=origin.Issue};
+            // Preserve the existing UID wait until the upstream trace exposes it separately.
+            if(origin.Issue is MissingMapObjects pending)
+                return lane with{Fate=ComponentLaneFate.Unresolved,Issue=pending};
+            ValidateLaneAnalysis(edge,path,origin.Issue,roleKnown:origin.Fate!=ComponentLaneFate.Unresolved);
             if(origin.Fate is not (ComponentLaneFate.Dies or ComponentLaneFate.Separates))return lane;
             var (turn,issue)=SoftOutletTurn(mainPassage!,edge);
             return lane with{Fate=origin.Fate==ComponentLaneFate.Dies?ComponentLaneFate.Born:ComponentLaneFate.Joins,
@@ -270,7 +271,7 @@ public sealed class ComponentContinuityIndex
         {
             if(!continuity.TryGetValue(path.PrefabUid,out var facts))
                 return new(edge,path,null,null,false,new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,"组件缺少合法原生曲线几何"));
-            if(facts.MapIssue is {} issue)return new(edge,path,null,null,false,issue);
+            ValidateLaneAnalysis(edge,path,facts.MapIssue);
             for(int i=0;i<path.CurveIndices.Count;i++)
             {
                 int curve=path.CurveIndices[i];
@@ -278,21 +279,21 @@ public sealed class ComponentContinuityIndex
                 {
                     var merge=facts.Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Merge&&p.SharedCurveIndex==curve);
                     var branch=merge?.Branches.FirstOrDefault(b=>b.CurveIndex==path.CurveIndices[i-1]);
-                    if(branch?.Role==LaneContinuityRole.Unknown)return new(edge,path,null,null,false,branch.MapIssue??merge?.MapIssue);
+                    ValidateLaneAnalysis(edge,path,merge?.MapIssue,curve,branch?.Role!=LaneContinuityRole.Unknown);
                     if(branch?.Role==LaneContinuityRole.Dead)return new(edge,path,branch,merge,true,null);
                 }
                 if(i+1<path.CurveIndices.Count)
                 {
                     var split=facts.Points.FirstOrDefault(p=>p.Kind==LaneContinuityPointKind.Split&&p.SharedCurveIndex==curve);
                     var branch=split?.Branches.FirstOrDefault(b=>b.CurveIndex==path.CurveIndices[i+1]);
-                    if(branch is {Role:LaneContinuityRole.Unknown})return new(edge,path,null,null,false,branch.MapIssue??split?.MapIssue);
+                    ValidateLaneAnalysis(edge,path,split?.MapIssue,curve,branch?.Role!=LaneContinuityRole.Unknown);
                     if(branch is {Role:LaneContinuityRole.Newborn})
                     {
-                        // An issue-free split with every branch explicitly non-surviving
-                        // proves where this lane's identity ends in the reverse graph.
-                        bool noMain=reverse&&split!.MapIssue is null&&split.Branches.All(b=>
-                            b.Role==LaneContinuityRole.Newborn&&b.MapIssue is null);
-                        return new(edge,path,null,null,false,reverse?branch.MapIssue:null)
+                        if(reverse)ValidateLaneAnalysis(edge,path,branch.MapIssue,branch.CurveIndex);
+                        // A split with every branch explicitly non-surviving proves
+                        // where this lane's identity ends in the reverse graph.
+                        bool noMain=reverse&&split!.Branches.All(b=>b.Role==LaneContinuityRole.Newborn);
+                        return new(edge,path,null,null,false,null)
                             {NoMainSplitIndex=noMain?i+1:null};
                     }
                 }
@@ -387,7 +388,7 @@ public sealed class ComponentContinuityIndex
                     // The upstream trace establishes a boundary. A soft outlet
                     // uses its own downstream ports to describe the direction.
                     if(reverse)return Result(ComponentLaneFate.Separates,current,distance,terminal,terminal);
-                    var (direction,directionIssue)=Toward(localLane.Lane,nearest[0].Main.Lane);
+                    var (direction,directionIssue)=Toward(localLane.Edge,localLane.Lane,nearest[0].Main.Lane);
                     return Result(ComponentLaneFate.Separates,current,distance,terminal,terminal,direction,
                         directionIssue);
                 }
@@ -398,9 +399,11 @@ public sealed class ComponentContinuityIndex
                     // The side's real death at the same origin wins over the
                     // observation range ending there.
                     if(at<=ComponentContinuity.WindowMeters&&(at<=referenceEnd||sameDeath))
+                    {
+                        if(!reverse)ValidateLaneAnalysis(localLane.Edge,localLane.Lane,dead.MapIssue,dead.CurveIndex);
                         return Result(ComponentLaneFate.Dies,current,at,At(localLane.Edge,localLane.Lane,local),
-                        At(localLane.Edge,localLane.Lane,Length(localLane.Lane)),reverse?null:ConvertTurn(dead.Turn),
-                        reverse?localLane.Merge!.MapIssue:dead.MapIssue);
+                            At(localLane.Edge,localLane.Lane,Length(localLane.Lane)),reverse?null:ConvertTurn(dead.Turn));
+                    }
                     if(referenceEnd>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,at);
                 }
                 if(referenceEnd<=ComponentContinuity.WindowMeters)
@@ -488,14 +491,14 @@ public sealed class ComponentContinuityIndex
             var segment=segments.FirstOrDefault(s=>distance<=s.Start+s.Length+.0001)??segments[^1];
             return At(segment.Edge,segment.Lane,Math.Clamp(distance-segment.Start,0,segment.Length));
         }
-        private static (ComponentTurn Turn,MapQueryIssue? Issue) Toward(PrefabLanePath side,PrefabLanePath main)
+        private static (ComponentTurn Turn,MapQueryIssue? Issue) Toward(DirectedRoad edge,PrefabLanePath side,PrefabLanePath main)
         {
             var curve=side.NativeGeometry?.Curves.FirstOrDefault(c=>c.Index==side.CurveIndices[0]);
             var standard=main.NativeGeometry?.Curves.FirstOrDefault(c=>c.Index==main.CurveIndices[0]);
             if(curve is null||standard is null)return (new(NavigationSide.None,ComponentTurnKind.Unknown,"侧向并入缺少原生入口曲线"),
                 new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,"侧向并入缺少原生入口曲线"));
             var description=LaneContinuity.DescribeTurn(side.NativeGeometry!,curve.Index,standard.StartTangent,standard.Start,true);
-            if(description.MapIssue is {} issue)return (new(NavigationSide.None,ComponentTurnKind.Unknown,issue.Reason),issue);
+            ValidateLaneAnalysis(edge,side,description.MapIssue,curve.Index);
             var turn=ConvertTurn(description.Turn);
             return (turn.Kind==ComponentTurnKind.Unknown?turn:turn with{Kind=ComponentTurnKind.Forward},null);
         }
@@ -515,6 +518,15 @@ public sealed class ComponentContinuityIndex
         }
         private static double CurveOffset(PrefabLanePath lane,int index)
             =>new LanePolyline(lane.Points).Along[lane.CurveStartPointIndices[index]];
+        // Remove this check once map loading validates native lane analysis.
+        [System.Diagnostics.Conditional("DEBUG")]
+        private static void ValidateLaneAnalysis(DirectedRoad edge,PrefabLanePath lane,MapQueryIssue? issue,
+            int? curve=null,bool roleKnown=true)
+        {
+            if(issue is null&&roleKnown)return;
+            var curves=curve?.ToString()??string.Join(',',lane.CurveIndices);
+            throw new NavigationContractException($"Prefab {lane.PrefabUid:X16}, passage {edge.Id}, lane {lane.EntryOrder}->{lane.ExitOrder}, curve(s) {curves}: {issue?.Reason??"native lane role or upstream origin is unresolved"}");
+        }
         [System.Diagnostics.Conditional("DEBUG")]
         private static void ValidateDeathVisit(PrefabLanePath lane,int shared)
         {

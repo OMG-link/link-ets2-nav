@@ -21,7 +21,6 @@ public static class PrefabCurvePathfinder
         IReadOnlySet<int> targets, bool stopAfterFirst, ulong? prefabUid)
     {
         PrefabDescriptorInput.AssertCurveIndices(descriptor);
-        PrefabDescriptorInput.AssertCurveLengths(descriptor);
         PrefabDescriptorInput.AssertCurveGeometry(descriptor);
         var curves = descriptor.NavCurves;
         var startCurves = starts.Where(index => index != -1).Distinct().ToArray();

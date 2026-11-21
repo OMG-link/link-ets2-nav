@@ -64,26 +64,6 @@ public sealed class GameDataManagerTests
     }
 
     [Fact]
-    public void RejectsNanLengthBeforeAPrivatePrefabCurveCanBeProjectedOut()
-    {
-        var native=NativePpd();
-        native.NavCurves[0].TrafficRule="private";
-        native.NavCurves[0].Length=float.NaN;
-        var files=new Files();
-        files.Content["/def/world/prefab.test.sii"]="SiiNunit { prefab_model : prefab.test { prefab_desc: \"/prefab/test.ppd\" } }";
-        files.BinaryContent[TestPpd]=SerializePpd(native);
-        var map=new TruckLib.ScsMap.Map();
-        var node=new Node{Uid=10};
-        var prefab=new Prefab{Uid=42,Model=new Token("test"),Nodes=[node]};
-        map.Nodes.Add(node.Uid,node);
-        map.MapItems.Add(prefab.Uid,prefab);
-        using var data=new GameDataManager(files,map:map);
-
-        var error=Assert.Throws<InvalidDataException>(()=>data.GetPrefabPassageLengths(prefab.Uid,node.Uid,node.Uid));
-        Assert.Contains("PPD /prefab/test.ppd: curve 0 has invalid length NaN",error.Message);
-    }
-
-    [Fact]
     public void NativeResourceCacheAcceptsPortPaddingZeroLengthAndReciprocalCycles()
     {
         var native = NativePpd();

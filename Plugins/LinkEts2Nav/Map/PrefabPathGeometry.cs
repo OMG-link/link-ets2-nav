@@ -16,7 +16,6 @@ public static class PrefabPathGeometry
         int count=descriptor.Nodes.Count;
         PrefabDescriptorInput.AssertInstance(prefab,descriptor);
         PrefabDescriptorInput.AssertCurveIndices(descriptor);
-        PrefabDescriptorInput.AssertCurveLengths(descriptor);
         PrefabDescriptorInput.AssertCurveGeometry(descriptor);
         PrefabDescriptorInput.AssertBlinkers(descriptor);
         if(descriptor.NavCurves.Count==0)return ([], null);

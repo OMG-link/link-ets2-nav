@@ -52,6 +52,9 @@ public sealed class PrefabPlacement
     {
         if(descriptor.Nodes.Count<1||prefab.Nodes.Count!=descriptor.Nodes.Count||prefab.Origin>=descriptor.Nodes.Count)
             throw new InvalidDataException($"Prefab {prefab.Uid:X16}: instance has {prefab.Nodes.Count} nodes and origin {prefab.Origin}, descriptor has {descriptor.Nodes.Count} nodes.");
+        var duplicate = prefab.Nodes.GroupBy(node => node.Uid).FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+            throw new InvalidDataException($"Prefab {prefab.Uid:X16}: interface node {duplicate.Key:X16} occurs in multiple slots.");
     }
     private static float Horizontal(Vector3 p)=>MathF.Sqrt(p.X*p.X+p.Z*p.Z);
     private static bool Finite(Vector3 p)=>float.IsFinite(p.X)&&float.IsFinite(p.Y)&&float.IsFinite(p.Z);

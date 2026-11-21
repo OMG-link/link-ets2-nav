@@ -10,7 +10,15 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
 {
     public IReadOnlyList<DirectedRoad> Annotate(IEnumerable<DirectedRoad> source)
     {
-        var result=source.ToArray();var sampler=new RoadSlopeWindowSampler(incidentRoads,result.Where(e=>!e.ReturnsToEntry).ToArray(),missingConnection);
+        var result=source.ToArray();
+#if DEBUG
+        var duplicate = result.Where(edge => NativeLaneGraph.Prefab(edge) is not null)
+            .GroupBy(edge => (Prefab: NativeLaneGraph.Prefab(edge), edge.StartNodeUid, edge.EndNodeUid))
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+            throw new NavigationContractException($"Prefab {duplicate.Key.Prefab}: duplicate passage {duplicate.Key.StartNodeUid:X16}->{duplicate.Key.EndNodeUid:X16}.");
+#endif
+        var sampler=new RoadSlopeWindowSampler(incidentRoads,result.Where(e=>!e.ReturnsToEntry).ToArray(),missingConnection);
         var passages=result.Select((edge,index)=>(edge,index)).Where(p=>!p.edge.ReturnsToEntry&&p.edge.Id.StartsWith("prefab:",StringComparison.Ordinal)
             &&p.edge.Junction?.IsJunction!=true).ToArray();
         var groups=passages
@@ -25,12 +33,12 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
             foreach(var entry in entries)
             {
                 ulong uid=entry.Key;int count=entry.Select(c=>c.EntryLane).Distinct().Count();
-                var candidates=group.Where(p=>p.edge.StartNodeUid==uid).Select(p=>p.edge).ToArray();
+                var candidate=group.Where(p=>p.edge.StartNodeUid==uid).Select(p=>p.edge).FirstOrDefault();
                 var input=sampler.Sample(uid,true,group.Key.Prefab);
                 if(input.MapIssue is {} inputIssue){dependencies.Add(inputIssue);reportMapIssue?.Invoke(inputIssue);}
-                double? angle=candidates.Length==1?DirectionDifference(candidates[0]):null;
+                double? angle=candidate is null?null:DirectionDifference(candidate);
                 string? failure=input.Failure??output.Failure;
-                if(angle is null)failure=(failure is null?"":failure+"；")+"竞争入口原生方向缺失或不唯一";
+                if(angle is null)failure=(failure is null?"":failure+"；")+"竞争入口原生方向缺失";
                 measurements.Add(new(uid,count,input.AngleDegrees,output.AngleDegrees,angle,failure));
             }
             var priority=RoadJoinPriorityScorer.Evaluate(measurements.ToArray()) with{MapIssues=dependencies.Distinct().ToArray()};
@@ -54,9 +62,9 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
             var byOutlet=group.ToLookup(p=>p.edge.EndNodeUid,p=>p.edge);
             bool IsHardOutlet(IGrouping<ulong,LaneConnection> outlet)
             {
-                var candidates=byOutlet[outlet.Key].ToArray();
-                if(candidates.Length!=1||candidates[0].LanePaths.Count==0)return false;
-                var paths=candidates[0].LanePaths;
+                var candidate=byOutlet[outlet.Key].FirstOrDefault();
+                if(candidate is null||candidate.LanePaths.Count==0)return false;
+                var paths=candidate.LanePaths;
                 var ports=paths.Select(p=>(p.EntryLane,p.ExitLane)).ToHashSet();
                 return outlet.All(c=>ports.Contains((c.EntryLane,c.ExitLane)))&&paths.All(ProvenHard);
             }
@@ -64,7 +72,7 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
             var priority=eligible.Length switch
             {
                 0=>new RoadJoinPriority(null,[],[],null,"All native passages from this entrance are hard outlets."){NoEligibleOutlet=true},
-                1 when byOutlet[eligible[0].Key].Count()==1&&byOutlet[eligible[0].Key].Single().LanePaths.Count>0
+                1 when byOutlet[eligible[0].Key].FirstOrDefault() is {LanePaths.Count:>0}
                     =>new RoadJoinPriority(eligible[0].Key,[],[],null,"Only one candidate remains after excluding hard outlets."),
                 _=>ScoreOutlets()
             };
@@ -81,12 +89,12 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
                 if(input.MapIssue is {} inputIssue){dependencies.Add(inputIssue);reportMapIssue?.Invoke(inputIssue);}
                 foreach(var outlet in eligible)
                 {
-                    var candidates=byOutlet[outlet.Key].ToArray();
+                    var candidate=byOutlet[outlet.Key].FirstOrDefault();
                     var output=sampler.Sample(outlet.Key,false,group.Key.Prefab);
                     if(output.MapIssue is {} issue){dependencies.Add(issue);reportMapIssue?.Invoke(issue);}
-                    double? angle=candidates.Length==1?DirectionDifference(candidates[0]):null;
+                    double? angle=candidate is null?null:DirectionDifference(candidate);
                     string? failure=input.Failure??output.Failure;
-                    if(angle is null)failure=(failure is null?"":failure+"；")+"竞争出口原生方向缺失或不唯一";
+                    if(angle is null)failure=(failure is null?"":failure+"；")+"竞争出口原生方向缺失";
                     measurements.Add(new(outlet.Key,outlet.Select(p=>p.ExitLane).Distinct().Count(),
                         output.AngleDegrees is {} a?-a:null,input.AngleDegrees is {} b?-b:null,angle,failure));
                 }

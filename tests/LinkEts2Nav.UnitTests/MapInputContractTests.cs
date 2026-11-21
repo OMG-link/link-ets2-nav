@@ -29,6 +29,15 @@ public sealed class MapInputContractTests
         var s=Scene();typeof(Prefab).GetProperty(nameof(Prefab.Origin))!.SetValue(s.Prefab,(ushort)2);
         Assert.Throws<InvalidDataException>(()=>PrefabPathGeometry.Build(s.Prefab,s.Descriptor));
     }
+    [Fact]
+    public void DistinctPrefabSlotsCannotReferenceTheSameMapNode()
+    {
+        var scene = Scene();
+        scene.Prefab.Nodes[1] = new Node { Uid = scene.Prefab.Nodes[0].Uid, Position = new(0, 0, -10) };
+
+        Assert.Throws<InvalidDataException>(() => PrefabLaneTopology.Build(scene.Prefab, scene.Descriptor));
+        Assert.Throws<InvalidDataException>(() => PrefabPathGeometry.Build(scene.Prefab, scene.Descriptor));
+    }
     [Fact] public void PlacementDoesNotRejectShortSpansOrControlResiduals()
     {
         var s=Scene(.25f);s.Prefab.Nodes[1].Position=new(0,0,-2);

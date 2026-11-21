@@ -10,6 +10,17 @@ public sealed class RoadJoinPriorityTests
 {
     private static RoadJoinEntryMeasurement Entry(ulong id,int lanes)=>new(id,lanes,0,0,0);
 
+#if DEBUG
+    [Fact]
+    public void RepeatedDirectedPrefabPassageViolatesAnnotationContract()
+    {
+        var passage = new DirectedRoad("prefab:0000000000000001:0:1", 10, 20, [Vector3.Zero, Vector3.UnitX]);
+        var builder = new RoadJoinPriorityBuilder(new Dictionary<ulong, List<Road>>());
+
+        Assert.Throws<NavigationContractException>(() => builder.Annotate([passage, passage]));
+    }
+#endif
+
     [Fact]
     public void ExactlyFivePointAdvantageQualifies()
     {

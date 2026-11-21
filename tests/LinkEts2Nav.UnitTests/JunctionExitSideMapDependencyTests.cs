@@ -57,14 +57,15 @@ public sealed class JunctionExitSideMapDependencyTests
              Curve(3,new(60,0,0),new(100,0,0),[],[2]),Curve(4,new(60,0,0),new(100,0,25),[],[2])]);
         var missing=new MissingMapObjects([new(MapObjectKind.Item,34)],"outlet scoring window seam");
         var join=new RoadJoinPriority(10,[],[],8,"known main entrance");
-        var split=new RoadJoinPriority(null,[],[],null,"outlet dependencies missing"){MapIssues=[missing]};
-        DirectedRoad[] graph=[Passage(10,20,[0,2,3],geometry,join,split),Passage(10,30,[0,2,4],geometry,join,split),
-            Passage(11,20,[1,2,3],geometry,join,split),Passage(11,30,[1,2,4],geometry,join,split)];
+        DirectedRoad[] graph=[Passage(10,20,[0,2,3],geometry,join) with{SplitPriorityDependency=missing},
+            Passage(10,30,[0,2,4],geometry,join) with{SplitPriorityDependency=missing},
+            Passage(11,20,[1,2,3],geometry,join) with{SplitPriorityDependency=missing},
+            Passage(11,30,[1,2,4],geometry,join) with{SplitPriorityDependency=missing}];
         var index=ComponentContinuityIndex.Build(new(graph));var selected=graph[0];
         var entry=index.ForEntry(selected.Id)!;
         Assert.Equal(ComponentContinuityKind.Main,entry.Kind);Assert.Equal(2,entry.LegalExitCount);
         Assert.All(index.Entries.Where(f=>f.LegalExitCount>=2),f=>Assert.NotNull(index.ForExit(f.EdgeId)));
-        Assert.Equal(ComponentContinuityKind.Unknown,index.ForExit(selected.Id)!.Kind);
+        Assert.Equal(ComponentContinuityKind.NeedsMapObjects,index.ForExit(selected.Id)!.Kind);
         Assert.IsType<MissingMapObjects>(index.ForExit(selected.Id)!.Issue);
         var result=ComponentManeuverProjection.Build([selected],0,[entry],index.Exits,selected.LanePaths[0]);
         Assert.Equal(ManeuverKind.Straight,Assert.Single(result.Actions).Kind);

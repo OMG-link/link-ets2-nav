@@ -50,6 +50,8 @@ public sealed record DirectedRoad(
     public RoadJoinPriority? JoinPriority { get; init; }
     /// <summary>Snapshot-local continuity priority of competing outlets, measured in reverse travel.</summary>
     public RoadJoinPriority? SplitPriority { get; init; }
+    public LinkEts2Nav.Map.MissingMapObjects? JoinPriorityDependency { get; init; }
+    public LinkEts2Nav.Map.MissingMapObjects? SplitPriorityDependency { get; init; }
     public RoadForkInfo? ForkInfo { get; init; }
 }
 

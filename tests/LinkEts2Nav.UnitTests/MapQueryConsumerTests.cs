@@ -30,19 +30,26 @@ public sealed class MapQueryConsumerTests
     }
 
     [Fact]
-    public void SlopeGapReturnsDependencyButActualBranchAmbiguityDoesNotRequestMoreMap()
+    public void SlopeGapReturnsDependency()
     {
         var gap = new RoadSlopeWindowSampler(new Dictionary<ulong, List<Road>>(), [], _ => Missing()).Sample(10, true);
         Assert.Equal([Required], Assert.IsType<MissingMapObjects>(gap.MapIssue).Keys);
+    }
+
+#if DEBUG
+    [Fact]
+    public void MultipleOrdinarySlopeContinuationsViolateTheSamplingContract()
+    {
         var map = new TruckLib.ScsMap.Map();
         var first = Road.Add(map, Vector3.Zero, new(0, 0, 30), default);
         var second = Road.Add(map, Vector3.Zero, new(30, 0, 0), default);
         var called = false;
-        var split = new RoadSlopeWindowSampler(new Dictionary<ulong, List<Road>> { [10] = [first, second] }, [],
-            _ => { called = true; return Missing(); }).Sample(10, true);
+        var sampler = new RoadSlopeWindowSampler(new Dictionary<ulong, List<Road>> { [10] = [first, second] }, [],
+            _ => { called = true; return Missing(); });
+        Assert.Throws<NavigationContractException>(() => sampler.Sample(10, true));
         Assert.False(called);
-        Assert.Equal(MapQueryFailureKind.Ambiguous, Assert.IsType<MapQueryFailure>(split.MapIssue).Kind);
     }
+#endif
 
     [Fact]
     public void RecursiveSlopeDependencyKeepsItsOriginalSampleInterfaceAnchor()

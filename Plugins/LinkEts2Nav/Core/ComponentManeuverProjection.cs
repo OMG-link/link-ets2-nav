@@ -41,7 +41,7 @@ public static class ComponentManeuverProjection
             if(fact.Kind==ComponentContinuityKind.Main&&local is not null)
                 fact=fact with{Kind=ComponentContinuityKind.Hard,ActionPoint=local.Terminal,LifecycleEnd=local.LifecycleEnd,
                     Turn=local.Turn,StructuralConstraintId=local.StructuralConstraintId,Lanes=[local]};
-            if(fact.Kind is ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular)
+            if(fact.Kind is ComponentContinuityKind.Unknown or ComponentContinuityKind.Singular or ComponentContinuityKind.NeedsMapObjects)
             {Fail(fact,"组件主侧关系或车道终点尚未确定");return;}
             if(!outgoing&&fact.Kind==ComponentContinuityKind.Soft&&UsesOwnSideExit(fact))return;
             bool choose=outgoing&&(fact.Kind==ComponentContinuityKind.Natural

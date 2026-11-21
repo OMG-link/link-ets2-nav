@@ -9,10 +9,15 @@ public sealed class NativeLaneGraph
     public NativeLaneGraph ThroughTraffic=>throughTraffic.Value;
     private readonly Dictionary<ulong,IReadOnlyList<DirectedRoad>> starts;
     private readonly Dictionary<string,IReadOnlyList<DirectedRoad>> prefabs;
-    public NativeLaneGraph(IReadOnlyList<DirectedRoad> edges)
+    private readonly Dictionary<ulong, NativeLaneGeometry> prefabGeometry;
+    public NativeLaneGraph(IReadOnlyList<DirectedRoad> edges) : this(edges, []) { }
+
+    internal NativeLaneGraph(IReadOnlyList<DirectedRoad> edges, IEnumerable<NativeLaneGeometry> geometry)
     {
         Edges=Array.AsReadOnly(edges.ToArray());
-        throughTraffic=new(()=>Edges.Any(e=>e.ReturnsToEntry)?new NativeLaneGraph(Edges.Where(e=>!e.ReturnsToEntry).ToArray()):this);
+        prefabGeometry = geometry.ToDictionary(prefab => prefab.PrefabUid);
+        throughTraffic=new(()=>Edges.Any(e=>e.ReturnsToEntry)
+            ? new NativeLaneGraph(Edges.Where(e=>!e.ReturnsToEntry).ToArray(), prefabGeometry.Values) : this);
         starts=edges.GroupBy(e=>e.StartNodeUid).ToDictionary(g=>g.Key,g=>(IReadOnlyList<DirectedRoad>)Array.AsReadOnly(g.ToArray()));
         prefabs=edges.Where(e=>Prefab(e) is not null).GroupBy(e=>Prefab(e)!)
             .ToDictionary(g=>g.Key,g=>(IReadOnlyList<DirectedRoad>)Array.AsReadOnly(g.ToArray()),StringComparer.Ordinal);
@@ -20,5 +25,6 @@ public sealed class NativeLaneGraph
     public IReadOnlyList<DirectedRoad> From(ulong node)=>starts.GetValueOrDefault(node)??[];
     public IReadOnlyList<DirectedRoad> InPrefab(DirectedRoad edge)
         =>Prefab(edge) is {} id?prefabs.GetValueOrDefault(id)??[]:[];
+    internal NativeLaneGeometry? PrefabGeometry(ulong prefabUid) => prefabGeometry.GetValueOrDefault(prefabUid);
     public static string? Prefab(DirectedRoad edge)=>edge.Id.StartsWith("prefab:",StringComparison.Ordinal)?edge.Id.Split(':')[1]:null;
 }

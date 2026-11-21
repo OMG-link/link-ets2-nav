@@ -8,19 +8,18 @@ namespace LinkEts2Nav.Map;
 public static class PrefabPathGeometry
 {
     public static IReadOnlyList<DirectedRoad> Build(Prefab prefab,PrefabDescriptor descriptor)
-        =>Build(prefab,descriptor,[]);
+        => BuildNavigation(prefab, descriptor, []).Paths;
 
-    internal static IReadOnlyList<DirectedRoad> Build(Prefab prefab,PrefabDescriptor descriptor,
-        IReadOnlyList<NativeContinuationOverride> continuityOverrides)
+    internal static (IReadOnlyList<DirectedRoad> Paths, NativeLaneGeometry? Geometry) BuildNavigation(
+        Prefab prefab, PrefabDescriptor descriptor, IReadOnlyList<NativeContinuationOverride> continuityOverrides)
     {
         int count=descriptor.Nodes.Count;
         PrefabPlacement.ValidateTopology(prefab,descriptor);
-        if(descriptor.NavCurves.Count==0)return [];
-        if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return [];
+        if(descriptor.NavCurves.Count==0)return ([], null);
+        if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return ([], null);
         var control=placement.ControlNodes;var curves=descriptor.NavCurves;
         bool Valid(int i)=>i>=0&&i<curves.Count&&Finite(curves[i].StartPosition)&&Finite(curves[i].EndPosition)
             &&float.IsFinite(curves[i].Length)&&curves[i].Length>.001f;
-        var nativeGeometry=BuildNativeGeometry(prefab.Uid,descriptor,placement) with{ContinuationOverrides=continuityOverrides};
         var targets=control.SelectMany(n=>n.OutputLines).Where(Valid).ToHashSet();
         var searches=control.SelectMany(n=>n.InputLines).Where(Valid).Distinct()
             .ToDictionary(i=>i,i=>PrefabCurvePathfinder.FindEach(descriptor,i,targets));
@@ -44,12 +43,24 @@ public static class PrefabPathGeometry
             return valid.OrderBy(p=>Vector3.Dot(Position(p.line)-prefab.Nodes[node].Position,right)).ThenBy(p=>p.slot)
                 .Select((p,rank)=>(p.slot,rank)).ToDictionary(p=>p.slot,p=>p.rank);
         }
-        var forks=PrefabForkTopology.Build(prefab,descriptor,placement,node=>Order(node,true));
-        var laneSignals=PrefabForkTopology.LaneSignals(prefab,descriptor,placement,node=>Order(node,true));
+        var entryOrders = Enumerable.Range(0, count).Select(node => Order(node, true)).ToArray();
+        var exitOrders = Enumerable.Range(0, count).Select(node => Order(node, false)).ToArray();
+        NativeLanePort[] Ports(IReadOnlyList<Dictionary<int, int>> orders, bool input)
+            => orders.SelectMany((slots, node) => slots.Select(slot => new NativeLanePort(
+                prefab.Nodes[node].Uid, slot.Key, slot.Value,
+                (input ? control[node].InputLines : control[node].OutputLines)[slot.Key]))).ToArray();
+        var nativeGeometry=BuildNativeGeometry(prefab.Uid,descriptor,placement) with
+        {
+            ContinuationOverrides = continuityOverrides,
+            Inputs = Ports(entryOrders, true),
+            Outputs = Ports(exitOrders, false)
+        };
+        var forks=PrefabForkTopology.Build(prefab,descriptor,placement,node=>entryOrders[node]);
+        var laneSignals=PrefabForkTopology.LaneSignals(prefab,descriptor,placement,node=>entryOrders[node]);
         for(int from=0;from<count;from++)
         for(int to=0;to<count;to++)
         {
-            var entryOrder=Order(from,true);var exitOrder=Order(to,false);
+            var entryOrder=entryOrders[from];var exitOrder=exitOrders[to];
             IReadOnlyList<int> Starts(IReadOnlyList<int> chain)
             {
                 var indices=new List<int>();int offset=0;
@@ -83,7 +94,7 @@ public static class PrefabPathGeometry
                     NativeEntryTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[representative[0]].StartRotation)),
                     NativeExitTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[representative[^1]].EndRotation))});
         }
-        return result;
+        return (result, nativeGeometry);
     }
     private static NativeLaneGeometry BuildNativeGeometry(ulong prefabUid,PrefabDescriptor descriptor,PrefabPlacement placement)
     {

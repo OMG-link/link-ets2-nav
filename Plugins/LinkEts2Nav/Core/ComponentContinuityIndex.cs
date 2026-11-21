@@ -52,6 +52,7 @@ public sealed class ComponentContinuityIndex
             StartNodeUid=edge.EndNodeUid,EndNodeUid=edge.StartNodeUid,Points=edge.Points.Reverse().ToArray(),
             NativeEntryTangent=-edge.NativeExitTangent,NativeExitTangent=-edge.NativeEntryTangent,
             JoinPriority=edge.SplitPriority,SplitPriority=edge.JoinPriority,
+            JoinPriorityDependency=edge.SplitPriorityDependency,SplitPriorityDependency=edge.JoinPriorityDependency,
             LanePaths=edge.LanePaths.Select(p=>
             {
                 int n=p.Points.Count;var starts=p.CurveStartPointIndices;
@@ -125,10 +126,17 @@ public sealed class ComponentContinuityIndex
                 token.ThrowIfCancellationRequested();
                 var inputs=group.Select(e=>e.StartNodeUid).Distinct().ToArray();
                 if(inputs.Length<2)continue;
+                if(group.Select(e=>e.JoinPriorityDependency).OfType<MissingMapObjects>().FirstOrDefault() is {} dependency)
+                {
+                    foreach(var edge in group)result[edge.Id]=IncompletePriority(edge,dependency);
+                    continue;
+                }
                 var priority=group.Select(e=>e.JoinPriority).OfType<RoadJoinPriority>().FirstOrDefault();
                 if(priority?.MainEntry is not {} main)
                 {
-                    foreach(var edge in group)result[edge.Id]=Unknown(edge,priority,priority?.Reason??"组件缺少完整主入口评分");
+                    var issue=priority?.MapIssues.FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,
+                        priority?.Reason??"组件缺少完整主入口评分");
+                    foreach(var edge in group)result[edge.Id]=IncompletePriority(edge,issue);
                     continue;
                 }
                 var all=prefabs[group.Key.PrefabUid];
@@ -162,12 +170,19 @@ public sealed class ComponentContinuityIndex
                 token.ThrowIfCancellationRequested();
                 int exitCount=group.Select(e=>e.EndNodeUid).Distinct().Count();
                 if(exitCount<2)continue;
+                if(group.Select(e=>e.SplitPriorityDependency).OfType<MissingMapObjects>().FirstOrDefault() is {} dependency)
+                {
+                    foreach(var edge in group)result[edge.Id]=IncompletePriority(edge,dependency);
+                    continue;
+                }
                 var priority=group.Select(e=>e.SplitPriority).OfType<RoadJoinPriority>().FirstOrDefault();
                 var main=priority?.MainEntry;
                 // Only complete scoring supplies a margin when there is no winner.
                 if(main is null&&priority?.WinningMargin is null&&priority?.NoEligibleOutlet!=true)
                 {
-                    foreach(var edge in group)result[edge.Id]=Unknown(edge,priority,priority?.Reason??"Missing outlet priority");
+                    var issue=priority?.MapIssues.FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,
+                        priority?.Reason??"Missing outlet priority");
+                    foreach(var edge in group)result[edge.Id]=IncompletePriority(edge,issue);
                     continue;
                 }
 
@@ -254,13 +269,11 @@ public sealed class ComponentContinuityIndex
             return (new(cross>0?NavigationSide.Right:NavigationSide.Left,ComponentTurnKind.Forward),null);
         }
 
-        private ComponentPassageContinuity Unknown(DirectedRoad edge,RoadJoinPriority? priority,string reason)
+        private ComponentPassageContinuity IncompletePriority(DirectedRoad edge,MapQueryIssue issue)
         {
-            var missingObjects=(priority?.MapIssues??[]).OfType<MissingMapObjects>().SelectMany(i=>i.Keys).Distinct().ToArray();
-            MapQueryIssue issue=missingObjects.Length>0?new MissingMapObjects(missingObjects,reason)
-                :priority?.MapIssues.FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,reason);
             issue=issue with{QueryAnchor=edge.Points.FirstOrDefault()};Issues.Add(issue);
-            return new(edge.Id,edge.LanePaths[0].PrefabUid,edge.StartNodeUid,edge.EndNodeUid,false,ComponentContinuityKind.Unknown,
+            var kind=issue is MissingMapObjects?ComponentContinuityKind.NeedsMapObjects:ComponentContinuityKind.Unknown;
+            return new(edge.Id,edge.LanePaths[0].PrefabUid,edge.StartNodeUid,edge.EndNodeUid,false,kind,
                 null,null,null,null,edge.LanePaths.Select(p=>p.EntryOrder).Distinct().Order().ToArray(),
                 edge.LanePaths.Select(p=>p.ExitOrder).Distinct().Order().ToArray(),edge.LanePaths.Max(p=>p.EntryLaneCount),
                 edge.LanePaths.Max(p=>p.ExitLaneCount),0,null,[],issue);

@@ -80,12 +80,14 @@ public sealed class RoadSlopePrefabWindowTests
     }
 
     [Fact]
-    public void DistinctUpstreamPortsWithDifferentSlopesRemainUnknown()
+    public void ASecondRampStopsReverseSamplingBeforeItsAlternatingSlopes()
     {
         var left=Prefab(1,10,30,new(0,0,0),new(0,0,30));
         var right=OtherPort(Prefab(1,20,30,new(10,4,0),new(0,0,30)),"prefab:0000000000000001:2:1");
         var sample=new RoadSlopeWindowSampler(Roads(), [left,right]).Sample(30,true);
-        Assert.Null(sample.AngleDegrees);Assert.Contains("不同坡度",sample.Failure);
+        Assert.Null(sample.AngleDegrees);
+        Assert.Equal(0,sample.CoveredMeters);
+        Assert.Null(sample.MapIssue);
     }
 
     [Theory]
@@ -96,7 +98,8 @@ public sealed class RoadSlopePrefabWindowTests
         var left=incoming?Prefab(1,10,30,new(0,0,0),new(0,3,30)):Prefab(1,30,10,new(0,0,0),new(0,3,30));
         var right=OtherPort(incoming?Prefab(1,20,30,new(10,0,0),new(10,3,30)):Prefab(1,30,20,new(10,0,0),new(10,3,30)),
             "prefab:0000000000000001:2:1");
-        var sample=new RoadSlopeWindowSampler(Roads(),[left,right]).Sample(30,incoming);
+        var crossing=new PrefabJunctionInfo(2,2,1);
+        var sample=new RoadSlopeWindowSampler(Roads(),[left with{Junction=crossing},right with{Junction=crossing}]).Sample(30,incoming);
         Assert.Null(sample.MapIssue);Assert.Null(sample.Failure);Assert.Equal(20,sample.CoveredMeters);
         Assert.Equal(Math.Atan(.1)*180/Math.PI,sample.AngleDegrees!.Value,6);
     }
@@ -107,38 +110,83 @@ public sealed class RoadSlopePrefabWindowTests
         var complete=Prefab(1,10,30,new(0,0,0),new(0,0,30));
         var incomplete=OtherPort(Prefab(1,20,30,new(3,0,25),new(3,0,30)),"prefab:0000000000000001:2:1");
         var missing=new MissingMapObjects([new(MapObjectKind.Item,99)],"missing continuation");
-        var sample=new RoadSlopeWindowSampler(Roads(),[complete,incomplete],_=>missing).Sample(30,true);
+        var crossing=new PrefabJunctionInfo(2,2,1);
+        var sample=new RoadSlopeWindowSampler(Roads(),[complete with{Junction=crossing},incomplete with{Junction=crossing}],_=>missing).Sample(30,true);
         Assert.Null(sample.AngleDegrees);Assert.Equal(5,sample.CoveredMeters);
         var issue=Assert.IsType<MissingMapObjects>(sample.MapIssue);
         Assert.Equal(missing.Keys,issue.Keys);Assert.Equal(missing.Reason,issue.Reason);Assert.NotNull(sample.Failure);
     }
 
-    [Fact]
-    public void AlmostTwentyMeterRoadCompletesItsRemainingWindowOnBothFlatPorts()
+    [Theory]
+    [InlineData(false,false)]
+    [InlineData(true,false)]
+    [InlineData(true,true)]
+    public void SamplingUsesTheAvailableRoadBeforeASecondRampOrPublicSplit(bool common,bool crossing)
     {
-        var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(0,0,19.9994f),default);
-        Assert.True(road.Length<20);
-        var left=Prefab(1,road.ForwardNode.Uid,30,new(0,0,19.9994f),new(0,0,50));
-        var right=OtherPort(Prefab(1,road.ForwardNode.Uid,40,new(3,0,19.9994f),new(3,0,50)),"prefab:0000000000000001:0:2");
-        var sample=new RoadSlopeWindowSampler(Roads(road),[left,right]).Sample(road.Node.Uid,false);
-        Assert.Null(sample.Failure);Assert.Equal(0,sample.AngleDegrees);Assert.Equal(20,sample.CoveredMeters);
-        Assert.Single(sample.Roads);Assert.Single(sample.Prefabs);
+        var map=new TruckLib.ScsMap.Map();
+        var road=Road.Add(map,Vector3.Zero,new(0,1,12),default);
+        var left=Prefab(1,road.ForwardNode.Uid,30,new(0,1,12),new(0,0,50));
+        var right=OtherPort(Prefab(1,road.ForwardNode.Uid,40,new(3,1,12),new(3,0,50)),"prefab:0000000000000001:0:2");
+        var junction=crossing?new PrefabJunctionInfo(2,2,1):null;
+        var sample=new RoadSlopeWindowSampler(Roads(road),[left with{Junction=junction},right with{Junction=junction}])
+            .Sample(road.Node.Uid,false,common:common);
+        Assert.Null(sample.Failure);
+        Assert.Equal(Math.Atan(1d/12)*180/Math.PI,sample.AngleDegrees!.Value,6);
+        Assert.Equal(12,sample.CoveredMeters,6);
+        Assert.Single(sample.Roads);Assert.Empty(sample.Prefabs);
     }
 
     [Fact]
-    public void InconsistentParallelSlopeCandidatesRemainUnknown()
+    public void InconsistentParallelLaneSlopesAreRecordedSeparatelyFromMapDependencies()
     {
         var path=Prefab(1,10,20,new(0,0,0),new(0,0,30),2);
         path=path with{LanePaths=[path.LanePaths[0],path.LanePaths[1] with{Points=[new(3,0,0),new(3,3,30)]}]};
         var sample=new RoadSlopeWindowSampler(Roads(), [path]).Sample(20,true);
-        Assert.Null(sample.AngleDegrees);Assert.Contains("不同坡度",sample.Failure);
+        Assert.Null(sample.AngleDegrees);Assert.True(sample.InconsistentLaneSlopes);Assert.Null(sample.MapIssue);
     }
 
     [Fact]
-    public void MissingContinuationReportsPartialCoverageAndCannotManufactureFlatSlope()
+    public void LoadedEndOfTheRoadUsesTheSlopeOverTheAvailableDistance()
     {
-        var sample=new RoadSlopeWindowSampler(Roads(), [Prefab(1,10,20,new(0,0,0),new(0,0,5))]).Sample(20,true);
-        Assert.Null(sample.AngleDegrees);Assert.Equal(5,sample.CoveredMeters);Assert.NotNull(sample.Failure);
+        var sample=new RoadSlopeWindowSampler(Roads(), [Prefab(1,10,20,new(0,0,0),new(0,1,5))],
+            _=>new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,"Loaded depot with no continuation.")).Sample(20,true);
+        Assert.Equal(Math.Atan(.2)*180/Math.PI,sample.AngleDegrees!.Value,6);
+        Assert.Equal(5,sample.CoveredMeters);Assert.Null(sample.Failure);Assert.Null(sample.MapIssue);
+    }
+
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(.0000001f)]
+    public void EffectivelyZeroRoadLengthDoesNotContributeSlope(float recordedLength)
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var road=Road.Add(map,Vector3.Zero,new(0,1,5),default);
+        road.Length=recordedLength;
+        var sample=new RoadSlopeWindowSampler(Roads(road)).Sample(road.Node.Uid,false);
+        Assert.Equal(0,sample.CoveredMeters);Assert.Null(sample.AngleDegrees);Assert.Null(sample.MapIssue);
+    }
+
+    [Theory]
+    [InlineData(-1f)]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void InvalidSourceRoadLengthReportsInvalidInput(float recordedLength)
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var road=Road.Add(map,Vector3.Zero,new(0,1,5),default);
+        road.Length=recordedLength;
+        var sampler=new RoadSlopeWindowSampler(Roads(road));
+        Assert.Throws<InvalidDataException>(()=>sampler.Sample(road.Node.Uid,false));
+    }
+
+    [Fact]
+    public void NonfinitePrefabSamplesAreExplicitlyUnsupported()
+    {
+        var path=Prefab(1,10,20,Vector3.Zero,new(0,1,5));
+        var malformed=path with{LanePaths=[path.LanePaths[0] with{Points=[Vector3.Zero,new(float.NaN,1,5)]}]};
+        var sampler=new RoadSlopeWindowSampler(Roads(),[malformed]);
+        Assert.Throws<NotSupportedException>(()=>sampler.Sample(10,false));
     }
 
     [Fact]

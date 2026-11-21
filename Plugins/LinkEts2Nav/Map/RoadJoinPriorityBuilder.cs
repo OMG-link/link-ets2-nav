@@ -26,9 +26,9 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
         {
             var entries=group.SelectMany(p=>Connections(p.edge)).Where(p=>p.ExitNode==group.Key.Exit).GroupBy(p=>p.EntryNode).ToArray();
             if(entries.Length<2)continue;
-            var output=sampler.Sample(group.Key.Exit,false,group.Key.Prefab);var measurements=new List<RoadJoinEntryMeasurement>();
-            var dependencies=new List<MapQueryIssue>();if(output.MapIssue is {} outputDependency)dependencies.Add(outputDependency);
-            if(output.MapIssue is {} outputIssue)reportMapIssue?.Invoke(outputIssue);
+            var output=sampler.Sample(group.Key.Exit,false,group.Key.Prefab,common:true);var measurements=new List<RoadJoinEntryMeasurement>();
+            var dependencies=new List<MissingMapObjects>();
+            if(output.MapIssue is {} outputIssue){dependencies.Add(outputIssue);reportMapIssue?.Invoke(outputIssue);}
             foreach(var entry in entries)
             {
                 ulong uid=entry.Key;int count=entry.Select(c=>c.EntryLane).Distinct().Count();
@@ -36,12 +36,14 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
                 var input=sampler.Sample(uid,true,group.Key.Prefab);
                 if(input.MapIssue is {} inputIssue){dependencies.Add(inputIssue);reportMapIssue?.Invoke(inputIssue);}
                 double? angle=candidate is null?null:DirectionDifference(candidate);
-                string? failure=input.Failure??output.Failure;
-                if(angle is null)failure=(failure is null?"":failure+"；")+"竞争入口原生方向缺失";
-                measurements.Add(new(uid,count,input.AngleDegrees,output.AngleDegrees,angle,failure));
+                string? failure=angle is null?"竞争入口原生方向缺失":null;
+                measurements.Add(new(uid,count,input.AngleDegrees,output.AngleDegrees,angle,failure)
+                    {SlopeWeightFactor=SlopeWeightFactor(input,output)});
             }
-            var priority=RoadJoinPriorityScorer.Evaluate(measurements.ToArray()) with{MapIssues=dependencies.Distinct().ToArray()};
-            foreach(var (edge,index) in group)result[index]=edge with{JoinPriority=priority};
+            var (priority,dependency)=Score(measurements,dependencies);
+            foreach(var (_,index) in group)
+                result[index]=result[index] with{JoinPriority=priority,JoinPriorityDependency=dependency};
+            if(priority is null)continue;
             log?.Invoke($"组件入口主路评分：prefab:{group.Key.Prefab}，出口={group.Key.Exit:X16}，主路={priority.MainEntry?.ToString("X16")??"未知"}；{priority.Reason}；"+
                 string.Join("；",priority.Scores.Select(s=>FormattableString.Invariant($"{s.Measurement.Entry:X16} 坡差={s.Measurement.SlopeDifferenceDegrees:F4}° 角差={s.Measurement.DirectionDifferenceDegrees:F4}° 车道={s.Measurement.LaneCount}，分数={s.SlopeScore:F3}+{s.DirectionScore:F3}+{s.LaneScore:F3}={s.Total:F3}"))));
         }
@@ -68,23 +70,31 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
                 return outlet.All(c=>ports.Contains((c.EntryLane,c.ExitLane)))&&paths.All(ProvenHard);
             }
             var eligible=outlets.Where(outlet=>!IsHardOutlet(outlet)).ToArray();
-            var priority=eligible.Length switch
+            (RoadJoinPriority? priority,MissingMapObjects? dependency)=eligible.Length switch
             {
-                0=>new RoadJoinPriority(null,[],[],null,"All native passages from this entrance are hard outlets."){NoEligibleOutlet=true},
-                1 when byOutlet[eligible[0].Key].FirstOrDefault() is {LanePaths.Count:>0}
-                    =>new RoadJoinPriority(eligible[0].Key,[],[],null,"Only one candidate remains after excluding hard outlets."),
+                0=>(new RoadJoinPriority(null,[],[],null,"All native passages from this entrance are hard outlets."){NoEligibleOutlet=true},null),
+                1=>(SelectSoleOutlet(eligible[0].Key),null),
                 _=>ScoreOutlets()
             };
-            foreach(var (edge,index) in group)result[index]=result[index] with{SplitPriority=priority};
+            foreach(var (_,index) in group)
+                result[index]=result[index] with{SplitPriority=priority,SplitPriorityDependency=dependency};
+            if(priority is null)continue;
             log?.Invoke($"组件出口主路评分：prefab:{group.Key.Prefab}，入口={group.Key.Entry:X16}，主路={priority.MainEntry?.ToString("X16")??"未知"}；"+
                 $"硬出口排除={outlets.Length-eligible.Length}；{priority.Reason}；"+
                 string.Join("；",priority.Scores.Select(s=>FormattableString.Invariant($"{s.Measurement.Entry:X16} 坡差={s.Measurement.SlopeDifferenceDegrees:F4}° 角差={s.Measurement.DirectionDifferenceDegrees:F4}° 车道={s.Measurement.LaneCount}，分数={s.Total:F3}"))));
 
-            RoadJoinPriority ScoreOutlets()
+            RoadJoinPriority SelectSoleOutlet(ulong outlet)
             {
-                var input=sampler.Sample(group.Key.Entry,true,group.Key.Prefab);
+                if(byOutlet[outlet].FirstOrDefault() is not {LanePaths.Count:>0})
+                    throw new NotSupportedException($"Prefab {group.Key.Prefab}, entrance {group.Key.Entry:X16}: the sole outlet {outlet:X16} after hard-outlet exclusion has no native passage with lane geometry.");
+                return new(outlet,[],[],null,"Only one candidate remains after excluding hard outlets.");
+            }
+
+            (RoadJoinPriority? Priority,MissingMapObjects? Dependency) ScoreOutlets()
+            {
+                var input=sampler.Sample(group.Key.Entry,true,group.Key.Prefab,common:true);
                 var measurements=new List<RoadJoinEntryMeasurement>();
-                var dependencies=new List<MapQueryIssue>();
+                var dependencies=new List<MissingMapObjects>();
                 if(input.MapIssue is {} inputIssue){dependencies.Add(inputIssue);reportMapIssue?.Invoke(inputIssue);}
                 foreach(var outlet in eligible)
                 {
@@ -92,15 +102,28 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
                     var output=sampler.Sample(outlet.Key,false,group.Key.Prefab);
                     if(output.MapIssue is {} issue){dependencies.Add(issue);reportMapIssue?.Invoke(issue);}
                     double? angle=candidate is null?null:DirectionDifference(candidate);
-                    string? failure=input.Failure??output.Failure;
-                    if(angle is null)failure=(failure is null?"":failure+"；")+"竞争出口原生方向缺失";
+                    string? failure=angle is null?"竞争出口原生方向缺失":null;
                     measurements.Add(new(outlet.Key,outlet.Select(p=>p.ExitLane).Distinct().Count(),
-                        output.AngleDegrees is {} a?-a:null,input.AngleDegrees is {} b?-b:null,angle,failure));
+                        output.AngleDegrees is {} a?-a:null,input.AngleDegrees is {} b?-b:null,angle,failure)
+                        {SlopeWeightFactor=SlopeWeightFactor(output,input)});
                 }
-                return RoadJoinPriorityScorer.Evaluate(measurements) with{MapIssues=dependencies.Distinct().ToArray()};
+                return Score(measurements,dependencies);
             }
         }
         return result;
+    }
+
+    private static double SlopeWeightFactor(RoadSlopeWindow candidate,RoadSlopeWindow common)
+        =>candidate.InconsistentLaneSlopes||common.InconsistentLaneSlopes||common.CoveredMeters==0
+            ?0:candidate.CoveredMeters/RoadSlopeWindowSampler.WindowMeters;
+
+    private static (RoadJoinPriority? Priority,MissingMapObjects? Dependency) Score(
+        IReadOnlyList<RoadJoinEntryMeasurement> measurements,IReadOnlyList<MissingMapObjects> dependencies)
+    {
+        if(dependencies.Count>0)
+            return (null,new MissingMapObjects(dependencies.SelectMany(d=>d.Keys),
+                "Component slope scoring needs native lookup keys."){QueryAnchor=dependencies[0].QueryAnchor});
+        return (RoadJoinPriorityScorer.Evaluate(measurements),null);
     }
 
     private static IEnumerable<LaneConnection> Connections(DirectedRoad edge)=>edge.LaneConnections

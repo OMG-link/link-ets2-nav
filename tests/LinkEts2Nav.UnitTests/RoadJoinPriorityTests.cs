@@ -32,7 +32,49 @@ public sealed class RoadJoinPriorityTests
 
         Assert.Throws<NavigationContractException>(() => builder.Annotate([scene.Main, passage]));
     }
+
+    [Fact]
+    public void CandidateUidsMustBePresentAndUnique()
+    {
+        var entry=Entry(1,1);
+        Assert.Throws<NavigationContractException>(()=>RoadJoinPriorityScorer.Evaluate([]));
+        Assert.Throws<NavigationContractException>(()=>RoadJoinPriorityScorer.Evaluate([entry,entry]));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void EvenTheOnlyCandidateMustHaveAtLeastOneLane(int lanes)
+    {
+        var error=Assert.Throws<NavigationContractException>(()=>RoadJoinPriorityScorer.Evaluate([Entry(1,lanes)]));
+        Assert.Contains("0000000000000001",error.Message);
+        Assert.Contains($"has {lanes} lanes",error.Message);
+    }
 #endif
+
+    [Fact]
+    public void SoleCandidateNeedsNoComparisonMeasurements()
+    {
+        var result=RoadJoinPriorityScorer.Evaluate([new(1,1,null,null,null)]);
+        Assert.Equal(1UL,result.MainEntry);Assert.Empty(result.Scores);
+    }
+
+    [Fact]
+    public void PartialCandidateSlopeWeightsAreReducedBeforeDistributingTenPoints()
+    {
+        var result=RoadJoinPriorityScorer.Evaluate([Entry(1,1),Entry(2,1) with{SlopeWeightFactor=.5},
+            Entry(3,1) with{IncomingSlopeDegrees=null,SlopeWeightFactor=0}]);
+        var byUid=result.Scores.ToDictionary(score=>score.Measurement.Entry);
+        Assert.Equal(20d/3,byUid[1].SlopeScore,8);Assert.Equal(10d/3,byUid[2].SlopeScore,8);
+        Assert.Equal(0,byUid[3].SlopeScore);
+    }
+
+    [Fact]
+    public void PositiveSlopeCoverageWithAnInvalidMeasurementIsExplicitlyUnsupported()
+    {
+        Assert.Throws<NotSupportedException>(()=>RoadJoinPriorityScorer.Evaluate(
+            [Entry(1,1),Entry(2,1) with{IncomingSlopeDegrees=double.NaN}]));
+    }
 
     [Fact]
     public void ExactlyFivePointAdvantageQualifies()
@@ -106,13 +148,11 @@ public sealed class RoadJoinPriorityTests
         Assert.Equal(2,value.Roads.Count);Assert.Same(value,sampler.Sample(a.Node.Uid,false));
     }
     [Fact]
-    public void IncompleteOrAmbiguousSlopeWindowsDoNotPretendToBeFlat()
+    public void IncompleteSlopeWindowUsesTheMeasuredGrade()
     {
         var map=new TruckLib.ScsMap.Map();var road=Road.Add(map,new(0,0,0),new(0,0,10),default);
         var partial=new RoadSlopeWindowSampler(Index(road)).Sample(road.Node.Uid,false);
-        Assert.Null(partial.AngleDegrees);Assert.InRange(partial.CoveredMeters,9.9,10.1);
-        var ambiguous=Index(road);ambiguous[road.Node.Uid].Add(road);
-        Assert.Null(new RoadSlopeWindowSampler(ambiguous).Sample(road.Node.Uid,false).AngleDegrees);
+        Assert.Equal(0,partial.AngleDegrees);Assert.InRange(partial.CoveredMeters,9.9,10.1);
     }
 
     private static (TruckLib.ScsMap.Map Map,DirectedRoad Main,DirectedRoad Side,Road Before,Road After) Scene(bool complete=true)
@@ -129,6 +169,31 @@ public sealed class RoadJoinPriorityTests
             Points=[new(10,0,0),new(10,0,0),new(0,0,-50),new(0,0,-50)],NativeEntryTangent=Vector3.Normalize(new(-.25f,0,-1))};
         if(!complete)map.MapItems.Remove(sideRoad.Uid);
         return(map,main,side,before,after);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InconsistentGradesDisableOnlyTheAffectedScope(bool common)
+    {
+        var scene=Scene();
+        ulong port=common?scene.Main.EndNodeUid:scene.Side.StartNodeUid;
+        ulong external=100;
+        var start=common?port:external;
+        var end=common?external:port;
+        var points=new Vector3[]{Vector3.Zero,new(0,0,30)};
+        var first=new PrefabLanePath(41,start,end,0,0,0,0,2,2,[0],points,30);
+        var second=new PrefabLanePath(41,start,end,1,1,1,1,2,2,[1],[new(3,0,0),new(3,3,30)],30);
+        var adjacent=new DirectedRoad("prefab:41:0:1",start,end,points){LanePaths=[first,second]};
+        var roads=Index(scene.Map.MapItems.Values.OfType<Road>().Where(r=>r.Node.Uid!=port&&r.ForwardNode.Uid!=port).ToArray());
+
+        var annotation=new RoadJoinPriorityBuilder(roads).Annotate([scene.Main,scene.Side,adjacent]);
+
+        var priority=annotation[0].JoinPriority!;
+        var scores=priority.Scores.ToDictionary(s=>s.Measurement.Entry);
+        Assert.Equal(0,scores[scene.Side.StartNodeUid].SlopeScore);
+        Assert.Equal(common?0:10,scores[scene.Main.StartNodeUid].SlopeScore);
+        Assert.Equal(common?20:30,priority.Scores.Sum(s=>s.Total),8);
     }
     [Fact]
     public void LoadedPriorityAnnotationDoesNotReplaceMissingNativeLaneContinuity()
@@ -162,11 +227,11 @@ public sealed class RoadJoinPriorityTests
         Assert.Equal(2,main.JoinPriority.Scores.Count);Assert.True(main.JoinPriority.WinningMargin>=5);
     }
     [Fact]
-    public void MissingSideRoadStillCompetesAndKeepsTheUnknownJoinBarrier()
+    public void MissingSideRoadDefersTheReportAndKeepsTheJoinBarrier()
     {
         var scene=Scene(false);var paths=new RoadPathSource(scene.Map,[scene.Main,scene.Side]);
         var graph=paths.GetNavigationGraph();var main=graph.Single(e=>e.Id==scene.Main.Id);
-        Assert.Null(main.JoinPriority!.MainEntry);Assert.Equal(2,main.JoinPriority.Measurements.Count);
+        Assert.Null(main.JoinPriority);Assert.NotNull(main.JoinPriorityDependency);
         Assert.Equal(RoadJoinRole.Ambiguous,RoadJoinClassifier.Classify(main).Role);
         var approach=graph.Single(e=>e.StartNodeUid==scene.Before.Node.Uid&&e.EndNodeUid==scene.Before.ForwardNode.Uid);
         var outgoing=graph.Single(e=>e.StartNodeUid==scene.After.Node.Uid&&e.EndNodeUid==scene.After.ForwardNode.Uid);

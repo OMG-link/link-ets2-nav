@@ -3,7 +3,7 @@ using LinkEts2Nav.Map;
 
 namespace LinkEts2Nav.Core;
 
-public enum ComponentContinuityKind { Main, Hard, Soft, Natural, Singular, Unknown }
+public enum ComponentContinuityKind { Main, Hard, Soft, Natural, Singular, Unknown, NeedsMapObjects }
 public enum ComponentLaneFate { Continues, Dies, Separates, Unresolved, Born, Joins }
 public enum ComponentTurnKind { Forward, Turn, Back, Unknown }
 public sealed record ComponentTurn(NavigationSide Side,ComponentTurnKind Kind,string? Failure=null);

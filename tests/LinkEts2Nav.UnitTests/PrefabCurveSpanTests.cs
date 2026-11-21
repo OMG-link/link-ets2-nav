@@ -7,6 +7,24 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class PrefabCurveSpanTests
 {
     [Fact]
+    public void NativeSuccessorRemainsReachableAcrossCurveEndpointGap()
+    {
+        var descriptor = new PrefabDescriptor
+        {
+            NavCurves =
+            [
+                new() { StartPosition = Vector3.Zero, EndPosition = new(0, 0, -10), Length = 10, NextLines = { 1 } },
+                new() { StartPosition = new(0, 0, -11), EndPosition = new(0, 0, -21), Length = 10 }
+            ]
+        };
+        var targets = new HashSet<int> { 1 };
+        int[] expected = [0, 1];
+
+        Assert.Equal(expected, PrefabCurvePathfinder.Find(descriptor, [0], targets));
+        Assert.Equal(expected, PrefabCurvePathfinder.FindEach(descriptor, 0, targets)[1]);
+    }
+
+    [Fact]
     public void NativeCurveIndicesReferToTheActualRepresentativePolylineAfterPlacementAndGrading()
     {
         var descriptor=new PrefabDescriptor

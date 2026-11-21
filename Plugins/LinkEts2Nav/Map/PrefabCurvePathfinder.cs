@@ -22,7 +22,6 @@ public static class PrefabCurvePathfinder
             if (targets.Contains(line)) { found = line; break; }
             foreach (int next in curves[line].NextLines.Where(Valid))
             {
-                if (Vector3.Distance(curves[line].EndPosition, curves[next].StartPosition) > .5f) continue;
                 float nextCost = cost + curves[next].Length;
                 if (costs.TryGetValue(next, out float known) && known <= nextCost) continue;
                 costs[next] = nextCost; previous[next] = line; queue.Enqueue(next, nextCost);
@@ -59,7 +58,6 @@ public static class PrefabCurvePathfinder
             }
             foreach(int next in curves[current].NextLines.Where(Valid))
             {
-                if(Vector3.Distance(curves[current].EndPosition,curves[next].StartPosition)>.5f)continue;
                 float cost=priority.Cost+curves[next].Length;
                 if(costs.TryGetValue(next,out var known)&&known<=cost)continue;
                 costs[next]=cost;previous[next]=current;queue.Enqueue(next,(cost,next));

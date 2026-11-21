@@ -6,7 +6,6 @@ namespace LinkEts2Nav.Map;
 internal sealed class NativeNodeConnections
 {
     private readonly record struct NodeReference(ulong NodeUid, ulong ItemUid);
-    private HashSet<NodeReference> pendingItems = [];
     private HashSet<NodeReference> pendingNodes = [];
 
     /// <summary>Requires a native node and a component that owns one of its sides.</summary>
@@ -29,10 +28,7 @@ internal sealed class NativeNodeConnections
     public void Validate(IEnumerable<INode> nodes, IEnumerable<MapItem> items,
         Func<ulong, INode?> getNode, Func<ulong, MapItem?> getItem)
     {
-        var nextItems = new HashSet<NodeReference>();
         var nextNodes = new HashSet<NodeReference>();
-        foreach (var reference in pendingItems)
-            CheckReference(reference.NodeUid, reference.ItemUid, getItem(reference.ItemUid), trackPending: true);
         foreach (var reference in pendingNodes)
             CheckOwner(reference.NodeUid, reference.ItemUid);
 
@@ -51,21 +47,7 @@ internal sealed class NativeNodeConnections
             }
         }
 
-        foreach (var raw in nodes)
-        {
-            if (raw is not Node node)
-                continue;
-            var backward = node.BackwardItem is { } back ? getItem(back.Uid) : null;
-            var forward = node.ForwardItem is { } front ? getItem(front.Uid) : null;
-            // Only road and prefab connections are part of the navigation graph.
-            // A filtered scenery node must not create an outstanding validation.
-            bool navigationNode = backward is Road or Prefab || forward is Road or Prefab;
-            if (node.BackwardItem is { } backwardReference)
-                CheckReference(node.Uid, backwardReference.Uid, backward, navigationNode);
-            if (node.ForwardItem is { } forwardReference)
-                CheckReference(node.Uid, forwardReference.Uid, forward, navigationNode);
-        }
-        pendingItems = nextItems;
+        ValidateReferences(nodes, getItem);
         pendingNodes = nextNodes;
 
         void CheckOwnerEndpoint(MapItem owner, INode? endpoint)
@@ -90,11 +72,24 @@ internal sealed class NativeNodeConnections
                     $"Backward item: {node.BackwardItem?.Uid:X16}, forward item: {node.ForwardItem?.Uid:X16}.");
         }
 
-        void CheckReference(ulong nodeUid, ulong itemUid, MapItem? item, bool trackPending)
-        {
-            if (item is null && trackPending)
-                nextItems.Add(new(nodeUid, itemUid));
+    }
 
+    /// <summary>Checks node declarations against the navigation items that have just become available.</summary>
+    public static void ValidateReferences(IEnumerable<INode> nodes, Func<ulong, MapItem?> getItem)
+    {
+        foreach (var raw in nodes)
+        {
+            if (raw is not Node node)
+                continue;
+            if (node.BackwardItem is { } backward)
+                CheckReference(node.Uid, backward.Uid);
+            if (node.ForwardItem is { } forward)
+                CheckReference(node.Uid, forward.Uid);
+        }
+
+        void CheckReference(ulong nodeUid, ulong itemUid)
+        {
+            var item = getItem(itemUid);
             bool mismatched = item switch
             {
                 Road road => road.Node.Uid != nodeUid && road.ForwardNode.Uid != nodeUid,

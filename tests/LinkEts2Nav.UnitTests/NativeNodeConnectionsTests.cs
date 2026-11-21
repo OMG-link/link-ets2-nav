@@ -77,6 +77,29 @@ public sealed class NativeNodeConnectionsTests
         Assert.Null(data.GetItem(unrelated.Uid));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ChecksEarlierNodeEvenWhenNeitherSideWasInitiallyAvailable(bool fromHost)
+    {
+        var firstWindow = new GameMap();
+        var boundary = firstWindow.AddNode(new(0, 0, 0));
+        var secondWindow = new GameMap();
+        var unrelated = Road.Add(secondWindow, new(0, 0, 20), new(20, 0, 20), default);
+        var thirdWindow = new GameMap();
+        var absent = Road.Add(thirdWindow, new(0, 0, 40), new(20, 0, 40), default);
+        boundary.ForwardItem = unrelated;
+        boundary.BackwardItem = absent;
+        var data = new GameMapData(fromHost ? firstWindow : null);
+        if (!fromHost)
+            data.Publish(firstWindow);
+
+        var error = Assert.Throws<InvalidDataException>(() => data.Publish(secondWindow));
+        Assert.Contains(boundary.Uid.ToString("X16"), error.Message);
+        Assert.Contains(unrelated.Uid.ToString("X16"), error.Message);
+        Assert.Null(data.GetItem(unrelated.Uid));
+    }
+
     [Fact]
     public void ChecksAnEarlierComponentClaimWhenTheUnresolvedNodeArrives()
     {

@@ -80,6 +80,14 @@ public sealed class GameMapData
     {
         lock(gate)
         {
+            var newNavigationItems = map.MapItems.Values
+                .Where(item => item is Road or Prefab && !Items.ContainsKey(item.Uid))
+                .ToDictionary(item => item.Uid);
+            // Earlier node references are already retained in the native maps.
+            // Only newly visible navigation items can complete one of those checks.
+            if (newNavigationItems.Count != 0)
+                NativeNodeConnections.ValidateReferences(
+                    (basis?.Nodes.Values ?? []).Concat(extraNodes.Values), newNavigationItems.GetValueOrDefault);
             connections.Validate(map.Nodes.Values, map.MapItems.Values, NodeAt, ItemAt);
             Header??=new(map.NormalScale,map.CityScale,map.StartPosition,map.StartRotation,map.EuropeMapUiCorrections,map.EditorMapId);
             var items=extraItems.ToDictionary();

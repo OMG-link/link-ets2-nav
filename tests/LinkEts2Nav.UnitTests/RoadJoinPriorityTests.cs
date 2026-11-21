@@ -19,6 +19,19 @@ public sealed class RoadJoinPriorityTests
 
         Assert.Throws<NavigationContractException>(() => builder.Annotate([passage, passage]));
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ScoringPassageRequiresBothNativeTangents(bool missingEntry)
+    {
+        var scene = Scene();
+        var passage = missingEntry ? scene.Side with { NativeEntryTangent = null }
+            : scene.Side with { NativeExitTangent = null };
+        var builder = new RoadJoinPriorityBuilder(Index(scene.Map.MapItems.Values.OfType<Road>().ToArray()));
+
+        Assert.Throws<NavigationContractException>(() => builder.Annotate([scene.Main, passage]));
+    }
 #endif
 
     [Fact]
@@ -168,6 +181,20 @@ public sealed class RoadJoinPriorityTests
         var result=new RoadJoinPriorityBuilder(Index(scene.Map.MapItems.Values.OfType<Road>().ToArray())).Annotate(edges);
         Assert.All(result,e=>Assert.NotNull(e.JoinPriority));
         Assert.All(result,e=>Assert.Equal(2,e.JoinPriority!.Measurements.Count));
+    }
+
+    [Fact]
+    public void DirectionScoringAcceptsSmallHorizontalTangentComponents()
+    {
+        var scene = Scene();
+        var passage = scene.Side with { NativeEntryTangent = new Vector3(.0001f, 1, 0) };
+        var builder = new RoadJoinPriorityBuilder(Index(scene.Map.MapItems.Values.OfType<Road>().ToArray()));
+
+        var annotated = builder.Annotate([scene.Main, passage]);
+
+        var measurement = Assert.Single(annotated[0].JoinPriority!.Measurements, m => m.Entry == passage.StartNodeUid);
+        Assert.Equal(90d, measurement.DirectionDifferenceDegrees!.Value, 8);
+        Assert.NotEmpty(annotated[0].JoinPriority!.Scores);
     }
     [Fact]
     public void OutletCompetitionUsesTheSameThirtyPointScorerWithReversedTravelMeasurements()

@@ -1,4 +1,3 @@
-using System.Numerics;
 using LinkEts2Nav.Core;
 using TruckLib.ScsMap;
 
@@ -107,12 +106,16 @@ public sealed class RoadJoinPriorityBuilder(IReadOnlyDictionary<ulong,List<Road>
     private static IEnumerable<LaneConnection> Connections(DirectedRoad edge)=>edge.LaneConnections
         ??edge.LanePaths.Select(p=>new LaneConnection(p.EntryNodeUid,p.EntryLane,p.ExitNodeUid,p.ExitLane)).ToArray();
 
-    private static double? DirectionDifference(DirectedRoad edge)
+    private static double DirectionDifference(DirectedRoad edge)
     {
-        if(edge.NativeEntryTangent is not {} a||edge.NativeExitTangent is not {} b)return null;
-        var x=new Vector2(a.X,a.Z);var y=new Vector2(b.X,b.Z);
-        if(!float.IsFinite(x.X)||!float.IsFinite(x.Y)||!float.IsFinite(y.X)||!float.IsFinite(y.Y)
-            ||x.LengthSquared()<.000001||y.LengthSquared()<.000001)return null;
-        return Math.Abs(Math.Atan2((double)x.X*y.Y-(double)x.Y*y.X,Vector2.Dot(x,y)))*180/Math.PI;
+#if DEBUG
+        if (edge.NativeEntryTangent is null || edge.NativeExitTangent is null)
+            throw new NavigationContractException($"Prefab passage {edge.Id}: direction scoring requires native entry and exit tangents.");
+#endif
+        var entry = edge.NativeEntryTangent!.Value;
+        var exit = edge.NativeExitTangent!.Value;
+        double cross = (double)entry.X * exit.Z - (double)entry.Z * exit.X;
+        double dot = (double)entry.X * exit.X + (double)entry.Z * exit.Z;
+        return Math.Abs(Math.Atan2(cross, dot)) * 180 / Math.PI;
     }
 }

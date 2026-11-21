@@ -33,17 +33,16 @@ public sealed class JunctionExitSideMapDependencyTests
         var side=Passage(10,30,[1],geometry,split:priority,entryOrder:1);
         var missing=new MissingMapObjects([new(MapObjectKind.Item,34)],"upstream window seam");
         var index=ComponentContinuityIndex.Build(new([main,side]),_=>missing);
-        Assert.Equal(ComponentContinuityKind.Main,index.ForExit(main.Id)!.Kind);
-        Assert.Equal(ComponentContinuityKind.Unknown,index.ForExit(side.Id)!.Kind);
+        Assert.Equal(ComponentContinuityKind.NeedsMapObjects,index.ForExit(main.Id)!.Kind);
+        Assert.Equal(ComponentContinuityKind.NeedsMapObjects,index.ForExit(side.Id)!.Kind);
         Assert.IsType<MissingMapObjects>(index.ForExit(side.Id)!.Issue);
         var result=ComponentManeuverProjection.Build([main],0,[],index.Exits,main.LanePaths[0]);
-        Assert.Equal(ManeuverKind.Straight,Assert.Single(result.Actions).Kind);
-        Assert.Equal(NavigationSide.None,result.Actions[0].StraightExitSides);
+        Assert.Empty(result.Actions);
         Assert.IsType<MissingMapObjects>(Assert.Single(result.Issues));
         Assert.Equal(new NavigationUnresolvedSpan(0,RouteGeometry.Length(main)),Assert.Single(result.Unresolved));
         var planner=new ComponentManeuverPlanner();DirectedRoad[] graph=[main,side];
         planner.UseIndex(graph,index);
-        Assert.Equal(ManeuverKind.Straight,Assert.Single(planner.Build([main],graph)[0]).Kind);
+        Assert.Empty(planner.Build([main],graph)[0]);
         Assert.IsType<MissingMapObjects>(Assert.Single(planner.Issues));
         Assert.Equal(result.Unresolved,planner.Unresolved);
     }

@@ -142,19 +142,34 @@ public sealed class ComponentContinuityIndex
                 var all=prefabs[group.Key.PrefabUid];
                 var mainPaths=all.Where(e=>e.StartNodeUid==main).SelectMany(e=>e.LanePaths.Select(p=>Inspect(e,p)))
                     .Where(p=>p.IdentityPreserved&&p.Death is null&&p.Issue is null).ToArray();
+                var completed=new List<ComponentPassageContinuity>();
+                MissingMapObjects? waiting=null;
                 foreach(var family in group.GroupBy(e=>e.StartNodeUid))
                 {
                     var first=family.First();
                     int exits=all.Where(e=>e.StartNodeUid==family.Key).Select(e=>e.EndNodeUid).Distinct().Count();
                     var rootLanes=all.Where(e=>e.StartNodeUid==family.Key).SelectMany(e=>e.LanePaths)
                         .Select(p=>p.EntryOrder).Distinct().Order().ToArray();
-                    var outcomes=rootLanes.Select(order=>Walk(first,order,mainPaths,family.Key==main)).ToArray();
-                    foreach(var edge in family)
+                    var outcomes=new List<ComponentLaneOutcome>();
+                    foreach(var order in rootLanes)
                     {
-                        var fact=ComponentContinuity.Aggregate(edge,family.Key==main,outcomes,exits);
-                        if(fact.Issue is {} issue)Issues.Add(issue);
-                        result[edge.Id]=fact;
+                        var traced=Walk(first,order,mainPaths,family.Key==main);
+                        if(traced.Issue is MissingMapObjects needed){waiting=needed;break;}
+                        outcomes.Add(traced.Value!);
                     }
+                    if(waiting is not null)break;
+                    foreach(var edge in family)
+                        completed.Add(ComponentContinuity.Aggregate(edge,family.Key==main,outcomes,exits));
+                }
+                if(waiting is not null)
+                {
+                    foreach(var edge in group)result[edge.Id]=IncompletePriority(edge,waiting);
+                    continue;
+                }
+                foreach(var fact in completed)
+                {
+                    if(fact.Issue is {} issue)Issues.Add(issue);
+                    result[fact.EdgeId]=fact;
                 }
             }
             return result;
@@ -189,6 +204,7 @@ public sealed class ComponentContinuityIndex
                 var localPaths=group.SelectMany(edge=>edge.LanePaths.Select(path=>(Edge:edge,Path:path,Split:continuity.GetValueOrDefault(path.PrefabUid)?.FirstSideSplit(path.CurveIndices)))).ToArray();
                 var mainPassage=main is {} mainOutlet?group.Single(e=>e.EndNodeUid==mainOutlet):null;
                 var origins=new Dictionary<int,ComponentLaneOutcome>();
+                MissingMapObjects? waiting=null;
                 if(mainPassage is not null)
                 {
                     var referenceOrders=localPaths.Where(p=>p.Edge.EndNodeUid==mainPassage.EndNodeUid&&p.Split is null)
@@ -201,8 +217,15 @@ public sealed class ComponentContinuityIndex
                         var root=family.First();
                         var reverseEdge=reversed[new(root.Edge.Id,root.Edge.EndNodeUid,root.Edge.StartNodeUid)];
                         var reversePath=reverseEdge.LanePaths.First(p=>p.ExitOrder==family.Key);
-                        origins.Add(family.Key,backward.Trace(reverseEdge,reversePath,null,[],false,referenceOrders));
+                        var traced=backward.Trace(reverseEdge,reversePath,null,[],false,referenceOrders);
+                        if(traced.Issue is MissingMapObjects needed){waiting=needed;break;}
+                        origins.Add(family.Key,traced.Value!);
                     }
+                }
+                if(waiting is not null)
+                {
+                    foreach(var edge in group)result[edge.Id]=IncompletePriority(edge,waiting);
+                    continue;
                 }
                 foreach(var paths in localPaths.GroupBy(p=>p.Edge.Id))
                 {
@@ -314,7 +337,7 @@ public sealed class ComponentContinuityIndex
             return new(edge,path,null,null,true,null);
         }
 
-        private ComponentLaneOutcome Walk(DirectedRoad initial,int order,Local[] mains,bool mainEntrance)
+        private MapQueryResult<ComponentLaneOutcome> Walk(DirectedRoad initial,int order,Local[] mains,bool mainEntrance)
         {
             var family=prefabs[initial.LanePaths[0].PrefabUid].Where(e=>e.StartNodeUid==initial.StartNodeUid)
                 .SelectMany(e=>e.LanePaths.Where(p=>p.EntryOrder==order).Select(p=>Inspect(e,p))).ToArray();
@@ -323,20 +346,20 @@ public sealed class ComponentContinuityIndex
                 initialIssue:family.Select(p=>p.Issue).OfType<MapQueryIssue>().FirstOrDefault());
         }
 
-        private ComponentLaneOutcome Trace(DirectedRoad initial,PrefabLanePath path,Local? chosen,Local[] mains,bool mainEntrance,
+        private MapQueryResult<ComponentLaneOutcome> Trace(DirectedRoad initial,PrefabLanePath path,Local? chosen,Local[] mains,bool mainEntrance,
             IReadOnlyList<int>? upstreamReferenceOrders=null,MapQueryIssue? initialIssue=null)
         {
             double initialLength=Length(path);var originEdge=chosen?.Edge??initial;
             var midpoint=At(originEdge,path,initialLength/2);var exit=At(originEdge,path,initialLength);
             var trace=new List<Segment>();
             if(upstreamReferenceOrders is null)trace.Add(new(originEdge,path,-initialLength,initialLength));
-            ComponentLaneOutcome Result(ComponentLaneFate fate,bool current,double distance,ComponentBoundary? terminal=null,
+            MapQueryResult<ComponentLaneOutcome> Result(ComponentLaneFate fate,bool current,double distance,ComponentBoundary? terminal=null,
                 ComponentBoundary? lifecycle=null,ComponentTurn? turn=null,MapQueryIssue? issue=null)
             {
                 double actionDistance=Math.Max(0,distance-ComponentContinuity.AdvanceMeters);
                 if(reverse&&fate is ComponentLaneFate.Dies or ComponentLaneFate.Separates)
                     actionDistance=Math.Min(Math.Max(0,distance),ComponentContinuity.AdvanceMeters);
-                return new(path.EntryOrder,path.ExitOrder,fate,current,distance,midpoint,exit,terminal,lifecycle,
+                return MapQueryResult<ComponentLaneOutcome>.Ready(new(path.EntryOrder,path.ExitOrder,fate,current,distance,midpoint,exit,terminal,lifecycle,
                     trace.Count==0?exit:At(trace,actionDistance),turn,issue)
                 {
                     MidpointDistanceFromExitMeters=-initialLength/2,
@@ -348,11 +371,16 @@ public sealed class ComponentContinuityIndex
                     TurnPrefabUid=fate==ComponentLaneFate.Dies?chosen!.Lane.PrefabUid:null,
                     TurnSharedCurveIndex=fate==ComponentLaneFate.Dies?chosen!.Merge!.SharedCurveIndex:null,
                     TurnBranchCurveIndex=fate==ComponentLaneFate.Dies?chosen!.Death!.CurveIndex:null
-                };
+                });
             }
-            ComponentLaneOutcome Missing(string reason,ulong node,MapQueryIssue? issue=null)
-                =>Result(ComponentLaneFate.Unresolved,false,0,issue:(issue??missing?.Invoke(node)
-                    ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason)) with{QueryAnchor=upstreamReferenceOrders is null?initial.Points[0]:exit.Position});
+            MapQueryResult<ComponentLaneOutcome> Missing(string reason,ulong node,MapQueryIssue? issue=null)
+            {
+                var cause=(issue??missing?.Invoke(node)??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason))
+                    with{QueryAnchor=upstreamReferenceOrders is null?initial.Points[0]:exit.Position};
+                return cause is MissingMapObjects
+                    ? MapQueryResult<ComponentLaneOutcome>.Unavailable(cause)
+                    : Result(ComponentLaneFate.Unresolved,false,0,issue:cause);
+            }
             double distance=-initialLength;bool current=true;
             var references=mains.Select(m=>new Reference(m,-Length(m.Lane))).ToArray();
             if(upstreamReferenceOrders is not null)
@@ -360,7 +388,7 @@ public sealed class ComponentContinuityIndex
                 distance=0;current=false;
                 var terminal=Advance(exit.EndNodeUid,path.ExitOrder,NativeLaneGraph.Prefab(initial)!,
                     upstreamReferenceOrders.Select(order=>(Order:order,Distance:0d)).ToArray());
-                if(terminal is not null)return terminal;
+                if(terminal is {} upstreamResult)return upstreamResult;
             }
             else
             {
@@ -427,10 +455,10 @@ public sealed class ComponentContinuityIndex
                 var mainEnds=references.Where(r=>r.Local.Death is null&&r.Local.Lane.ExitNodeUid==node)
                     .Select(r=>(Order:r.Local.Lane.ExitOrder,Distance:LaneTraceDistance.Advance(r.StartDistance,Length(r.Local.Lane)))).ToArray();
                 var advance=Advance(node,lane,NativeLaneGraph.Prefab(localLane.Edge)!,mainEnds);
-                if(advance is not null)return advance;
+                if(advance is {} traced)return traced;
             }
 
-            ComponentLaneOutcome? Advance(ulong node,int lane,string previousPrefab,(int Order,double Distance)[] mainEnds)
+            MapQueryResult<ComponentLaneOutcome>? Advance(ulong node,int lane,string previousPrefab,(int Order,double Distance)[] mainEnds)
             {
                 var mainOrders=mainEnds.Select(r=>r.Order).ToHashSet();
                 string? previousRoad=null;

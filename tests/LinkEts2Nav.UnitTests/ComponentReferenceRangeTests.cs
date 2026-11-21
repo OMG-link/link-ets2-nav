@@ -111,7 +111,7 @@ public sealed class ComponentReferenceRangeTests
     {
         var initial=Initial();var missing=new MissingMapObjects([new(MapObjectKind.Node,40)],"unloaded next component");
         var side=ComponentContinuityIndex.Build(new(initial.Graph),_=>missing).ForEntry(initial.Side.Id)!;
-        Assert.Equal(ComponentContinuityKind.Unknown,side.Kind);
+        Assert.Equal(ComponentContinuityKind.NeedsMapObjects,side.Kind);
         Assert.Equal(missing.Keys,Assert.IsType<MissingMapObjects>(side.Issue).Keys);
     }
 #if DEBUG

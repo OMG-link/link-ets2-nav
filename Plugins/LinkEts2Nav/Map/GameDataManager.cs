@@ -122,15 +122,32 @@ public sealed class GameDataManager:IDisposable
         return Projection("prefab-passage-lengths",$"{prefabUid:X16}:{entry:X16}:{exit:X16}:{projected.CacheKey}",
             ()=>PrefabPassageLengths.Read(prefab.Instance,projected.Descriptor,entry,exit));
     }
-    public PrefabDescriptor GetPrefabDescription(string path)=>Projection("ppd",GameResourceStore.Key(path),()=>PrefabDescriptor.Open(path,resources));
+    public PrefabDescriptor GetPrefabDescription(string path)
+    {
+        string resource = GameResourceStore.Key(path);
+        return Projection("ppd", resource, () =>
+        {
+            var descriptor = PrefabDescriptor.Open(resource, resources);
+            PrefabDescriptorInput.Validate(resource, descriptor);
+            return descriptor;
+        });
+    }
     /// <summary>The effective navigation descriptor for a particular loaded instance.</summary>
     internal PrefabDescriptor? GetPrefabNavigationDescription(Prefab prefab,string? resource)
     {
         if(PrefabNavigationOverrides.Find(prefab.Uid) is not {} correction)
-            return resource is null?null:GetPrefabDescription(resource);
+            return resource is null ? null : ReadForInstance(resource);
         correction.ValidateInstance(prefab,resource);
+        var native = ReadForInstance(correction.Resource);
         return Projection("prefab-navigation-instance",prefab.Uid.ToString("X16"),
-            ()=>correction.Apply(prefab,GetPrefabDescription(correction.Resource)));
+            ()=>correction.Apply(prefab,native));
+
+        PrefabDescriptor ReadForInstance(string resourcePath)
+        {
+            var descriptor = GetPrefabDescription(resourcePath);
+            PrefabDescriptorInput.ValidateInstance(resourcePath, prefab, descriptor);
+            return descriptor;
+        }
     }
     public TruckLib.Models.Model GetModelDescription(string path)=>Projection("model-description",GameResourceStore.Key(path),()=>TruckLib.Models.Model.Open(path,resources));
     /// <summary>All named model anchors and hookups, before instance variant visibility is applied.</summary>

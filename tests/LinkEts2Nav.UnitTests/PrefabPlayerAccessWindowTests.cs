@@ -1,4 +1,5 @@
 using System.Numerics;
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Map;
 using TruckLib.Models.Ppd;
 using TruckLib.ScsMap;
@@ -78,13 +79,15 @@ public sealed class PrefabPlayerAccessWindowTests
         var source=Straight(1,0,10,20);source.Descriptor.NavCurves[1].StartPosition=source.Descriptor.NavCurves[0].StartPosition;
         Assert.Equal(0,Build([source],RoadAt(10,0),[false,null])[1].ExcludedCurves);
     }
+#if DEBUG
     [Fact]
-    public void ADescriptorWithoutControlNodesCannotBePlacedAsAWindowPrefab()
+    public void PermissionWindowRequiresAValidatedPrefabInstance()
     {
         var source=Straight(1,0,10,20);source.Descriptor.Nodes=[];source.Prefab.Nodes=[];
         source.Descriptor.NavCurves[0].NextLines.Add(1);source.Descriptor.NavCurves[1].NextLines.Add(0);
-        Assert.Throws<InvalidDataException>(()=>Build([source],RoadAt(40,0),[false,null]));
+        Assert.Throws<NavigationContractException>(()=>Build([source],RoadAt(40,0),[false,null]));
     }
+#endif
     [Fact]
     public void AnExplicitRuleBlocksItsCurveEvenWithoutRoadBinding()
     {

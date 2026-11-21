@@ -155,14 +155,22 @@ public sealed class LaneContinuityTests
         Assert.Empty(result.Points);Assert.Equal(new[]{0},result.UnchangedCurveIndices);
     }
     [Fact]
-    public void MissingOrNonreciprocalNativeReferencesAreUnknownRatherThanInventedLinks()
+    public void DuplicateNativeCurveIdentityIsReported()
     {
-        var geometry=Merge(0,20);var broken=geometry.Curves[1] with{Next=[]};
-        Assert.All(Point(geometry with{Curves=[geometry.Curves[0],broken,geometry.Curves[2]]}).Branches,b=>Assert.Equal(LaneContinuityRole.Unknown,b.Role));
-        var omitted=geometry.Curves[2] with{Previous=[]};
-        Assert.All(Point(geometry with{Curves=[geometry.Curves[0],geometry.Curves[1],omitted]}).Branches,b=>Assert.Equal(LaneContinuityRole.Unknown,b.Role));
+        var geometry=Merge(0,20);
         Assert.NotNull(LaneContinuity.Analyze(geometry with{Curves=geometry.Curves.Append(geometry.Curves[0]).ToArray()}).MapIssue);
     }
+#if DEBUG
+    [Fact]
+    public void InternalLaneGeometryRequiresReciprocalNativeLinks()
+    {
+        var geometry=Merge(0,20);
+        var broken=geometry.Curves[1] with{Next=[]};
+        Assert.Throws<NavigationContractException>(()=>Point(geometry with{Curves=[geometry.Curves[0],broken,geometry.Curves[2]]}));
+        var omitted=geometry.Curves[2] with{Previous=[]};
+        Assert.Throws<NavigationContractException>(()=>Point(geometry with{Curves=[geometry.Curves[0],geometry.Curves[1],omitted]}));
+    }
+#endif
     [Fact]
     public void HermiteTangentsAreTranslationInvariantEvenWithRepeatedControlPositions()
     {
@@ -171,12 +179,8 @@ public sealed class LaneContinuityTests
         Assert.Equal(curve.Tangent(.5f),moved.Tangent(.5f));
         Assert.Equal(curve.StartTangent,curve.Tangent(0));Assert.Equal(curve.EndTangent,curve.Tangent(1));
     }
-    [Theory]
-    [InlineData(null)]
-    [InlineData(-1)]
-    [InlineData(-2)]
-    [InlineData(99)]
-    public void ProductionGeometryPreservesCurveIndicesAndExcludesDisallowedTracks(int? invalidReference)
+    [Fact]
+    public void ProductionGeometryPreservesCurveIndicesAndExcludesDisallowedTracks()
     {
         var rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,-MathF.PI/2);
         var descriptor=new PrefabDescriptor
@@ -188,7 +192,6 @@ public sealed class LaneContinuityTests
                 new NavCurve{StartPosition=new(-10,0,4),EndPosition=Vector3.Zero,Length=11,StartRotation=rotation,EndRotation=rotation,NextLines={2},TrafficRule="tram"},
                 new NavCurve{StartPosition=Vector3.Zero,EndPosition=new(10,0,0),Length=10,StartRotation=rotation,EndRotation=rotation,PreviousLines={0,1}}]
         };
-        if(invalidReference is {} bad)descriptor.NavCurves[0].NextLines.Add(bad);
         var prefab=new Prefab{Uid=9,Nodes=descriptor.Nodes.Select((n,i)=>(INode)new Node{Uid=(ulong)(10+i),Position=n.Position}).ToList()};
         var projected=PrefabPlayerAccess.Build(descriptor,[null,null,null],[null,null,null],rule=>rule=="tram"?false:null);
         var edges=PrefabPathGeometry.Build(prefab,projected.Descriptor);
@@ -198,14 +201,7 @@ public sealed class LaneContinuityTests
         Assert.Equal(new[]{0},geometry.Curves.Single(c=>c.Index==2).Previous);
         var continuity=LaneContinuity.Analyze(geometry);
         Assert.Empty(continuity.Points);
-        if(invalidReference is not null)
-        {
-            Assert.Equal(MapQueryFailureKind.InvalidData,Assert.IsType<MapQueryFailure>(geometry.Curves[0].MapIssue).Kind);
-            Assert.Equal(MapQueryFailureKind.InvalidData,Assert.IsType<MapQueryFailure>(continuity.MapIssue).Kind);
-            Assert.DoesNotContain(0,continuity.UnchangedCurveIndices);
-            Assert.Contains(invalidReference.Value,projected.Descriptor.NavCurves[0].NextLines);
-        }
-        else Assert.Null(continuity.MapIssue);
+        Assert.Null(continuity.MapIssue);
         Assert.All(geometry.Curves,c=>Assert.True(c.StartTangent.Length()>1));
     }
 }

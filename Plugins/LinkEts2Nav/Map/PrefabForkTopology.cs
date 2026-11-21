@@ -28,6 +28,8 @@ public static class PrefabForkTopology
     private static Analysis Analyze(Prefab prefab,PrefabDescriptor descriptor,
         PrefabPlacement placement,Func<int,IReadOnlyDictionary<int,int>> entryOrders,bool byLane)
     {
+        PrefabDescriptorInput.AssertCurveIndices(descriptor);
+        PrefabDescriptorInput.AssertBlinkers(descriptor);
         var curves=descriptor.NavCurves;int count=curves.Count;var nodes=placement.ControlNodes;
         var result=new Dictionary<ulong,RoadForkInfo>();
         var signals=new Dictionary<(ulong,int,ulong,int),ForkSignal?>();
@@ -36,34 +38,34 @@ public static class PrefabForkTopology
         var boundary=new ulong[count];var reach=new ulong[count];var previous=Enumerable.Range(0,count).Select(_=>new List<int>()).ToArray();
         var nodeMasks=new ulong[nodes.Count];var targetNodes=byLane?new List<int>():Enumerable.Range(0,nodes.Count).ToList();
         bool valid=true;
-        for(int node=0;node<nodes.Count;node++)foreach(int curve in nodes[node].OutputLines.Where(i=>i>=0))
+        for(int node=0;node<nodes.Count;node++)foreach(int curve in nodes[node].OutputLines.Where(i=>i!=-1))
         {
             int target=byLane?targetNodes.Count:node;
-            if(curve>=count||boundary[curve]!=0||target>=64){valid=false;continue;}
+            if(boundary[curve]!=0||target>=64){valid=false;continue;}
             if(byLane)targetNodes.Add(node);
             boundary[curve]=1UL<<target;nodeMasks[node]|=boundary[curve];
         }
         for(int i=0;i<count;i++)foreach(int next in curves[i].NextLines)
-            if(next<0||next>=count)valid=false;else if(boundary[i]==0)previous[next].Add(i);
+            if(boundary[i]==0)previous[next].Add(i);
         if(!valid)return Finish();
         var queue=new Queue<int>();
         for(int i=0;i<count;i++)if(boundary[i]!=0){reach[i]=boundary[i];queue.Enqueue(i);}
         while(queue.TryDequeue(out int curve))foreach(int parent in previous[curve])
             if((reach[parent]|reach[curve])!=reach[parent]){reach[parent]|=reach[curve];queue.Enqueue(parent);}
         int Lamp(int i)=>curves[i].Blinker switch
-        {BlinkerType.NoBlinker or BlinkerType.NoBlinkerForced=>0,BlinkerType.LeftBlinker=>1,BlinkerType.RightBlinker=>2,_=>4};
+        {BlinkerType.LeftBlinker=>1,BlinkerType.RightBlinker=>2,_=>0};
         for(int from=0;from<nodes.Count;from++)
         {
             var orders=entryOrders(from);ulong excluded=nodeMasks[from],all=0;
-            foreach(int start in nodes[from].InputLines.Where(i=>i>=0&&i<count))all|=reach[start]&~excluded;
+            foreach(int start in nodes[from].InputLines.Where(i=>i!=-1))all|=reach[start]&~excluded;
             if(BitOperations.PopCount(all)<2)continue;
             var outcomes=new Dictionary<(int Exit,int Lane,int Output),HashSet<int>>();
             var decisions=new Dictionary<int,HashSet<NativeForkDecision>>();
             bool inputValid=true;
             for(int lane=0;lane<nodes[from].InputLines.Length;lane++)
             {
-                int start=nodes[from].InputLines[lane];if(start<0)continue;
-                if(start>=count||!orders.ContainsKey(lane)){inputValid=false;continue;}
+                int start=nodes[from].InputLines[lane];if(start==-1)continue;
+                if(!orders.ContainsKey(lane)){inputValid=false;continue;}
                 ulong root=reach[start]&~excluded;
                 var pending=new Stack<(int Curve,int Lamps)>();var visited=new HashSet<(int,int)>();
                 pending.Push((start,BitOperations.PopCount(root)==1?Lamp(start):0));
@@ -111,8 +113,8 @@ public static class PrefabForkTopology
                 // in this outlet and retains an output not shared by another input.
                 bool inherited=inputs.Any(l=>outcomes.Where(p=>p.Key.Lane==l).Select(p=>p.Key.Exit).Distinct().SequenceEqual(new[]{to})
                     &&rows.Where(p=>p.Key.Lane==l).Any(p=>!rows.Any(q=>q.Key.Lane!=l&&q.Key.Output==p.Key.Output)));
-                var inputCurve=nodes[from].InputLines.FirstOrDefault(i=>i>=0&&i<count,-1);
-                var outputCurve=nodes[to].OutputLines.FirstOrDefault(i=>i>=0&&i<count,-1);
+                var inputCurve=nodes[from].InputLines.FirstOrDefault(i=>i!=-1,-1);
+                var outputCurve=nodes[to].OutputLines.FirstOrDefault(i=>i!=-1,-1);
                 double? turn=null;
                 if(inputCurve>=0&&outputCurve>=0)
                 {

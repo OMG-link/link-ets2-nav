@@ -12,32 +12,33 @@ public static class PrefabJunctionClassifier
     private const uint SiblingMask = 0x000000F0;
     public static PrefabJunctionInfo Analyze(PrefabDescriptor descriptor)
     {
+        PrefabDescriptorInput.AssertCurveIndices(descriptor);
         int count=descriptor.NavCurves.Count;
-        bool Valid(int i)=>i>=0&&i<count;
-        int entrances=descriptor.Nodes.Count(n=>n.InputLines.Any(Valid));
-        int exits=descriptor.Nodes.Count(n=>n.OutputLines.Any(Valid));
+        static bool Present(int i)=>i!=-1;
+        int entrances=descriptor.Nodes.Count(n=>n.InputLines.Any(Present));
+        int exits=descriptor.Nodes.Count(n=>n.OutputLines.Any(Present));
         var widths=descriptor.Nodes.Select(n=>
         {
-            var points=n.InputLines.Where(Valid).Select(i=>descriptor.NavCurves[i].StartPosition)
-                .Concat(n.OutputLines.Where(Valid).Select(i=>descriptor.NavCurves[i].EndPosition)).ToArray();
+            var points=n.InputLines.Where(Present).Select(i=>descriptor.NavCurves[i].StartPosition)
+                .Concat(n.OutputLines.Where(Present).Select(i=>descriptor.NavCurves[i].EndPosition)).ToArray();
             double width=0;
             for(int a=0;a<points.Length;a++)for(int b=a+1;b<points.Length;b++)
                 width=Math.Max(width,Vector2.Distance(new(points[a].X,points[a].Z),new(points[b].X,points[b].Z)));
             return width;
         }).ToArray();
         PrefabJunctionInfo Result(int crossings)=>new(entrances,exits,crossings)
-        {InterfaceCount=descriptor.Nodes.Count(n=>n.InputLines.Any(Valid)||n.OutputLines.Any(Valid)),InterfaceWidths=widths};
+        {InterfaceCount=descriptor.Nodes.Count(n=>n.InputLines.Any(Present)||n.OutputLines.Any(Present)),InterfaceWidths=widths};
         if(entrances<2||exits<2||count>8192)return Result(0);
         var starts=Enumerable.Range(0,count).Select(_=>new HashSet<int>()).ToArray();
         var ends=Enumerable.Range(0,count).Select(_=>new HashSet<int>()).ToArray();
         var reverse=Enumerable.Range(0,count).Select(_=>new List<int>()).ToArray();
-        for(int i=0;i<count;i++)foreach(int next in descriptor.NavCurves[i].NextLines.Where(Valid))reverse[next].Add(i);
+        for(int i=0;i<count;i++)foreach(int next in descriptor.NavCurves[i].NextLines)reverse[next].Add(i);
         void Reach(int owner,IEnumerable<int> seeds,HashSet<int>[] owners,bool forward)
         {
-            var pending=new Stack<int>(seeds.Where(Valid));
+            var pending=new Stack<int>(seeds.Where(Present));
             while(pending.TryPop(out int i))
                 if(owners[i].Add(owner))
-                    foreach(int next in forward?descriptor.NavCurves[i].NextLines.Where(Valid):reverse[i])pending.Push(next);
+                    foreach(int next in forward?(IEnumerable<int>)descriptor.NavCurves[i].NextLines:reverse[i])pending.Push(next);
         }
         for(int n=0;n<descriptor.Nodes.Count;n++)
         {
@@ -53,7 +54,7 @@ public static class PrefabJunctionClassifier
             if((flags&StartOrEnd)==0)
             {
                 var curves=descriptor.Intersections.Skip(i).Take(siblings).Select(p=>(int)p.CurveId).ToArray();
-                if(curves.All(Valid)&&curves.Distinct().Count()==curves.Length)
+                if(curves.All(i=>i>=0&&i<count)&&curves.Distinct().Count()==curves.Length)
                 {
                     bool crossed=false;
                     for(int a=0;a<curves.Length&&!crossed;a++)for(int b=a+1;b<curves.Length;b++)

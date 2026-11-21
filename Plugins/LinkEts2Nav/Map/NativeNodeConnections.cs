@@ -81,6 +81,42 @@ internal sealed class NativeNodeConnections
         return (backward, forward == backward ? null : forward);
     }
 
+    public static void ValidateRepeatedNode(Node previous, Node incoming)
+    {
+        if (previous.BackwardItem?.Uid == incoming.BackwardItem?.Uid
+            && previous.ForwardItem?.Uid == incoming.ForwardItem?.Uid)
+            return;
+
+        throw new InvalidDataException($"Native node {incoming.Uid:X16} changed its connection declarations. "
+            + $"Before: {previous.BackwardItem?.Uid:X16} / {previous.ForwardItem?.Uid:X16}. "
+            + $"After: {incoming.BackwardItem?.Uid:X16} / {incoming.ForwardItem?.Uid:X16} (backward / forward).");
+    }
+
+    public static void ValidateRepeatedItem(MapItem previous, MapItem incoming)
+    {
+        if (previous is not (Road or Prefab) && incoming is not (Road or Prefab))
+            return;
+
+        bool same = (previous, incoming) switch
+        {
+            (Road oldRoad, Road road) => oldRoad.Node?.Uid == road.Node?.Uid
+                && oldRoad.ForwardNode?.Uid == road.ForwardNode?.Uid,
+            (Prefab oldPrefab, Prefab prefab) => oldPrefab.Origin == prefab.Origin
+                && oldPrefab.Nodes.Select(node => node?.Uid).SequenceEqual(prefab.Nodes.Select(node => node?.Uid)),
+            _ => false
+        };
+        if (!same)
+            throw new InvalidDataException($"Native component {incoming.Uid:X16} changed its interface declarations. "
+                + $"Before: {Describe(previous)}. After: {Describe(incoming)}.");
+
+        static string Describe(MapItem item)
+        {
+            var endpoints = HostMapView.NodesOf(item).Select(node => node is null ? "null" : $"{node.Uid:X16}");
+            string origin = item is Prefab prefab ? $", origin {prefab.Origin}" : "";
+            return $"{item.GetType().Name} [{string.Join(", ", endpoints)}]{origin}";
+        }
+    }
+
     /// <summary>The new component must account for every earlier node that references its UID.</summary>
     public static void ValidatePriorReferences(MapItem item, int priorCount, Func<ulong, INode?> getPriorNode,
         IEnumerable<INode> priorNodes)

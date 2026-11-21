@@ -84,11 +84,22 @@ public sealed class GameMapData
     {
         lock(gate)
         {
+            foreach (var (uid, incoming) in map.Nodes)
+                if (incoming is Node node && GetNode(uid) is Node previous && !ReferenceEquals(previous, node))
+                    NativeNodeConnections.ValidateRepeatedNode(previous, node);
+
             foreach (var item in map.MapItems.Values)
-                if (item is Road or Prefab && !Items.ContainsKey(item.Uid))
+            {
+                if (GetItem(item.Uid) is { } previous)
+                {
+                    if (!ReferenceEquals(previous, item))
+                        NativeNodeConnections.ValidateRepeatedItem(previous, item);
+                }
+                else if (item is Road or Prefab)
                     NativeNodeConnections.ValidatePriorReferences(item,
                         hostReferenceCounts.Count(item.Uid) + extraReferenceCounts.GetValueOrDefault(item.Uid),
                         GetNode, (basis?.Nodes.Values ?? []).Concat(extraNodes.Values));
+            }
 
             connections.Validate(map.Nodes.Values, map.MapItems.Values, NodeAt, ItemAt);
             Header??=new(map.NormalScale,map.CityScale,map.StartPosition,map.StartRotation,map.EuropeMapUiCorrections,map.EditorMapId);
@@ -104,9 +115,8 @@ public sealed class GameMapData
             {
                 if (basis?.Nodes.ContainsKey(uid) == true)
                     continue;
-                if (extraNodes.TryGetValue(uid, out var previous))
-                    UpdateExtraReferences(previous, -1);
-                UpdateExtraReferences(node, 1);
+                if (!extraNodes.ContainsKey(uid))
+                    RecordExtraReferences(node);
                 nodes[uid] = node;
             }
             var sectors=extraSectors.ToDictionary();
@@ -127,26 +137,22 @@ public sealed class GameMapData
         MapItem? ItemAt(ulong uid)
             => basis?.MapItems.GetValueOrDefault(uid) ?? map.MapItems.GetValueOrDefault(uid) ?? extraItems.GetValueOrDefault(uid);
 
-        void UpdateExtraReferences(INode raw, int delta)
+        void RecordExtraReferences(INode raw)
         {
             if (raw is not Node node)
                 return;
             var (backward, forward) = NativeNodeConnections.DistinctReferences(node);
             if (backward is ulong backwardUid)
-                UpdateCount(backwardUid, delta);
+                RecordReference(backwardUid);
             if (forward is ulong forwardUid)
-                UpdateCount(forwardUid, delta);
+                RecordReference(forwardUid);
         }
 
-        void UpdateCount(ulong uid, int delta)
+        void RecordReference(ulong uid)
         {
             if (ItemAt(uid) is not null)
                 return;
-            int count = extraReferenceCounts.GetValueOrDefault(uid) + delta;
-            if (count == 0)
-                extraReferenceCounts.Remove(uid);
-            else
-                extraReferenceCounts[uid] = count;
+            extraReferenceCounts[uid] = extraReferenceCounts.GetValueOrDefault(uid) + 1;
         }
     }
 }

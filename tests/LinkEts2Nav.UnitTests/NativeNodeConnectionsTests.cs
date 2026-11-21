@@ -137,6 +137,90 @@ public sealed class NativeNodeConnectionsTests
         Assert.Null(data.GetNode(node.Uid));
     }
 
+    [Fact]
+    public void RepeatedNodeCannotDiscardAReferenceToAPreviouslyPublishedRoad()
+    {
+        var initial = new GameMap();
+        var road = Road.Add(initial, new(0, 0, 0), new(20, 0, 0), default);
+        var data = new GameMapData(null);
+        data.Publish(initial);
+        var supplement = new GameMap();
+        var replacement = new Node { Uid = road.ForwardNode.Uid, Position = road.ForwardNode.Position };
+        supplement.Nodes.Add(replacement.Uid, replacement);
+
+        var error = Assert.Throws<InvalidDataException>(() => data.Publish(supplement));
+        Assert.Contains(replacement.Uid.ToString("X16"), error.Message);
+        Assert.Contains(road.Uid.ToString("X16"), error.Message);
+        Assert.Same(road.ForwardNode, data.GetNode(replacement.Uid));
+    }
+
+    [Fact]
+    public void RepeatedRoadCannotReplaceItsPreviouslyPublishedEndpoints()
+    {
+        var initial = new GameMap();
+        var road = Road.Add(initial, new(0, 0, 0), new(20, 0, 0), default);
+        var data = new GameMapData(null);
+        data.Publish(initial);
+        var supplement = new GameMap();
+        var replacement = Road.Add(supplement, new(0, 0, 20), new(20, 0, 20), default);
+        supplement.MapItems.Remove(replacement.Uid);
+        replacement.Uid = road.Uid;
+        supplement.MapItems.Add(replacement.Uid, replacement);
+
+        var error = Assert.Throws<InvalidDataException>(() => data.Publish(supplement));
+        Assert.Contains(road.Uid.ToString("X16"), error.Message);
+        Assert.Contains(road.Node.Uid.ToString("X16"), error.Message);
+        Assert.Contains(replacement.Node.Uid.ToString("X16"), error.Message);
+        Assert.Same(road, data.GetItem(road.Uid));
+    }
+
+    [Fact]
+    public void RepeatedPrefabCannotReorderItsInterfaceSlots()
+    {
+        var initial = new GameMap();
+        var first = initial.AddNode(new(0, 0, 0));
+        var second = initial.AddNode(new(20, 0, 0));
+        var prefab = new Prefab { Uid = 42, Nodes = [first, second] };
+        first.ForwardItem = prefab;
+        second.BackwardItem = prefab;
+        initial.MapItems.Add(prefab.Uid, prefab);
+        var data = new GameMapData(null);
+        data.Publish(initial);
+        var supplement = new GameMap();
+        supplement.MapItems.Add(prefab.Uid, new Prefab { Uid = prefab.Uid, Nodes = [second, first] });
+
+        var error = Assert.Throws<InvalidDataException>(() => data.Publish(supplement));
+        Assert.Contains(prefab.Uid.ToString("X16"), error.Message);
+        Assert.Same(prefab, data.GetItem(prefab.Uid));
+    }
+
+    [Fact]
+    public void RepeatedNodeAcceptsAResolvedObjectWithTheSameUid()
+    {
+        var supplement = new GameMap();
+        var road = Road.Add(supplement, new(0, 0, 0), new(20, 0, 0), default);
+        var endpoint = (Node)road.Node;
+        using var bytes = new MemoryStream();
+        using var writer = new BinaryWriter(bytes);
+        endpoint.Serialize(writer);
+        writer.Flush();
+        bytes.Position = 0;
+        using var reader = new BinaryReader(bytes);
+        var unresolved = new Node();
+        unresolved.Deserialize(reader);
+        Assert.NotSame(road, unresolved.ForwardItem);
+        Assert.Equal(road.Uid, unresolved.ForwardItem!.Uid);
+        var initial = new GameMap();
+        initial.Nodes.Add(unresolved.Uid, unresolved);
+        var data = new GameMapData(null);
+        data.Publish(initial);
+
+        data.Publish(supplement);
+
+        Assert.Same(road, data.GetItem(road.Uid));
+        Assert.Same(endpoint, data.GetNode(endpoint.Uid));
+    }
+
 #if DEBUG
     [Fact]
     public void OtherSideQueryRequiresItsComponentToBeAttached()

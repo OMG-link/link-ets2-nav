@@ -1,3 +1,4 @@
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Map;
 using TruckLib.Models.Ppd;
 using TruckLib.ScsMap;
@@ -23,7 +24,9 @@ public sealed class PrefabLaneTopologyTests
         prefab.ChangeOrigin(1);
         var rotated=PrefabLaneTopology.Build(prefab,descriptor)!;
         Assert.Equal(lanes.OrderBy(c=>c.EntryNode).ThenBy(c=>c.EntryLane),rotated.OrderBy(c=>c.EntryNode).ThenBy(c=>c.EntryLane));
+#if DEBUG
         descriptor.NavCurves[0].NextLines.Clear(); descriptor.NavCurves[0].NextLines.Add(999);
-        Assert.Null(PrefabLaneTopology.Build(prefab,descriptor));
+        Assert.Throws<NavigationContractException>(() => PrefabLaneTopology.Build(prefab,descriptor));
+#endif
     }
 }

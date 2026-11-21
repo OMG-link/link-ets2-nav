@@ -1,4 +1,5 @@
 using System.Numerics;
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Map;
 using TruckLib.Models.Ppd;
 using TruckLib.ScsMap;
@@ -17,17 +18,18 @@ public sealed class MapInputContractTests
         };
         return(new Prefab{Uid=42,Nodes=[new Node{Uid=10,Position=Vector3.Zero},new Node{Uid=20,Position=new(0,0,-length)}]},descriptor);
     }
-    [Fact] public void DescriptorPairingMismatchIsAnErrorRatherThanEmptyGeometry()
+#if DEBUG
+    [Fact] public void InternalGeometryConsumersRequireMatchingDescriptorAndInstance()
     {
         var s=Scene();s.Prefab.Nodes.RemoveAt(1);
-        Assert.Throws<InvalidDataException>(()=>PrefabPlacement.TryCreate(s.Prefab,s.Descriptor,out _));
-        Assert.Throws<InvalidDataException>(()=>PrefabPathGeometry.Build(s.Prefab,s.Descriptor));
-        Assert.Throws<InvalidDataException>(()=>PrefabLaneTopology.Build(s.Prefab,s.Descriptor));
+        Assert.Throws<NavigationContractException>(()=>PrefabPlacement.TryCreate(s.Prefab,s.Descriptor,out _));
+        Assert.Throws<NavigationContractException>(()=>PrefabPathGeometry.Build(s.Prefab,s.Descriptor));
+        Assert.Throws<NavigationContractException>(()=>PrefabLaneTopology.Build(s.Prefab,s.Descriptor));
     }
     [Fact] public void InvalidOriginIsAnError()
     {
         var s=Scene();typeof(Prefab).GetProperty(nameof(Prefab.Origin))!.SetValue(s.Prefab,(ushort)2);
-        Assert.Throws<InvalidDataException>(()=>PrefabPathGeometry.Build(s.Prefab,s.Descriptor));
+        Assert.Throws<NavigationContractException>(()=>PrefabPathGeometry.Build(s.Prefab,s.Descriptor));
     }
     [Fact]
     public void DistinctPrefabSlotsCannotReferenceTheSameMapNode()
@@ -35,9 +37,10 @@ public sealed class MapInputContractTests
         var scene = Scene();
         scene.Prefab.Nodes[1] = new Node { Uid = scene.Prefab.Nodes[0].Uid, Position = new(0, 0, -10) };
 
-        Assert.Throws<InvalidDataException>(() => PrefabLaneTopology.Build(scene.Prefab, scene.Descriptor));
-        Assert.Throws<InvalidDataException>(() => PrefabPathGeometry.Build(scene.Prefab, scene.Descriptor));
+        Assert.Throws<NavigationContractException>(() => PrefabLaneTopology.Build(scene.Prefab, scene.Descriptor));
+        Assert.Throws<NavigationContractException>(() => PrefabPathGeometry.Build(scene.Prefab, scene.Descriptor));
     }
+#endif
     [Fact] public void PlacementDoesNotRejectShortSpansOrControlResiduals()
     {
         var s=Scene(.25f);s.Prefab.Nodes[1].Position=new(0,0,-2);

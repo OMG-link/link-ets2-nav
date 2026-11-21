@@ -32,10 +32,12 @@ public static class PrefabPlayerAccessWindow
         for(int s=0;s<sources.Length;s++)
         {
             token.ThrowIfCancellationRequested();var source=sources[s];var curves=source.Descriptor.NavCurves;
+            PrefabDescriptorInput.AssertCurveIndices(source.Descriptor);
+            PrefabDescriptorInput.AssertCurveLengths(source.Descriptor);
             for(int i=0;i<curves.Count;i++)
             {
                 banned[starts[s]+i]=ruleAccess(curves[i].TrafficRule.ToString())==false;
-                foreach(int next in curves[i].NextLines.Where(n=>n>=0&&n<curves.Count))Edge(starts[s]+i,starts[s]+next);
+                foreach(int next in curves[i].NextLines)Edge(starts[s]+i,starts[s]+next);
             }
             if(!PrefabPlacement.TryCreate(source.Prefab,source.Descriptor,out var placement))
             {
@@ -48,7 +50,7 @@ public static class PrefabPlayerAccessWindow
                 var lines=isInput?placement.ControlNodes[n].InputLines:placement.ControlNodes[n].OutputLines;
                 for(int slot=0;slot<lines.Length;slot++)
                 {
-                    int i=lines[slot];if(i<0||i>=curves.Count||curves[i].Length<=0)continue;
+                    int i=lines[slot];if(i==-1||curves[i].Length==0)continue;
                     var c=curves[i];ports.Add(new(starts[s]+i,s,n,slot,isInput,source.Prefab.Nodes[n].Uid,
                         placement.ToWorld(isInput?c.StartPosition:c.EndPosition),
                         placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,isInput?c.StartRotation:c.EndRotation))));

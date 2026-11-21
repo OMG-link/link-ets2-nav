@@ -65,39 +65,30 @@ public sealed class LaneContinuityBlinkerTests
         var point=Point(Edit(Merge(),0,c=>c with{Blinker=LaneBlinker.NoBlinkerForced}));
         Assert.Equal(LaneContinuityRole.Survivor,Branch(point,0).Role);Assert.False(Branch(point,0).VetoedByBlinker);
     }
+#if DEBUG
     [Fact]
-    public void UnknownLampIsNotAssumedToMeanNoBlinker()
+    public void InternalMergeGeometryRequiresAKnownBlinker()
     {
-        var point=Point(Edit(Merge(),0,c=>c with{Blinker=(LaneBlinker)3}));
-        Assert.IsType<MapQueryFailure>(point.MapIssue);Assert.All(point.Branches,b=>Assert.Equal(LaneContinuityRole.Unknown,b.Role));
+        var geometry=Edit(Merge(),0,c=>c with{Blinker=(LaneBlinker)3});
+        Assert.Throws<NavigationContractException>(()=>Point(geometry));
     }
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ConfirmedDirectionalPredecessorCanVetoEvenWithAnUnknownLamp(bool unknownCurrent)
+#endif
+    [Fact]
+    public void ConfirmedDirectionalPredecessorCanVetoAnUnmarkedCurve()
     {
-        var g=Edit(Merge(),0,c=>c with{Previous=[5],Blinker=unknownCurrent?(LaneBlinker)3:LaneBlinker.NoBlinker});
+        var g=Edit(Merge(),0,c=>c with{Previous=[5]});
         g=Predecessors(g,C(5,new(-200,0,0),new(-100,0,0),[0],[],LaneBlinker.Right));
         var point=Point(g);Assert.Null(point.MapIssue);Assert.Equal(5,Branch(point,0).BlinkerSourceCurveIndex);
         Assert.Equal(LaneContinuityRole.Survivor,Branch(point,1).Role);
     }
+#if DEBUG
     [Fact]
-    public void MissingPredecessorIsUnknownRatherThanAnUnmarkedEntrance()
+    public void MissingPredecessorViolatesNativeGeometryContract()
     {
-        var point=Point(Edit(Merge(),0,c=>c with{Previous=[99]}));
-        Assert.NotNull(point.MapIssue);Assert.All(point.Branches,b=>Assert.Equal(LaneContinuityRole.Unknown,b.Role));
+        var geometry=Edit(Merge(),0,c=>c with{Previous=[99]});
+        Assert.Throws<NavigationContractException>(()=>Point(geometry));
     }
-    [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    public void AnotherUnknownPredecessorDoesNotReopenAnAlreadyVetoedCandidate(int vetoed)
-    {
-        var g=Edit(Edit(Merge(),vetoed,c=>c with{Blinker=LaneBlinker.Right}),1-vetoed,c=>c with{Previous=[99]});
-        var point=Point(g);Assert.NotNull(point.MapIssue);
-        Assert.Equal(LaneContinuityRole.Dead,Branch(point,vetoed).Role);Assert.True(Branch(point,vetoed).VetoedByBlinker);
-        Assert.Equal(LaneContinuityRole.Unknown,Branch(point,1-vetoed).Role);
-        Assert.NotEqual(LaneTurnKind.Unknown,Branch(point,vetoed).Turn);
-    }
+#endif
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -115,26 +106,28 @@ public sealed class LaneContinuityBlinkerTests
         g=Predecessors(g,C(5,new(-200,0,0),new(-100,0,0),[0,6],[],LaneBlinker.Right),C(6,new(-100,0,0),new(-50,0,30),[],[5]));
         Assert.Equal(LaneContinuityRole.Survivor,Branch(Point(g),0).Role);Assert.False(Branch(Point(g),0).VetoedByBlinker);
     }
+#if DEBUG
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void AnIncompleteInterveningSplitCannotBeUsedAsAConfirmedBoundary(bool missingCurve)
+    public void IncompleteInterveningSplitViolatesNativeGeometryContract(bool missingCurve)
     {
         var g=Edit(Merge(),0,c=>c with{Previous=[5]});
         g=Predecessors(g,C(5,new(-200,0,0),new(-100,0,0),missingCurve?[0,99]:[0],[]));
         if(!missingCurve)g=Predecessors(g,C(6,new(-100,0,0),new(-50,0,30),[],[5]));
-        Assert.NotNull(Point(g).MapIssue);
+        Assert.Throws<NavigationContractException>(()=>Point(g));
     }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void AnIncompleteInterveningMergeCannotBeUsedAsAConfirmedBoundary(bool missingCurve)
+    public void IncompleteInterveningMergeViolatesNativeGeometryContract(bool missingCurve)
     {
         var g=Edit(Merge(),0,c=>c with{Previous=missingCurve?[5,99]:[5]});
         g=Predecessors(g,C(5,new(-200,0,0),new(-100,0,0),[0],[]));
         if(!missingCurve)g=Predecessors(g,C(6,new(-200,0,10),new(-100,0,0),[0],[]));
-        Assert.NotNull(Point(g).MapIssue);
+        Assert.Throws<NavigationContractException>(()=>Point(g));
     }
+#endif
     [Fact]
     public void ARemainingCandidateStillNeedsItsMidpointGeometry()
     {
@@ -176,13 +169,12 @@ public sealed class LaneContinuityBlinkerTests
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(4)]
-    [InlineData(3)]
     public void NativeProjectionRetainsTheExactBlinkerValue(int raw)
     {
         var rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,-MathF.PI/2);
         var descriptor=new TruckLib.Models.Ppd.PrefabDescriptor
         {
-            Nodes=[new(){Position=Vector3.Zero,InputLines=[0,-1,-2,99],OutputLines=[]},new(){Position=new(100,0,0),InputLines=[],OutputLines=[0,-1]}],
+            Nodes=[new(){Position=Vector3.Zero,InputLines=[0,-1],OutputLines=[]},new(){Position=new(100,0,0),InputLines=[],OutputLines=[0,-1]}],
             NavCurves=[new(){StartPosition=Vector3.Zero,EndPosition=new(100,0,0),StartRotation=rotation,EndRotation=rotation,Length=100,
                 Blinker=(TruckLib.Models.Ppd.BlinkerType)raw}]
         };

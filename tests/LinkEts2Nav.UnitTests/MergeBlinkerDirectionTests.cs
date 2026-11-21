@@ -26,13 +26,21 @@ public sealed class MergeBlinkerDirectionTests
     [InlineData(LaneBlinker.Left,LaneBlinker.Right)]
     [InlineData(LaneBlinker.Left,LaneBlinker.Left)]
     [InlineData(LaneBlinker.Right,LaneBlinker.Right)]
-    [InlineData((LaneBlinker)6,LaneBlinker.NoBlinker)]
     public void MissingOrCompetingCommandsRemainUnknown(LaneBlinker a,LaneBlinker b)
     {
         var decision=MergeBlinkerDirection.Classify(Path(LaneBlinker.NoBlinker,a,LaneBlinker.NoBlinker),
             Path(LaneBlinker.NoBlinker,b,LaneBlinker.NoBlinker),1);
         Assert.Null(decision.FirstEnds);Assert.Null(decision.MoveLeft);
     }
+#if DEBUG
+    [Fact]
+    public void MergeLampMetadataRequiresAKnownBlinker()
+    {
+        var invalid=Path(LaneBlinker.NoBlinker,(LaneBlinker)6,LaneBlinker.NoBlinker);
+        var native=Path(LaneBlinker.NoBlinker,LaneBlinker.NoBlinker,LaneBlinker.NoBlinker);
+        Assert.Throws<NavigationContractException>(()=>MergeBlinkerDirection.Classify(invalid,native,1));
+    }
+#endif
 
     [Fact]
     public void EarlierTurnAndDownstreamLampDoNotLeakIntoMergeDecision()

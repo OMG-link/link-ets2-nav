@@ -398,7 +398,6 @@ public sealed class ComponentContinuityTests
         if(malformed)
         {
             var exception=Assert.Throws<NavigationContractException>(()=>ComponentContinuityIndex.Build(graph));
-            Assert.Contains(first.Id,exception.Message);
             Assert.Contains("not reciprocal",exception.Message);
             return;
         }

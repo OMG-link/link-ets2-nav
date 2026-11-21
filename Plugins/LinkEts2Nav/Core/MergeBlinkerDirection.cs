@@ -16,6 +16,10 @@ public static class MergeBlinkerDirection
             return new(null,null,"合流前原生转向灯数据不可用");
         var a=first.CurveBlinkers[^(sharedSuffixCount+1)];
         var b=second.CurveBlinkers[^(sharedSuffixCount+1)];
+#if DEBUG
+        if(!Enum.IsDefined(a)||!Enum.IsDefined(b))
+            throw new NavigationContractException($"Prefab {first.PrefabUid:X16}: merge curves have invalid Blinker values {(int)a}/{(int)b}.");
+#endif
         bool None(LaneBlinker lamp)=>lamp is LaneBlinker.NoBlinker or LaneBlinker.NoBlinkerForced;
         bool Turn(LaneBlinker lamp)=>lamp is LaneBlinker.Left or LaneBlinker.Right;
         if(Turn(a)&&None(b))return new(true,a==LaneBlinker.Left,"合流前单侧原生转向灯；保留无转向灯路线");

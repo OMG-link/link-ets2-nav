@@ -29,6 +29,8 @@ public sealed class RoundaboutMapIndex
 
     public void AddPrefab(Prefab prefab, PrefabDescriptor descriptor, string? resource=null,string access="native")
     {
+        PrefabDescriptorInput.AssertCurveIndices(descriptor);
+        PrefabDescriptorInput.AssertCurveLengths(descriptor);
         if(prefabs.TryGetValue(prefab.Uid,out var previous)&&previous.Access==access)return;
         if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return;
         if(previous.Curves is not null)
@@ -52,8 +54,8 @@ public sealed class RoundaboutMapIndex
         var entryLanes = new Dictionary<int,int>(); var exitLanes=new Dictionary<int,int>();
         for (int n = 0; n < placement.ControlNodes.Count; n++)
         {
-            foreach (int i in placement.ControlNodes[n].InputLines.Where(i => i >= 0)) entry[i] = prefab.Nodes[n].Uid;
-            foreach (int i in placement.ControlNodes[n].OutputLines.Where(i => i >= 0)) exit[i] = prefab.Nodes[n].Uid;
+            foreach (int i in placement.ControlNodes[n].InputLines.Where(i => i != -1)) entry[i] = prefab.Nodes[n].Uid;
+            foreach (int i in placement.ControlNodes[n].OutputLines.Where(i => i != -1)) exit[i] = prefab.Nodes[n].Uid;
             for(int lane=0;lane<placement.ControlNodes[n].InputLines.Length;lane++)entryLanes[placement.ControlNodes[n].InputLines[lane]]=lane;
             for(int lane=0;lane<placement.ControlNodes[n].OutputLines.Length;lane++)exitLanes[placement.ControlNodes[n].OutputLines[lane]]=lane;
         }
@@ -61,7 +63,7 @@ public sealed class RoundaboutMapIndex
         for (int i = 0; i < descriptor.NavCurves.Count; i++)
         {
             var curve = descriptor.NavCurves[i];
-            if (!float.IsFinite(curve.Length) || curve.Length <= 0) continue;
+            if (curve.Length == 0) continue;
             var a = Vector3.Transform(-Vector3.UnitZ, curve.StartRotation) * curve.Length;
             var b = Vector3.Transform(-Vector3.UnitZ, curve.EndRotation) * curve.Length;
             int samples = Math.Max(4, (int)Math.Ceiling(curve.Length / 1.5));
@@ -74,7 +76,7 @@ public sealed class RoundaboutMapIndex
             }).ToArray();
             if (points.Any(p => !float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z))) continue;
             result.Add(new(new(prefab.Uid, i), prefab.Uid, prefab.LeftHandTraffic, points,
-                curve.NextLines.Where(j=>j>=0).Select(j => new RoundaboutCurveKey(prefab.Uid, j)).ToArray(), entry.GetValueOrDefault(i), exit.GetValueOrDefault(i))
+                curve.NextLines.Select(j => new RoundaboutCurveKey(prefab.Uid, j)).ToArray(), entry.GetValueOrDefault(i), exit.GetValueOrDefault(i))
             {NativeCurve=Native(placement.ToWorld(curve.StartPosition),placement.ToWorld(curve.EndPosition),
                 placement.ToWorldDirection(a),placement.ToWorldDirection(b)),EntryLane=entryLanes.GetValueOrDefault(i,-1),ExitLane=exitLanes.GetValueOrDefault(i,-1)});
         }

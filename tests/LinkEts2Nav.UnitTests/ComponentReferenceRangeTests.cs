@@ -125,14 +125,11 @@ public sealed class ComponentReferenceRangeTests
         var b=NativeLaneFixture.WithInterfaces(2,[Curve(0,new(150,0,0),a,[3],[]),
             Curve(1,new(150,0,4),new(260,0,4),[],[]),Curve(2,new(150,0,8),new(260,0,8),[],[]),
             Curve(3,a,new(260,0,0),[],[0,4]),Curve(4,new(150,0,-4),a,[],[])]);
-        Assert.Null(LaneContinuity.Analyze(b).MapIssue);
-        Assert.Contains(LaneContinuity.Analyze(b).Points,p=>p.MapIssue is MapQueryFailure);
         var middle=Passage(2,40,50,0,0,[0,3],b,3,3);
         middle=middle with{LanePaths=[middle.LanePaths[0],Passage(2,40,50,1,1,[1],b,3,3).LanePaths[0],
             Passage(2,40,50,2,2,[2],b,3,3).LanePaths[0]]};
         var graph=new NativeLaneGraph(initial.Graph.Append(middle).ToArray());
         var exception=Assert.Throws<NavigationContractException>(()=>ComponentContinuityIndex.Build(graph));
-        Assert.Contains(middle.Id,exception.Message);
         Assert.Contains("not reciprocal",exception.Message);
     }
 #endif

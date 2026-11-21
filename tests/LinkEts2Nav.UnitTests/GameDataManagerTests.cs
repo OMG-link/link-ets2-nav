@@ -14,6 +14,136 @@ public sealed class GameDataManagerTests
 {
     private const ulong OverridePrefab = 0x4F84385F6C870001;
     private const string OverrideResource = "/prefab2/fork_temp/invis/invis_r1_mage_left_tmpl.ppd";
+    private const string TestPpd = "/prefab/test.ppd";
+
+    [Theory]
+    [InlineData("next-index", "invalid NextLines index 5")]
+    [InlineData("previous-index", "invalid PreviousLines index -1")]
+    [InlineData("next-reciprocity", "NextLines index 1 is not reciprocal")]
+    [InlineData("previous-reciprocity", "PreviousLines index 0 is not reciprocal")]
+    [InlineData("input-index", "control node 0 has invalid input curve index -2")]
+    [InlineData("output-index", "control node 0 has invalid output curve index 2")]
+    [InlineData("negative-length", "invalid length")]
+    [InlineData("nan-length", "invalid length")]
+    [InlineData("infinite-length", "invalid length")]
+    [InlineData("position", "nonfinite endpoint")]
+    [InlineData("rotation", "nonfinite endpoint rotation")]
+    [InlineData("blinker", "unknown Blinker value 3")]
+    [InlineData("control-position", "control node 0 has a nonfinite position or direction")]
+    [InlineData("control-direction", "control node 0 has a nonfinite position or direction")]
+    public void RejectsInvalidNativeNavigationAtTheResourceBoundary(string invalidField, string diagnostic)
+    {
+        var native = NativePpd();
+        var first = native.NavCurves[0];
+        var last = native.NavCurves[1];
+        switch (invalidField)
+        {
+            case "next-index": first.NextLines[0] = 5; break;
+            case "previous-index": first.PreviousLines.Add(-1); break;
+            case "next-reciprocity": last.PreviousLines.Clear(); break;
+            case "previous-reciprocity": first.NextLines.Clear(); break;
+            case "input-index": native.Nodes[0].InputLines[0] = -2; break;
+            case "output-index": native.Nodes[0].OutputLines[0] = 2; break;
+            case "negative-length": first.Length = -1; break;
+            case "nan-length": first.Length = float.NaN; break;
+            case "infinite-length": first.Length = float.PositiveInfinity; break;
+            case "position": first.EndPosition = new(0, float.NaN, 0); break;
+            case "rotation": first.EndRotation = new(0, 0, 0, float.PositiveInfinity); break;
+            case "blinker": first.Blinker = (TruckLib.Models.Ppd.BlinkerType)3; break;
+            case "control-position": native.Nodes[0].Position = new(0, float.NaN, 0); break;
+            case "control-direction": native.Nodes[0].Direction = new(0, float.PositiveInfinity, 0); break;
+        }
+        var files = new Files();
+        files.BinaryContent[TestPpd] = SerializePpd(native);
+        using var data = new GameDataManager(files);
+
+        var failure = Assert.Throws<InvalidDataException>(() => data.GetPrefabDescription(TestPpd));
+
+        Assert.Contains(TestPpd, failure.Message);
+        Assert.Contains(diagnostic, failure.Message);
+    }
+
+    [Fact]
+    public void NativeResourceCacheAcceptsPortPaddingZeroLengthAndReciprocalCycles()
+    {
+        var native = NativePpd();
+        native.NavCurves[0].Length = 0;
+        native.NavCurves[0].PreviousLines.Add(1);
+        native.NavCurves[1].NextLines.Add(0);
+        var files = new Files();
+        files.BinaryContent[TestPpd] = SerializePpd(native);
+        using var data = new GameDataManager(files);
+
+        var descriptor = data.GetPrefabDescription(TestPpd);
+
+        Assert.Same(descriptor, data.GetPrefabDescription("/prefab/./test.ppd"));
+        Assert.Equal(1, files.Reads[TestPpd]);
+        Assert.Contains(-1, descriptor.Nodes[0].InputLines);
+        Assert.Equal(0, descriptor.NavCurves[0].Length);
+        Assert.Equal([0], descriptor.NavCurves[1].NextLines);
+    }
+
+    [Theory]
+    [InlineData("count", "instance has")]
+    [InlineData("origin", "origin")]
+    [InlineData("duplicate", "multiple slots")]
+    [InlineData("position", "nonfinite position or rotation")]
+    [InlineData("rotation", "nonfinite position or rotation")]
+    public void ValidatesTheSourcePrefabPairAtTheInstanceBoundary(string invalidField, string diagnostic)
+    {
+        var native = NativePpd();
+        native.Nodes.Add(new ControlNode
+        {
+            Position = Vector3.UnitZ, Direction = Vector3.UnitZ,
+            InputLines = [-1, -1, -1, -1, -1, -1, -1, -1],
+            OutputLines = [-1, -1, -1, -1, -1, -1, -1, -1]
+        });
+        var first = new Node { Uid = 10 };
+        var last = new Node { Uid = 20, Position = Vector3.UnitZ };
+        var prefab = new Prefab { Uid = 42, Nodes = [first, last] };
+        switch (invalidField)
+        {
+            case "count": prefab.Nodes.RemoveAt(1); break;
+            case "origin": typeof(Prefab).GetProperty(nameof(Prefab.Origin))!.SetValue(prefab, (ushort)2); break;
+            case "duplicate": last.Uid = first.Uid; break;
+            case "position": last.Position = new(0, float.PositiveInfinity, 0); break;
+            case "rotation": last.Rotation = new(0, 0, 0, float.NaN); break;
+        }
+        var files = new Files();
+        files.BinaryContent[TestPpd] = SerializePpd(native);
+        using var data = new GameDataManager(files);
+
+        var failure = Assert.Throws<InvalidDataException>(() => data.GetPrefabNavigationDescription(prefab, TestPpd));
+
+        Assert.Contains("000000000000002A", failure.Message);
+        Assert.Contains(diagnostic, failure.Message);
+    }
+
+    private static PrefabDescriptor NativePpd() => new()
+    {
+        Nodes =
+        [
+            new()
+            {
+                Direction = Vector3.UnitZ,
+                InputLines = [0, -1, -1, -1, -1, -1, -1, -1],
+                OutputLines = [1, -1, -1, -1, -1, -1, -1, -1]
+            }
+        ],
+        NavCurves =
+        [
+            new() { Length = 10, StartRotation = Quaternion.Identity, EndRotation = Quaternion.Identity, NextLines = { 1 } },
+            new() { Length = 10, StartRotation = Quaternion.Identity, EndRotation = Quaternion.Identity, PreviousLines = { 0 } }
+        ]
+    };
+
+    private static byte[] SerializePpd(PrefabDescriptor descriptor)
+    {
+        using var bytes = new MemoryStream();
+        using var writer = new BinaryWriter(bytes);
+        descriptor.Serialize(writer);
+        return bytes.ToArray();
+    }
 
     [Fact]
     public void InstanceNavigationOverridePreservesTheSharedNativeDescriptorAndOriginalPassages()
@@ -142,7 +272,7 @@ public sealed class GameDataManagerTests
         var prefab=new Prefab{Uid=42,Model=new Token("test"),Nodes=[node]};node.ForwardItem=prefab;
         map.Nodes.Add(node.Uid,node);map.MapItems.Add(prefab.Uid,prefab);
         using var data=new GameDataManager(fs,map:map);
-        data.Projection("ppd","/prefab/port.ppd",()=>new TruckLib.Models.Ppd.PrefabDescriptor{NavCurves=[]});
+        data.Projection("ppd","/prefab/port.ppd",()=>new PrefabDescriptor{Nodes=[new ControlNode()],NavCurves=[]});
         var failure=Assert.IsType<MapQueryFailure>(data.DescribeMissingConnection(map,node.Uid));
         Assert.Equal(MapQueryFailureKind.DefinitionUnavailable,failure.Kind);
         Assert.Contains("000000000000002A",failure.Reason);Assert.Contains("/prefab/port.ppd",failure.Reason);
@@ -412,15 +542,16 @@ public sealed class GameDataManagerTests
     private sealed class Files:IFileSystem
     {
         public readonly Dictionary<string,string> Content=new(StringComparer.Ordinal);
+        public readonly Dictionary<string,byte[]> BinaryContent=new(StringComparer.Ordinal);
         public readonly Dictionary<string,Exception> Failures=new(StringComparer.Ordinal);
         public readonly ConcurrentDictionary<string,int> Reads=new(StringComparer.Ordinal),Scans=new(StringComparer.Ordinal);
         public char DirectorySeparator=>'/';
-        public bool FileExists(string path)=>Content.ContainsKey(path);
-        public bool DirectoryExists(string path)=>Content.Keys.Any(p=>p.StartsWith(path.TrimEnd('/')+"/",StringComparison.Ordinal));
+        public bool FileExists(string path)=>Content.ContainsKey(path)||BinaryContent.ContainsKey(path);
+        public bool DirectoryExists(string path)=>Content.Keys.Concat(BinaryContent.Keys).Any(p=>p.StartsWith(path.TrimEnd('/')+"/",StringComparison.Ordinal));
         public IList<string> GetFiles(string path)
-        {Scans.AddOrUpdate(path,1,(_,n)=>n+1);return Content.Keys.Where(p=>GetParent(p)==path.TrimEnd('/')).ToArray();}
+        {Scans.AddOrUpdate(path,1,(_,n)=>n+1);return Content.Keys.Concat(BinaryContent.Keys).Where(p=>GetParent(p)==path.TrimEnd('/')).ToArray();}
         public byte[] ReadAllBytes(string path)
-        {Reads.AddOrUpdate(path,1,(_,n)=>n+1);if(Failures.TryGetValue(path,out var failure))throw failure;return Content.TryGetValue(path,out var text)?Encoding.UTF8.GetBytes(text):throw new FileNotFoundException(path);}
+        {Reads.AddOrUpdate(path,1,(_,n)=>n+1);if(Failures.TryGetValue(path,out var failure))throw failure;return BinaryContent.TryGetValue(path,out var bytes)?bytes.ToArray():Content.TryGetValue(path,out var text)?Encoding.UTF8.GetBytes(text):throw new FileNotFoundException(path);}
         public Stream Open(string path)=>new MemoryStream(ReadAllBytes(path),false);
         public string ReadAllText(string path)=>ReadAllText(path,Encoding.UTF8);
         public string ReadAllText(string path,Encoding encoding)=>encoding.GetString(ReadAllBytes(path));

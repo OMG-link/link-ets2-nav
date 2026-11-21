@@ -76,8 +76,7 @@ public static class LaneContinuity
         {
             foreach(var kind in new[]{LaneContinuityPointKind.Merge,LaneContinuityPointKind.Split})
             {
-                // Consider declarations on both ends. A missing reciprocal declaration must
-                // become Unknown, never silently erase a real N-way choice.
+                // Both declarations identify the same native links after input validation.
                 var indices=(kind==LaneContinuityPointKind.Merge
                     ?shared.Previous.Concat(incoming[shared.Index])
                     :shared.Next.Concat(outgoing[shared.Index]))
@@ -97,6 +96,7 @@ public static class LaneContinuity
         ulong prefab=geometry.PrefabUid;
         Vector3 origin=merge?shared.Start:shared.End,standard=merge?shared.StartTangent:shared.EndTangent;
         var angles=new double?[indices.Length];var vetoes=new int?[indices.Length];
+        NativeLaneApproachTrace.AssertReciprocal(curves,shared,indices,!merge);
         LaneContinuityBranch KnownDead(int id,int source)
         {
             var direction=DescribeApproach(geometry,curves[id],shared.Index,standard,origin,true,curves,incoming,outgoing);
@@ -113,11 +113,8 @@ public static class LaneContinuity
         MapQueryIssue? eligibilityIssue=null;
         for(int i=0;i<indices.Length;i++)
         {
-            if(!curves.TryGetValue(indices[i],out var branch))return Unknown(Invalid($"Prefab {prefab:X16}: native curve {indices[i]} is unavailable."));
+            var branch=curves[indices[i]];
             if(branch.MapIssue is {} issue)return Unknown(issue);
-            if(!(merge?branch.Next:branch.Previous).Contains(shared.Index)
-                ||!(merge?shared.Previous:shared.Next).Contains(branch.Index))
-                return Unknown(Invalid($"Prefab {prefab:X16}: native link {indices[i]} / {shared.Index} is not reciprocal."));
             if(merge)
             {
                 var veto=FindMergeBlinker(branch,shared.Index,geometry.InputCurveIndices,curves,incoming,outgoing);
@@ -169,10 +166,12 @@ public static class LaneContinuity
         {
             if(step.Issue is {} traceIssue)return (null,traceIssue);
             var current=step.Curve!;
+#if DEBUG
+            if(!Enum.IsDefined(current.Blinker))
+                throw new NavigationContractException($"Native curve {current.Index}: unknown Blinker value {(int)current.Blinker}.");
+#endif
             if(current.Blinker is LaneBlinker.Left or LaneBlinker.Right)return (current.Index,null);
             unresolved??=current.MapIssue;
-            if(current.Blinker is not (LaneBlinker.NoBlinker or LaneBlinker.NoBlinkerForced))
-                unresolved??=Invalid($"Native curve {current.Index}: unknown Blinker value {(int)current.Blinker}.");
         }
         return (null,unresolved);
     }

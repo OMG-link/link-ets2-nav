@@ -58,9 +58,7 @@ public sealed class PrefabPlayerAccessTests
             NavCurves=[new NavCurve{Length=10,NextLines={2}},new NavCurve{Length=10,NextLines={2}},new NavCurve{Length=10}]
         };
         var projection=PrefabPlayerAccess.Build(d,[false,null,null],[null,null,null]);
-        Assert.Equal(0,projection.Descriptor.NavCurves[0].Length);
-        Assert.Equal(10,projection.Descriptor.NavCurves[1].Length);
-        Assert.Equal(10,projection.Descriptor.NavCurves[2].Length);
+        Assert.Equal(new[]{false,true,true},projection.AllowedCurves);
         Assert.Equal(new[]{2},projection.Descriptor.NavCurves[1].NextLines);
     }
     [Fact]
@@ -68,8 +66,7 @@ public sealed class PrefabPlayerAccessTests
     {
         var (_,d)=Fork();d.NavCurves[1].TrafficRule="private";
         var projection=PrefabPlayerAccess.Build(d,[null,null,null],[null,null,null],rule=>rule=="private"?false:null);
-        Assert.Equal(0,projection.Descriptor.NavCurves[1].Length);
-        Assert.Equal(10,projection.Descriptor.NavCurves[0].Length);
+        Assert.Equal(new[]{true,false,true},projection.AllowedCurves);
     }
     [Fact]
     public void APathEndingOnlyAtAnInternalBanDoesNotLeaveAGhostEntranceLane()
@@ -81,7 +78,7 @@ public sealed class PrefabPlayerAccessTests
         };
         var projection=PrefabPlayerAccess.Build(d,[null,null],[null,null],rule=>rule=="private"?false:null);
         Assert.Equal(new[]{-1,2},projection.Descriptor.Nodes[0].InputLines);
-        Assert.Equal(10,projection.Descriptor.NavCurves[2].Length);
+        Assert.True(projection.AllowedCurves![2]);
     }
     [Fact]
     public void AnUnknownDisconnectedCycleIsNotMistakenForForbiddenTraffic()

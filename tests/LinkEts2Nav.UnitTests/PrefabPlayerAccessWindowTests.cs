@@ -40,32 +40,20 @@ public sealed class PrefabPlayerAccessWindowTests
         var source=Straight(1,0,10,20,reversedInputSlots:true,origin:origin);
         var result=Build([source],RoadAt(10,0),[false,null])[1];
         Assert.Equal(1,result.ExcludedCurves);
-        Assert.Equal(0,result.Descriptor.NavCurves[0].Length);Assert.Equal(10,result.Descriptor.NavCurves[1].Length);
+        Assert.Equal(new[]{false,true},result.AllowedCurves);
+        Assert.All(result.Descriptor.NavCurves,curve=>Assert.Equal(10,curve.Length));
         Assert.Equal(new[]{1,-1},result.Descriptor.Nodes[0].InputLines);
         Assert.Equal(new[]{-1,1},result.Descriptor.Nodes[1].OutputLines);
         Assert.Equal(new[]{1,0},source.Descriptor.Nodes[0].InputLines);
         Assert.Equal(10,source.Descriptor.NavCurves[0].Length);
     }
     [Fact]
-    public void ZeroLengthNativePortStillReceivesItsRoadLanePermission()
-    {
-        var source=Straight(1,0,10,20);
-        source.Descriptor.NavCurves[0].Length=0;
-        var projection=Build([source],RoadAt(10,0),[false,true])[1];
-
-        Assert.Equal(1,projection.ExcludedCurves);
-        Assert.Equal(new[]{-1,1},projection.Descriptor.Nodes[0].InputLines);
-        var passage=Assert.Single(PrefabPathGeometry.Build(source.Prefab,projection.Descriptor));
-        Assert.Equal(1,Assert.Single(passage.LanePaths).EntryLane);
-    }
-
-    [Fact]
     public void AProvenRailLanePropagatesAcrossNativePrefabAttachments()
     {
         var first=Straight(1,0,10,20);var second=Straight(2,10,20,30);var third=Straight(3,20,30,40);
         var result=Build([first,second,third],RoadAt(10,0),[false,null]);
         Assert.All(result.Values,p=>Assert.Equal(1,p.ExcludedCurves));
-        Assert.All(result.Values,p=>Assert.Equal(10,p.Descriptor.NavCurves[1].Length));
+        Assert.All(result.Values,p=>Assert.Equal(new[]{false,true},p.AllowedCurves));
     }
     [Fact]
     public void UnknownAndCarReachablePathsAreNotRemoved()
@@ -75,8 +63,8 @@ public sealed class PrefabPlayerAccessWindowTests
         Assert.All(unknown.Values,p=>Assert.Equal(0,p.ExcludedCurves));
         first.Descriptor.NavCurves[0].NextLines.Add(1);
         var shared=Build([first,second],RoadAt(10,0),[false,null]);
-        Assert.Equal(10,shared[1].Descriptor.NavCurves[1].Length);
-        Assert.Equal(10,shared[2].Descriptor.NavCurves[1].Length);
+        Assert.Equal(new[]{false,true},shared[1].AllowedCurves);
+        Assert.Equal(new[]{false,true},shared[2].AllowedCurves);
     }
     [Fact]
     public void MismatchedLaneCountKeepsUnknownLanesAndReportsTheMissingBinding()
@@ -106,6 +94,6 @@ public sealed class PrefabPlayerAccessWindowTests
     {
         var source=Straight(1,0,10,20);source.Descriptor.NavCurves[1].TrafficRule="private";
         var result=PrefabPlayerAccessWindow.Build([source],(_,_)=>null,(_,_)=>null,r=>r=="private"?false:null,token:TestContext.Current.CancellationToken)[1];
-        Assert.Equal(10,result.Descriptor.NavCurves[0].Length);Assert.Equal(0,result.Descriptor.NavCurves[1].Length);
+        Assert.Equal(new[]{true,false},result.AllowedCurves);
     }
 }

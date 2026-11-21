@@ -33,7 +33,6 @@ public static class PrefabPlayerAccessWindow
         {
             token.ThrowIfCancellationRequested();var source=sources[s];var curves=source.Descriptor.NavCurves;
             PrefabDescriptorInput.AssertCurveIndices(source.Descriptor);
-            PrefabDescriptorInput.AssertCurveLengths(source.Descriptor);
             for(int i=0;i<curves.Count;i++)
             {
                 banned[starts[s]+i]=ruleAccess(curves[i].TrafficRule.ToString())==false;

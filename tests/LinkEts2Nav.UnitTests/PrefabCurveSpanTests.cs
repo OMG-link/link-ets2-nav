@@ -8,7 +8,7 @@ public sealed class PrefabCurveSpanTests
 {
     [Theory]
     [InlineData(3,1000f,"2500 m")]
-    [InlineData(8193,0f,"8192 queue items")]
+    [InlineData(8193,0.001f,"8192 queue items")]
     public void SearchBudgetReportsOnlyAnUnresolvedReachableTarget(int count,float length,string limit)
     {
         var curves=Enumerable.Range(0,count+1).Select(_=>new NavCurve{Length=length}).ToList();

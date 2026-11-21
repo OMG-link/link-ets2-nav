@@ -17,10 +17,7 @@ public static class PrefabPassageLengths
         var lengths=new List<double>();
         foreach(int start in from.InputLines.Where(i=>i!=-1).Distinct())
             foreach(var chain in PrefabCurvePathfinder.FindEach(descriptor,start,targets,prefab.Uid).Values)
-            {
-                double length=chain.Sum(i=>(double)descriptor.NavCurves[i].Length);
-                if(length>0)lengths.Add(length);
-            }
+                lengths.Add(chain.Sum(i=>(double)descriptor.NavCurves[i].Length));
         return Array.AsReadOnly(lengths.Distinct().Order().ToArray());
     }
 }

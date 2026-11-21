@@ -23,7 +23,7 @@ internal static class PrefabDescriptorInput
         for (int index = 0; index < curves.Count; index++)
         {
             var curve = curves[index];
-            if (!float.IsFinite(curve.Length) || curve.Length < 0)
+            if (!float.IsFinite(curve.Length) || curve.Length < 0.001f)
                 throw Invalid($"curve {index} has invalid length {curve.Length}");
             if (!Finite(curve.StartPosition) || !Finite(curve.EndPosition))
                 throw Invalid($"curve {index} has a nonfinite endpoint");
@@ -76,17 +76,6 @@ internal static class PrefabDescriptorInput
             if (!Enum.IsDefined(descriptor.NavCurves[index].Blinker))
                 throw new NavigationContractException(
                     $"PPD curve {index}: unknown Blinker value {(int)descriptor.NavCurves[index].Blinker}.");
-    }
-
-    [Conditional("DEBUG")]
-    public static void AssertCurveLengths(PrefabDescriptor descriptor)
-    {
-        for (int index = 0; index < descriptor.NavCurves.Count; index++)
-        {
-            float length = descriptor.NavCurves[index].Length;
-            if (!float.IsFinite(length) || length < 0)
-                throw new NavigationContractException($"PPD curve {index}: invalid length {length}.");
-        }
     }
 
     [Conditional("DEBUG")]

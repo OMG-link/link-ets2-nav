@@ -109,7 +109,6 @@ public static class PrefabPathGeometry
     private static NativeLaneGeometry BuildNativeGeometry(ulong prefabUid,PrefabDescriptor descriptor,PrefabPlacement placement)
     {
         // Access projection disconnects forbidden curves from all links and ports.
-        // A referenced native curve may have a legitimate zero reported length.
         var curves=descriptor.NavCurves;
         var inputIndices=descriptor.Nodes.SelectMany(n=>n.InputLines).Where(i=>i!=-1).Distinct().Order().ToArray();
         var outputIndices=descriptor.Nodes.SelectMany(n=>n.OutputLines).Where(i=>i!=-1).Distinct().Order().ToArray();

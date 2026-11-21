@@ -3,7 +3,10 @@ using TruckLib.ScsMap;
 
 namespace LinkEts2Nav.Map;
 
-public sealed record PrefabPlayerProjection(PrefabDescriptor Descriptor,string CacheKey,int ExcludedCurves);
+public sealed record PrefabPlayerProjection(PrefabDescriptor Descriptor,string CacheKey,int ExcludedCurves)
+{
+    internal IReadOnlyList<bool>? AllowedCurves { get; init; }
+}
 
 /// <summary>A player-drivable view of native curves. Unknown permissions retain native connectivity.</summary>
 public static class PrefabPlayerAccess
@@ -76,13 +79,16 @@ public static class PrefabPlayerAccess
             Signs=source.Signs,Semaphores=source.Semaphores,SpawnPoints=source.SpawnPoints,MapPoints=source.MapPoints,
             TriggerPoints=source.TriggerPoints,Intersections=source.Intersections,NavNodes=source.NavNodes
         };
-        return new(projected,string.Concat(allowed.Select(a=>a?'1':'0')),excluded);
+        return new(projected,string.Concat(allowed.Select(a=>a?'1':'0')),excluded)
+        {
+            AllowedCurves=Array.AsReadOnly(allowed.ToArray())
+        };
     }
 
     private static NavCurve Copy(NavCurve c,bool allowed,IReadOnlyList<bool> permissions)
     {
         var result=new NavCurve{Name=c.Name,LeadsToNodes=c.LeadsToNodes,StartPosition=c.StartPosition,EndPosition=c.EndPosition,
-            StartRotation=c.StartRotation,EndRotation=c.EndRotation,Length=allowed?c.Length:0,SemaphoreId=c.SemaphoreId,
+            StartRotation=c.StartRotation,EndRotation=c.EndRotation,Length=c.Length,SemaphoreId=c.SemaphoreId,
             TrafficRule=c.TrafficRule,NavNodeIndex=c.NavNodeIndex,Blinker=c.Blinker,AllowedVehicles=c.AllowedVehicles,
             LowProbability=c.LowProbability,LimitDisplacement=c.LimitDisplacement,AdditivePriority=c.AdditivePriority,PriorityModifier=c.PriorityModifier};
         if(allowed)

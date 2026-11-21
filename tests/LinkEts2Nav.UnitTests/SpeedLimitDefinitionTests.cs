@@ -308,7 +308,7 @@ public sealed class SpeedLimitDefinitionTests
         var prefab=new Prefab{Nodes=[new Node{Uid=100},rail.Node,new Node{Uid=300}]};
         if(origin>0)prefab.ChangeOrigin((ushort)origin);
         var projection=PrefabPlayerAccess.Build(prefab,descriptor,new SpeedLimitDefinitionReader(fs));
-        Assert.Equal(0,projection.Descriptor.NavCurves[0].Length);Assert.Equal(10,projection.Descriptor.NavCurves[1].Length);
+        Assert.Equal(new[]{false,true},projection.AllowedCurves);
     }
 
     [Fact]
@@ -329,7 +329,7 @@ public sealed class SpeedLimitDefinitionTests
         var reader=new SpeedLimitDefinitionReader(data);
         Assert.Same(descriptor,PrefabPlayerAccess.Build(prefab,descriptor,reader).Descriptor);
         var projected=PrefabPlayerAccess.Build(prefab,descriptor,reader,data.Map);
-        Assert.Equal(0,projected.Descriptor.NavCurves[0].Length);Assert.Equal(10,projected.Descriptor.NavCurves[1].Length);
+        Assert.Equal(new[]{false,true},projected.AllowedCurves);
         Assert.Equal("UnresolvedItem",node.ForwardItem!.GetType().Name);
     }
 

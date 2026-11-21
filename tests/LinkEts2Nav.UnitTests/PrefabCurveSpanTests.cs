@@ -6,6 +6,25 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class PrefabCurveSpanTests
 {
+    [Theory]
+    [InlineData(3,1000f,"2500 m")]
+    [InlineData(8193,0f,"8192 queue items")]
+    public void SearchBudgetReportsOnlyAnUnresolvedReachableTarget(int count,float length,string limit)
+    {
+        var curves=Enumerable.Range(0,count+1).Select(_=>new NavCurve{Length=length}).ToList();
+        for(int index=0;index<count-1;index++)
+        {
+            curves[index].NextLines.Add(index+1);
+            curves[index+1].PreviousLines.Add(index);
+        }
+        var descriptor=new PrefabDescriptor{NavCurves=curves};
+        Assert.Empty(PrefabCurvePathfinder.FindEach(descriptor,0,new HashSet<int>{count}));
+        var error=Assert.Throws<NotSupportedException>(()=>
+            PrefabCurvePathfinder.FindEach(descriptor,0,new HashSet<int>{count-1},42));
+        Assert.Contains("Prefab 000000000000002A",error.Message);
+        Assert.Contains(limit,error.Message);
+    }
+
     [Fact]
     public void NativeSuccessorRemainsReachableAcrossCurveEndpointGap()
     {

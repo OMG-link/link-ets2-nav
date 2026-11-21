@@ -90,6 +90,19 @@ internal static class PrefabDescriptorInput
     }
 
     [Conditional("DEBUG")]
+    public static void AssertCurveGeometry(PrefabDescriptor descriptor)
+    {
+        for (int index = 0; index < descriptor.NavCurves.Count; index++)
+        {
+            var curve = descriptor.NavCurves[index];
+            if (!Finite(curve.StartPosition) || !Finite(curve.EndPosition))
+                throw new NavigationContractException($"PPD curve {index}: nonfinite endpoint.");
+            if (!FiniteRotation(curve.StartRotation) || !FiniteRotation(curve.EndRotation))
+                throw new NavigationContractException($"PPD curve {index}: nonfinite endpoint rotation.");
+        }
+    }
+
+    [Conditional("DEBUG")]
     public static void AssertControlPlacement(PrefabDescriptor descriptor)
     {
         for (int i = 0; i < descriptor.Nodes.Count; i++)

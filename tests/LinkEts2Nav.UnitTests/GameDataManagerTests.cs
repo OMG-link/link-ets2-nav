@@ -64,6 +64,26 @@ public sealed class GameDataManagerTests
     }
 
     [Fact]
+    public void RejectsNanLengthBeforeAPrivatePrefabCurveCanBeProjectedOut()
+    {
+        var native=NativePpd();
+        native.NavCurves[0].TrafficRule="private";
+        native.NavCurves[0].Length=float.NaN;
+        var files=new Files();
+        files.Content["/def/world/prefab.test.sii"]="SiiNunit { prefab_model : prefab.test { prefab_desc: \"/prefab/test.ppd\" } }";
+        files.BinaryContent[TestPpd]=SerializePpd(native);
+        var map=new TruckLib.ScsMap.Map();
+        var node=new Node{Uid=10};
+        var prefab=new Prefab{Uid=42,Model=new Token("test"),Nodes=[node]};
+        map.Nodes.Add(node.Uid,node);
+        map.MapItems.Add(prefab.Uid,prefab);
+        using var data=new GameDataManager(files,map:map);
+
+        var error=Assert.Throws<InvalidDataException>(()=>data.GetPrefabPassageLengths(prefab.Uid,node.Uid,node.Uid));
+        Assert.Contains("PPD /prefab/test.ppd: curve 0 has invalid length NaN",error.Message);
+    }
+
+    [Fact]
     public void NativeResourceCacheAcceptsPortPaddingZeroLengthAndReciprocalCycles()
     {
         var native = NativePpd();
@@ -335,13 +355,18 @@ public sealed class GameDataManagerTests
         Assert.DoesNotContain(paths.MapIssues,issue=>issue is MissingMapObjects);
     }
 
-    [Fact]
-    public void AProjectedOutPathIsNotAMissingNativePath()
+    [Theory]
+    [InlineData(20f)]
+    [InlineData(0f)]
+    public void AProjectedOutPathIsNotAMissingNativePath(float reportedLength)
     {
-        var (data,window,route)=MissingPrefabPassage(nativePath:true);
+        var (data,window,route)=MissingPrefabPassage(nativePath:true,reportedLength:reportedLength);
         using var dataset=data;
         var prefab=data.GetPrefab(42)!;
-        Assert.NotEmpty(PrefabPassageLengths.Read(prefab.Instance,prefab.Description!,10,11));
+        var description=prefab.Description!;
+        Assert.True(PrefabLaneTopology.Reaches(prefab.Instance,description,10,11));
+        Assert.NotEmpty(PrefabPathGeometry.Build(prefab.Instance,description));
+        if(reportedLength==0)Assert.Empty(PrefabPassageLengths.Read(prefab.Instance,description,10,11));
         var access=PrefabPlayerAccess.Build(prefab.Description!,[false,null],[null,false]);
         Assert.Empty(PrefabPassageLengths.Read(prefab.Instance,access.Descriptor,10,11));
         window=window with{PrefabPaths=PrefabPathGeometry.Build(prefab.Instance,access.Descriptor)};
@@ -362,7 +387,7 @@ public sealed class GameDataManagerTests
     }
 
     private static (GameDataManager Data,NearbyMapSnapshot Window,RouteSnapshot Route) MissingPrefabPassage(
-        bool ferry=false,bool company=false,bool nativePath=false,bool neighboringCompany=false)
+        bool ferry=false,bool company=false,bool nativePath=false,bool neighboringCompany=false,float reportedLength=20)
     {
         var fs=new Files();
         fs.Content["/def/world/prefab.test.sii"]="SiiNunit { prefab_model : prefab.test { prefab_desc: \"/prefab/facility.ppd\" } }";
@@ -381,7 +406,7 @@ public sealed class GameDataManagerTests
         {
             Nodes=[new ControlNode{Position=entry.Position,InputLines=nativePath?[0]:[],OutputLines=[]},
                 new ControlNode{Position=exit.Position,InputLines=[],OutputLines=nativePath?[0]:[]}],
-            NavCurves=nativePath?[new NavCurve{StartPosition=entry.Position,EndPosition=exit.Position,Length=20}]:[]
+            NavCurves=nativePath?[new NavCurve{StartPosition=entry.Position,EndPosition=exit.Position,Length=reportedLength}]:[]
         });
         var window=new NearbyMapSnapshot(map,[],[],[]){Data=data,MissingConnection=uid=>data.DescribeMissingConnection(map,uid),
             Companies=new(company?[new(90,prefab.Uid,"terminal","",null)]:[],[prefab])};

@@ -47,6 +47,19 @@ public sealed class PrefabPlayerAccessWindowTests
         Assert.Equal(10,source.Descriptor.NavCurves[0].Length);
     }
     [Fact]
+    public void ZeroLengthNativePortStillReceivesItsRoadLanePermission()
+    {
+        var source=Straight(1,0,10,20);
+        source.Descriptor.NavCurves[0].Length=0;
+        var projection=Build([source],RoadAt(10,0),[false,true])[1];
+
+        Assert.Equal(1,projection.ExcludedCurves);
+        Assert.Equal(new[]{-1,1},projection.Descriptor.Nodes[0].InputLines);
+        var passage=Assert.Single(PrefabPathGeometry.Build(source.Prefab,projection.Descriptor));
+        Assert.Equal(1,Assert.Single(passage.LanePaths).EntryLane);
+    }
+
+    [Fact]
     public void AProvenRailLanePropagatesAcrossNativePrefabAttachments()
     {
         var first=Straight(1,0,10,20);var second=Straight(2,10,20,30);var third=Straight(3,20,30,40);

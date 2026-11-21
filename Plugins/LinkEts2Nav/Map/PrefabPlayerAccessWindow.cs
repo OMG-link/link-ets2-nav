@@ -50,7 +50,7 @@ public static class PrefabPlayerAccessWindow
                 var lines=isInput?placement.ControlNodes[n].InputLines:placement.ControlNodes[n].OutputLines;
                 for(int slot=0;slot<lines.Length;slot++)
                 {
-                    int i=lines[slot];if(i==-1||curves[i].Length==0)continue;
+                    int i=lines[slot];if(i==-1)continue;
                     var c=curves[i];ports.Add(new(starts[s]+i,s,n,slot,isInput,source.Prefab.Nodes[n].Uid,
                         placement.ToWorld(isInput?c.StartPosition:c.EndPosition),
                         placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,isInput?c.StartRotation:c.EndRotation))));

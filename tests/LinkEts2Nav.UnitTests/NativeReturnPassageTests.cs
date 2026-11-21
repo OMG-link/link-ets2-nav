@@ -52,11 +52,22 @@ public sealed class NativeReturnPassageTests
     }
 
     [Fact]
-    public void MissingOrZeroLengthNativeChainDoesNotCreateAnEdge()
+    public void MissingNativeChainDoesNotCreateAnEdge()
     {
         var (prefab,descriptor)=NativeReturn(false);Assert.Empty(PrefabPathGeometry.Build(prefab,descriptor));
+        Assert.False(PrefabLaneTopology.Reaches(prefab,descriptor,10,10));
+    }
+
+    [Fact]
+    public void ZeroReportedLengthPreservesAConnectedNativeReturn()
+    {
+        var (prefab,descriptor)=NativeReturn();
         foreach(var curve in descriptor.NavCurves)curve.Length=0;
-        Assert.Empty(PrefabPathGeometry.Build(prefab,descriptor));
+        Assert.True(PrefabLaneTopology.Reaches(prefab,descriptor,10,10));
+        var edge=Assert.Single(PrefabPathGeometry.Build(prefab,descriptor));
+        Assert.True(edge.ReturnsToEntry);
+        Assert.True(RouteGeometry.Length(edge)>0);
+        Assert.Empty(PrefabPassageLengths.Read(prefab,descriptor,10,10));
     }
 
     [Fact]

@@ -31,8 +31,13 @@ public sealed class ComponentMapDemandTests
             [uid<100?local:remote],"known missing owner"),reportMapIssue:reported.Add);
         var graph=paths.GetNavigationGraph();
         Assert.Empty(reported);Assert.Empty(paths.MapIssues);
-        Assert.All(graph,e=>Assert.NotEmpty(e.JoinPriority!.MapIssues));
+        Assert.All(graph,e=>
+        {
+            Assert.Null(e.JoinPriority);
+            Assert.Equal([e.StartNodeUid<100?local:remote],e.JoinPriorityDependency!.Keys);
+        });
         var index=ComponentContinuityIndex.Build(new(graph));
+        Assert.All(index.Entries,fact=>Assert.Equal(ComponentContinuityKind.NeedsMapObjects,fact.Kind));
         Assert.Contains(index.Issues.OfType<MissingMapObjects>(),i=>i.Keys.Contains(remote));
         Assert.Empty(reported); // Keeping static diagnostics is not a load request.
         var planner=new ComponentManeuverPlanner();planner.UseIndex(graph,index);

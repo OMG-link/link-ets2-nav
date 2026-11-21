@@ -332,7 +332,7 @@ public sealed class ComponentContinuityTests
         Assert.Equal(first.EndNodeUid,priority.MainEntry);
         Assert.Equal([first.EndNodeUid,second.EndNodeUid],priority.Measurements.Select(m=>m.Entry));
         Assert.Equal(30,priority.Scores.Sum(s=>s.Total),5);
-        Assert.Empty(priority.MapIssues);
+        Assert.All(facts,edge=>Assert.Null(edge.SplitPriorityDependency));
     }
 
     [Fact]

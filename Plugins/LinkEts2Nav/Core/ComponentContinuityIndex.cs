@@ -134,7 +134,7 @@ public sealed class ComponentContinuityIndex
                 var priority=group.Select(e=>e.JoinPriority).OfType<RoadJoinPriority>().FirstOrDefault();
                 if(priority?.MainEntry is not {} main)
                 {
-                    var issue=priority?.MapIssues.FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,
+                    var issue=new MapQueryFailure(MapQueryFailureKind.Ambiguous,
                         priority?.Reason??"组件缺少完整主入口评分");
                     foreach(var edge in group)result[edge.Id]=IncompletePriority(edge,issue);
                     continue;
@@ -180,7 +180,7 @@ public sealed class ComponentContinuityIndex
                 // Only complete scoring supplies a margin when there is no winner.
                 if(main is null&&priority?.WinningMargin is null&&priority?.NoEligibleOutlet!=true)
                 {
-                    var issue=priority?.MapIssues.FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,
+                    var issue=new MapQueryFailure(MapQueryFailureKind.Ambiguous,
                         priority?.Reason??"Missing outlet priority");
                     foreach(var edge in group)result[edge.Id]=IncompletePriority(edge,issue);
                     continue;

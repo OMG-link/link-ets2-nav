@@ -1,4 +1,3 @@
-using LinkEts2Nav.Map;
 namespace LinkEts2Nav.Core;
 
 public sealed record RoadJoinEntryMeasurement(ulong Entry,int LaneCount,double? IncomingSlopeDegrees,
@@ -14,7 +13,6 @@ public sealed record RoadJoinEntryScore(RoadJoinEntryMeasurement Measurement,dou
 public sealed record RoadJoinPriority(ulong? MainEntry,IReadOnlyList<RoadJoinEntryMeasurement> Measurements,
     IReadOnlyList<RoadJoinEntryScore> Scores,double? WinningMargin,string Reason)
 {
-    public IReadOnlyList<MapQueryIssue> MapIssues {get;init;}=[];
     public bool NoEligibleOutlet {get;init;}
 }
 

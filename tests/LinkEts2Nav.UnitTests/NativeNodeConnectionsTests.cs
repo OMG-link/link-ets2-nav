@@ -8,6 +8,26 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class NativeNodeConnectionsTests
 {
     [Fact]
+    public void PackedHostReferenceCountsKeepWholeUidGroupsAcrossBlocks()
+    {
+        const ulong maximum = ulong.MaxValue;
+        var references = Enumerable.Range(0, 390).Select(i => (ulong)i * 3).ToList();
+        references.AddRange(Enumerable.Repeat(381UL, 200));
+        references.AddRange([maximum - 1, maximum]);
+        references.Reverse();
+
+        var counts = UnresolvedItemReferenceCounts.Build(references);
+
+        Assert.Equal(1, counts.Count(0));
+        Assert.Equal(201, counts.Count(381));
+        Assert.Equal(0, counts.Count(382));
+        Assert.Equal(1, counts.Count(384));
+        Assert.Equal(0, counts.Count(maximum - 2));
+        Assert.Equal(1, counts.Count(maximum - 1));
+        Assert.Equal(1, counts.Count(maximum));
+    }
+
+    [Fact]
     public void OtherSideDistinguishesOpenEndFromMissingObjectAndLoadedConnection()
     {
         var firstWindow = new GameMap();

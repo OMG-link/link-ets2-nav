@@ -26,7 +26,7 @@ internal sealed class NativeNodeConnections
 
     /// <summary>Checks both declarations of a connection when both native objects are visible.</summary>
     public void Validate(IEnumerable<INode> nodes, IEnumerable<MapItem> items,
-        Func<ulong, INode?> getNode, Func<ulong, MapItem?> getItem)
+        Func<ulong, INode?> getNode, Func<ulong, MapItem?> getItem, Action<ulong>? onUnresolvedItem = null)
     {
         var nextNodes = new HashSet<NodeReference>();
         foreach (var reference in pendingNodes)
@@ -47,7 +47,7 @@ internal sealed class NativeNodeConnections
             }
         }
 
-        ValidateReferences(nodes, getItem);
+        ValidateReferences(nodes, getItem, onUnresolvedItem);
         pendingNodes = nextNodes;
 
         void CheckOwnerEndpoint(MapItem owner, INode? endpoint)
@@ -74,22 +74,48 @@ internal sealed class NativeNodeConnections
 
     }
 
-    /// <summary>Checks node declarations against the navigation items that have just become available.</summary>
-    public static void ValidateReferences(IEnumerable<INode> nodes, Func<ulong, MapItem?> getItem)
+    public static (ulong? Backward, ulong? Forward) DistinctReferences(Node node)
+    {
+        ulong? backward = node.BackwardItem?.Uid;
+        ulong? forward = node.ForwardItem?.Uid;
+        return (backward, forward == backward ? null : forward);
+    }
+
+    /// <summary>The new component must account for every earlier node that references its UID.</summary>
+    public static void ValidatePriorReferences(MapItem item, int priorCount, Func<ulong, INode?> getPriorNode,
+        IEnumerable<INode> priorNodes)
+    {
+        if (priorCount == 0)
+            return;
+        int reciprocalCount = HostMapView.NodesOf(item)
+            .Where(endpoint => endpoint is not null).DistinctBy(endpoint => endpoint.Uid)
+            .Count(endpoint => getPriorNode(endpoint.Uid) is Node node
+                && (node.BackwardItem?.Uid == item.Uid || node.ForwardItem?.Uid == item.Uid));
+        // Each reciprocal node is one of the previously counted declarations.
+        // Find the offending node only after proving that an unmatched declaration exists.
+        if (priorCount > reciprocalCount)
+            ValidateReferences(priorNodes, uid => uid == item.Uid ? item : null);
+    }
+
+    private static void ValidateReferences(IEnumerable<INode> nodes, Func<ulong, MapItem?> getItem,
+        Action<ulong>? onUnresolvedItem = null)
     {
         foreach (var raw in nodes)
         {
             if (raw is not Node node)
                 continue;
-            if (node.BackwardItem is { } backward)
-                CheckReference(node.Uid, backward.Uid);
-            if (node.ForwardItem is { } forward)
-                CheckReference(node.Uid, forward.Uid);
+            var (backward, forward) = DistinctReferences(node);
+            if (backward is ulong backwardUid)
+                CheckReference(node.Uid, backwardUid);
+            if (forward is ulong forwardUid)
+                CheckReference(node.Uid, forwardUid);
         }
 
         void CheckReference(ulong nodeUid, ulong itemUid)
         {
             var item = getItem(itemUid);
+            if (item is null)
+                onUnresolvedItem?.Invoke(itemUid);
             bool mismatched = item switch
             {
                 Road road => road.Node.Uid != nodeUid && road.ForwardNode.Uid != nodeUid,

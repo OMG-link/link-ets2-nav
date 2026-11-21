@@ -28,9 +28,15 @@ public sealed class RoundaboutMapIndex
     public int BuiltSectorCount => built.Count;
 
     public void AddPrefab(Prefab prefab, PrefabDescriptor descriptor, string? resource=null,string access="native")
+        => AddPrefab(prefab,descriptor,resource,access,null);
+
+    internal void AddPrefab(Prefab prefab, PrefabPlayerProjection projection, string? resource=null)
+        => AddPrefab(prefab,projection.Descriptor,resource,projection.CacheKey,projection.AllowedCurves);
+
+    private void AddPrefab(Prefab prefab, PrefabDescriptor descriptor, string? resource,string access,
+        IReadOnlyList<bool>? allowedCurves)
     {
         PrefabDescriptorInput.AssertCurveIndices(descriptor);
-        PrefabDescriptorInput.AssertCurveLengths(descriptor);
         if(prefabs.TryGetValue(prefab.Uid,out var previous)&&previous.Access==access)return;
         if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return;
         if(previous.Curves is not null)
@@ -62,8 +68,8 @@ public sealed class RoundaboutMapIndex
         var result = new List<RoundaboutCurve>();
         for (int i = 0; i < descriptor.NavCurves.Count; i++)
         {
+            if (allowedCurves?[i] == false) continue;
             var curve = descriptor.NavCurves[i];
-            if (curve.Length == 0) continue;
             var a = Vector3.Transform(-Vector3.UnitZ, curve.StartRotation) * curve.Length;
             var b = Vector3.Transform(-Vector3.UnitZ, curve.EndRotation) * curve.Length;
             int samples = Math.Max(4, (int)Math.Ceiling(curve.Length / 1.5));

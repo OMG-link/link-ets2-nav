@@ -23,7 +23,7 @@ internal static class PrefabDescriptorInput
         for (int index = 0; index < curves.Count; index++)
         {
             var curve = curves[index];
-            if (!float.IsFinite(curve.Length) || curve.Length < 0)
+            if (!float.IsFinite(curve.Length) || curve.Length < 0.001f)
                 throw Invalid($"curve {index} has invalid length {curve.Length}");
             if (!Finite(curve.StartPosition) || !Finite(curve.EndPosition))
                 throw Invalid($"curve {index} has a nonfinite endpoint");
@@ -79,13 +79,15 @@ internal static class PrefabDescriptorInput
     }
 
     [Conditional("DEBUG")]
-    public static void AssertCurveLengths(PrefabDescriptor descriptor)
+    public static void AssertCurveGeometry(PrefabDescriptor descriptor)
     {
         for (int index = 0; index < descriptor.NavCurves.Count; index++)
         {
-            float length = descriptor.NavCurves[index].Length;
-            if (!float.IsFinite(length) || length < 0)
-                throw new NavigationContractException($"PPD curve {index}: invalid length {length}.");
+            var curve = descriptor.NavCurves[index];
+            if (!Finite(curve.StartPosition) || !Finite(curve.EndPosition))
+                throw new NavigationContractException($"PPD curve {index}: nonfinite endpoint.");
+            if (!FiniteRotation(curve.StartRotation) || !FiniteRotation(curve.EndRotation))
+                throw new NavigationContractException($"PPD curve {index}: nonfinite endpoint rotation.");
         }
     }
 

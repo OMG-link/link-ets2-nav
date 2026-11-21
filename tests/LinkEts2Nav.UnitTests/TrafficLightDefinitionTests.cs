@@ -55,6 +55,24 @@ public sealed class TrafficLightDefinitionTests
             Live(lamp,NativeType.TRAFFICLIGHT)),f.Map,f.Navigation,out _));
     }
     [Fact]
+    public void PlayerProjectionExcludesForbiddenSignalCurvesWithoutChangingTheirLength()
+    {
+        var descriptor=new PrefabDescriptor
+        {
+            Nodes=[new(){Position=Vector3.Zero,InputLines=[0,1]},
+                new(){Position=new(0,0,30),OutputLines=[0,1]}],
+            NavCurves=[new(){Length=30,SemaphoreId=1,StartRotation=Quaternion.Identity},
+                new(){Length=30,SemaphoreId=2,StartRotation=Quaternion.Identity}]
+        };
+        var prefab=new Prefab{Uid=7,Nodes=[new Node{Uid=10},new Node{Uid=20,Position=new(0,0,30)}]};
+        var projection=PrefabPlayerAccess.Project(descriptor,[false,true]);
+
+        Assert.Equal(30,projection.Descriptor.NavCurves[0].Length);
+        Assert.Equal(2,TrafficSignalMap.Build(prefab,descriptor).Count);
+        Assert.Equal(1,Assert.Single(TrafficSignalMap.Build(prefab,projection)).CurveIndex);
+    }
+
+    [Fact]
     public void MultipleRealHeadsInAProfileGroupMustAgreeOnPhaseAndCountdown()
     {
         var f=Fixture(SemaphoreType.UseProfile,false);var a=f.Control.Lamps[0];var b=f.Control.Lamps[1];var binder=new TrafficSignalBinder();

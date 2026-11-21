@@ -89,7 +89,7 @@ public sealed class NearbyCameraScanner
             cancellationToken.ThrowIfCancellationRequested();
             var junctions = new List<DirectedRoad>();
             var nativeGeometries = new List<NativeLaneGeometry>();
-            var signalPrefabs=new List<(Prefab Prefab,TruckLib.Models.Ppd.PrefabDescriptor Descriptor)>();
+            var signalPrefabs=new List<(Prefab Prefab,PrefabPlayerProjection Projection)>();
             var areas = new List<FreeNavigationArea>();
             var issues = new List<string>();
             var nextGeometry = new Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, NativeLaneGeometry? Geometry, IReadOnlyList<FreeNavigationArea> Areas)>();
@@ -106,8 +106,8 @@ public sealed class NearbyCameraScanner
             {
                 cancellationToken.ThrowIfCancellationRequested();var prefab=source.Prefab;string resource=prefabResources[prefab.Uid];
                 var access=permissions[prefab.Uid];var key=(prefab.Uid,access.CacheKey);
-                signalPrefabs.Add((prefab,access.Descriptor));
-                roundaboutIndex.AddPrefab(prefab,access.Descriptor,resource,access.CacheKey);
+                signalPrefabs.Add((prefab,access));
+                roundaboutIndex.AddPrefab(prefab,access,resource);
                 if(!geometryCache.TryGetValue(key,out var geometry))
                 {
                     var continuity=PrefabNavigationOverrides.ContinuityFor(prefab,resource,source.Descriptor);
@@ -126,7 +126,7 @@ public sealed class NearbyCameraScanner
                     .SelectMany(r=>Enumerable.Range(0,Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)+1)
                         .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),speedReader!,cancellationToken);
             var builtLimits = ProjectedSignBuilder.Build(data.ReadSpeedLimits(nextMap,regionData,cancellationToken),junctions,cancellationToken);
-            trafficSignals=new(signalPrefabs.SelectMany(p=>TrafficSignalMap.Build(p.Prefab,p.Descriptor)));
+            trafficSignals=new(signalPrefabs.SelectMany(p=>TrafficSignalMap.Build(p.Prefab,p.Projection)));
             // One annotated geometry graph per map version, shared with navigation consumers.
             var navigation=new RoadPathSource(nextMap,junctions,playerAccess:speedReader.RoadPlayerAccess,roadHalfWidth:speedReader.ReferenceHalfWidth,missingConnection:need,reportMapIssue:typedIssues.Add);
             var builtGraph=new NativeLaneGraph(navigation.GetNavigationGraph(), nativeGeometries);

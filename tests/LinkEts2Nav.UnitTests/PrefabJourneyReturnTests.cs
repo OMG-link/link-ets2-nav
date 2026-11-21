@@ -47,7 +47,7 @@ public sealed class PrefabJourneyReturnTests
     {
         var s=Return(439.6382);
         var result=new RouteJourneyEstimator(s.Map,(_,_)=>new(80,"category"),2,
-            prefabLengths:(_,_,_)=>[double.NaN,-1,146.54605102539062]).Estimate(s.Route);
+            prefabLengths:(_,_,_)=>[146.54605102539062]).Estimate(s.Route);
         Assert.True(result.Ready,result.Failure);Assert.Equal(346.5460510253906,result.WorldMeters!.Value,6);
     }
 

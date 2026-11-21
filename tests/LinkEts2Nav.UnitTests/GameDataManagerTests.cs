@@ -24,6 +24,8 @@ public sealed class GameDataManagerTests
     [InlineData("input-index", "control node 0 has invalid input curve index -2")]
     [InlineData("output-index", "control node 0 has invalid output curve index 2")]
     [InlineData("negative-length", "invalid length")]
+    [InlineData("zero-length", "invalid length")]
+    [InlineData("submillimeter-length", "invalid length")]
     [InlineData("nan-length", "invalid length")]
     [InlineData("infinite-length", "invalid length")]
     [InlineData("position", "nonfinite endpoint")]
@@ -45,6 +47,8 @@ public sealed class GameDataManagerTests
             case "input-index": native.Nodes[0].InputLines[0] = -2; break;
             case "output-index": native.Nodes[0].OutputLines[0] = 2; break;
             case "negative-length": first.Length = -1; break;
+            case "zero-length": first.Length = 0; break;
+            case "submillimeter-length": first.Length = MathF.BitDecrement(0.001f); break;
             case "nan-length": first.Length = float.NaN; break;
             case "infinite-length": first.Length = float.PositiveInfinity; break;
             case "position": first.EndPosition = new(0, float.NaN, 0); break;
@@ -64,10 +68,10 @@ public sealed class GameDataManagerTests
     }
 
     [Fact]
-    public void NativeResourceCacheAcceptsPortPaddingZeroLengthAndReciprocalCycles()
+    public void NativeResourceCacheAcceptsPortPaddingMinimumLengthAndReciprocalCycles()
     {
         var native = NativePpd();
-        native.NavCurves[0].Length = 0;
+        native.NavCurves[0].Length = 0.001f;
         native.NavCurves[0].PreviousLines.Add(1);
         native.NavCurves[1].NextLines.Add(0);
         var files = new Files();
@@ -79,7 +83,7 @@ public sealed class GameDataManagerTests
         Assert.Same(descriptor, data.GetPrefabDescription("/prefab/./test.ppd"));
         Assert.Equal(1, files.Reads[TestPpd]);
         Assert.Contains(-1, descriptor.Nodes[0].InputLines);
-        Assert.Equal(0, descriptor.NavCurves[0].Length);
+        Assert.Equal(0.001f, descriptor.NavCurves[0].Length);
         Assert.Equal([0], descriptor.NavCurves[1].NextLines);
     }
 
@@ -345,7 +349,9 @@ public sealed class GameDataManagerTests
         var (data,window,route)=MissingPrefabPassage(nativePath:true);
         using var dataset=data;
         var prefab=data.GetPrefab(42)!;
-        Assert.NotEmpty(PrefabPassageLengths.Read(prefab.Instance,prefab.Description!,10,11));
+        var description=prefab.Description!;
+        Assert.True(PrefabLaneTopology.Reaches(prefab.Instance,description,10,11));
+        Assert.NotEmpty(PrefabPathGeometry.Build(prefab.Instance,description));
         var access=PrefabPlayerAccess.Build(prefab.Description!,[false,null],[null,false]);
         Assert.Empty(PrefabPassageLengths.Read(prefab.Instance,access.Descriptor,10,11));
         window=window with{PrefabPaths=PrefabPathGeometry.Build(prefab.Instance,access.Descriptor)};

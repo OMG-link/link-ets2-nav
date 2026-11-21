@@ -260,7 +260,7 @@ public sealed class GameDataManager:IDisposable
             var resource=source?.Definition?.Descriptor;
             var description=resource is not null&&FileExists(resource)?source!.Description:null;
             // An unfiltered path can be absent from the player graph because of access rules.
-            if(description is not null&&PrefabPassageLengths.Read(prefab,description,entry.Uid,exit.Uid).Count>0)continue;
+            if(description is not null&&PrefabLaneTopology.Reaches(prefab,description,entry.Uid,exit.Uid))continue;
             var definition=resource is null?$"model {prefab.Model}":resource;
             throw new InvalidDataException($"Prefab {uid:X16} ({definition}) has no native lane path for SDK passage {entry.Uid:X16} → {exit.Uid:X16}.");
         }

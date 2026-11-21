@@ -67,8 +67,7 @@ public sealed class RouteJourneyEstimator(GameMapData map,Func<Road,bool,SpeedLi
                 if(!double.IsFinite(sdkMeters)||sdkMeters<=0)return Missing($"同接口导航行程没有有效正距离：{start.Uid:X16}");
                 if(prefabLengths is null)return Missing($"同接口预制件行程缺少原生路线查询：{start.Uid:X16}");
                 var loops=owners.OfType<Prefab>().Where(p=>p.Nodes.Any(n=>n.Uid==start.Uid))
-                    .SelectMany(p=>prefabLengths(p,start.Uid,start.Uid).Where(d=>double.IsFinite(d)&&d>0)
-                        .Select(d=>new Span(p,d,true))).ToArray();
+                    .SelectMany(p=>prefabLengths(p,start.Uid,start.Uid).Select(d=>new Span(p,d,true))).ToArray();
                 if(loops.Length==0)return Missing($"同接口预制件没有有效闭环：{start.Uid:X16}");
                 if(loops.Length==1)span=loops[0];
                 else

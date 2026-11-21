@@ -19,6 +19,13 @@ public sealed class TrafficSignalMap(IEnumerable<TrafficSignalControl> controls)
     public TrafficSignalControl? Find(ulong prefab,int curve)=>curves.GetValueOrDefault((prefab,curve));
     public int Count=>curves.Count;
     public static IReadOnlyList<TrafficSignalControl> Build(Prefab prefab,PrefabDescriptor descriptor)
+        => Build(prefab,descriptor,null);
+
+    internal static IReadOnlyList<TrafficSignalControl> Build(Prefab prefab,PrefabPlayerProjection projection)
+        => Build(prefab,projection.Descriptor,projection.AllowedCurves);
+
+    private static IReadOnlyList<TrafficSignalControl> Build(Prefab prefab,PrefabDescriptor descriptor,
+        IReadOnlyList<bool>? allowedCurves)
     {
         if(!PrefabPlacement.TryCreate(prefab,descriptor,out var placement))return [];
         var groups=new Dictionary<int,TrafficSignalLamp[]>();
@@ -26,7 +33,7 @@ public sealed class TrafficSignalMap(IEnumerable<TrafficSignalControl> controls)
         var result=new List<TrafficSignalControl>();
         for(int index=0;index<descriptor.NavCurves.Count;index++)
         {
-            var curve=descriptor.NavCurves[index];if(curve.SemaphoreId<0||curve.Length<=0)continue;
+            var curve=descriptor.NavCurves[index];if(curve.SemaphoreId<0||allowedCurves?[index]==false)continue;
             if(!groups.TryGetValue(curve.SemaphoreId,out var lamps))
             {
                 // UseProfile, country variants and visual heads do not decide eligibility.

@@ -44,7 +44,9 @@ public sealed class NativeReturnPassageTests
     [Fact]
     public void OneControlInterfaceUsesPositiveNativeCurveGeometry()
     {
-        var edge=Return();Assert.True(edge.ReturnsToEntry);
+        var (prefab,descriptor)=NativeReturn();
+        var edge=Assert.Single(PrefabPathGeometry.Build(prefab,descriptor));Assert.True(edge.ReturnsToEntry);
+        Assert.True(PrefabLaneTopology.Reaches(prefab,descriptor,10,10));
         Assert.Equal(10UL,edge.StartNodeUid);Assert.Equal(10UL,edge.EndNodeUid);
         Assert.Equal(new[]{0,1,2},Assert.Single(edge.LanePaths).CurveIndices);
         Assert.True(RouteGeometry.Length(edge)>25);Assert.True(edge.LanePaths[0].LengthMeters>20);
@@ -52,11 +54,10 @@ public sealed class NativeReturnPassageTests
     }
 
     [Fact]
-    public void MissingOrZeroLengthNativeChainDoesNotCreateAnEdge()
+    public void MissingNativeChainDoesNotCreateAnEdge()
     {
         var (prefab,descriptor)=NativeReturn(false);Assert.Empty(PrefabPathGeometry.Build(prefab,descriptor));
-        foreach(var curve in descriptor.NavCurves)curve.Length=0;
-        Assert.Empty(PrefabPathGeometry.Build(prefab,descriptor));
+        Assert.False(PrefabLaneTopology.Reaches(prefab,descriptor,10,10));
     }
 
     [Fact]

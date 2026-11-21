@@ -319,6 +319,7 @@ public sealed class SpeedLimitDefinitionTests
         var supplement=new TruckLib.ScsMap.Map();var rail=Road.Add(supplement,new(10,0,-4),new(20,0,-4),default);rail.RoadType="un11";
         var node=rail.Node;node.ForwardItem=(IMapObject)Activator.CreateInstance(typeof(MapItem).Assembly.GetTypes().Single(t=>t.Name=="UnresolvedItem"),rail.Uid)!;
         var prefab=new Prefab{Uid=999,Nodes=[new Node{Uid=100},node,new Node{Uid=300}]};
+        ((Node)node).BackwardItem=prefab;
         var host=new TruckLib.ScsMap.Map();host.Nodes.Add(node.Uid,node);host.MapItems.Add(prefab.Uid,prefab);
         var descriptor=new TruckLib.Models.Ppd.PrefabDescriptor
         {

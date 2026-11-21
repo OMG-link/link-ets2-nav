@@ -93,7 +93,11 @@ public sealed class GameDataManagerTests
                 Nodes = controls.Select((id, i) => new Node { Uid = id, Position = positions[i] }).Cast<INode>().ToList()
             };
             map.MapItems.Add(uid, prefab);
-            foreach (var node in prefab.Nodes) map.Nodes.Add(node.Uid, node);
+            foreach (var node in prefab.Nodes.Cast<Node>())
+            {
+                node.ForwardItem = prefab;
+                map.Nodes.Add(node.Uid, node);
+            }
             return prefab;
         }
         var prefab = Add(OverridePrefab, [0x4F84385E34070008, 0x4F84385F83070009, 0x4F84385D1F87000A]);

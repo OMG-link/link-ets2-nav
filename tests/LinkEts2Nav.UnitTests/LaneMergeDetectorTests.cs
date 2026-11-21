@@ -319,8 +319,19 @@ public sealed class LaneMergeDetectorTests
         var outgoing=Road.Add(map,main.Points[^1],main.Points[^1]-new Vector3(0,0,2000),default);
         ending=ending with{EntryNodeUid=sideRoad.ForwardNode.Uid,ExitNodeUid=outgoing.Node.Uid};
         main=main with{EntryNodeUid=mainRoad.ForwardNode.Uid,ExitNodeUid=outgoing.Node.Uid};
-        var selected=shape.Edge with{StartNodeUid=ending.EntryNodeUid,EndNodeUid=ending.ExitNodeUid,Points=ending.Points,LanePaths=[ending]};
-        var continuing=shape.Edge with{Id="prefab:000000000000002A:2:1",StartNodeUid=main.EntryNodeUid,EndNodeUid=main.ExitNodeUid,Points=main.Points,LanePaths=[main]};
+        DirectedRoad Passage(string id, PrefabLanePath lane)
+        {
+            var curves = lane.NativeGeometry!.Curves;
+            return shape.Edge with
+            {
+                Id = id, StartNodeUid = lane.EntryNodeUid, EndNodeUid = lane.ExitNodeUid,
+                Points = lane.Points, LanePaths = [lane],
+                NativeEntryTangent = Scale(curves.Single(c => c.Index == lane.CurveIndices[0]).StartTangent),
+                NativeExitTangent = Scale(curves.Single(c => c.Index == lane.CurveIndices[^1]).EndTangent)
+            };
+        }
+        var selected=Passage(shape.Edge.Id,ending);
+        var continuing=Passage("prefab:000000000000002A:2:1",main);
         var now=DateTimeOffset.UtcNow;
         var route=RouteSnapshot.Parse([new(sideRoad.Node.Uid,3000,100),new(sideRoad.ForwardNode.Uid,2500,90),new(outgoing.Node.Uid,2000,80),new(outgoing.ForwardNode.Uid,0,0)],now);
         var data=new GameDataSnapshot(new(ending.Points[0].X,0,ending.Points[0].Z+100,0,15,3000,true,false,1,now),route,RouteAvailability.Available,"s",true){NavigationRoute=NavigationRouteState.Empty.Accept(route)};

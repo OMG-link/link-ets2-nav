@@ -50,7 +50,7 @@ public sealed class NearbyCameraScanner
     private IReadOnlyList<FreeNavigationArea> freeNavigationAreas = [];
     private TrafficSignalMap trafficSignals=TrafficSignalMap.Empty;
     private string[] junctionDiagnostics = [];
-    private Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
+    private Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, NativeLaneGeometry? Geometry, IReadOnlyList<FreeNavigationArea> Areas)> geometryCache = [];
     private ScsMap? map;
     private SectorCoordinate[] loadedSectors = [];
     private IReadOnlyList<SectorCoordinate> emptySectors=[];
@@ -88,10 +88,11 @@ public sealed class NearbyCameraScanner
             companies=data.Companies.Build(nextMap);
             cancellationToken.ThrowIfCancellationRequested();
             var junctions = new List<DirectedRoad>();
+            var nativeGeometries = new List<NativeLaneGeometry>();
             var signalPrefabs=new List<(Prefab Prefab,TruckLib.Models.Ppd.PrefabDescriptor Descriptor)>();
             var areas = new List<FreeNavigationArea>();
             var issues = new List<string>();
-            var nextGeometry = new Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, IReadOnlyList<FreeNavigationArea> Areas)>();
+            var nextGeometry = new Dictionary<(ulong Uid,string Access), (IReadOnlyList<DirectedRoad> Paths, NativeLaneGeometry? Geometry, IReadOnlyList<FreeNavigationArea> Areas)>();
             var prefabSources=new List<PrefabPermissionSource>();var prefabResources=new Dictionary<ulong,string>();
             foreach(var prefab in nextMap.MapItems.Values.OfType<Prefab>())
             {
@@ -110,9 +111,11 @@ public sealed class NearbyCameraScanner
                 if(!geometryCache.TryGetValue(key,out var geometry))
                 {
                     var continuity=PrefabNavigationOverrides.ContinuityFor(prefab,resource,source.Descriptor);
-                    geometry=(PrefabPathGeometry.Build(prefab,access.Descriptor,continuity),FreeNavigationArea.Build(prefab,source.Descriptor));
+                    var navigationGeometry = PrefabPathGeometry.BuildNavigation(prefab, access.Descriptor, continuity);
+                    geometry=(navigationGeometry.Paths,navigationGeometry.Geometry,FreeNavigationArea.Build(prefab,source.Descriptor));
                 }
                 nextGeometry[key]=geometry;junctions.AddRange(geometry.Paths);areas.AddRange(geometry.Areas);
+                if (geometry.Geometry is { } nativeGeometry) nativeGeometries.Add(nativeGeometry);
             }
             foreach(var road in nextMap.MapItems.Values.OfType<Road>()) roundaboutIndex.AddRoad(road,speedReader);
             roundaboutIndex.BuildNewSectors(sectors,cancellationToken,need);
@@ -126,7 +129,7 @@ public sealed class NearbyCameraScanner
             trafficSignals=new(signalPrefabs.SelectMany(p=>TrafficSignalMap.Build(p.Prefab,p.Descriptor)));
             // One annotated geometry graph per map version, shared with navigation consumers.
             var navigation=new RoadPathSource(nextMap,junctions,playerAccess:speedReader.RoadPlayerAccess,roadHalfWidth:speedReader.ReferenceHalfWidth,missingConnection:need,reportMapIssue:typedIssues.Add);
-            var builtGraph=new NativeLaneGraph(navigation.GetNavigationGraph());
+            var builtGraph=new NativeLaneGraph(navigation.GetNavigationGraph(), nativeGeometries);
             var builtComponents=ComponentContinuityIndex.Build(builtGraph,need,cancellationToken:cancellationToken);
             typedIssues.AddRange(navigation.MapIssues);
             // Static index diagnostics are not load demands. Only a queried route

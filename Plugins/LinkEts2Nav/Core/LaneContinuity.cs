@@ -20,8 +20,11 @@ public sealed record NativeLaneGeometry(ulong PrefabUid,IReadOnlyList<NativeLane
 {
     public IReadOnlyList<int> InputCurveIndices {get;init;}=[];
     public IReadOnlyList<int> OutputCurveIndices {get;init;}=[];
+    internal IReadOnlyList<NativeLanePort> Inputs { get; init; } = [];
+    internal IReadOnlyList<NativeLanePort> Outputs { get; init; } = [];
     internal IReadOnlyList<NativeContinuationOverride> ContinuationOverrides {get;init;}=[];
 }
+internal sealed record NativeLanePort(ulong NodeUid, int Slot, int Order, int CurveIndex);
 internal sealed record NativeContinuationOverride(LaneContinuityPointKind Kind,int SharedCurve,int SurvivingBranch);
 public enum LaneContinuityPointKind { Merge,Split }
 public enum LaneContinuityRole { Survivor,Dead,Newborn,Unknown }

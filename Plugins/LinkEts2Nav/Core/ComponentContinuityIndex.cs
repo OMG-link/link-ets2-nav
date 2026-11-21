@@ -341,7 +341,6 @@ public sealed class ComponentContinuityIndex
                     ??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason)) with{QueryAnchor=upstreamReferenceOrders is null?initial.Points[0]:exit.Position});
             double distance=-initialLength;bool current=true;
             var references=mains.Select(m=>new Reference(m,-Length(m.Lane))).ToArray();
-            MapQueryIssue? referenceIssue=null;
             if(upstreamReferenceOrders is not null)
             {
                 distance=0;current=false;
@@ -366,7 +365,7 @@ public sealed class ComponentContinuityIndex
                 token.ThrowIfCancellationRequested();
                 var localLane=chosen!;
                 if(mains.Length==0&&localLane.Death is null)return Missing("主线资格已丢失，无法确认最近主线",localLane.Edge.StartNodeUid,
-                    referenceIssue??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"主线资格已丢失，无法确认最近主线"));
+                    new MapQueryFailure(MapQueryFailureKind.Ambiguous,"主线资格已丢失，无法确认最近主线"));
                 double referenceEnd=references.Length>0&&references.All(r=>r.Local.Death is not null)
                     ?references.Max(r=>LaneTraceDistance.Advance(r.StartDistance,DeathOffset(r.Local))):double.PositiveInfinity;
                 double limit=Math.Min(ComponentContinuity.WindowMeters,referenceEnd);
@@ -376,8 +375,7 @@ public sealed class ComponentContinuityIndex
                 bool sameBoundary=references.Any(r=>r.Local.Death is not null&&r.Local.Lane.PrefabUid==localLane.Lane.PrefabUid
                     &&r.Local.Merge!.SharedCurveIndex==localLane.Lane.CurveIndices[0]);
                 if(distance>limit&&!sameDeath&&!sameBoundary)
-                    return referenceIssue is null?Result(ComponentLaneFate.Continues,false,limit)
-                        :Missing("主线参照结束，其余候选身份尚未确认",localLane.Edge.StartNodeUid,referenceIssue);
+                    return Result(ComponentLaneFate.Continues,false,limit);
                 var nearest=mains.Select(m=>(Main:m,Distance:Vector3.DistanceSquared(localLane.Lane.Points[0],m.Lane.Points[0])))
                     .OrderBy(p=>p.Distance).ToArray();
                 if(nearest.Length>1&&Math.Abs(nearest[0].Distance-nearest[1].Distance)<1e-6
@@ -406,8 +404,7 @@ public sealed class ComponentContinuityIndex
                     if(referenceEnd>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,at);
                 }
                 if(referenceEnd<=ComponentContinuity.WindowMeters)
-                    return referenceIssue is null?Result(ComponentLaneFate.Continues,false,referenceEnd)
-                        :Missing("主线参照结束，其余候选身份尚未确认",localLane.Edge.StartNodeUid,referenceIssue);
+                    return Result(ComponentLaneFate.Continues,false,referenceEnd);
                 distance=LaneTraceDistance.Advance(distance,Length(localLane.Lane));
                 if(distance>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,distance);
                 ulong node=localLane.Edge.EndNodeUid;int lane=localLane.Lane.ExitOrder;
@@ -440,7 +437,7 @@ public sealed class ComponentContinuityIndex
                     return Missing("相接预制件不唯一",node,new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接预制件不唯一"));
                 var options=component.SelectMany(e=>e.LanePaths.Where(p=>p.EntryOrder==lane).Select(p=>Inspect(e,p))).ToArray();
                 chosen=Choose(options);
-                if(chosen is null&&upstreamReferenceOrders is not null&&referenceIssue is null
+                if(chosen is null&&upstreamReferenceOrders is not null
                     &&options.All(o=>!o.IdentityPreserved&&o.Issue is null))
                 {
                     // Discarded side branches may have lost identity before the confirmed stop.
@@ -455,9 +452,13 @@ public sealed class ComponentContinuityIndex
                 if(chosen is null)return Missing("相接组件车道没有唯一原生延续",node,
                     options.Select(p=>p.Issue).OfType<MapQueryIssue>().FirstOrDefault()??new MapQueryFailure(MapQueryFailureKind.Ambiguous,"相接组件车道没有唯一原生延续"));
                 var mainCandidates=component.SelectMany(e=>e.LanePaths.Where(p=>mainOrders.Contains(p.EntryOrder)).Select(p=>Inspect(e,p))).ToArray();
-                // A later confirmed death does not resolve an earlier uncertain reference.
-                referenceIssue??=mainCandidates.Select(m=>m.Issue).OfType<MapQueryIssue>().FirstOrDefault();
-                references=mainCandidates.Where(p=>p.IdentityPreserved&&p.Issue is null)
+#if DEBUG
+                // Remove this check once lane analysis stops returning issues on reference candidates.
+                var invalidReference=mainCandidates.FirstOrDefault(candidate=>candidate.Issue is not null);
+                if(invalidReference is not null)
+                    throw new NavigationContractException($"Main lane reference {invalidReference.Edge.Id}, entry lane {invalidReference.Lane.EntryOrder}: {invalidReference.Issue!.Reason}");
+#endif
+                references=mainCandidates.Where(p=>p.IdentityPreserved)
                     .SelectMany(m=>mainEnds.Where(r=>r.Order==m.Lane.EntryOrder).Select(r=>new Reference(m,r.Distance))).ToArray();
                 mains=references.Select(r=>r.Local).ToArray();
                 trace.Add(new(chosen.Edge,chosen.Lane,distance,Length(chosen.Lane)));current=false;

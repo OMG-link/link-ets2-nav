@@ -114,8 +114,9 @@ public sealed class ComponentReferenceRangeTests
         Assert.Equal(ComponentContinuityKind.Unknown,side.Kind);
         Assert.Equal(missing.Keys,Assert.IsType<MissingMapObjects>(side.Issue).Keys);
     }
+#if DEBUG
     [Fact]
-    public void LaterReferenceDeathDoesNotEraseAnEarlierUnresolvedNativeOrigin()
+    public void InvalidNativeReferenceFailsWhenFirstEncountered()
     {
         var initial=Initial(twoMain:true);var a=new Vector3(250,0,0);
         // Constructed partial native topology: the merge names branch4, but
@@ -129,18 +130,12 @@ public sealed class ComponentReferenceRangeTests
         var middle=Passage(2,40,50,0,0,[0,3],b,3,3);
         middle=middle with{LanePaths=[middle.LanePaths[0],Passage(2,40,50,1,1,[1],b,3,3).LanePaths[0],
             Passage(2,40,50,2,2,[2],b,3,3).LanePaths[0]]};
-        var road=new DirectedRoad("road:after-partial-origin",50,60,[new(260,0,0),new(310,0,0)]);
-        var c=NativeLaneFixture.WithInterfaces(3,[Curve(0,new(310,0,0),new(420,0,0),[],[]),
-            new(1,new(310,0,4),new(410,0,8),new(100,0,60),new(100,0,60),[3],[]),
-            Curve(2,new(310,0,8),new(410,0,8),[3],[]),Curve(3,new(410,0,8),new(420,0,8),[],[1,2])]);
-        var last=Passage(3,60,70,0,0,[0],c,3,2);
-        last=last with{LanePaths=[last.LanePaths[0],Passage(3,60,70,1,1,[1,3],c,3,2).LanePaths[0],
-            Passage(3,60,70,2,1,[2,3],c,3,2).LanePaths[0]]};
-        var fact=ComponentContinuityIndex.Build(new(initial.Graph.Concat([middle,road,last]).ToArray())).ForEntry(initial.Side.Id)!;
-        Assert.Equal(ComponentContinuityKind.Unknown,fact.Kind);
-        Assert.Equal(MapQueryFailureKind.InvalidData,Assert.IsType<MapQueryFailure>(fact.Issue).Kind);
-        Assert.Contains("not reciprocal",fact.Issue!.Reason);
+        var graph=new NativeLaneGraph(initial.Graph.Append(middle).ToArray());
+        var exception=Assert.Throws<NavigationContractException>(()=>ComponentContinuityIndex.Build(graph));
+        Assert.Contains(middle.Id,exception.Message);
+        Assert.Contains("not reciprocal",exception.Message);
     }
+#endif
     [Fact]
     public void LastConfirmedReferenceDeathDefinesTheRangeWhenAllReferencesEnd()
     {

@@ -39,6 +39,19 @@ public sealed class PmgLocatorReaderTests
         Assert.Same(anchors,data.GetNamedModelLocators("/model/./a.pmd"));
         Assert.Equal(1,fs.Reads);
     }
+    [Fact]
+    public void OversizedModelMeshesRetainTheirParsedLocatorsWithoutKeepingTheRawBytes()
+    {
+        var mesh=Model("sign.city1_0");
+        Array.Resize(ref mesh,GameResourceStore.DefaultRawFileBudget+1);
+        var fs=new LocatorFileSystem(mesh);using var data=new GameDataManager(fs);
+        var anchors=data.GetNamedModelLocators("/model/a.pmd");
+        Assert.Equal("sign.city1_0",Assert.Single(anchors).Hookup);
+        Assert.Same(anchors,data.GetNamedModelLocators("/model/a.pmd"));
+        Assert.Equal(1,fs.Reads);Assert.Equal(0,data.Statistics.ResidentResourceBytes);
+        data.GetResource("/model/a.pmg");
+        Assert.Equal(2,fs.Reads);Assert.Equal(0,data.Statistics.ResidentResourceBytes);
+    }
     private sealed class LocatorFileSystem(byte[] bytes):TruckLib.IFileSystem
     {
         public int Reads;

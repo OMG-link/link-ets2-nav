@@ -52,7 +52,7 @@ public sealed class GameDataManager:IDisposable
     private GameDataManager(IFileSystem source,IReadOnlyList<string>? activeMods,NativeMap? map,string mapPath,IDisposable? owner)
     {
         mods=activeMods?.ToArray()??[];this.mapPath=mapPath;this.owner=owner;
-        resources=new(this,()=>GameDefinitionFileSystem.Create(source,mods));
+        resources=new(this,()=>GameDefinitionFileSystem.Create(source,mods),mapPath);
         Map=new(map);world=new(()=>new WorldDefinitionIndex(this),LazyThreadSafetyMode.ExecutionAndPublication);
     }
     public static GameDataManager Open(string gamePath,IEnumerable<string> logLines,NativeMap? map=null)
@@ -273,8 +273,22 @@ public sealed class GameDataManager:IDisposable
         protected override bool PostProcessItem(MapItem item)
         {
             if(basis?.MapItems.ContainsKey(item.Uid)==true)return false;
-            if(item is Compound compound)return LoadedMapItems.RetainSupplementSigns(compound);
-            return item is TruckLib.ScsMap.Model or Sign or Road or Prefab or Company or CityArea or TrafficArea;
+            // TruckLib calls this after the entire native data payload is read.
+            switch(item)
+            {
+                case Road road:
+                    road.Left.Terrain=null;road.Right.Terrain=null;
+                    return true;
+                case Prefab prefab:
+                    foreach(var node in prefab.PrefabNodes)node.Terrain=null;
+                    return true;
+                case TruckLib.ScsMap.Model model:
+                    return model.ModelHookups;
+                case Compound compound:
+                    return LoadedMapItems.RetainSupplementSigns(compound);
+                default:
+                    return item is Sign or Company or CityArea or TrafficArea;
+            }
         }
     }
 }

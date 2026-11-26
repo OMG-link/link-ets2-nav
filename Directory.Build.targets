@@ -26,9 +26,14 @@
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-23fw-v26w-5fgq" />
   </ItemGroup>
   <Target Name="PrepareNavLocalHost" BeforeTargets="PrepareForBuild"
-          Condition="'$(MSBuildProjectName)' == 'ETS2LA.Networking' Or '$(MSBuildProjectName)' == 'ETS2LA.Backend' Or '$(MSBuildProjectName)' == 'ETS2LA.State' Or '$(MSBuildProjectName)' == 'ETS2LA.Controls'">
+          Condition="'$(MSBuildProjectName)' == 'ETS2LA' Or '$(MSBuildProjectName)' == 'ETS2LA.Game' Or '$(MSBuildProjectName)' == 'ETS2LA.Networking' Or '$(MSBuildProjectName)' == 'ETS2LA.Backend' Or '$(MSBuildProjectName)' == 'ETS2LA.State' Or '$(MSBuildProjectName)' == 'ETS2LA.Controls'">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)dev-host/prepare-local-host.ps1&quot; -ProjectName &quot;$(MSBuildProjectName)&quot;" />
   </Target>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA'">
+    <Compile Remove="Program.cs" />
+    <Compile Include="$(NavOverrides)HostProgram.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)dev-host/LocalHost.cs" />
+  </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.Networking'">
     <Compile Remove="Networking.cs;Plugins/client.cs" />
     <Compile Include="$(NavOverrides)Networking.cs" />
@@ -48,7 +53,8 @@
     <Compile Include="$(NavOverrides)SDL3ControlsBackend.cs" Condition="'$(OS)' == 'Unix'" />
   </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.Game'">
-    <Compile Remove="Output/Output.cs" />
+    <Compile Remove="Program.cs;Output/Output.cs" />
+    <Compile Include="$(NavOverrides)GameHandler.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)dev-host/GameOutput.cs" Link="Output/Output.cs" />
   </ItemGroup>
 

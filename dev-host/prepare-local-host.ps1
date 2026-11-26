@@ -19,6 +19,48 @@ function Save-Override([string]$name, [string]$text) {
         [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))
     }
 }
+if ($ProjectName -eq 'ETS2LA') {
+    $text = Read-Source 'ETS2LA\Program.cs'
+    $text = Replace-Once $text '        args = Utils.WaitForRestartParentProcess(args);' ''
+    $anchor = '        Utils.InitializeTranslations();'
+    $text = Replace-Once $text $anchor @'
+        args = Utils.WaitForRestartParentProcess(args);
+        using var instance = LocalHost.OpenInstanceLock(out bool firstInstance);
+        if (!firstInstance)
+        {
+            Console.Error.WriteLine("This ETS2LA host is already running. Close it before starting another mode.");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        Utils.InitializeTranslations();
+        if (args.Contains("--navigation-only", StringComparer.Ordinal))
+        {
+            Environment.ExitCode = LocalHost.RunNavigationOnly();
+            return;
+        }
+        RunFullHost(args, currentVersion);
+    }
+
+    private static void RunFullHost(string[] args, string currentVersion)
+    {
+'@
+    Save-Override 'HostProgram.cs' $text
+}
+if ($ProjectName -eq 'ETS2LA.Game') {
+    $text = Read-Source 'ETS2LA.Game\Program.cs'
+    $anchor = '        var camera = CameraProvider.Current;'
+    $text = Replace-Once $text $anchor (@'
+        if (AppContext.TryGetSwitch("LinkEts2Nav.NavigationOnly", out var navigationOnly) && navigationOnly)
+        {
+            var routes = NavigationProvider.Current;
+            var signals = SemaphoreProvider.Current;
+            return;
+        }
+
+'@ + [char]10 + $anchor)
+    Save-Override 'GameHandler.cs' $text
+}
 if ($ProjectName -eq 'ETS2LA.Networking') {
     $text = Read-Source 'ETS2LA.Networking\Networking.cs'
     $anchor = "public NetworkingClient()`n    {"

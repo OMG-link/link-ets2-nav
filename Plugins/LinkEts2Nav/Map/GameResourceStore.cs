@@ -5,11 +5,20 @@ using TruckLib;
 namespace LinkEts2Nav.Map;
 
 /// <summary>One immutable mounted-resource view. Native readers get independent read-only streams.</summary>
-internal sealed class GameResourceStore(GameDataManager owner,Func<IFileSystem> source) : IFileSystem
+internal sealed class GameResourceStore(GameDataManager owner,Func<IFileSystem> source,string mapPath,
+    int rawFileBudget=GameResourceStore.DefaultRawFileBudget) : IFileSystem
 {
+    internal const int DefaultRawFileBudget=32*1024*1024;
+    private readonly record struct CachedFile(string Path,int Size);
     private readonly object io=new();
     private readonly Lazy<IFileSystem> source=new(source,LazyThreadSafetyMode.ExecutionAndPublication);
     private readonly ConcurrentDictionary<string,Lazy<byte[]>> bytes=new(StringComparer.Ordinal);
+    // TruckLib accepts either an MBD or a sector directory (including a custom mod map).
+    private readonly string mapDirectory=Key(mapPath).TrimEnd('/')+"/";
+    private readonly string mbdSectorDirectory=Path.ChangeExtension(Key(mapPath),null)!.TrimEnd('/')+"/";
+    private readonly Dictionary<string,LinkedListNode<CachedFile>> retainedFiles=new(StringComparer.Ordinal);
+    private readonly LinkedList<CachedFile> recency=new();
+    private long boundedBytes;
     private readonly ConcurrentDictionary<string,Lazy<string[]>> directories=new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string,bool> filesExist=new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string,bool> directoriesExist=new(StringComparer.Ordinal);
@@ -36,13 +45,62 @@ internal sealed class GameResourceStore(GameDataManager owner,Func<IFileSystem> 
         }
         return "/"+string.Join('/',parts);
     }
-    private byte[] Buffer(string path)=>bytes.GetOrAdd(Key(path),p=>new(()=>
+    private bool HasByteBudget(string key)
     {
-        byte[] value;
-        lock(io){Interlocked.Increment(ref reads);value=source.Value.ReadAllBytes(p);}
-        Interlocked.Add(ref residentBytes,value.Length);
-        return value;
-    },LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+        var extension=Path.GetExtension(key.AsSpan());
+        if(extension.Equals(".pmg",StringComparison.OrdinalIgnoreCase))return true;
+        if(extension is not (".base" or ".aux" or ".data" or ".desc" or ".snd" or ".layer"))return false;
+        var directory=key.AsSpan(0,key.LastIndexOf('/')+1);
+        return directory.SequenceEqual(mapDirectory)||directory.SequenceEqual(mbdSectorDirectory);
+    }
+
+    private byte[] Buffer(string path)
+    {
+        string key=Key(path);
+        bool bounded=HasByteBudget(key);
+        var entry=bytes.GetOrAdd(key,(p,hasBudget)=>new(()=>
+        {
+            byte[] value;
+            lock(io){Interlocked.Increment(ref reads);value=source.Value.ReadAllBytes(p);}
+            if(!hasBudget)Interlocked.Add(ref residentBytes,value.Length);
+            return value;
+        },LazyThreadSafetyMode.ExecutionAndPublication),bounded);
+        var buffer=entry.Value;
+        if(bounded)RetainRecent(key,entry,buffer.Length);
+        return buffer;
+    }
+
+    private void RetainRecent(string key,Lazy<byte[]> entry,int size)
+    {
+        lock(retainedFiles)
+        {
+            // A concurrent reader may still hold the old buffer after another read evicted it.
+            if(!bytes.TryGetValue(key,out var current)||!ReferenceEquals(entry,current))return;
+            if(retainedFiles.TryGetValue(key,out var hit))
+            {
+                recency.Remove(hit);
+                recency.AddFirst(hit);
+                return;
+            }
+            if(size==0||size>rawFileBudget)
+            {
+                bytes.TryRemove(key,out _);
+                return;
+            }
+            long change=size;
+            while(boundedBytes+change>rawFileBudget)
+            {
+                var oldest=recency.Last!.Value;
+                recency.RemoveLast();
+                retainedFiles.Remove(oldest.Path);
+                bytes.TryRemove(oldest.Path,out _);
+                change-=oldest.Size;
+            }
+            retainedFiles.Add(key,recency.AddFirst(new CachedFile(key,size)));
+            boundedBytes+=change;
+            Interlocked.Add(ref residentBytes,change);
+        }
+    }
     internal ReadOnlyMemory<byte> Read(string path)=>Buffer(path);
     public byte[] ReadAllBytes(string path)=>Buffer(path).ToArray();
     public Stream Open(string path)=>new MemoryStream(Buffer(path),false);

@@ -9,9 +9,11 @@ param(
     [string]$TestFilter,
     [switch]$NoRestore,
     [switch]$NoBuild,
-    [string]$SpeechPackPath
+    [string]$SpeechPackPath,
+    [switch]$NavigationOnly
 )
 $ErrorActionPreference = 'Stop'
+if ($NavigationOnly -and $Action -ne 'Run') { throw 'NavigationOnly is only available with -Action Run.' }
 if ($Action -ne 'Test' -and ($PSBoundParameters.ContainsKey('TestScope') -or $TestFilter -or $NoRestore -or $NoBuild)) {
     throw 'TestScope, TestFilter, NoRestore and NoBuild are only available with -Action Test.'
 }
@@ -137,10 +139,15 @@ try {
         }
         Write-Host "Local speech pack deployed to $packDeployment."
     }
-    Write-Host "Plugin deployed to $deployment. Enable it in ETS2LA's plugin manager."
+    if ($NavigationOnly) { Write-Host "Plugin deployed to $deployment." }
+    else { Write-Host "Plugin deployed to $deployment. Enable it in ETS2LA's plugin manager." }
     if ($Action -eq 'Run') {
         Push-Location $hostOutput
-        try { Invoke-Checked dotnet @((Join-Path $hostOutput 'ETS2LA.dll')) }
+        try {
+            $hostArguments = @((Join-Path $hostOutput 'ETS2LA.dll'))
+            if ($NavigationOnly) { $hostArguments += '--navigation-only' }
+            Invoke-Checked dotnet $hostArguments
+        }
         finally { Pop-Location }
     }
 }

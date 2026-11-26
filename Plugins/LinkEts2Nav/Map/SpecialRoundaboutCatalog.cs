@@ -88,7 +88,9 @@ public sealed class SpecialRoundaboutCatalog
                     && !graph[circuit[p.i]].Next.Where(k=>k.ItemUid==circuit[p.i].ItemUid).Select(k=>k.CurveIndex)
                         .Order().SequenceEqual(expected.Order())))
                 {diagnostic?.Invoke($"Special roundabout {definition.Id}: native curve connectivity changed.");continue;}
-                var found=new RoundaboutBuilder(graph.Values).BuildDeclaredCircuit(circuit,token);
+                var builder=graph is Dictionary<RoundaboutCurveKey,RoundaboutCurve> shared
+                    ?new RoundaboutBuilder(shared):new RoundaboutBuilder(graph.Values);
+                var found=builder.BuildDeclaredCircuit(circuit,token);
                 if(found is not null)yield return found with{SpecialDefinitionId=definition.Id};
             }
         }

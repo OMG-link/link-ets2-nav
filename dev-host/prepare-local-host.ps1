@@ -19,6 +19,27 @@ function Save-Override([string]$name, [string]$text) {
         [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))
     }
 }
+if ($ProjectName -eq 'TruckLib') {
+    $text = Read-Source 'TruckLib\TruckLib\ScsMap\Node.cs'
+    $before = @'
+            envelope = new(position.X, position.Z, position.X, position.Z);
+            if (Parent is Map map)
+            {
+                map.Nodes.Tree.Delete(this);
+                map.Nodes.Tree.Insert(this);
+            }
+'@
+    $after = @'
+            var tree = (Parent as Map)?.Nodes.Tree;
+            int count = tree?.Count ?? 0;
+            tree?.Delete(this);
+            envelope = new(position.X, position.Z, position.X, position.Z);
+            if (tree is not null && tree.Count < count)
+                tree.Insert(this);
+'@
+    $text = Replace-Once $text ($before.Replace("`r`n", "`n")) ($after.Replace("`r`n", "`n"))
+    Save-Override 'TruckLibNode.cs' $text
+}
 if ($ProjectName -eq 'ETS2LA') {
     $text = Read-Source 'ETS2LA\Program.cs'
     $text = Replace-Once $text '        args = Utils.WaitForRestartParentProcess(args);' ''
@@ -60,6 +81,23 @@ if ($ProjectName -eq 'ETS2LA.Game') {
 
 '@ + [char]10 + $anchor)
     Save-Override 'GameHandler.cs' $text
+}
+if ($ProjectName -eq 'TruckLib.HashFs') {
+    $path = Join-Path $projectRoot 'dev-host\TruckLib.HashFs\TruckLib.HashFs\HashFsV2Reader.cs'
+    $text = [IO.File]::ReadAllText($path).Replace("`r`n", "`n")
+    $text = Replace-Once $text '!EqualityComparer<IEntry>.Default.Equals(stored, entry)' @'
+(!ReferenceEquals(stored, entry) && !EqualityComparer<IEntry>.Default.Equals(stored, entry)
+                    && !NavigationArchiveEntry.MatchesOtherRepresentation(stored, entry))
+'@
+    $anchor = '            var meta = new MainMetadata();'
+    $text = Replace-Once $text $anchor ($anchor + [char]10 + '            bool compact = AppContext.TryGetSwitch("LinkEts2Nav.NavigationOnly", out bool navigationOnly) && navigationOnly;')
+    $anchor = '                mr.BaseStream.Position = entry.MetadataIndex * MetadataTableBlockSize;'
+    $text = Replace-Once $text $anchor (@'
+                if (compact && NavigationArchiveEntry.TryAdd(Entries, entry, metadataTableBuffer))
+                    continue;
+
+'@ + [char]10 + $anchor)
+    Save-Override 'HashFsV2Reader.cs' $text
 }
 if ($ProjectName -eq 'ETS2LA.Networking') {
     $text = Read-Source 'ETS2LA.Networking\Networking.cs'

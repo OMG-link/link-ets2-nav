@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Numerics;
 using LinkEts2Nav.Core;
 using LinkEts2Nav.Runtime;
@@ -26,7 +27,7 @@ public sealed record NearbyMapSnapshot(ScsMap Map, IReadOnlyList<CameraObservati
     public NativeLaneGraph? NativeGraph {get;init;}
     public ComponentContinuityIndex? Components {get;init;}
     public IReadOnlyList<RoundaboutStructure> Roundabouts { get; init; } = [];
-    public IReadOnlyDictionary<ulong, RoundaboutStructure> RoadStructures { get; init; } = new Dictionary<ulong, RoundaboutStructure>();
+    public IReadOnlyDictionary<ulong, RoundaboutStructure> RoadStructures { get; init; } = ReadOnlyDictionary<ulong, RoundaboutStructure>.Empty;
     public RoadNameIndex? RoadNames {get;init;}
     public CompanyPlaceIndex Companies {get;init;}=CompanyPlaceIndex.Empty;
     public SpeedLimitData SpeedLimits { get; init; } = SpeedLimitData.Empty;
@@ -60,6 +61,10 @@ public sealed class NearbyCameraScanner
     private SpeedLimitAreaCache? areaCache;
     private CompanyPlaceIndex companies=CompanyPlaceIndex.Empty;
     private SpeedLimitData speedLimits = SpeedLimitData.Empty;
+    private RoadNameIndex? roadNames;
+    private IReadOnlyList<RoundaboutStructure> roundabouts = [];
+    private IReadOnlyDictionary<ulong, RoundaboutStructure> roadStructures = ReadOnlyDictionary<ulong, RoundaboutStructure>.Empty;
+    private List<SingleNodeItem>? cameraCandidates;
 
     public NearbyCameraScanner(IFileSystem fileSystem,string mapPath="/map/europe.mbd",IReadOnlyList<string>? activeModPaths=null,ScsMap? hostMap=null)
         :this(new GameDataManager(fileSystem,activeModPaths,hostMap,mapPath)) { }
@@ -135,12 +140,19 @@ public sealed class NearbyCameraScanner
             // Static index diagnostics are not load demands. Only a queried route
             // passage reports its component dependencies through RoadPathSource.
             cancellationToken.ThrowIfCancellationRequested();
+            var builtRoadNames = new RoadNameIndex(nextMap.MapItems.Values);
+            var builtRoundabouts = roundaboutIndex.Structures;
+            var builtRoadStructures = roundaboutIndex.RoadAnnotations;
             geometryCache = nextGeometry;
             junctionGeometry = junctions;
             freeNavigationAreas = areas;
             junctionDiagnostics = issues.Distinct().ToArray();
             speedLimits = builtLimits;
             nativeGraph=builtGraph;components=builtComponents;
+            roadNames=builtRoadNames;
+            roundabouts=builtRoundabouts;
+            roadStructures=builtRoadStructures;
+            cameraCandidates=null;
             map = nextMap;
             loadedSectors = sectors;
             emptySectors=data.WindowReadiness(nextMap).Empty;
@@ -154,17 +166,16 @@ public sealed class NearbyCameraScanner
 
         if(speedLimits.Error is not null) diagnostics.Add(speedLimits.Error);
         var cameras = new List<CameraObservation>();
-        foreach (var item in LoadedMapItems.Enumerate(map.MapItems.Values))
+        foreach (var item in cameraCandidates ??= FindCameraCandidates(map, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (item is not SingleNodeItem placed || placed.Node is not Node node) continue;
+            if (item.Node is not Node node) continue;
             if (!coverage.Contains(node.Position, 100)) continue;
             string? descriptor = null;
             Vector3 scale = Vector3.One;
             string variant = "default";
             if (item is ScsModel modelItem)
             {
-                if (!modelItem.ModelHookups) continue;
                 descriptor=data.World.Models.GetValueOrDefault(modelItem.Name.ToString())?.Descriptor;
                 scale = modelItem.Scale;
                 variant = modelItem.Variant.ToString();
@@ -207,7 +218,19 @@ public sealed class NearbyCameraScanner
                 });
             }
         }
-        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { ReadySectors=loadedSectors,EmptySectors=emptySectors,Coverage=coverage,MissingConnection=missingConnection,MapIssues=mapIssues,Data=data, RoadNames=new RoadNameIndex(map.MapItems.Values), Companies=companies, NativeGraph=nativeGraph,Components=components,RoadStructures = roundaboutIndex.RoadAnnotations, Roundabouts = roundaboutIndex.Structures, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };
+        return new NearbyMapSnapshot(map, cameras, diagnostics.Distinct().ToArray(), loadedSectors) { ReadySectors=loadedSectors,EmptySectors=emptySectors,Coverage=coverage,MissingConnection=missingConnection,MapIssues=mapIssues,Data=data, RoadNames=roadNames, Companies=companies, NativeGraph=nativeGraph,Components=components,RoadStructures=roadStructures,Roundabouts=roundabouts, PrefabPaths = junctionGeometry, SpeedLimits = speedLimits, Ferries=Ferries, FreeNavigationAreas = freeNavigationAreas,TrafficSignals=trafficSignals };
+    }
+
+    private static List<SingleNodeItem> FindCameraCandidates(ScsMap map, CancellationToken cancellationToken)
+    {
+        var candidates = new List<SingleNodeItem>();
+        foreach (var item in LoadedMapItems.Enumerate(map.MapItems.Values))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (item is SingleNodeItem placed && item is (Sign or ScsModel { ModelHookups: true }))
+                candidates.Add(placed);
+        }
+        return candidates;
     }
 
     public static SectorCoordinate[] SectorsNear(Vector3 position, float radiusMeters)

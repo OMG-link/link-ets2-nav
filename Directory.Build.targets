@@ -26,7 +26,7 @@
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-23fw-v26w-5fgq" />
   </ItemGroup>
   <Target Name="PrepareNavLocalHost" BeforeTargets="PrepareForBuild"
-          Condition="'$(MSBuildProjectName)' == 'ETS2LA' Or '$(MSBuildProjectName)' == 'ETS2LA.Game' Or '$(MSBuildProjectName)' == 'ETS2LA.Networking' Or '$(MSBuildProjectName)' == 'ETS2LA.Backend' Or '$(MSBuildProjectName)' == 'ETS2LA.State' Or '$(MSBuildProjectName)' == 'ETS2LA.Controls'">
+          Condition="'$(MSBuildProjectName)' == 'ETS2LA' Or '$(MSBuildProjectName)' == 'ETS2LA.Game' Or '$(MSBuildProjectName)' == 'ETS2LA.Networking' Or '$(MSBuildProjectName)' == 'ETS2LA.Backend' Or '$(MSBuildProjectName)' == 'ETS2LA.State' Or '$(MSBuildProjectName)' == 'ETS2LA.Controls' Or '$(MSBuildProjectName)' == 'TruckLib' Or '$(MSBuildProjectName)' == 'TruckLib.HashFs'">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)dev-host/prepare-local-host.ps1&quot; -ProjectName &quot;$(MSBuildProjectName)&quot;" />
   </Target>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA'">
@@ -65,11 +65,19 @@
     <Content Include="$(NavUi)Catalogue.razor" Link="Pages/Plugins/Catalogue.razor" TargetPath="Pages/Plugins/Catalogue.razor" />
   </ItemGroup>
   <!-- Build the forked libraries once for all host and plugin consumers. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'TruckLib.HashFs'">
+    <Compile Remove="HashFsV2Reader.cs" />
+    <Compile Include="$(NavOverrides)HashFsV2Reader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)dev-host/NavigationArchiveEntry.cs" />
+  </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'TruckLib' Or '$(MSBuildProjectName)' == 'TruckLib.HashFs' Or '$(MSBuildProjectName)' == 'TruckLib.HashFs.Benchmarks'">
     <PackageReference Remove="TruckLib.Sii" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)dev-host/TruckLib.Sii/TruckLib.Sii/TruckLib.Sii.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'TruckLib'">
+    <Compile Remove="ScsMap/Node.cs;ScsMap/Collections/NodeDictionary.cs" />
+    <Compile Include="$(NavOverrides)TruckLibNode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)dev-host/TruckLibNodeDictionary.cs" Link="ScsMap/Collections/NodeDictionary.cs" />
     <PackageReference Remove="TruckLib.HashFs" />
     <PackageReference Update="TruckLib.Models" Version="0.4.3" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)dev-host/TruckLib.HashFs/TruckLib.HashFs/TruckLib.HashFs.csproj" />

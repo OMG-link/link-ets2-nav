@@ -100,13 +100,14 @@ public sealed class NavPlugin : Plugin
     {
         using var source = new Ets2LaGameDataSource(Events.Current);
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
+        bool navigationOnly = AppContext.TryGetSwitch("LinkEts2Nav.NavigationOnly", out bool enabled) && enabled;
         (string Resource,string? Session,DateTimeOffset ReceivedAt)? lastScanSample=null;
         var logOutput = new NavigationLogReporter();
         await using var speechUsage=new SpeechUsageStore(Path.Combine(AppContext.BaseDirectory,"Cache","LinkEts2Nav","SpeechUsage"),
             message=>logOutput.Event(message,DateTimeOffset.UtcNow),
             warning:message=>logOutput.Change("speech-usage-corrupt",message,DateTimeOffset.UtcNow,isWarning:true));
         SpeechUsageReports.Attach(speechUsage);
-        await using var motionTrace = new NavigationTraceRecorder(
+        await using var motionTrace = navigationOnly ? null : new NavigationTraceRecorder(
             Path.Combine(AppContext.BaseDirectory, "Cache", "LinkEts2Nav", "Diagnostics"),
             message => logOutput.Event(message, DateTimeOffset.UtcNow));
         await using var speech = CreateSpeech(logOutput, token,out var cityNames,out var speechResources,speechUsage.Collector);
@@ -147,7 +148,7 @@ public sealed class NavPlugin : Plugin
         string session = "";
         var mountCheck = DateTimeOffset.MinValue;
         var scanBusySince = DateTimeOffset.MinValue;
-        ReplayCapture.Attach(motionTrace);
+        if (motionTrace is not null) ReplayCapture.Attach(motionTrace);
         try
         {
             logOutput.Event("后台扫描已启动；状态无变化时每 30 秒汇总一次。", DateTimeOffset.UtcNow);
@@ -156,7 +157,7 @@ public sealed class NavPlugin : Plugin
                 token.ThrowIfCancellationRequested();
                 mapScanner?.ThrowIfFaulted();
                 playback.ThrowIfFaulted();
-                motionTrace.ThrowIfFaulted();
+                motionTrace?.ThrowIfFaulted();
                 speechUsage.ThrowIfFaulted();
                 if(speechResources is not null&&await speechResources.ApplyPendingAsync(speech!.Queue))
                 {
@@ -304,7 +305,7 @@ public sealed class NavPlugin : Plugin
                         TrafficLight=trafficLightReminder.Process(latest,calibrated,navigationDiagnostic,DateTimeOffset.UtcNow)};
                     guidance.Tick(latest,DateTimeOffset.UtcNow);
                     diagnostic=diagnostic with{Guidance=guidance.Diagnostic};
-                    motionTrace.Record(latest, calibrated, diagnostic, signature, currentInstallation.Path);
+                    motionTrace?.Record(latest, calibrated, diagnostic, signature, currentInstallation.Path);
                     if (latest.Vehicle is { Paused: true })
                         diagnostic = diagnostic with { State = "附近地图已准备；游戏已暂停，预警暂挂。" };
                     if (scan.IsScanning && now - scanBusySince >= TimeSpan.FromSeconds(1)
@@ -325,7 +326,7 @@ public sealed class NavPlugin : Plugin
             {
                 try
                 {
-                    ReplayCapture.Detach(motionTrace);
+                    if (motionTrace is not null) ReplayCapture.Detach(motionTrace);
                     logOutput.Event("后台扫描已停止。", DateTimeOffset.UtcNow);
                 }
                 finally

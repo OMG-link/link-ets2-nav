@@ -5,8 +5,10 @@ namespace DevHost.IntegrationTests;
 
 public sealed class NavigationLogIntegrationTests(LocalHostFixture fixture) : IClassFixture<LocalHostFixture>
 {
-    [Fact]
-    public async Task EnabledPluginLogsReadinessAndWorkerStopsWithoutGameData()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnabledPluginLogsReadinessAndStartsReplayOnlyWithTheWindow(bool navigationOnly)
     {
         _ = fixture.Network;
         var handler = new PluginHandler();
@@ -20,6 +22,9 @@ public sealed class NavigationLogIntegrationTests(LocalHostFixture fixture) : IC
             if (entry.Item2.Contains("等待 ETS2 当前地图就绪")) waiting.TrySetResult();
             if (entry.Item2.Contains("后台扫描已停止")) stopped.TrySetResult();
         }
+        const string mode = "LinkEts2Nav.NavigationOnly";
+        AppContext.TryGetSwitch(mode, out bool previousMode);
+        AppContext.SetSwitch(mode, navigationOnly);
         Logger.OnLog += Observe;
         try
         {
@@ -28,6 +33,8 @@ public sealed class NavigationLogIntegrationTests(LocalHostFixture fixture) : IC
             plugin.OnEnable();
             await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
             await waiting.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            var replay = plugin.GetType().Assembly.GetType("LinkEts2Nav.Runtime.ReplayCapture", throwOnError: true)!;
+            Assert.Equal(!navigationOnly, Assert.IsType<bool>(replay.GetProperty("IsAvailable")!.GetValue(null)));
             plugin.OnDisable();
             await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
             Assert.False(plugin._IsRunning);
@@ -36,6 +43,7 @@ public sealed class NavigationLogIntegrationTests(LocalHostFixture fixture) : IC
         {
             handler.UnloadPlugins();
             Logger.OnLog -= Observe;
+            AppContext.SetSwitch(mode, previousMode);
         }
     }
 }

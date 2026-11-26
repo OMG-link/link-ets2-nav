@@ -12,6 +12,7 @@ internal sealed class NavigationMapIdentity(NearbyMapSnapshot snapshot)
         && ReferenceEquals(snapshot.SpeedLimits,value.SpeedLimits)
         && ReferenceEquals(snapshot.Ferries,value.Ferries)
         && ReferenceEquals(snapshot.FreeNavigationAreas,value.FreeNavigationAreas)
-        && snapshot.RoadStructures.Count==value.RoadStructures.Count
-        && snapshot.RoadStructures.All(p=>value.RoadStructures.TryGetValue(p.Key,out var other)&&ReferenceEquals(p.Value,other));
+        && (ReferenceEquals(snapshot.RoadStructures,value.RoadStructures)
+            || snapshot.RoadStructures.Count==value.RoadStructures.Count
+            && snapshot.RoadStructures.All(p=>value.RoadStructures.TryGetValue(p.Key,out var other)&&ReferenceEquals(p.Value,other)));
 }

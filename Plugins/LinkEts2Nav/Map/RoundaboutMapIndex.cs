@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Numerics;
 using TruckLib.Models.Ppd;
 using TruckLib.ScsMap;
@@ -21,10 +22,10 @@ public sealed class RoundaboutMapIndex
     private readonly Dictionary<ulong, (SectorCoordinate Sector, RoundaboutCurve[] Curves, RoundaboutCurveKey[] Entrances,string Access)> prefabs = [];
     private readonly Dictionary<RoundaboutCurveKey, RoundaboutCurve> curves = [];
     private readonly Dictionary<string, RoundaboutStructure> structures = [];
-    public IReadOnlyList<RoundaboutStructure> Structures => structures.Values.ToArray();
-    public IReadOnlyDictionary<ulong, RoundaboutStructure> RoadAnnotations => structures.Values
+    public IReadOnlyList<RoundaboutStructure> Structures => Array.AsReadOnly(structures.Values.ToArray());
+    public IReadOnlyDictionary<ulong, RoundaboutStructure> RoadAnnotations => new ReadOnlyDictionary<ulong, RoundaboutStructure>(structures.Values
         .SelectMany(r => r.PrefabUids.Concat(r.Ring.Select(k => k.ItemUid)).Distinct().Select(uid => (uid, r)))
-        .GroupBy(p => p.uid).ToDictionary(g => g.Key, g => g.First().r);
+        .GroupBy(p => p.uid).ToDictionary(g => g.Key, g => g.First().r));
     public int BuiltSectorCount => built.Count;
 
     public void AddPrefab(Prefab prefab, PrefabDescriptor descriptor, string? resource=null,string access="native")
@@ -167,17 +168,15 @@ public sealed class RoundaboutMapIndex
         // active window. Its native curves are already retained by this index.
         var fresh = sectors.Concat(dirtyAttachments)
             .Where(s => !built.Contains(s)).Distinct().ToArray();
-        var inputs = curves.Values.Where(c => c.EntryNode != 0).GroupBy(c => c.EntryNode).ToDictionary(g => g.Key, g => g.ToArray());
-        var graph = curves.Values.Select(c =>
+        var inputs = curves.Values.Where(c => c.EntryNode != 0).ToLookup(c => c.EntryNode);
+        var graph = curves.Values.ToDictionary(c => c.Key, c =>
         {
             if (c.ExitNode == 0) return c;
-            var next = (inputs.GetValueOrDefault(c.ExitNode) ?? []).Where(n => n.Key.ItemUid != c.Key.ItemUid)
-                .Select(n => n.Key).ToArray();
+            var next = inputs[c.ExitNode].Where(n => n.Key.ItemUid != c.Key.ItemUid).Select(n => n.Key);
             return c with { Next = c.Next.Concat(next).Distinct().ToArray() };
-        }).ToArray();
-        var linked=graph.ToDictionary(c=>c.Key);
+        });
         var classified=structures.Values.Where(r=>r.SpecialDefinitionId is not null).SelectMany(r=>r.PrefabUids).ToHashSet();
-        foreach(var declared in special.Build(linked,resources,classified,message=>diagnostics.Add(message),token))
+        foreach(var declared in special.Build(graph,resources,classified,message=>diagnostics.Add(message),token))
         {
             if(declared.DirectionCheck is { } check)diagnostics.Add($"Declared {declared.SpecialDefinitionId}: {check}");
             if(declared.LaneGeometry is { } geometry)diagnostics.Add($"Declared {declared.SpecialDefinitionId}: {geometry}");

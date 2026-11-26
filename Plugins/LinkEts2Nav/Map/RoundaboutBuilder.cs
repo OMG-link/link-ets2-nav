@@ -56,7 +56,10 @@ public sealed class RoundaboutBuilder
     private readonly Dictionary<RoundaboutCurveKey, (RoundaboutCurveKey[] Ring, ulong[] Owners)> completed = new();
 
     public RoundaboutBuilder(IEnumerable<RoundaboutCurve> curves)
-        => graph = curves.ToDictionary(c => c.Key);
+        : this(curves.ToDictionary(c => c.Key)) { }
+
+    internal RoundaboutBuilder(Dictionary<RoundaboutCurveKey, RoundaboutCurve> graph)
+        => this.graph = graph;
 
     public RoundaboutStructure? Find(ulong initialPrefab, IEnumerable<RoundaboutCurveKey> entrances,
         CancellationToken cancellationToken = default)

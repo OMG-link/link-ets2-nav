@@ -83,9 +83,14 @@ public sealed class RouteJourneyEstimatorTests
     [Fact]
     public void MissingConnectionIsNotInventedAsStraightLine()
     {
-        var s=SplitScene();s.Before.ForwardNode.ForwardItem=null!;s.After.Node.BackwardItem=null!;
-        var route=Route(s.Before.Node.Uid,s.Before.ForwardNode.Uid,999,s.After.Node.Uid,s.After.ForwardNode.Uid);
-        Assert.Contains("连接缺失",new RouteJourneyEstimator(s.Map,Eighty).Estimate(route).Failure);
+        var map = new TruckLib.ScsMap.Map();
+        var before = Road.Add(map, Vector3.Zero, new(100, 0, 0), default);
+        var after = Road.Add(map, new(200, 0, 100), new(500, 0, 100), default);
+        var route = Route(before.Node.Uid, before.ForwardNode.Uid, 999, after.Node.Uid, after.ForwardNode.Uid);
+
+        var estimate = new RouteJourneyEstimator(map, Eighty).Estimate(route);
+        Assert.Contains("连接缺失", estimate.Failure);
+        Assert.Null(estimate.WorldMeters);
     }
 
     [Fact]

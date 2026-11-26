@@ -14,15 +14,14 @@ public static class ProjectedSignBuilder
                 :Array.Empty<DirectedRoad>()));
         var graph=roads.Concat(prefabPaths).Where(e=>e.Points.Count>=2).DistinctBy(LimitEdgeKey.Of).ToArray();
         var projection=SignProjector.Build(data,graph,token);
-        var events=new Dictionary<LimitEdgeKey,IReadOnlyList<ProjectedLimitSign>>();
+        var events=new Dictionary<LimitEdgeKey,DirectedSignEvents>();
         var metadata=new Dictionary<LimitEdgeKey,LimitRoad?>();
         var starts=graph.GroupBy(e=>e.StartNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
         var ends=graph.GroupBy(e=>e.EndNodeUid).ToDictionary(g=>g.Key,g=>g.ToArray());
         for(int i=0;i<graph.Length;i++)
         {
             token.ThrowIfCancellationRequested();var edge=graph[i];var key=LimitEdgeKey.Of(edge);
-            events[key]=projection.Events[i].Select(e=>new ProjectedLimitSign(e.SignId,e.At,
-                SpeedLimitGeometry.PointAt(edge,e.At),e.Action)).ToArray();
+            events[key]=projection.Events[i];
             if(ulong.TryParse(edge.Id,NumberStyles.HexNumber,CultureInfo.InvariantCulture,out var uid))
                 metadata[key]=data.Roads.GetValueOrDefault(uid);
             else

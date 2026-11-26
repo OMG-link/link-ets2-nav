@@ -25,6 +25,7 @@ public sealed class EnvironmentPreviewPlanner
     private readonly Dictionary<string,State> states=new(StringComparer.Ordinal);
     private long order;
     public void Reset(){states.Clear();order=0;}
+    internal void Withdraw(string eventId)=>states.Remove(eventId);
     /// <summary>Translate shared plans into a new route frame without rediscovering their speech profile.</summary>
     public void Rebase(IReadOnlyList<EnvironmentPreviewEvent> input)
     {

@@ -70,15 +70,13 @@ public static class PrefabPathGeometry
             }
             var candidates=new List<PrefabLanePath>();
             PrefabLanePath? representative=null;
-            IReadOnlyList<Vector3>? referencePoints=null;
             float leastCost=float.PositiveInfinity;
             for(int input=0;input<control[from].InputLines.Length;input++)
             for(int output=0;output<control[to].OutputLines.Length;output++)
             {
                 int start=control[from].InputLines[input],end=control[to].OutputLines[output];
                 if(start==-1||end==-1||!searches[start].TryGetValue(end,out var chain))continue;
-                var points=Sample(prefab,descriptor,placement,from,to,chain);
-                var lanePoints=points.Skip(1).Take(points.Count-2).ToArray();
+                var lanePoints=Sample(prefab,descriptor,placement,from,to,chain);
                 var path=new PrefabLanePath(prefab.Uid,prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,input,output,
                     entryOrder[input],exitOrder[output],entryOrder.Count,exitOrder.Count,chain,lanePoints,
                     lanePoints.Zip(lanePoints.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)))
@@ -91,20 +89,95 @@ public static class PrefabPathGeometry
                 {
                     leastCost=cost;
                     representative=path;
-                    referencePoints=points;
                 }
             }
             if(representative is null)continue;
             var indices=representative.CurveIndices;
-            result.Add(new($"prefab:{prefab.Uid:X16}:{from}:{to}",prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,referencePoints!)
+            var alternatives=ProjectionLanes(representative,candidates,from==to);
+            result.Add(new($"prefab:{prefab.Uid:X16}:{from}:{to}",prefab.Nodes[from].Uid,prefab.Nodes[to].Uid,representative.Points)
                 {LaneConnections=laneConnections,LanePaths=candidates.ToArray(),Junction=junction,
+                    ControlPositions=(prefab.Nodes[from].Position,prefab.Nodes[to].Position),ProjectionLanes=alternatives,
                     IsMinorStraight=junction.IsMinorPassage((from+prefab.Origin)%count,(to+prefab.Origin)%count),
                     ForkInfo=forks.GetValueOrDefault(prefab.Nodes[from].Uid),
-                    NativeCurveSpans=indices.Zip(representative.CurveStartPointIndices,(curve,start)=>new PrefabCurveSpan(curve,start+1)).ToArray(),
+                    NativeCurveSpans=indices.Zip(representative.CurveStartPointIndices,(curve,start)=>new PrefabCurveSpan(curve,start)).ToArray(),
                     NativeEntryTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[indices[0]].StartRotation)),
                     NativeExitTangent=placement.ToWorldDirection(Vector3.Transform(-Vector3.UnitZ,curves[indices[^1]].EndRotation))});
         }
         return (result, nativeGeometry);
+    }
+
+    internal static DirectedRoad WithObservedLane(DirectedRoad edge,PrefabLanePath lane)
+    {
+        var geometry=lane.NativeGeometry!;
+        var entry=geometry.Curves.First(c=>c.Index==lane.CurveIndices[0]).StartTangent;
+        var exit=geometry.Curves.First(c=>c.Index==lane.CurveIndices[^1]).EndTangent;
+        return edge with {Points=lane.Points,ObservedLane=lane,
+            NativeCurveSpans=lane.CurveIndices.Zip(lane.CurveStartPointIndices,(c,i)=>new PrefabCurveSpan(c,i)).ToArray(),
+            NativeEntryTangent=Vector3.Normalize(entry),NativeExitTangent=Vector3.Normalize(exit),
+            ProjectionLanes=ProjectionLanes(lane,edge.LanePaths,true)};
+    }
+
+    private static (PrefabLanePath Lane,double[]? Stations)[] ProjectionLanes(PrefabLanePath representative,
+        IReadOnlyList<PrefabLanePath> lanes,bool sameInterface)
+    {
+        if(lanes.Count<2)return [];
+        var reference=new LanePolyline(representative.Points);
+        return lanes.Where(l=>!ReferenceEquals(l,representative)).Select(l=>
+        {
+            var stations=ParallelStations(reference,l);
+            if(sameInterface && stations is null)stations=SharedSuffixStations(reference,representative,l);
+            return (Lane:l,Stations:stations);
+        }).Where(l=>sameInterface || l.Stations is not null).ToArray();
+    }
+
+    // On a common directed suffix every remaining curve and exit is identical.
+    // Its native station stays valid even when the two prefixes have different lengths.
+    private static double[]? SharedSuffixStations(LanePolyline reference,PrefabLanePath selected,PrefabLanePath other)
+    {
+        int count=0;
+        while(count<Math.Min(selected.CurveIndices.Count,other.CurveIndices.Count)
+            && selected.CurveIndices[^(count+1)]==other.CurveIndices[^(count+1)])count++;
+        if(count==0)return null;
+        int a=selected.CurveStartPointIndices[^count],b=other.CurveStartPointIndices[^count];
+        if(reference.Points.Count-a!=other.Points.Count-b)return null;
+        var stations=Enumerable.Repeat(double.NaN,other.Points.Count).ToArray();
+        double remaining=0;
+        for(int i=other.Points.Count-1;i>=b;i--)
+        {
+            int k=a+i-b;
+            if(Vector3.Distance(reference.Points[k],other.Points[i])>LaneRouteConnections.NativeSeamMeters
+                || Math.Abs(reference.Length-reference.Along[k]-remaining)>LaneRouteConnections.NativeSeamMeters)return null;
+            stations[i]=reference.Along[k];
+            if(i>b)remaining+=Vector3.Distance(other.Points[i-1],other.Points[i]);
+        }
+        return stations;
+    }
+
+    // Only a lateral translation that still fits at every vertex in both sampled
+    // chains gives the lanes a common longitudinal coordinate. Between vertices
+    // the two polylines interpolate linearly in measured arc length. The PPD port
+    // seam tolerance covers map sampling and floating-point world coordinates.
+    private static double[]? ParallelStations(LanePolyline reference,PrefabLanePath lane)
+    {
+        const double seam=LaneRouteConnections.NativeSeamMeters;
+        if(Math.Abs(reference.Length-lane.LengthMeters)>seam)return null;
+        var line=new LanePolyline(lane.Points);
+        var shift=line.Points[0]-reference.Points[0];
+        if(Math.Abs(shift.Y)>seam||Math.Abs(Vector3.Dot(shift,reference.Heading(0)))>seam)return null;
+        bool Fits(double at)=>Vector3.Distance(reference.At(at)+shift,line.At(at))<=seam;
+        if(!reference.Along.All(Fits)||!line.Along.All(Fits))return null;
+
+        // Both ports are exact mileage anchors. Interior stations come from the
+        // translated native samples projected onto the reference at this visit.
+        var stations=new double[line.Points.Count];
+        stations[^1]=reference.Length;
+        for(int i=1;i<stations.Length-1;i++)
+        {
+            double at=line.Along[i];
+            stations[i]=reference.Project(line.Points[i]-shift,Math.Max(0,at-seam),Math.Min(reference.Length,at+seam)).Along;
+            if(stations[i]<stations[i-1])return null;
+        }
+        return stations;
     }
     private static NativeLaneGeometry BuildNativeGeometry(ulong prefabUid,PrefabDescriptor descriptor,PrefabPlacement placement)
     {
@@ -140,11 +213,11 @@ public static class PrefabPathGeometry
         };
     }
 
-    private static List<Vector3> Sample(Prefab prefab,PrefabDescriptor descriptor,PrefabPlacement placement,
+    private static Vector3[] Sample(Prefab prefab,PrefabDescriptor descriptor,PrefabPlacement placement,
         int from,int to,IReadOnlyList<int> chain)
     {
         var curves=descriptor.NavCurves;var control=placement.ControlNodes;
-            var points = new List<Vector3> { prefab.Nodes[from].Position };
+            var points = new List<Vector3>();
             foreach (int index in chain)
             {
                 var curve = curves[index];
@@ -167,28 +240,25 @@ public static class PrefabPathGeometry
                     points.Add(worldPosition);
                 }
             }
-            if (points.Count < 3) throw Unsupported("passage geometry has fewer than three points");
+            if (points.Count < 2) throw Unsupported("passage geometry has fewer than two points");
             // Grade the actual sampled lane chain, never an invented node-to-node edge.
             // Arc-length interpolation also handles curved/sloping native geometry.
             double total = 0;
             var along = new double[points.Count];
-            for (int i = 2; i < points.Count; i++)
+            for (int i = 1; i < points.Count; i++)
                 along[i] = total += Vector3.Distance(points[i - 1], points[i]);
             if (!double.IsFinite(total) || total <= .001)
                 throw Unsupported($"passage geometry has unusable sampled length {total} m");
             float startHeight = prefab.Nodes[from].Position.Y - placement.ToWorld(control[from].Position).Y;
             float endHeight = prefab.Nodes[to].Position.Y - placement.ToWorld(control[to].Position).Y;
-            for (int i = 1; i < points.Count; i++)
+            for (int i = 0; i < points.Count; i++)
             {
                 var point = points[i];
                 point.Y += startHeight + (endHeight - startHeight) * (float)(along[i] / total);
                 if (!Finite(point)) throw Unsupported($"graded sample {i} has nonfinite coordinates");
                 points[i] = point;
             }
-            // Short lane-to-reference joins only connect the actual PPD lane endpoints
-            // to the map control-node centers; the junction itself follows its curves.
-            points.Add(prefab.Nodes[to].Position);
-        return points;
+        return points.ToArray();
 
         NotSupportedException Unsupported(string reason)
             =>new($"Prefab {prefab.Uid:X16}, interfaces {prefab.Nodes[from].Uid:X16} → {prefab.Nodes[to].Uid:X16}, curves [{string.Join(',',chain)}]: {reason}.");

@@ -11,6 +11,9 @@ public sealed class RouteProgressTracker
     public string Frame=>frame.ToString(System.Globalization.CultureInfo.InvariantCulture);
     public void Reset(){previous.Clear();session=null;frame++;}
     public double Update(string sessionId,IReadOnlyList<DirectedRoad> route,double localAlong)
+        =>Update(sessionId,route,localAlong,null);
+
+    internal double Update(string sessionId,IReadOnlyList<DirectedRoad> route,double localAlong,double? knownComponentOrigin)
     {
         if(session!=sessionId){Reset();session=sessionId;}
         var sections=new List<(EdgeKey Key,double Start)>();double along=0;
@@ -22,7 +25,8 @@ public sealed class RouteProgressTracker
         var counts=sections.GroupBy(s=>s.Key).ToDictionary(g=>g.Key,g=>g.Count());
         var common=sections.Where(s=>counts[s.Key]==1&&previous.TryGetValue(s.Key,out var p)&&p.Count==1).ToArray();
         double offset=0;
-        if(common.Length>0)offset=previous[common[0].Key].Start-common[0].Start;
+        if(knownComponentOrigin is {} origin)offset=origin;
+        else if(common.Length>0)offset=previous[common[0].Key].Start-common[0].Start;
         else if(previous.Count>0)frame++;
         previous=sections.GroupBy(s=>s.Key).ToDictionary(g=>g.Key,g=>(g.First().Start+offset,g.Count()));
         return localAlong+offset;

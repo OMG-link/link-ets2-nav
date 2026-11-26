@@ -6,7 +6,10 @@ namespace LinkEts2Nav.Core;
 public enum ComponentContinuityKind { Main, Hard, Soft, Natural, Singular, Unknown, NeedsMapObjects }
 public enum ComponentLaneFate { Continues, Dies, Separates, Unresolved, Born, Joins }
 public enum ComponentTurnKind { Forward, Turn, Back, Unknown }
-public sealed record ComponentTurn(NavigationSide Side,ComponentTurnKind Kind,string? Failure=null);
+public sealed record ComponentTurn(NavigationSide Side,ComponentTurnKind Kind,string? Failure=null)
+{
+    public MapQueryIssue? MapIssue {get;init;}
+}
 
 public enum ComponentBoundaryInterface { None, Start, End }
 /// <summary>A point on a particular directed physical passage, with optional proven interface identity.</summary>

@@ -50,6 +50,7 @@ public sealed class ComponentContinuityIndex
         return edge with
         {
             StartNodeUid=edge.EndNodeUid,EndNodeUid=edge.StartNodeUid,Points=edge.Points.Reverse().ToArray(),
+            ControlPositions=edge.ControlPositions is {} ports?(ports.Exit,ports.Entry):null,ProjectionLanes=[],ObservedLane=null,
             NativeEntryTangent=-edge.NativeExitTangent,NativeExitTangent=-edge.NativeEntryTangent,
             JoinPriority=edge.SplitPriority,SplitPriority=edge.JoinPriority,
             JoinPriorityDependency=edge.SplitPriorityDependency,SplitPriorityDependency=edge.JoinPriorityDependency,
@@ -76,7 +77,7 @@ public sealed class ComponentContinuityIndex
             StartNodeUid=edge.StartNodeUid,EndNodeUid=edge.EndNodeUid};
     }
 
-    private static ComponentTurn ConvertTurn(LaneTurnKind turn)=>turn switch
+    private static ComponentTurn ConvertTurn(LaneTurnKind turn, MapQueryIssue? directionIssue)=>turn switch
     {
         LaneTurnKind.ForwardLeft=>new(NavigationSide.Left,ComponentTurnKind.Forward),
         LaneTurnKind.ForwardRight=>new(NavigationSide.Right,ComponentTurnKind.Forward),
@@ -84,7 +85,7 @@ public sealed class ComponentContinuityIndex
         LaneTurnKind.Right=>new(NavigationSide.Right,ComponentTurnKind.Turn),
         LaneTurnKind.RearLeft=>new(NavigationSide.Left,ComponentTurnKind.Back),
         LaneTurnKind.RearRight=>new(NavigationSide.Right,ComponentTurnKind.Back),
-        _=>new(NavigationSide.None,ComponentTurnKind.Unknown,"原生切线无法确定转向方向")
+        _=>new(NavigationSide.None,ComponentTurnKind.Unknown,directionIssue?.Reason??"原生切线无法确定转向方向"){MapIssue=directionIssue}
     };
 
     private sealed class Builder
@@ -253,12 +254,12 @@ public sealed class ComponentContinuityIndex
             ValidateLaneAnalysis(edge,path,facts.MapIssue);
             if(split is {} change)
             {
-                ValidateLaneAnalysis(edge,path,change.Branch.MapIssue??change.Point.MapIssue,change.Branch.CurveIndex,
+                ValidateLaneAnalysis(edge,path,change.Point.MapIssue,change.Branch.CurveIndex,
                     change.Branch.Role==LaneContinuityRole.Newborn);
                 int index=change.Index;
                 var terminal=At(edge,path,CurveOffset(path,index));
                 return lane with{Fate=ComponentLaneFate.Born,InComponent=true,Terminal=terminal,
-                    Turn=ConvertTurn(change.Branch.Turn),TurnPrefabUid=path.PrefabUid,TurnSharedCurveIndex=change.Point.SharedCurveIndex,
+                    Turn=ConvertTurn(change.Branch.Turn,change.Branch.MapIssue),TurnPrefabUid=path.PrefabUid,TurnSharedCurveIndex=change.Point.SharedCurveIndex,
                     TurnBranchCurveIndex=change.Branch.CurveIndex,StructuralConstraintId=$"lane-split:{path.PrefabUid:X16}:{change.Point.SharedCurveIndex}",
                     TerminalDistanceFromExitMeters=terminal.OffsetMeters};
             }
@@ -277,8 +278,8 @@ public sealed class ComponentContinuityIndex
 
         private static (ComponentTurn? Turn,MapQueryIssue? Issue) SoftOutletTurn(DirectedRoad main,DirectedRoad side)
         {
-            var mainPort=main.Points[^1];
-            var sidePort=side.Points[^1];
+            var mainPort=main.ExitInterface;
+            var sidePort=side.ExitInterface;
             bool HorizontalFinite(Vector3 point)=>float.IsFinite(point.X)&&float.IsFinite(point.Z);
             if(main.NativeExitTangent is not {} tangent||!HorizontalFinite(tangent)||(tangent.X==0&&tangent.Z==0)
                 ||!HorizontalFinite(mainPort)||!HorizontalFinite(sidePort))
@@ -325,7 +326,6 @@ public sealed class ComponentContinuityIndex
                     ValidateLaneAnalysis(edge,path,split?.MapIssue,curve,branch?.Role!=LaneContinuityRole.Unknown);
                     if(branch is {Role:LaneContinuityRole.Newborn})
                     {
-                        if(reverse)ValidateLaneAnalysis(edge,path,branch.MapIssue,branch.CurveIndex);
                         // A split with every branch explicitly non-surviving proves
                         // where this lane's identity ends in the reverse graph.
                         bool noMain=reverse&&split!.Branches.All(b=>b.Role==LaneContinuityRole.Newborn);
@@ -429,7 +429,7 @@ public sealed class ComponentContinuityIndex
                     // The upstream trace establishes a boundary. A soft outlet
                     // uses its own downstream ports to describe the direction.
                     if(reverse)return Result(ComponentLaneFate.Separates,current,distance,terminal,terminal);
-                    var (direction,directionIssue)=Toward(localLane.Edge,localLane.Lane,nearest[0].Main.Lane);
+                    var (direction,directionIssue)=Toward(localLane.Lane,nearest[0].Main.Lane);
                     return Result(ComponentLaneFate.Separates,current,distance,terminal,terminal,direction,
                         directionIssue);
                 }
@@ -441,9 +441,8 @@ public sealed class ComponentContinuityIndex
                     // observation range ending there.
                     if(at<=ComponentContinuity.WindowMeters&&(at<=referenceEnd||sameDeath))
                     {
-                        if(!reverse)ValidateLaneAnalysis(localLane.Edge,localLane.Lane,dead.MapIssue,dead.CurveIndex);
                         return Result(ComponentLaneFate.Dies,current,at,At(localLane.Edge,localLane.Lane,local),
-                            At(localLane.Edge,localLane.Lane,Length(localLane.Lane)),reverse?null:ConvertTurn(dead.Turn));
+                            At(localLane.Edge,localLane.Lane,Length(localLane.Lane)),reverse?null:ConvertTurn(dead.Turn,dead.MapIssue));
                     }
                     if(referenceEnd>ComponentContinuity.WindowMeters)return Result(ComponentLaneFate.Continues,false,at);
                 }
@@ -532,16 +531,15 @@ public sealed class ComponentContinuityIndex
             var segment=segments.FirstOrDefault(s=>distance<=s.Start+s.Length+.0001)??segments[^1];
             return At(segment.Edge,segment.Lane,Math.Clamp(distance-segment.Start,0,segment.Length));
         }
-        private static (ComponentTurn Turn,MapQueryIssue? Issue) Toward(DirectedRoad edge,PrefabLanePath side,PrefabLanePath main)
+        private static (ComponentTurn Turn,MapQueryIssue? Issue) Toward(PrefabLanePath side,PrefabLanePath main)
         {
             var curve=side.NativeGeometry?.Curves.FirstOrDefault(c=>c.Index==side.CurveIndices[0]);
             var standard=main.NativeGeometry?.Curves.FirstOrDefault(c=>c.Index==main.CurveIndices[0]);
             if(curve is null||standard is null)return (new(NavigationSide.None,ComponentTurnKind.Unknown,"侧向并入缺少原生入口曲线"),
                 new MapQueryFailure(MapQueryFailureKind.DefinitionUnavailable,"侧向并入缺少原生入口曲线"));
             var description=LaneContinuity.DescribeTurn(side.NativeGeometry!,curve.Index,standard.StartTangent,standard.Start,true);
-            ValidateLaneAnalysis(edge,side,description.MapIssue,curve.Index);
-            var turn=ConvertTurn(description.Turn);
-            return (turn.Kind==ComponentTurnKind.Unknown?turn:turn with{Kind=ComponentTurnKind.Forward},null);
+            var turn=ConvertTurn(description.Turn,description.MapIssue);
+            return (turn.Kind==ComponentTurnKind.Unknown?turn:turn with{Kind=ComponentTurnKind.Forward},description.MapIssue);
         }
         private string Constraint(Local local)
         {

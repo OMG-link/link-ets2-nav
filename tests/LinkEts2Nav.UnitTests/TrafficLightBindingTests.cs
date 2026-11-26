@@ -24,6 +24,9 @@ public sealed class TrafficLightBindingTests
     private static readonly DateTimeOffset Now=DateTimeOffset.UtcNow;
     private static PrefabLanePath Lane(ulong entry,ulong exit,int curve=0,int lane=0)=>new(7,entry,exit,lane,0,lane,0,2,1,[curve],
         [new(100,0,lane*3.5f),new(130,0,lane*3.5f)],30);
+    private static DirectedRoad Edge(PrefabLanePath lane) =>
+        new($"prefab:7:{lane.ExitNodeUid}", lane.EntryNodeUid, lane.ExitNodeUid, lane.Points)
+        { LanePaths = [lane], NativeEntryTangent = Vector3.UnitX, NativeExitTangent = Vector3.UnitX };
     private static TrafficSignalControl Control(int curve=0,int signal=0,float z=0)=>new(7,curve,signal,new(100,0,z),Vector3.UnitX,
         [new(new(100,0,4+z),Quaternion.Identity)]);
     private static GameDataSnapshot Data(bool navigation=true,float x=90,float z=0)=>new(
@@ -70,7 +73,6 @@ public sealed class TrafficLightBindingTests
         var map=new ScsMap();var road=Road.Add(map,Vector3.Zero,new(100,0,0),default);
         ulong entry=road.ForwardNode.Uid;
         var through=Lane(entry,2);var turn=Lane(entry,3,1,1);
-        DirectedRoad Edge(PrefabLanePath lane)=>new("prefab:7:"+lane.ExitNodeUid,entry,lane.ExitNodeUid,lane.Points){LanePaths=[lane]};
         var binder=new TrafficSignalBinder();
         var shared=Nearby([Control(),Control(1,z:3.5f)],map,[Edge(through),Edge(turn)]);
         Assert.NotNull(binder.Match(Data(false),shared,Navigation(),out _));
@@ -89,7 +91,6 @@ public sealed class TrafficLightBindingTests
         var map=new ScsMap();var road=Road.Add(map,Vector3.Zero,new(100,0,0),default);
         ulong entry=road.ForwardNode.Uid;
         var forward=Lane(entry,2);var returning=Lane(entry,entry,1);
-        DirectedRoad Edge(PrefabLanePath lane)=>new("prefab:7:"+lane.ExitNodeUid,entry,lane.ExitNodeUid,lane.Points){LanePaths=[lane]};
         var controls=returnHasDifferentGroup?new[]{Control(),Control(1,1)}:new[]{Control()};
         var selected=new TrafficSignalBinder().Match(Data(false),Nearby(controls,map,[Edge(forward),Edge(returning)]),Navigation(),out _);
         Assert.NotNull(selected);Assert.Equal(0,selected.Control.SignalId);

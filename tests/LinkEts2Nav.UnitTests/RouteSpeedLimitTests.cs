@@ -113,6 +113,68 @@ public sealed class RouteSpeedLimitTests
         var data=Build(Source([a,b],Sign("60",150,new(SetKph:60))),bridge);
         Assert.Equal(60,Sim(data,[a,bridge,b],target:P(350)).Kph);
     }
+    [Theory]
+    [InlineData(20,55,80)]
+    [InlineData(20,78,80)]
+    [InlineData(20,110,30)]
+    [InlineData(60,55,80)]
+    [InlineData(60,78,50)]
+    [InlineData(60,110,50)]
+    public void ObservedNativeReturnReadsOnlySignsOnItsBranch(int branchZ,int cameraX,int expected)
+    {
+        var edge=ReturnBranches(60);
+        var observed=edge.LanePaths[branchZ==20?0:1];
+        var route=edge with{Points=observed.Points,ObservedLane=observed};
+        var approach=R(1,9,10,P(-100),P(0));
+        var data=Build(Source([approach],
+            new("near-30",P(92,23),Vector3.UnitX,false,new(SetKph:30)),
+            new("far-50",P(68,63),Vector3.UnitX,false,new(SetKph:50))),edge);
+
+        Assert.Equal(expected,Sim(data,[route],start:P(38,branchZ),target:P(cameraX,branchZ)).Kph);
+    }
+
+    [Theory]
+    [InlineData(32)] // Both branches are within the sign installation radius.
+    [InlineData(60)]
+    public void ObservedBranchKeepsItsSignStationAndTheSharedEntrySign(int farZ)
+    {
+        var edge=ReturnBranches(farZ);
+        var far=edge.LanePaths[1];var near=edge.LanePaths[0];
+        var farVisit=edge with{Points=far.Points,ObservedLane=far};
+        var nearVisit=edge with{Points=near.Points,ObservedLane=near};
+        var data=Build(Source([],new("shared",P(10,2),Vector3.UnitX,false,new(Reset:true)),
+            new("far-entry",P(68,farZ+3),Vector3.UnitX,false,new(Urban:true)),
+            new("unconfirmed-template",P(90,farZ+3),Vector3.UnitX,false,new(SetKph:50),TemplateOverride:true),
+            new("faces-away",P(100,farZ+3),-Vector3.UnitX,false,new(SetKph:30)),
+            new("overhead",new(110,6,farZ),Vector3.UnitX,false,new(SetKph:30))),edge);
+
+        var index=data.SignProjections!;
+        Assert.Equal(["shared"],index.On(nearVisit).Select(s=>s.SignId));
+        Assert.Equal(["shared","far-entry","unconfirmed-template"],index.On(farVisit).Select(s=>s.SignId));
+        var entry=index.On(farVisit)[1];
+        Assert.Equal(P(68,farZ),entry.Position);
+        Assert.Equal(farZ+68,entry.AlongMeters);
+        Assert.True(index.On(farVisit)[2].Action.Unsupported);
+        Assert.Empty(new CityEntryEventBuilder().Build([nearVisit],0,data));
+        Assert.Equal(farZ+68,Assert.Single(new CityEntryEventBuilder().Build([farVisit],0,data)).AlongMeters);
+
+        // An independently rebuilt map may reuse every numeric ID and native curve number.
+        var otherSnapshot=farVisit with{ObservedLane=far with{}};
+        Assert.False(index.Contains(otherSnapshot));
+        Assert.Empty(index.On(otherSnapshot));
+    }
+
+    private static DirectedRoad ReturnBranches(int farZ)
+    {
+        static PrefabLanePath Lane(int slot,int z)
+        {
+            Vector3[] points=[P(0),P(20),P(20,z),P(140,z),P(140,-20),P(0,-20),P(0,-3)];
+            return new(0xABC,10,10,slot,slot,slot,slot,2,2,[slot],points,
+                points.Zip(points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second)));
+        }
+        var near=Lane(0,20);var far=Lane(1,farZ);
+        return new("prefab:ABC:0:0",10,10,near.Points){LanePaths=[near,far],ControlPositions=(P(0),P(0))};
+    }
     [Fact]
     public void ASignAtAContinuousPrefabInterfaceIsNotCompetingOwnership()
     {

@@ -2,6 +2,7 @@ using System.Numerics;
 using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 using LinkEts2Nav.Map;
+using LinkEts2Nav.Runtime;
 namespace LinkEts2Nav.UnitTests;
 public sealed class RoundaboutNavigationTests
 {
@@ -150,8 +151,37 @@ public sealed class RoundaboutNavigationTests
     {
         var ring=InternalStartRing(Exit(12,1,Polar(1)));
         var exit=new DirectedRoad("prefab:1:0:2",50,12,[Polar(0),Polar(1)]);
-        Assert.Throws<NotSupportedException>(()=>RoundaboutRouteAdapter.Build([exit],
+        var range=Assert.Single(RoundaboutRouteAdapter.Build([exit],
             new Dictionary<ulong,RoundaboutStructure>{{1,ring}},[8],_=>Polar(0)));
+        var action=Assert.Single(range.Actions);
+        Assert.True(range.StartsInside);
+        Assert.Equal(ManeuverKind.ExitRoundabout,action.Kind);
+        Assert.Equal("驶出环岛",action.Instruction);
+        Assert.Equal(range.EndMeters,action.DistanceMeters,4);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DestinationAtAnInternalRingNodeKeepsArrivalsAndOnlyKnownRingCues(bool startsInside)
+    {
+        var ring=Ring() with{InternalNodes=new HashSet<ulong>{50,51}};
+        ulong from=startsInside?51ul:10ul;
+        var edge=new DirectedRoad("prefab:1:0:1",from,50,[Polar(0),Polar(.5)]);
+        var ranges=Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}});
+        var range=Assert.Single(ranges);
+        Assert.True(range.EndsInside);
+        var actions=new NavigationManeuverDetector().FindSequence([edge],0,[],out double confirmed,out bool unresolved,out _,roundaboutRanges:ranges);
+        if(startsInside)Assert.Empty(actions);
+        else
+        {
+            var enter=Assert.Single(actions);
+            Assert.Equal(ManeuverKind.EnterRoundabout,enter.Kind);
+            Assert.Equal("进入环岛",enter.NearInstruction);
+        }
+        var sdk=RouteSnapshot.Parse([new(from,50,5),new(50,0,0)],DateTimeOffset.UnixEpoch);
+        Assert.Equal(ManeuverKind.Destination,NavigationDestination.Find(sdk,[edge],0,confirmed,unresolved)?.Kind);
+        Assert.Null(NavigationDestination.Find(sdk with{MayBeTruncated=true},[edge],0,confirmed,unresolved));
     }
 
     [Fact]
@@ -185,11 +215,14 @@ public sealed class RoundaboutNavigationTests
         var edge=new DirectedRoad("prefab:1:0:2",10,12,emptyCandidates?[Vector3.Zero,new(100,0,0)]:[Vector3.Zero,Vector3.Zero]);
         Assert.Throws<InvalidDataException>(()=>Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
     }
-    [Fact] public void IndistinguishableBearingsAreReportedInsteadOfReturningTheUnadaptedRoute()
+    [Fact] public void IndistinguishableBearingsKeepTheSelectedDepartureWithoutNumberingExits()
     {
         var ring=Ring();ring=ring with{ExitPorts=ring.ExitPorts.Select(p=>p with{Bearing=0}).ToArray()};
         var edge=new DirectedRoad("prefab:1:0:2",10,12,[Vector3.Zero,new(100,0,0)]);
-        Assert.Throws<NotSupportedException>(()=>Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        var range=Assert.Single(Build([edge],new Dictionary<ulong,RoundaboutStructure>{{1,ring}}));
+        Assert.Equal(new[]{ManeuverKind.EnterRoundabout,ManeuverKind.ExitRoundabout},range.Actions.Select(m=>m.Kind));
+        Assert.Equal("进入环岛",range.Actions[0].NearInstruction);
+        Assert.Equal("驶出环岛",range.Actions[1].Instruction);
     }
 
     [Fact]

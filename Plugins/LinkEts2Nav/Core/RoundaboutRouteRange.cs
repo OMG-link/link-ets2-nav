@@ -9,5 +9,6 @@ public sealed record RoundaboutRouteRange(string RingId,int StartVisitIndex,int 
     double StartMeters,double EndMeters,IReadOnlyList<NavigationManeuver> Actions)
 {
     public bool StartsInside { get; init; }
+    public bool EndsInside { get; init; }
     public bool ContainsVisit(int visitIndex)=>visitIndex>=StartVisitIndex&&visitIndex<EndVisitIndexExclusive;
 }

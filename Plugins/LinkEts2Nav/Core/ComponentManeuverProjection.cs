@@ -39,10 +39,10 @@ public static class ComponentManeuverProjection
             .OrderBy(a=>a.DistanceMeters).ToArray();
         return new(projected,issues,unresolved);
 
-        void Fail(ComponentPassageContinuity fact,string reason)
+        void Fail(ComponentPassageContinuity fact,string reason,MapQueryIssue? directionIssue=null)
         {
-            issues.Add(fact.Issue??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason)
-                {QueryAnchor=edge.Points.FirstOrDefault()});
+            var issue=directionIssue??fact.Issue??new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,reason);
+            issues.Add(issue.QueryAnchor is null?issue with{QueryAnchor=edge.Points.FirstOrDefault()}:issue);
             unresolved.Add(new(offsets[visit],offsets[visit+1]));
         }
         void Add(ComponentPassageContinuity fact,bool outgoing)
@@ -111,7 +111,7 @@ public static class ComponentManeuverProjection
                 var selectedTurn=outgoing&&fact.Kind==ComponentContinuityKind.Soft?fact.Turn:SelectedTurn(fact);
                 actualTurn=selectedTurn;
                 if(selectedTurn is not {Side:NavigationSide.Left or NavigationSide.Right} turn||turn.Kind==ComponentTurnKind.Unknown)
-                {Fail(fact,"组件转向侧无法判定，不能推测播报方向");return;}
+                {Fail(fact,selectedTurn?.Failure??"组件转向侧无法判定，不能推测播报方向",selectedTurn?.MapIssue);return;}
                 bool left=turn.Side==NavigationSide.Left;
                 kind=fact.Kind==ComponentContinuityKind.Soft||turn.Kind==ComponentTurnKind.Forward
                     ?left?ManeuverKind.KeepLeft:ManeuverKind.KeepRight:

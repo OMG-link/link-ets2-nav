@@ -193,8 +193,8 @@ public sealed class JunctionNavigationTests
                 EndRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI), Length = 40 }]
         };
         var link = Assert.Single(PrefabPathGeometry.Build(new Prefab { Nodes = [a, b] }, descriptor));
-        Assert.Equal(a.Position, link.Points[1]);
-        Assert.Equal(b.Position.Y, link.Points[^2].Y, 4);
+        Assert.Equal(a.Position, link.Points[0]);
+        Assert.Equal(b.Position.Y, link.Points[^1].Y, 4);
         foreach (var point in link.Points)
             Assert.Equal(10 + grade * point.Z / 40, point.Y, 4);
         Assert.InRange(new DirectedPathMatcher().ProjectDistance(new(0, 10 + grade / 2, 20),
@@ -222,8 +222,8 @@ public sealed class JunctionNavigationTests
         var crest = link.Points.MinBy(p => Math.Abs(p.Z-20));
         // Base 10 + native crest 2 + half of the four-metre endpoint grade.
         Assert.Equal(14,crest.Y,3);
-        Assert.Equal(10,link.Points[1].Y,3);
-        Assert.Equal(14,link.Points[^2].Y,3);
+        Assert.Equal(10,link.Points[0].Y,3);
+        Assert.Equal(14,link.Points[^1].Y,3);
     }
 
     [Fact]

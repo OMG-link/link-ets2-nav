@@ -38,6 +38,8 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     public double? EndDistanceMeters { get; init; }
     /// <summary>Optional common playback series; event IDs remain distinct for reconciliation.</summary>
     public string? SpeechSequenceId { get; init; }
+    /// <summary>The sequence ID includes the original source-node index in the complete SDK route.</summary>
+    internal bool HasSdkVisitIdentity { get; init; }
     /// <summary>Physical component entrance relative to the player, shared by all points of one visit.</summary>
     public double? SpeechSequenceStartDistanceMeters { get; init; }
     public double SpeechSequenceOrder { get; init; }
@@ -148,12 +150,12 @@ public sealed class NavigationManeuverDetector
                     SpeechSequenceStartDistanceMeters=a.SpeechSequenceStartDistanceMeters-vehicleAlong}));
                 confirmedUntil=ring.EndMeters;offset=ring.EndMeters;i=ring.EndVisitIndexExclusive-1;continue;
             }
-            // An explicitly selected native return is a structural instruction,
-            // not an angle-derived turn at an ordinary crossing junction.
+            // A PPD can assign both ends of parallel, straight service lanes to
+            // one SDK interface. A U-turn requires the permitted lanes to reverse.
             if(current.ReturnsToEntry&&current.LanePaths.Any(p=>p.CurveIndices.Count>0&&p.LengthMeters>.001
                 &&p.EntryNodeUid==current.StartNodeUid&&p.ExitNodeUid==current.EndNodeUid))
             {
-                if(end>=vehicleAlong)
+                if(end>=vehicleAlong && (current.ObservedLane is {} observed?ReversesHeading(observed):current.LanePaths.All(ReversesHeading)))
                     result.Add(new("return:"+current.Id,ManeuverKind.UTurn,offset-vehicleAlong,current.Id,current.Id)
                         {JunctionId="prefab:"+PrefabKey(current),EndDistanceMeters=end-vehicleAlong});
                 confirmedUntil=end;offset=end;continue;
@@ -316,7 +318,7 @@ public sealed class NavigationManeuverDetector
         {
             if(range.StartVisitIndex<previousEnd||range.EndVisitIndexExclusive<=range.StartVisitIndex||range.EndVisitIndexExclusive>route.Count
                 ||!double.IsFinite(range.StartMeters)||!double.IsFinite(range.EndMeters)||range.EndMeters<=range.StartMeters
-                ||range.Actions.Count==0||range.Actions.Any(a=>a.DistanceMeters<range.StartMeters||a.DistanceMeters>range.EndMeters
+                ||(range.Actions.Count==0&&!(range.StartsInside&&range.EndsInside))||range.Actions.Any(a=>a.DistanceMeters<range.StartMeters||a.DistanceMeters>range.EndMeters
                     ||!double.IsFinite(a.DistanceMeters)||a.EndDistanceMeters!=range.EndMeters||a.SpeechSequenceStartDistanceMeters!=range.StartMeters))
                 throw new NavigationContractException($"Roundabout {range.RingId}: visit range or actions do not match the original route contract.");
             previousEnd=range.EndVisitIndexExclusive;
@@ -355,11 +357,11 @@ public sealed class NavigationManeuverDetector
         if (main is null || main.Points.Count < 4 || selected.Points.Count < 4
             || NativeTangent(main, false) is not { } direction) return (null, true);
         // Geometry only labels left/right after lane structure establishes a road merge.
-        var delta = selected.Points[^2] - main.Points[^2];
+        var delta = selected.Points[LastLanePoint(selected)] - main.Points[LastLanePoint(main)];
         double side = direction.X * delta.Z - direction.Y * delta.X;
         if (Math.Abs(side) < .1)
         {
-            delta = selected.Points[1] - main.Points[1];
+            delta = selected.Points[FirstLanePoint(selected)] - main.Points[FirstLanePoint(main)];
             side = direction.X * delta.Z - direction.Y * delta.X;
         }
         if (Math.Abs(side) < .1) return (null, true);
@@ -370,7 +372,7 @@ public sealed class NavigationManeuverDetector
     {
         Vector2? previous = null;
         double absoluteDegrees = 0;
-        for (int i = 1; i < prefab.Points.Count - 2; i++)
+        for (int i = FirstLanePoint(prefab); i < LastLanePoint(prefab); i++)
         {
             var delta = prefab.Points[i + 1] - prefab.Points[i];
             var horizontal = new Vector2(delta.X, delta.Z);
@@ -475,6 +477,25 @@ public sealed class NavigationManeuverDetector
     private static bool NativeGeometrySupported(DirectedRoad edge)
         => edge.Points.Count < 4 || NativeTangent(edge, true).HasValue && NativeTangent(edge, false).HasValue;
 
+    private static bool ReversesHeading(PrefabLanePath lane)
+    {
+        if(lane.CurveIndices.Count==0 || lane.Points.Count<2)return false;
+        Vector3 entry,exit;
+        if(lane.NativeGeometry is {} geometry)
+        {
+            if(geometry.Curves.FirstOrDefault(c=>c.Index==lane.CurveIndices[0]) is not {} first
+                ||geometry.Curves.FirstOrDefault(c=>c.Index==lane.CurveIndices[^1]) is not {} last)return false;
+            entry=first.StartTangent;exit=last.EndTangent;
+        }
+        else
+        {
+            var path=new LanePolyline(lane.Points);
+            entry=path.Heading(0);exit=path.Heading(path.Length);
+        }
+        var a=new Vector2(entry.X,entry.Z);var b=new Vector2(exit.X,exit.Z);
+        return a.LengthSquared()>.000001f && b.LengthSquared()>.000001f && Math.Abs(Angle(a,b))>=150;
+    }
+
     private static Vector2? NativeTangent(DirectedRoad prefab, bool fromStart)
     {
         var native = fromStart ? prefab.NativeEntryTangent : prefab.NativeExitTangent;
@@ -487,11 +508,8 @@ public sealed class NavigationManeuverDetector
         // Legacy/synthetic paths can still derive direction from their own geometry.
         // Never sample an adjacent road to infer a prefab's direction.
         if (prefab.Points.Count < 4) return Tangent(prefab,fromStart);
-        // First/last points are road-control centers. Interior points are samples
-        // of directed PPD curves, and their endpoint tangents describe this junction.
-        if (prefab.Points.Count < 4) return null;
-        int start = fromStart ? 1 : prefab.Points.Count - 2;
-        int end = fromStart ? prefab.Points.Count - 2 : 1;
+        int start = fromStart ? FirstLanePoint(prefab) : LastLanePoint(prefab);
+        int end = fromStart ? LastLanePoint(prefab) : FirstLanePoint(prefab);
         int step = fromStart ? 1 : -1;
         for (int i = start; i != end; i += step)
         {
@@ -502,6 +520,10 @@ public sealed class NavigationManeuverDetector
         }
         return null;
     }
+
+    // Legacy representative polylines include a control center at each end.
+    private static int FirstLanePoint(DirectedRoad road)=>road.ControlPositions.HasValue?0:1;
+    private static int LastLanePoint(DirectedRoad road)=>road.Points.Count-1-FirstLanePoint(road);
 
     private static Vector2? Tangent(DirectedRoad road, bool fromStart)
     {

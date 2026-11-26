@@ -47,10 +47,10 @@ public sealed class SpeedLimitResolver
             {
                 if(!data.SignProjections!.Contains(road))return Unavailable("路径区段的标牌投影尚未加载",
                     MapQueryFailureKind.DefinitionUnavailable,camera.MonitoringPosition,missingProjection?.Invoke(road));
-                // RoadPathSource and the loader may use different polyline sampling densities.
-                // Reproject the cached point, rather than reusing another polyline's distance.
+                // An observed lane uses the exact native chain from the sign index. Other
+                // road geometry can be sampled differently by RoadPathSource and the loader.
                 var events=data.SignProjections.On(road).Select(sign=>(Sign:sign,
-                    At:SpeedLimitGeometry.Nearest(sign.Position,road)?.Along))
+                    At:road.ObservedLane is null?SpeedLimitGeometry.Nearest(sign.Position,road)?.Along:sign.AlongMeters))
                     .Where(p=>p.At.HasValue).OrderBy(p=>p.At).ThenBy(p=>p.Sign.SignId,StringComparer.Ordinal);
                 foreach(var item in events)
                 {

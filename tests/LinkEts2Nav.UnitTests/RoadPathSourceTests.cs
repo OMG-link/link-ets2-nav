@@ -1,4 +1,5 @@
 using System.Numerics;
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Map;
 using LinkEts2Nav.Runtime;
 using TruckLib.ScsMap;
@@ -14,6 +15,17 @@ public sealed class RoadPathSourceTests
         Road.Add(map, start, end, default);
     private static RouteSnapshot Route(params (ulong Uid, float Distance)[] nodes) =>
         RouteSnapshot.Parse(nodes.Select(node => new RouteNode(node.Uid, node.Distance, node.Distance / 20)), Now);
+
+    private static DirectedRoad Passage(ulong owner, ulong entry, ulong exit, float z, params float[] laneOffsets)
+    {
+        var reference = new[] { Point(0, z), Point(50, z) };
+        return new($"prefab:{owner:X16}:{entry}:{exit}", entry, exit, reference)
+        {
+            LanePaths = laneOffsets.Select((offset, i) => new PrefabLanePath(owner, entry, exit,
+                i, i, i, i, laneOffsets.Length, laneOffsets.Length, [i],
+                [Point(0, offset), Point(50, offset)], 50)).ToArray()
+        };
+    }
 
     private static (GameMap Map,Road[] Roads,RouteSnapshot Route) LongLoadedRoute()
     {
@@ -262,6 +274,208 @@ public sealed class RoadPathSourceTests
         var source = new RoadPathSource(map);
         var path = source.GetPath(Point(50), Vector3.UnitX, route, route.Availability);
         Assert.False(source.IsPositionOnPath(Point(350, y: 8), path));
+    }
+
+    [Theory]
+    [InlineData(0,    0, true)]
+    [InlineData(0.4f, 0, true)]
+    [InlineData(6.6f, 0, false)]
+    [InlineData(8.85f,0, false)]
+    [InlineData(0,    4, false)]
+    public void PlayerUsesActualPrefabLaneWhenAnotherRoadRunsBesideItsRepresentative(float z, float y, bool matches)
+    {
+        var map = new GameMap();
+        AddRoad(map, Point(-10,6.6f), Point(60,6.6f));
+        var passage = Passage(42, 1, 2, -5, -5, 0);
+        var route = Route((1, 50), (2, 0));
+        using var source = new RoadPathSource(map, [passage], roadHalfWidth: _ => 2.25);
+        Assert.Equal(matches, source.GetPath(Point(25, z, y), Vector3.UnitX, route, route.Availability).Count == 1);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void OnlyAPermittedOrdinaryRoadInTheVehiclesDirectionCanDisputeANativeLane(bool forward, bool matches)
+    {
+        var map = new GameMap();
+        AddRoad(map, Point(-10, 1.2f), Point(60, 1.2f));
+        var route = Route((1, 50), (2, 0));
+        using var source = new RoadPathSource(map, [Passage(42, 1, 2, 0, 0)],
+            playerAccess: (_, dir) => dir == forward, roadHalfWidth: _ => 2.25);
+        Assert.Equal(matches, source.GetPath(Point(25), Vector3.UnitX, route, route.Availability).Count == 1);
+        Assert.Empty(source.GetPath(Point(25), -Vector3.UnitX, route, route.Availability));
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(2, false)]
+    [InlineData(4, false)]
+    public void NearbyPrefabLaneIsComparedEvenWhenNoOrdinaryRoadProjects(float z, bool matches)
+    {
+        var route = Route((1, 50), (2, 0));
+        using var source = new RoadPathSource(new GameMap(),
+            [Passage(42, 1, 2, 0, 0), Passage(43, 3, 4, 4, 4)]);
+        Assert.Equal(matches, source.GetPath(Point(25, z), Vector3.UnitX, route, route.Availability).Count == 1);
+        Assert.Empty(source.GetPath(Point(65, z), Vector3.UnitX, route, route.Availability));
+    }
+
+    [Fact]
+    public void PathsToDifferentExitsMayUseTheSamePhysicalIncomingCurve()
+    {
+        var route = Route((1, 50), (2, 0));
+        DirectedRoad Branch(ulong exit, int branch, float z)
+        {
+            var points = new[] { Point(0), Point(10), Point(10), Point(50, z) };
+            var lane = new PrefabLanePath(42, 1, exit, 0, 0, 0, 0, 1, 1, [0, branch], points, 50)
+                {CurveStartPointIndices = [0,2]};
+            return new($"prefab:{42:X16}:1:{exit}",1,exit,points)
+                {LanePaths = [lane], NativeEntryTangent = points[1] - points[0], NativeExitTangent = points[^1] - points[^2]};
+        }
+        using var source = new RoadPathSource(new GameMap(), [Branch(2,1,0), Branch(3,2,8)]);
+        Assert.Single(source.GetPath(Point(5), Vector3.UnitX, route, route.Availability));
+        Assert.Empty(source.GetPath(Point(45,7), Vector3.UnitX, route, route.Availability));
+    }
+
+    [Fact]
+    public void NativePlayerProjectionDoesNotAssignACameraToANearbyStationPassage()
+    {
+        var map = new GameMap();
+        AddRoad(map, Point(-10,6.6f), Point(60,6.6f));
+        var route = Route((1, 50), (2, 0));
+        using var source = new RoadPathSource(map, [Passage(42, 1, 2, 0, 0)], roadHalfWidth: _ => 2.25);
+        Assert.Single(source.GetPath(Point(10), Vector3.UnitX, route, route.Availability));
+        Assert.Equal(CameraApproach.Unknown, source.MatchCamera(Point(10), Vector3.UnitX,
+            new("camera", Point(30,6.6f), Vector3.UnitX), route, route.Availability).Approach);
+    }
+
+    [Theory]
+    [InlineData( 1.15f,  1.15f,  2.25f, true)]
+    [InlineData( 1.15f,  2.25f,  2.25f, false)]
+    [InlineData( 1.15f,  1.7f,   2.25f, false)]
+    [InlineData( 1.15f,  0,      2.25f, false)]
+    [InlineData( 1.15f,  1.15f,  4.5f, false)]
+    [InlineData(-2.5f,  -2.5f,  -2.25f, true)]
+    [InlineData(-2.5f,  -2.25f, -2.25f, false)]
+    [InlineData(-2.5f,  -2.375f,-2.25f, false)]
+    public void SingleLaneAnchorsAtBothEndsDistinguishCloseStationAndRoadCenters(float station, float z, float farOffset, bool matches)
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(50));
+        DirectedRoad Port(ulong owner, ulong entry, ulong exit, float from, float to, float offset)
+        {
+            var points = new[] { Point(from,offset), Point(to,offset) };
+            var lane = new PrefabLanePath(owner, entry, exit, 0, 0, 0, 0, 1, 1, [0], points, to-from);
+            return new($"prefab:{owner:X16}:0:1", entry, exit, [Point(from), Point(to)])
+                {LanePaths = [lane]};
+        }
+        var before = Port(44, 3, road.Node.Uid, -20, 0, MathF.CopySign(2.25f,farOffset));
+        var after = Port(45, road.ForwardNode.Uid, 4, 50, 70, farOffset);
+        using var source = new RoadPathSource(map, [before, after, Passage(42,1,2,station,station)],
+            roadHalfWidth: _ => 4.5) {RoadLaneAccess = (_,_) => [true]};
+        var route = Route((1,50),(2,0));
+        Assert.Equal(matches, source.GetPath(Point(25,z), Vector3.UnitX, route, route.Availability).Count == 1);
+    }
+
+    [Fact]
+    public void ConsumedParallelPrefabCannotSupplyEvidenceForALaterVisit()
+    {
+        using var source = new RoadPathSource(new GameMap(), [Passage(42,1,2,0,0), Passage(43,2,3,0,8)]);
+        var sdk = Route((1,100),(2,50),(3,0));
+        var matched = source.MatchRoutePosition(Point(25), Vector3.UnitX, sdk, currentNodeIndex: 2);
+        Assert.Empty(matched.Path);
+        Assert.Null(matched.AlongMeters);
+    }
+
+    [Fact]
+    public void RoadUsedInTheOppositeDirectionCannotSupplyEvidenceForANearbyRouteExit()
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(50));
+        using var source = new RoadPathSource(map, [Passage(42, road.Node.Uid, 3, 7, 7)]);
+        var route = Route((road.ForwardNode.Uid, 100), (road.Node.Uid, 50), (3, 0));
+        Assert.Empty(source.MatchRoutePosition(Point(25), Vector3.UnitX, route).Path);
+    }
+
+    [Fact]
+    public void RepeatedPhysicalLaneCanSupplyEvidenceInItsNextLiveVisit()
+    {
+        var forward = Passage(42, 1, 2, 0, 0);
+        var back = new DirectedRoad("prefab:000000000000002B:1:0", 2, 1, [Point(50),Point(0)]);
+        using var source = new RoadPathSource(new GameMap(), [forward, back]);
+        var sdk = Route((1,150),(2,100),(1,50),(2,0));
+        var matched = source.MatchRoutePosition(Point(25), Vector3.UnitX, sdk, currentNodeIndex: 3);
+        Assert.Equal(3, matched.Path.Count);
+        Assert.Equal(125, matched.AlongMeters);
+    }
+
+    [Theory]
+    [InlineData(0, .25f, true)]
+    [InlineData(5, 0, false)]
+    public void SharedNativeCurveUsesTheSelectedPassagesGrade(float routeY, float otherY, bool matches)
+    {
+        DirectedRoad Graded(ulong exit, float y)
+        {
+            var points = new[] { Point(0, y:y), Point(50, y:y) };
+            var lane = new PrefabLanePath(42, 1, exit, 0, 0, 0, 0, 1, 1, [7], points, 50);
+            return new($"prefab:{42:X16}:1:{exit}", 1, exit, points) {LanePaths = [lane]};
+        }
+        using var source = new RoadPathSource(new GameMap(), native: new NativeLaneGraph([Graded(2,routeY), Graded(3,otherY)]));
+        var sdk = Route((1,50), (2,0));
+        Assert.Equal(matches, source.MatchRoutePosition(Point(25), Vector3.UnitX, sdk).AlongMeters.HasValue);
+    }
+
+    [Fact]
+    public void ReplacingAnEdgeInAnExistingComponentUpdatesItsLaneMembership()
+    {
+        var first = Passage(42,1,2,0,0);
+        var other = Passage(43,3,4,8,8);
+        using var source = new RoadPathSource(new GameMap(), native: new NativeLaneGraph([first,other]));
+        var sdk = Route((1,50),(2,0));
+        var component = Assert.Single(source.GetRouteComponents(sdk));
+        Assert.Single(source.MatchRoutePosition(Point(25), Vector3.UnitX, sdk).Path);
+        component[0] = other;
+        Assert.Empty(source.MatchRoutePosition(Point(25), Vector3.UnitX, sdk).Path);
+        Assert.Single(source.MatchRoutePosition(Point(25,8), Vector3.UnitX, sdk).Path);
+    }
+
+    [Theory]
+    [InlineData(0,     true,  true)]
+    [InlineData(.125f, true,  false)]
+    [InlineData(.25f,  true,  false)]
+    [InlineData(0,     false, false)]
+    public void NearASplitOnlyTheBetterFittingLaneCanResolveTheSdkPassage(float z, bool sharedPort, bool matches)
+    {
+        var first = Passage(42,1,2,0,0);
+        var owner = sharedPort ? 42UL : 43UL;
+        var from = sharedPort ? 1UL : 4UL;
+        var points = new[] {Point(0),Point(50,.5f)};
+        var other = new DirectedRoad($"prefab:{owner:X16}:0:2", from, 3, points)
+        {
+            LanePaths = [new(owner,from,3,0,0,0,0,1,1,[9],points,50)]
+        };
+        using var source = new RoadPathSource(new GameMap(), native: new NativeLaneGraph([first,other]));
+        var route = Route((1,50),(2,0));
+        Assert.Equal(matches, source.MatchRoutePosition(Point(25,z), Vector3.UnitX, route).AlongMeters.HasValue);
+    }
+
+    [Theory]
+    [InlineData(-2.2f, true)]
+    [InlineData(1.75f, false)]
+    public void DistinctSameSidePortOffsetsBoundThePossibleOrdinaryLane(float z, bool matches)
+    {
+        var map = new GameMap();
+        var road = AddRoad(map, Point(0), Point(50));
+        DirectedRoad Anchor(ulong owner, ulong from, ulong to, float x, float offset)
+        {
+            var points = new[] {Point(x,offset), Point(x+10,offset)};
+            var lane = new PrefabLanePath(owner,from,to,0,0,0,0,1,1,[0],points,10);
+            return new($"prefab:{owner:X16}:0:1",from,to,points){LanePaths = [lane]};
+        }
+        using var source = new RoadPathSource(map, [
+            Anchor(44, 3, road.Node.Uid, -10, .75f),
+            Anchor(45, road.ForwardNode.Uid, 4, 50, 2.24f), Passage(42,1,2,-2.2f,-2.2f,1.9f)
+        ]){RoadLaneAccess = (_,_) => [true]};
+        Assert.Equal(matches, source.MatchRoutePosition(Point(25,z), Vector3.UnitX, Route((1,50),(2,0))).AlongMeters.HasValue);
     }
 
     private static RouteSnapshot GapRoute(Road first, Road second) => Route(

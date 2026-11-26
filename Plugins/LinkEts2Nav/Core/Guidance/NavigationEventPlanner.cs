@@ -14,6 +14,7 @@ public sealed class NavigationEventPlanner
         public readonly double DiscoveredAlong = discoveredAlong;
         public double? EndAlong;
         public double? SequenceStartAlong;
+        public long? SdkRouteGeneration;
         public SpeechSequence? DenseSummary;
         public double? BriefingAlong;
         public bool BriefingStrict;
@@ -28,25 +29,35 @@ public sealed class NavigationEventPlanner
     public GuidanceSourcePlan Build(string sessionId,string routeRevision,DateTimeOffset observedAt,
         double playerAlong,IReadOnlyList<NavigationManeuver> maneuvers,bool active,bool deferred,
         bool confirmedContinuation,SpeechTriggerScheduler scheduler,string? coordinateFrame=null,
-        double? initialBoundaryAlong=null,bool replaceRoute=false,double? confirmedContinuationEndAlong=null)
+        double? initialBoundaryAlong=null,bool replaceRoute=false,double? confirmedContinuationEndAlong=null,long? sdkRouteGeneration=null)
     {
         if(session!=sessionId||frame!=coordinateFrame){Reset();session=sessionId;frame=coordinateFrame;}
         origin ??= playerAlong;
         // The retained physical entrance anchors one visit even after the SDK
         // truncates its route prefix or selects a different exit. Distinct later
         // visits have distinct entrance positions, without another lifecycle cache.
-        var inputs=new List<(NavigationManeuver Maneuver,string Key,double? Start)>();
+        var replacedSequences=new HashSet<string>(StringComparer.Ordinal);
+        if(sdkRouteGeneration is {} routeVersion)
+            foreach(var previous in actions.Where(p=>p.Value.SdkRouteGeneration is {} old && old!=routeVersion).ToArray())
+            {
+                replacedSequences.Add(SequenceId(previous.Value));actions.Remove(previous.Key);
+            }
+        var inputs=new List<(NavigationManeuver Maneuver,string Key,double? Start,long? Generation)>();
         foreach(var m in maneuvers)
         {
+            long? sdkVisit=m.HasSdkVisitIdentity?sdkRouteGeneration:null;
             double? start=null;
             if(m.SpeechSequenceId is not null&&m.SpeechSequenceStartDistanceMeters is {} relative)
             {
                 double candidate=playerAlong+relative;
-                start=actions.Values.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId)
+                start=sdkVisit.HasValue?candidate:actions.Values.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId)
                     .Select(p=>p.SequenceStartAlong).Concat(inputs.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId).Select(p=>p.Start))
                     .FirstOrDefault(p=>p is {} v&&Math.Abs(v-candidate)<=.0001)??candidate;
             }
-            string key=m.Id+VisitSuffix(start);
+            string key=m.Id+VisitSuffix(start,sdkVisit);
+            // A geometric refinement also carries earlier physical actions. Update the
+            // ones already planned without introducing a newly discovered cue behind the truck.
+            if(sdkVisit.HasValue && m.DistanceMeters<0 && !actions.ContainsKey(key))continue;
             if(start is null)
             {
                 // One route can visit the same physical entrance/exit repeatedly.
@@ -58,16 +69,16 @@ public sealed class NavigationEventPlanner
                 if(existing.Value is not null)key=existing.Key;
                 else if(used.Contains(key))key+=":occurrence:"+inputs.Count(p=>p.Maneuver.Id==m.Id);
             }
-            inputs.Add((m,key,start));
+            inputs.Add((m,key,start,sdkVisit));
         }
         var incoming=inputs.Select(p=>p.Key).ToHashSet(StringComparer.Ordinal);
         if(replaceRoute)
             foreach(var key in actions.Where(p=>p.Value.Along>playerAlong&&!incoming.Contains(p.Key)).Select(p=>p.Key).ToArray())
                 actions.Remove(key);
-        foreach(var (m,key,start) in inputs)
+        foreach(var (m,key,start,sdkVisit) in inputs)
         {
             if(!actions.TryGetValue(key,out var state))
-                actions[key]=state=new(m,key+"@0"+FrameSuffix(),playerAlong+m.DistanceMeters,playerAlong){SequenceStartAlong=start};
+                actions[key]=state=new(m,key+"@0"+FrameSuffix(),playerAlong+m.DistanceMeters,playerAlong){SdkRouteGeneration=sdkVisit};
             else if(start is null&&scheduler.IsConsumed("navigation",SpeechSequence.EndTriggerId(state.Id))
                 &&state.EndAlong is {} oldEnd&&playerAlong+m.DistanceMeters>oldEnd)
             {
@@ -75,13 +86,15 @@ public sealed class NavigationEventPlanner
                 actions[key]=state=new(m,key+"@"+generation+FrameSuffix(),playerAlong+m.DistanceMeters,playerAlong){Generation=generation};
             }
             state.Maneuver=m;
+            state.SequenceStartAlong=start;
             // Rebuilds can refine geometry or the route coordinate mapping.
             // Keep occurrence IDs and the consumed ledger, not stale coordinates.
             state.Along=playerAlong+m.DistanceMeters;
             if(m.EndDistanceMeters is {} end)
             {
                 if(start is null)state.EndAlong = playerAlong+end;
-                else foreach(var member in actions.Values.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId&&p.SequenceStartAlong==start))
+                else foreach(var member in actions.Values.Where(p=>p.Maneuver.SpeechSequenceId==m.SpeechSequenceId
+                    && (sdkVisit.HasValue?p.SdkRouteGeneration==sdkVisit:p.SequenceStartAlong==start)))
                     member.EndAlong=playerAlong+end;
             }
         }
@@ -99,7 +112,6 @@ public sealed class NavigationEventPlanner
         var auxiliaries=new List<SpeechSequence>();
         var events=new List<GuidanceEvent>();var triggers=new List<SpeechTrigger>();
         var environmentEvents=new List<EnvironmentPreviewEvent>();
-        var replacedContinuations=new HashSet<string>(StringComparer.Ordinal);
         var sequences=new Dictionary<string,(double? End,bool Ended)>(StringComparer.Ordinal);
         for(int i=0;i<ordered.Length;i++)
         {
@@ -133,7 +145,7 @@ public sealed class NavigationEventPlanner
             // Keep its normal distance/execution series; withdraw the old unknown
             // wording rather than letting map-window retention resurrect it.
             if(!m.ExecutionOnly&&IsNavigationAction(m)&&state.EndAlong is not null)
-                replacedContinuations.Add(ContinuationId(predecessor));
+                replacedSequences.Add(ContinuationId(predecessor));
             if(state.BriefingAlong is not null&&predecessor?.EndAlong is {} refinedEnd)
             {
                 state.BriefingAlong=Math.Max(state.DiscoveredAlong,refinedEnd);
@@ -251,7 +263,7 @@ public sealed class NavigationEventPlanner
             ?t with{Text=executionTexts[t.EventId]}:t)).ToArray();
         complete=JoinPassages(ordered,complete,auxiliaries);
         return new("navigation",sessionId,routeRevision,playerAlong,active,observedAt,[..complete,..auxiliaries,..environmental.Sequences])
-            {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame,ReplacedSequenceIds=replacedContinuations.ToArray()};
+            {PrepareWhileInactive=active,CoordinateFrame=coordinateFrame,ReplacedSequenceIds=replacedSequences.ToArray()};
     }
     // Keep physical series independent. Playback confirms the optional second
     // clause before retiring its own trigger; queueing the first clause is not enough.
@@ -286,10 +298,11 @@ public sealed class NavigationEventPlanner
     // only a driving decision can itself be numbered as the target junction.
     private static bool UsesPassageHelpers(NavigationManeuver m)=>IsNavigationAction(m)&&!m.ExecutionOnly;
     private static bool UsesJunctionOrdinal(NavigationManeuver m)=>UsesPassageHelpers(m)&&m.Kind is not (ManeuverKind.Destination or ManeuverKind.BoardFerry);
-    private static string VisitSuffix(double? start)=>start is {} value?":visit:"+value.ToString("R",CultureInfo.InvariantCulture):"";
+    private static string VisitSuffix(double? start,long? sdkGeneration)=>sdkGeneration is {} generation
+        ?":route:"+generation.ToString(CultureInfo.InvariantCulture):start is {} value?":visit:"+value.ToString("R",CultureInfo.InvariantCulture):"";
     private string FrameSuffix()=>frame is null?"":"#"+frame;
     private string SequenceId(ActionPlan state)=>state.Maneuver.SpeechSequenceId is not {} shared?state.Id
-        :shared+(state.SequenceStartAlong is {} visit?VisitSuffix(visit):"@"+state.Generation)+FrameSuffix();
+        :shared+(state.SequenceStartAlong is {} visit?VisitSuffix(visit,state.SdkRouteGeneration):"@"+state.Generation)+FrameSuffix();
     private string ContinuationId(ActionPlan? previous)=>"continuation:"+(previous is null?"origin"+FrameSuffix():SequenceId(previous));
     private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
     private static int ActionIndex(IReadOnlyList<ActionPlan> list,int start)

@@ -196,7 +196,17 @@ public static class LaneContinuity
             if(step.Curve!.MapIssue is {} curveIssue)return new(LaneTurnKind.Unknown,null,curveIssue);
             boundary=step.Curve;
         }
-        if(boundary is null)return new(LaneTurnKind.Unknown,null,Invalid($"Prefab {geometry.PrefabUid:X16} curve {branch.Index}: no complete segment between topology origins."));
+        if(boundary is null)
+        {
+            // A merge and a split can share the same endpoint. Only the two rays
+            // at that endpoint belong to this movement; an earlier bend may be common to other exits.
+            var tangent = merge ? branch.EndTangent : branch.StartTangent;
+            var local = DescribeDirection(tangent, standard, Vector3.Zero, merge);
+            return new(local, branch.Index, local == LaneTurnKind.Unknown
+                ? new MapQueryFailure(MapQueryFailureKind.Ambiguous,
+                    $"Prefab {geometry.PrefabUid:X16} curve {branch.Index}: coincident topology origins have no distinct lateral turn.")
+                : null);
+        }
         var turn=DescribeTurn(boundary,standard,origin,merge);
         return new(turn,boundary.Index,turn==LaneTurnKind.Unknown?Invalid($"Prefab {geometry.PrefabUid:X16} curve {boundary.Index}: turn side cannot be established from native tangent and origin."):null);
     }
@@ -206,6 +216,10 @@ public static class LaneContinuity
         static bool Finite(Vector3 value)=>float.IsFinite(value.X)&&float.IsFinite(value.Y)&&float.IsFinite(value.Z);
         if(!Finite(origin)||!Finite(branch.Start)||!Finite(branch.End))return LaneTurnKind.Unknown;
         Vector3 direction=merge?branch.StartTangent:branch.EndTangent;
+        return DescribeDirection(direction, standard, merge ? origin - branch.Start : branch.End - origin, merge);
+    }
+    private static LaneTurnKind DescribeDirection(Vector3 direction, Vector3 standard, Vector3 offset, bool merge)
+    {
         if(!Horizontal(direction,out double dx,out double dz)||!Horizontal(standard,out double sx,out double sz))return LaneTurnKind.Unknown;
         double cross=merge?dx*sz-dz*sx:sx*dz-sz*dx;
         double angle=Math.Atan2(Math.Abs(cross),dx*sx+dz*sz)*180/Math.PI;
@@ -214,7 +228,6 @@ public static class LaneContinuity
             // A merge is relative to its arriving lane's start ray. A split is
             // relative to the common arriving ray, including a branch that ends
             // backwards: its final heading must not invert the physical side.
-            Vector3 offset=merge?origin-branch.Start:branch.End-origin;
             cross=merge?dx*offset.Z-dz*offset.X:sx*offset.Z-sz*offset.X;
         }
         if(cross==0)return LaneTurnKind.Unknown;

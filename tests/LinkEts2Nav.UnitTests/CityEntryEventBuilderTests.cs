@@ -2,6 +2,7 @@ using System.Numerics;
 using LinkEts2Nav.Core;
 using LinkEts2Nav.Core.Guidance;
 using LinkEts2Nav.Map;
+using LinkEts2Nav.Runtime;
 namespace LinkEts2Nav.UnitTests;
 
 public sealed class CityEntryEventBuilderTests
@@ -13,6 +14,49 @@ public sealed class CityEntryEventBuilderTests
         signs,[],new Dictionary<string,TruckSpeedLimit>(),null);
     private static IReadOnlyList<EnvironmentPreviewEvent> Events(SpeedLimitData data,double player=0)
         =>new CityEntryEventBuilder().Build([Road],player,ProjectedSignBuilder.Build(data,[],TestContext.Current.CancellationToken));
+
+    [Theory]
+    [InlineData(2,false,false,false,0)]
+    [InlineData(32,false,false,false,1)]
+    [InlineData(2,true,false,false,1)]
+    [InlineData(2,false,true,false,1)]
+    [InlineData(32,false,true,false,2)]
+    [InlineData(2,false,false,true,1)]
+    public void DriverTakingAnotherNativeBranchWithdrawsItsFutureCityAnnouncement(int x,bool unloadSign,bool announceBeforeFork,bool innerCity,int expected)
+    {
+        var now=DateTimeOffset.UnixEpoch;
+        var passage=NativeReturnPassageTests.ServiceLanes(true,detour:true,sharedSuffix:true,longitudinalScale:40);
+        DirectedRoad approach=new("prefab:99:0:1",5,10,[new(2,0,500),new(2,0,0)]);
+        DirectedRoad onward=new("prefab:98:0:1",10,20,[new(2,0,-1600),new(2,0,-1750)]);
+        DirectedRoad[] edges=[approach,passage,onward];
+        var sdk=RouteSnapshot.Parse([new(5,3000,100),new(10,2500,80),new(10,300,10),new(20,0,0)],now);
+        var sign=new LimitSign("outer-city",new(34,0,announceBeforeFork?-300:-720),-Vector3.UnitZ,false,new(Urban:true));
+        var inner=new LimitSign("inner-city",new(0,0,-760),-Vector3.UnitZ,false,new(Urban:true)){CityName="内城"};
+        var scene=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=edges,
+            SpeedLimits=ProjectedSignBuilder.Build(innerCity?Data(sign,inner):Data(sign),edges,TestContext.Current.CancellationToken)};
+        var guidance=new GuidanceCoordinator();var runtime=new NavigationRuntime(guidance:guidance,spokenCityNames:new HashSet<string>{"内城"});
+        var queued=new List<QueuedGuidanceSpeech>();guidance.Queued+=queued.Add;
+        void Step(float px,float z)
+        {
+            now=now.AddSeconds(1);
+            var data=new GameDataSnapshot(new(px,0,z,0,20,1000,true,false,1,now),sdk,RouteAvailability.Available,"drive",true)
+                {NavigationRoute=NavigationRouteState.Empty.Accept(sdk)};
+            runtime.Process(data,scene,now);guidance.Tick(data,now);
+        }
+
+        Step(2,400);
+        Assert.Single(guidance.Timeline.Sources.Single(s=>s.Source==CityEntryEventBuilder.Kind).Sequences);
+        Assert.DoesNotContain(queued,q=>q.Source==CityEntryEventBuilder.Kind);
+        if(announceBeforeFork)
+        {
+            Step(2,150);
+            Assert.Equal("五百米后，进入城区，请注意减速慢行。",Assert.Single(queued,q=>q.Source==CityEntryEventBuilder.Kind).Text);
+        }
+        if(unloadSign)scene=scene with{SpeedLimits=ProjectedSignBuilder.Build(Data(),edges,TestContext.Current.CancellationToken)};
+        Step(x,-20);Step(x,announceBeforeFork?-115:-280);
+        Assert.Equal(expected,queued.Count(q=>q.Source==CityEntryEventBuilder.Kind));
+        if(innerCity)Assert.Contains("内城",Assert.Single(queued,q=>q.Source==CityEntryEventBuilder.Kind).Text);
+    }
 
     [Fact]
     public void UsesVisibleNameOnlyWhenItsAudioWasPreGenerated()

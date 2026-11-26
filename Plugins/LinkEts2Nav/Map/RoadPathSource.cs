@@ -31,9 +31,13 @@ public sealed class RoadPathSource:IDisposable
     private readonly Road[] roads;
     private readonly Func<Road,bool,bool?>? playerAccess;
     private readonly Func<Road,double?>? roadHalfWidth;
+    internal Func<Road,bool,IReadOnlyList<bool?>?>? RoadLaneAccess { private get; init; }
+    private AnchoredRoadLanes? anchoredLanes;
     private readonly Dictionary<(ulong, ulong), DirectedRoad> junctionLinks = new();
     private readonly HashSet<ulong> boundaryNodes = new();
     private readonly DirectedPathMatcher matcher = new();
+    private readonly IReadOnlyList<DirectedRoad> prefabGeometry;
+    private PrefabLanePositionIndex? prefabPositions;
     private readonly Action<string>? diagnosticLog;
     private readonly Func<ulong,MapQueryIssue>? missingConnection;
     private readonly Action<MapQueryIssue>? reportMapIssue;
@@ -67,6 +71,9 @@ public sealed class RoadPathSource:IDisposable
     private ulong[]? cachedNodes;
     private (bool Truncated,ulong? Terminal) cachedRouteMeaning;
     private readonly Dictionary<IReadOnlyList<DirectedRoad>,List<(int Start,int End)>> sdkVisits=new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<IReadOnlyList<DirectedRoad>,ObservedRouteLanes> observedLanes=new(ReferenceEqualityComparer.Instance);
+    private readonly IReadOnlyDictionary<ulong,RoundaboutStructure>? rings;
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<DirectedRoad>,List<(int Start,int End)>> variantVisits=new();
     public int RouteStructureBuildCount { get; private set; }
     private List<List<DirectedRoad>> cachedChunks = [];
     private IReadOnlyList<DirectedRoad>? navigationGraph;
@@ -77,8 +84,12 @@ public sealed class RoadPathSource:IDisposable
             playerAccess:window.Data is {} data?data.SpeedLimits.RoadPlayerAccess:null,
             missingConnection:window.MissingConnection,retries:retry?window.Retries:null,ferries:window.Ferries)
     {
+        rings=window.RoadStructures;
         if(window.Data is {} dataset)
+        {
+            RoadLaneAccess = dataset.SpeedLimits.RoadLanePlayerAccess;
             validateMissingPrefabPassage=(entry,exit)=>dataset.ValidateMissingPrefabPassage(window.Map,window.Companies,entry,exit);
+        }
     }
 
     public RoadPathSource(GameMap map, IReadOnlyList<DirectedRoad>? junctions = null,Action<string>? log=null,NativeLaneGraph? native=null,Func<Road,bool,bool?>? playerAccess=null,Func<Road,double?>? roadHalfWidth=null,
@@ -104,6 +115,7 @@ public sealed class RoadPathSource:IDisposable
         }
         var annotated=native?.Edges.Where(e=>NativeLaneGraph.Prefab(e) is not null).ToArray()
             ??new RoadJoinPriorityBuilder(incidentRoads,log,DescribeMissingConnection).Annotate(junctions??[]);
+        prefabGeometry = native?.Edges ?? annotated;
         foreach (var group in annotated.GroupBy(p => (p.StartNodeUid, p.EndNodeUid)))
         {
             boundaryNodes.Add(group.Key.StartNodeUid);
@@ -130,14 +142,43 @@ public sealed class RoadPathSource:IDisposable
     public IReadOnlyList<DirectedRoad> GetPath(Vector3 position, Vector3 heading, RouteSnapshot route,
         RouteAvailability availability,int currentNodeIndex=0)
     {
-        if (availability == RouteAvailability.None) return CurrentRoad(position, heading);
+        if (availability == RouteAvailability.None) {ResetObservedLanes();return CurrentRoad(position, heading);}
         if (availability != RouteAvailability.Available) return [];
-        var matches = GetRouteChunks(position, route)
-            .Where(chunk => IsPositionOnPath(position, chunk) && matcher.ProjectDistance(position, heading, chunk,FirstLiveVisit(chunk,currentNodeIndex)).HasValue)
-            .ToArray();
-        return matches.Length == 1 ? matches[0] : [];
+        return MatchRoutePosition(position, heading, route, currentNodeIndex).Path;
     }
 
+    /// <summary>Finds one live SDK route component and the player's coordinate on its published geometry.</summary>
+    public (IReadOnlyList<DirectedRoad> Path, double? AlongMeters) MatchRoutePosition(
+        Vector3 position, Vector3 heading, RouteSnapshot route, int currentNodeIndex = 0)
+    {
+        (IReadOnlyList<DirectedRoad> Path, double? AlongMeters) result = ([], null);
+        ObservedRouteLanes? selected=null;ObservedRouteLanes.Choice? choice=null;List<(int Start,int End)>? sourceVisits=null;
+        foreach (var chunk in GetRouteComponents(route))
+        {
+            int firstVisit = FirstLiveVisit(chunk, currentNodeIndex);
+            if (!IsPositionOnPath(position, chunk, heading, firstVisit))continue;
+            IReadOnlyList<DirectedRoad> path=chunk;double? station=null;
+            if(observedLanes.TryGetValue(chunk,out var lanes) && lanes.Matches(chunk))
+            {
+                path=lanes.Current;
+                if(lanes.Propose(position,heading,firstVisit,matcher,edge=>IsPositionOnPath(position,[edge],heading,0)) is {} proposal
+                    && matcher.ProjectDistance(position,heading,proposal.Path,firstVisit,proposal.Visit) is {} onVisit)
+                {
+                    selected=lanes;choice=proposal;path=proposal.Path;station=onVisit;sourceVisits=sdkVisits[chunk];
+                }
+            }
+            station??=matcher.ProjectDistance(position,heading,path,firstVisit);
+            if(station is not {} along)continue;
+            if (result.AlongMeters.HasValue) return ([], null);
+            result = (path, along);
+        }
+        if(selected is not null && choice is not null)
+        {
+            selected.Accept(choice);
+            variantVisits.GetValue(choice.Path,_=>sourceVisits!);
+        }
+        return result;
+    }
 
     /// <summary>Locates a current SDK entry without clipping its full geometry component.</summary>
     public RouteComponentEntry? GetRouteEntry(RouteSnapshot route,int sourceNodeIndex)
@@ -150,10 +191,11 @@ public sealed class RoadPathSource:IDisposable
         foreach(var component in components)
         {
             double along=0;var visits=sdkVisits[component];
+            IReadOnlyList<DirectedRoad> path=observedLanes.TryGetValue(component,out var lanes)&&lanes.Matches(component)?lanes.Current:component;
             for(int i=0;i<component.Count;i++)
             {
-                if(visits[i].Start==sourceNodeIndex)return new(component,i,along);
-                along+=RouteGeometry.Length(component[i]);
+                if(visits[i].Start==sourceNodeIndex)return new(path,i,along);
+                along+=RouteGeometry.Length(path[i]);
             }
         }
         return null;
@@ -184,7 +226,12 @@ public sealed class RoadPathSource:IDisposable
                 : Unknown("无导航：监测点不在当前唯一必经连接链，可能存在分岔");
         }
         if (availability != RouteAvailability.Available) return Unknown();
-        var chunks = GetRouteChunks(position, route);
+        IReadOnlyList<IReadOnlyList<DirectedRoad>> chunks = GetRouteChunks(position, route);
+        if(observedLanes.Count>0)
+        {
+            if(MatchRoutePosition(position,heading,route).AlongMeters is null)return Unknown("车辆在当前原生行驶通路上的位置不确定");
+            chunks=chunks.Select(chunk=>observedLanes.TryGetValue(chunk,out var variants)&&variants.Matches(chunk)?variants.Current:chunk).ToArray();
+        }
         var playerChunks = chunks.Select((path, index) => (Path: path, Index: index))
             .Where(p => IsPositionOnPath(position, p.Path) && matcher.ProjectDistance(position, heading, p.Path).HasValue)
             .ToArray();
@@ -248,6 +295,7 @@ public sealed class RoadPathSource:IDisposable
         cachedNodes=ids;
         sdkVisits.Clear();foreach(var pair in result.SdkVisits)sdkVisits.Add(pair.Key,pair.Value);
         cachedRouteMeaning=meaning;RouteStructureBuildCount++;cachedChunks=result.Chunks;
+        PrepareObservedLanes();
         foreach(var issue in result.Issues)ReportMapIssue(issue);
         foreach(var message in result.Diagnostics)diagnosticLog?.Invoke(message);
         return cachedChunks;
@@ -318,13 +366,34 @@ public sealed class RoadPathSource:IDisposable
             chunk.Add(directed);sdkVisits[chunk].Add((sdkStart,i));
         }
         cachedNodes=ids;cachedRouteMeaning=meaning;RouteStructureBuildCount++;
+        foreach(var component in cachedChunks)DirectedPathMatcher.RegisterComponent(component);
+        PrepareObservedLanes();
         return cachedChunks;
     }
     public void Dispose()=>routeRetry?.Dispose();
 
+    private void PrepareObservedLanes()
+    {
+        observedLanes.Clear();
+        foreach(var component in cachedChunks)
+            if(ObservedRouteLanes.Create(component,rings) is {} lanes)observedLanes.Add(component,lanes);
+    }
+
+    internal void ResetObservedLanes()
+    {
+        foreach(var lanes in observedLanes.Values)lanes.Reset();
+    }
+
+    private List<(int Start,int End)> Visits(IReadOnlyList<DirectedRoad> component)
+        =>variantVisits.TryGetValue(component,out var visits)?visits:sdkVisits[component];
+
+    // A baseline component and each of its measured lane variants share the same SDK visit table.
+    internal bool IsSameSdkComponent(IReadOnlyList<DirectedRoad> first,IReadOnlyList<DirectedRoad> second)
+        =>ReferenceEquals(Visits(first),Visits(second));
+
     /// <summary>Stable identities of this component's visits in the untrimmed SDK route.</summary>
     public IReadOnlyList<int> SourceNodeIndices(IReadOnlyList<DirectedRoad> component)
-        =>sdkVisits[component].Select(v=>v.Start).ToArray();
+        =>Visits(component).Select(v=>v.Start).ToArray();
 
     /// <summary>Excludes consumed SDK visits from position matching, preserving full path mileage and geometry.</summary>
     public int FirstLiveVisit(IReadOnlyList<DirectedRoad> component,int currentNodeIndex)
@@ -334,15 +403,20 @@ public sealed class RoadPathSource:IDisposable
         if(cachedNodes is null||currentNodeIndex<0||currentNodeIndex>=cachedNodes.Length)
             throw new NavigationContractException("The progress index must belong to the full ingress route.");
 #endif
-        var visits=sdkVisits[component];
+        var visits=Visits(component);
         int index=visits.FindIndex(v=>v.End>=currentNodeIndex);
+        if(index>=0 && index+1<component.Count && visits[index].End==currentNodeIndex
+            && component[index].ReturnsToEntry && component[index+1].Id==component[index].Id)index++;
         return index<0?component.Count:index;
     }
 
     /// <summary>Uses all nearby roads so a parallel non-route road cannot borrow route geometry.</summary>
     public bool IsPositionOnPath(Vector3 position, IReadOnlyList<DirectedRoad> path)
+        => IsPositionOnPath(position, path, null, 0);
+
+    private bool IsPositionOnPath(Vector3 position, IReadOnlyList<DirectedRoad> path, Vector3? heading, int firstVisit)
     {
-        if (path.Count == 0 || !float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
+        if (firstVisit >= path.Count || !float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
             return false;
         var nearby = roads.Where(r => r.Node is not null && r.ForwardNode is not null && Near(r, position))
             .Select(r => (Road: r, Score: Distance(position, [Orient(r, r.Node.Uid)])))
@@ -351,30 +425,84 @@ public sealed class RoadPathSource:IDisposable
         // Apply the same finite-path projection rule used when selecting the current road.
         var candidates = nearby.Where(p => HasProjection(position, Orient(p.Road, p.Road.Node.Uid)))
             .Take(3).ToArray();
-        bool endpointsOnly = candidates.Length == 0;
-        if (endpointsOnly)
+        var live = path.Skip(firstVisit);
+        if (candidates.Length == 0)
         {
-            if (path.Where(p => p.Id.StartsWith("prefab:", StringComparison.Ordinal))
+            if (live.Where(p => p.Id.StartsWith("prefab:", StringComparison.Ordinal)
+                    && (heading is null || p.LanePaths.Count == 0))
                 .Any(p => HasProjection(position, p))) return true;
-            // The outside wedge at an ordinary two-road bend can have no interior
-            // projection onto either road separately. Preserve its topological proof.
-            candidates = nearby.Take(3).ToArray();
-            if (candidates.Length < 2) return false;
         }
-        if (endpointsOnly || candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3)
+        if (OwnsOrdinaryRoad()) return true;
+        if (heading is not {} direction || !live.Any(edge => edge.LanePaths.Count > 0)) return false;
+
+        prefabPositions ??= PrefabLanePositionIndex.For(prefabGeometry);
+        var lanes = prefabPositions.Errors(position, direction, path, firstVisit, matcher);
+        // Require separate physical evidence when a permitted parallel lane also fits.
+        // The existing three-metre road-reference ambiguity band remains the fallback for
+        // roads without a measured width. Native curves sharing an actual lane count once.
+        if (!double.IsFinite(lanes.OnRoute) || lanes.OffRoute <= lanes.OnRoute + PrefabLanePositionIndex.LaneSeparation) return false;
+        foreach (var (road, _) in nearby)
         {
-            if (candidates.Length > 2 && candidates[2].Score - candidates[0].Score < 3
-                || !TryContinuousJoin(position, candidates[0].Road, candidates[1].Road, out var join))
-                return false;
-            var first = candidates[0].Road.Uid.ToString("X16");
-            var second = candidates[1].Road.Uid.ToString("X16");
-            return path.Zip(path.Skip(1)).Any(pair =>
-                pair.First.EndNodeUid == join && pair.Second.StartNodeUid == join
-                && (pair.First.Id == first && pair.Second.Id == second
-                    || pair.First.Id == second && pair.Second.Id == first));
+            var sample = Orient(road, road.Node.Uid);
+            var width = sample.ReferenceHalfWidthMeters;
+            double footprint = width is > 0 && double.IsFinite(width.Value) ? width.Value : 3;
+            bool Competes(bool forward)
+            {
+                var travel = forward ? direction : -direction;
+                if (!CanUse(road, forward) || matcher.ProjectionError(position, travel, sample.Points, width) is not {} error)
+                    return false;
+                if (error <= lanes.OnRoute + PrefabLanePositionIndex.LaneSeparation) return true;
+                if (RoadLaneAccess is not null && error <= lanes.OnRoute + 2 * footprint)
+                {
+                    anchoredLanes ??= new(incidentRoads, prefabPositions, RoadLaneAccess);
+                    if (anchoredLanes.Locate(road, forward, sample.Points.Count - 1) is {} lane
+                        && matcher.ProjectionError(position, travel, lane.Midline) is {} centerError)
+                    {
+                        double nearest = centerError - lane.OffsetUncertainty;
+                        if (lane.StableCenter)
+                        {
+                            double margin = lanes.OnRoute <= PrefabLanePositionIndex.LaneSeparation
+                                ? PrefabLanePositionIndex.CoordinateResolution(position) + lanes.SamplingError
+                                : PrefabLanePositionIndex.LaneSeparation;
+                            return nearest <= lanes.OnRoute + margin;
+                        }
+                        // Differing anchors bound the possible offsets. Use that bound only when
+                        // even the nearest lane lies beyond the reference relative to the player.
+                        if (nearest > error + PrefabLanePositionIndex.LaneSeparation)
+                            return nearest <= lanes.OnRoute + PrefabLanePositionIndex.LaneSeparation;
+                    }
+                }
+                return error <= lanes.OnRoute + footprint;
+            }
+            if (Competes(true) || Competes(false)) return false;
         }
-        var selectedId = candidates[0].Road.Uid.ToString("X16");
-        return path.Any(road => StringComparer.Ordinal.Equals(road.Id, selectedId));
+        return true;
+
+        bool OwnsOrdinaryRoad()
+        {
+            bool endpointsOnly = candidates.Length == 0;
+            if (endpointsOnly)
+            {
+                // The outside wedge at a simple two-road bend may have only endpoint projections.
+                candidates = nearby.Take(3).ToArray();
+                if (candidates.Length < 2) return false;
+            }
+            if (endpointsOnly || candidates.Length > 1 && candidates[1].Score - candidates[0].Score < 3)
+            {
+                if (candidates.Length > 2 && candidates[2].Score - candidates[0].Score < 3
+                    || !TryContinuousJoin(position, candidates[0].Road, candidates[1].Road, out var join))
+                    return false;
+                var first = candidates[0].Road.Uid.ToString("X16");
+                var second = candidates[1].Road.Uid.ToString("X16");
+                return live.Zip(live.Skip(1)).Any(pair =>
+                    pair.First.EndNodeUid == join && pair.Second.StartNodeUid == join
+                    && (pair.First.Id == first && pair.Second.Id == second
+                        || pair.First.Id == second && pair.Second.Id == first));
+            }
+            var selectedId = candidates[0].Road.Uid.ToString("X16");
+            return live.Any(road => StringComparer.Ordinal.Equals(road.Id, selectedId)
+                && (heading is not {} travel || matcher.ProjectionError(position, travel, road.Points, road.ReferenceHalfWidthMeters).HasValue));
+        }
     }
 
     private bool HasProjection(Vector3 position, DirectedRoad road)
@@ -469,7 +597,7 @@ public sealed class RoadPathSource:IDisposable
                     break;
                 }
                 var junction = exits[0];
-                if (Vector3.Distance(current.Points[^1], junction.Points[0]) > 2) break;
+                if (Vector3.Distance(current.ExitInterface, junction.EntryInterface) > 2) break;
                 visitedJunctions.Add(junction.Id.Split(':')[1]);
                 path.Add(junction);
                 coveredAhead += PolylineLength(junction);
@@ -480,7 +608,7 @@ public sealed class RoadPathSource:IDisposable
             if (successors.Length != 1 || !visited.Add(successors[0].Uid)) break;
             var next = Orient(successors[0], current.EndNodeUid);
             if (ambiguous.Contains((next.StartNodeUid, next.EndNodeUid))
-                || Vector3.Distance(current.Points[^1], next.Points[0]) > 2) break;
+                || Vector3.Distance(current.ExitInterface, next.EntryInterface) > 2) break;
             path.Add(next);
             coveredAhead += PolylineLength(next);
             current = next;

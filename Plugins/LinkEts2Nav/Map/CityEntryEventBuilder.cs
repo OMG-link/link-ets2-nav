@@ -14,7 +14,10 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
 {
     public const string Kind="city-entry";
     private sealed record Landmark(string SignId,string RoadId,ulong From,ulong To,
-        double Along,Vector3 Position,bool? Urban,string? CityName);
+        double Along,Vector3 Position,bool? Urban,string? CityName,int Visit)
+    {
+        public string? EventId {get;set;}
+    }
     private bool? actualUrban;
     private double? actualStateAlong;
     private string? diagnosticSignature;
@@ -37,17 +40,23 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
     public IReadOnlyList<EnvironmentPreviewEvent> Build(IReadOnlyList<DirectedRoad> route,
         double playerAlongMeters,SpeedLimitData data,double routeOriginAlongMeters=0,
         IReadOnlyList<DirectedRoad>? projectionPrefabPaths=null)
+        =>Build(route,playerAlongMeters,data,routeOriginAlongMeters,projectionPrefabPaths,null,out _);
+
+    internal IReadOnlyList<EnvironmentPreviewEvent> Build(IReadOnlyList<DirectedRoad> route,
+        double playerAlongMeters,SpeedLimitData data,double routeOriginAlongMeters,
+        IReadOnlyList<DirectedRoad>? projectionPrefabPaths,IReadOnlyList<DirectedRoad>? previousVisits,out IReadOnlyList<string> removed)
     {
         if(!double.IsFinite(playerAlongMeters)||!double.IsFinite(routeOriginAlongMeters))
             throw new ArgumentOutOfRangeException(nameof(playerAlongMeters));
-        var warnings=new List<string>();
+        var warnings=new List<string>();removed=[];
         if(data.Error is not null)
         {Report(["入城标牌暂不可用："+data.Error]);return [];}
         var projected=Projection(data,projectionPrefabPaths??route);
         var originals=data.Signs.DistinctBy(s=>s.Id).ToDictionary(s=>s.Id,StringComparer.Ordinal);
         var landmarks=new List<Landmark>();double along=routeOriginAlongMeters;
-        foreach(var road in route)
+        for(int visit=0;visit<route.Count;visit++)
         {
+            var road=route[visit];
             double length=road.Points.Zip(road.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
             foreach(var sign in projected.SignProjections!.On(road))
             {
@@ -62,7 +71,8 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
                 bool reliable=!sign.Action.Unsupported&&original?.TemplateOverride!=true&&original?.OwnershipAmbiguous!=true;
                 if(!reliable)warnings.Add("入城标牌未采用："+sign.SignId+"；规则、模板、归属或方向未确认。");
                 landmarks.Add(new(sign.SignId,road.Id,road.StartNodeUid,road.EndNodeUid,
-                    along+at.Value.Along,sign.Position,reliable?sign.Action.Urban:null,original?.CityName));
+                    along+(road.ObservedLane is null?at.Value.Along:sign.AlongMeters),sign.Position,
+                    reliable?sign.Action.Urban:null,original?.CityName,visit));
             }
             along+=length;
         }
@@ -71,16 +81,36 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
             foreach(string issue in projected.Diagnostics.Where(d=>d.Contains(sign.Id,StringComparison.Ordinal)))
                 warnings.Add("入城标牌未采用："+issue);
         Report(warnings);
+        if(previousVisits is not null)
+            removed=ReconcileObservedVisits(previousVisits,route,landmarks,projected.SignProjections!,playerAlongMeters);
         var ordered=currentLandmarks=landmarks.OrderBy(s=>s.Along).ThenBy(s=>s.SignId,StringComparer.Ordinal).ToArray();
         Advance(playerAlongMeters);
         bool? forecast=actualUrban;var result=new List<EnvironmentPreviewEvent>();
         foreach(var sign in ordered.Where(s=>s.Along>=playerAlongMeters))
         {
             if(sign.Urban==true&&forecast!=true)
-                result.Add(new(Identity(sign),Kind,sign.Along,sign.Along,meters=>Text(meters,sign.CityName is {} name&&spokenCityNames?.Contains(name)==true?name:null)));
+                result.Add(new(sign.EventId??=Identity(sign),Kind,sign.Along,sign.Along,meters=>Text(meters,sign.CityName is {} name&&spokenCityNames?.Contains(name)==true?name:null)));
             forecast=sign.Urban;
         }
+        if(removed.Count>0)removed=removed.Except(result.Select(e=>e.Id),StringComparer.Ordinal).ToArray();
         return result;
+    }
+
+    private IReadOnlyList<string> ReconcileObservedVisits(IReadOnlyList<DirectedRoad> previous,IReadOnlyList<DirectedRoad> route,
+        List<Landmark> landmarks,ProjectedSignIndex signs,double playerAlong)
+    {
+        var removed=new List<string>();
+        foreach(var old in currentLandmarks)
+        {
+            if(old.EventId is not {} id)continue;
+            var edge=route[old.Visit];var prior=previous[old.Visit];
+            if(edge.ObservedLane is null||!ReferenceEquals(edge.LanePaths,prior.LanePaths)||!signs.Contains(edge))continue;
+            // Retain the identity of the same installed sign when its native station changes.
+            if(landmarks.Find(s=>s.Visit==old.Visit&&s.SignId==old.SignId) is {} retained)retained.EventId=id;
+            else if(old.Along>playerAlong&&!ReferenceEquals(prior.ObservedLane,edge.ObservedLane)
+                &&signs.On(prior).Any(s=>s.SignId==old.SignId)&&!signs.On(edge).Any(s=>s.SignId==old.SignId))removed.Add(id);
+        }
+        return removed;
     }
 
     /// <summary>Passage state uses already projected signs; no map/sign parsing or event planning on position ticks.</summary>

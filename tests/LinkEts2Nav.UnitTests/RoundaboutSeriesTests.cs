@@ -61,4 +61,30 @@ public sealed class RoundaboutSeriesTests
         Assert.Equal(2,plan.Sequences.Count);Assert.Equal(6,plan.Events.Count);
         Assert.Equal(6,plan.Events.Select(e=>e.Id).Distinct().Count());
     }
+
+    [Fact]
+    public void ChangingAnUpstreamRingLaneReanchorsDownstreamCuesWithinTheirSdkVisit()
+    {
+        static NavigationManeuver[] OnRoute(double player,double entry,double end,int visit)=>Visit(player,entry,end)
+            .Select(m=>m with{Id=m.Id+":visit:"+visit,SpeechSequenceId="ring:in:visit:"+visit,HasSdkVisitIdentity=true}).ToArray();
+        var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        var first=planner.Build("s","r",Now,0,OnRoute(0,120,270,21),true,false,false,scheduler,sdkRouteGeneration:1);
+        timeline.Publish(first);scheduler.Update(timeline,Now,0);
+        var original=Assert.Single(first.Sequences);
+        var overview=Assert.Single(original.Triggers,t=>t.Kind==SpeechTriggerKind.Overview);
+        Assert.True(scheduler.IsConsumed("navigation",overview.Id));
+
+        var next=planner.Build("s","r",Now,25,OnRoute(25,145,295,21),true,false,false,scheduler,sdkRouteGeneration:1);
+        var moved=Assert.Single(next.Sequences);
+        Assert.Equal(original.Id,moved.Id);
+        Assert.Equal(original.Events.Select(e=>e.Id),moved.Events.Select(e=>e.Id));
+        Assert.Equal(new[]{145d,225d,265d},moved.Events.Select(e=>e.AlongMeters));
+        Assert.Equal(295,moved.EndAlongMeters);
+        Assert.True(scheduler.IsConsumed("navigation",Assert.Single(moved.Triggers,t=>t.Kind==SpeechTriggerKind.Overview).Id));
+
+        var replacement=planner.Build("s","new",Now,0,OnRoute(0,145,295,21),true,false,false,scheduler,sdkRouteGeneration:2);
+        var nextTrip=Assert.Single(replacement.Sequences);
+        Assert.NotEqual(original.Id,nextTrip.Id);Assert.Contains(original.Id,replacement.ReplacedSequenceIds);
+        Assert.False(scheduler.IsConsumed("navigation",Assert.Single(nextTrip.Triggers,t=>t.Kind==SpeechTriggerKind.Overview).Id));
+    }
 }

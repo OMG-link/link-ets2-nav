@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace LinkEts2Nav.Core;
 
@@ -32,6 +33,10 @@ public sealed record DirectedRoad(
     public bool ReturnsToEntry=>StartNodeUid==EndNodeUid&&Id.StartsWith("prefab:",StringComparison.Ordinal);
     /// <summary>Indices starting a separate native edge; the preceding gap has no route mileage.</summary>
     public IReadOnlyList<int> SegmentStarts { get; init; } = [];
+    /// <summary>Map interface centers for topology queries. A PPD lane may start or end well away from them.</summary>
+    internal (Vector3 Entry,Vector3 Exit)? ControlPositions { get; init; }
+    internal Vector3 EntryInterface => ControlPositions?.Entry ?? Points[0];
+    internal Vector3 ExitInterface => ControlPositions?.Exit ?? Points[^1];
     /// <summary>Map road-type token; absent for prefab connections or unavailable metadata.</summary>
     public string? RoadType { get; init; }
     /// <summary>Loaded road-reference half-width; absent for prefabs and unresolved road definitions.</summary>
@@ -43,7 +48,11 @@ public sealed record DirectedRoad(
     public Vector3? NativeEntryTangent { get; init; }
     public Vector3? NativeExitTangent { get; init; }
     public IReadOnlyList<PrefabLanePath> LanePaths { get; init; } = [];
-    /// <summary>Native curve starts in this exact representative polyline, including its first control-node join.</summary>
+    internal PrefabLanePath? ObservedLane { get; init; }
+    // Native alternatives on this exact passage. Null stations retain a competing physical
+    // lane for ambiguity checks when its mileage cannot be expressed on the chosen route.
+    internal IReadOnlyList<(PrefabLanePath Lane, double[]? Stations)> ProjectionLanes { get; init; } = [];
+    /// <summary>Native curve starts in this exact representative polyline.</summary>
     public IReadOnlyList<PrefabCurveSpan> NativeCurveSpans { get; init; } = [];
     public IReadOnlyList<LaneConnection>? LaneConnections { get; init; }
     /// <summary>Snapshot-local decision for independent entrance groups adding disjoint exit lanes.</summary>
@@ -69,9 +78,27 @@ public sealed record MonitoredCamera(string Id, Vector3 MonitoringPosition, Vect
 /// </summary>
 public sealed class DirectedPathMatcher
 {
+    internal const double ProjectionTieMeters=2;
     private readonly double _horizontalTolerance;
     private readonly double _verticalTolerance;
     private readonly double _minimumDirectionDot;
+    private static readonly ConditionalWeakTable<IReadOnlyList<DirectedRoad>, PreparedRoute> preparedRoutes=new();
+
+    // Map snapshots publish complete components and reuse them across navigation,
+    // cameras and speed limits. An ad-hoc caller's geometry remains uncached.
+    internal static void RegisterComponent(IReadOnlyList<DirectedRoad> component)
+        =>preparedRoutes.GetValue(component,static path=>new(path.ToArray()));
+
+    private sealed class PreparedRoute(DirectedRoad[] edges)
+    {
+        internal readonly Lazy<List<Segment>?> Segments=new(()=>BuildSegments(edges));
+        internal bool Matches(IReadOnlyList<DirectedRoad> path)
+        {
+            if(path.Count!=edges.Length)return false;
+            for(int i=0;i<edges.Length;i++)if(!ReferenceEquals(path[i],edges[i]))return false;
+            return true;
+        }
+    }
 
     public DirectedPathMatcher(double horizontalToleranceMeters = 12,
         double verticalToleranceMeters = 3, double minimumDirectionDot = 0.5)
@@ -100,7 +127,7 @@ public sealed class DirectedPathMatcher
             || !TryNormalizeHorizontal(camera.TravelDirection, out var cameraHeading))
             return Unknown("车辆或监测点位置、方向无效");
 
-        var segments = BuildSegments(orderedForwardRoads);
+        var segments = SegmentsOf(orderedForwardRoads);
         if (segments is null)
             return Unknown("必经路径节点未连接或几何无效");
         var player = Project(vehiclePosition, vehicleHeading, segments);
@@ -118,102 +145,183 @@ public sealed class DirectedPathMatcher
 
     /// <summary>Returns an unambiguous forward-oriented arc coordinate on a continuous path.</summary>
     public double? ProjectDistance(Vector3 position, Vector3 direction, IReadOnlyList<DirectedRoad> path,int firstVisitIndex=0)
+        =>ProjectDistance(position,direction,path,firstVisitIndex,null);
+
+    internal double? ProjectDistance(Vector3 position,Vector3 direction,IReadOnlyList<DirectedRoad> path,int firstVisitIndex,int? requiredVisit)
     {
         ArgumentNullException.ThrowIfNull(path);
         if (!Finite(position) || !TryNormalizeHorizontal(direction, out var heading)) return null;
-        var segments = BuildSegments(path);
-        return segments is null ? null : Project(position, heading, segments,firstVisitIndex)?.AlongDistance;
+        var segments = SegmentsOf(path);
+        return segments is null ? null : Project(position, heading, segments,firstVisitIndex,requiredVisit)?.AlongDistance;
     }
-    private List<Segment>? BuildSegments(IReadOnlyList<DirectedRoad> roads)
+
+    internal bool Near(Vector3 position,Vector3 minimum,Vector3 maximum)
+        =>position.X>=minimum.X-_horizontalTolerance && position.X<=maximum.X+_horizontalTolerance
+            &&position.Z>=minimum.Z-_horizontalTolerance && position.Z<=maximum.Z+_horizontalTolerance
+            &&position.Y>=minimum.Y-_verticalTolerance && position.Y<=maximum.Y+_verticalTolerance;
+
+    /// <summary>Closest directed, same-level projection inside the finite physical polyline.</summary>
+    public double? ProjectionError(Vector3 position, Vector3 direction, IReadOnlyList<Vector3> points,
+        double? referenceHalfWidthMeters=null)
+        =>ProjectPolyline(position,direction,points,referenceHalfWidthMeters)?.Error;
+
+    internal (Vector3 Position,Vector2 Heading,double Error)? ProjectPolyline(Vector3 position, Vector3 direction,
+        IReadOnlyList<Vector3> points,double? referenceHalfWidthMeters=null)
+    {
+        ArgumentNullException.ThrowIfNull(points);
+        if (points.Count < 2 || !Finite(points[0]) || !Finite(position)
+            || !TryNormalizeHorizontal(direction, out var heading)) return null;
+        var location = new Vector2(position.X,position.Z);
+        double tolerance = Tolerance(referenceHalfWidthMeters);
+        Line? previous = null, current = null;
+        (Vector3 Position,Vector2 Heading,double Error)? best = null;
+        void Observe(Line line, Line? next)
+        {
+            if (TryProject(position, location, heading, line, previous, next, tolerance, out float t, out double error)
+                && (best is null || error < best.Value.Error))
+                best=(Vector3.Lerp(line.Start,line.End,t),line.Heading,error);
+        }
+        for(int i=1;i<points.Count;i++)
+        {
+            var start=points[i-1];var end=points[i];
+            float squared=Vector3.DistanceSquared(start,end);
+            if(!float.IsFinite(squared))return null;
+            if(squared<.000001f)continue;
+            if(!TryNormalizeHorizontal(end-start,out var tangent))return null;
+            var next=new Line(start,end,tangent);
+            if(current is {} line)Observe(line,next);
+            previous=current;current=next;
+        }
+        if(current is {} last)Observe(last,null);
+        return best;
+    }
+
+    private double Tolerance(double? width) => width is > 0 && double.IsFinite(width.Value)
+        ? Math.Max(_horizontalTolerance, width.Value) : _horizontalTolerance;
+
+    private static List<Segment>? SegmentsOf(IReadOnlyList<DirectedRoad> path)
+        =>preparedRoutes.TryGetValue(path,out var route)&&route.Matches(path)?route.Segments.Value:BuildSegments(path);
+
+    private static List<Segment>? BuildSegments(IReadOnlyList<DirectedRoad> roads)
     {
         if (roads.Count == 0)
             return null;
         var segments = new List<Segment>();
         double offset = 0;
         DirectedRoad? previous = null;
+        int previousSegment = -1;
         for(int visit=0;visit<roads.Count;visit++)
         {
             var road=roads[visit];
-            if (road.Points.Count < 2 || road.StartNodeUid == 0 || road.EndNodeUid == 0
-                || road.Points.Any(point => !Finite(point)))
+            if (road.StartNodeUid == 0 || road.EndNodeUid == 0)
                 return null;
             if (previous is not null && previous.EndNodeUid != road.StartNodeUid)
                 return null;
-            var countBeforeRoad = segments.Count;
             var roadKey=NativeRoadKey.Of(road);
-            for (var i = 1; i < road.Points.Count; i++)
+            double width=road.ReferenceHalfWidthMeters is >0 && double.IsFinite(road.ReferenceHalfWidthMeters.Value)
+                ?road.ReferenceHalfWidthMeters.Value:0;
+            if (!AppendSegments(segments, road.Points, road.SegmentStarts, offset, visit, roadKey,
+                width, null, 0, true, ref previousSegment, out double length)) return null;
+            foreach (var (lane, stations) in road.ProjectionLanes)
             {
-                if (road.SegmentStarts.Contains(i)) continue;
-                var start = road.Points[i - 1];
-                var end = road.Points[i];
-                var length = Vector3.Distance(start, end);
-                if (!float.IsFinite(length))
-                    return null;
-                if (length < 0.001f)
-                    continue;
-                if (!TryNormalizeHorizontal(end - start, out var heading))
-                    return null;
-                double tolerance=road.ReferenceHalfWidthMeters is {} width&&double.IsFinite(width)&&width>0
-                    ?Math.Max(_horizontalTolerance,width):_horizontalTolerance;
-                segments.Add(new Segment(start, end, heading, offset, length,tolerance,visit,roadKey));
-                offset += length;
+                int lanePrevious = -1;
+                if (!AppendSegments(segments, lane.Points, [], offset, visit, roadKey,
+                    width, stations, lane.LengthMeters - length, stations is not null, ref lanePrevious, out _)) return null;
             }
-            if (segments.Count == countBeforeRoad)
-                return null;
+            offset += length;
             previous = road;
         }
         return segments;
     }
 
-    private Projection? Project(Vector3 position, Vector2 heading, List<Segment> segments,int firstVisitIndex=0)
+    private static bool AppendSegments(List<Segment> segments, IReadOnlyList<Vector3> points, IReadOnlyList<int> breaks,
+        double offset, int visit, NativeRoadKey road, double width, double[]? stations, double legDifference,
+        bool hasMileage, ref int previous, out double length)
+    {
+        length = 0;
+        if (points.Count < 2 || points.Any(p => !Finite(p))) return false;
+        int countBefore = segments.Count;
+        for (int i = 1; i < points.Count; i++)
+        {
+            if (breaks.Contains(i)) { previous = -1; continue; }
+            var start = points[i - 1];
+            var end = points[i];
+            float meters = Vector3.Distance(start, end);
+            if (!float.IsFinite(meters)) return false;
+            bool mapped=stations is not null && double.IsFinite(stations[i-1]) && double.IsFinite(stations[i]);
+            double along = offset + (mapped?stations![i-1]:length);
+            length += meters;
+            if (meters < .001f) continue;
+            if (!TryNormalizeHorizontal(end - start, out var heading)) return false;
+            int connected = previous >= 0 && segments[previous].Line.End == start ? previous : -1;
+            if (connected >= 0) segments[connected] = segments[connected] with { Next = segments.Count };
+            previous = segments.Count;
+            double span = mapped ? stations![i] - stations[i - 1] : meters;
+            segments.Add(new(new(start,end,heading),along,span,width,visit,road,connected,-1,
+                stations is null?hasMileage:mapped,legDifference));
+        }
+        return segments.Count > countBefore;
+    }
+
+    private Projection? Project(Vector3 position, Vector2 heading, List<Segment> segments,int firstVisitIndex=0,int? requiredVisit=null)
     {
         var candidates = new List<Projection>();
         var firstQualifiedVisit=new Dictionary<NativeRoadKey,int>();
-        for (int index = 0; index < segments.Count; index++)
+        var location = new Vector2(position.X, position.Z);
+        foreach (var segment in segments)
         {
-            var segment = segments[index];
             if(segment.VisitIndex<firstVisitIndex)continue;
-            if (Vector2.Dot(heading, segment.Heading) < _minimumDirectionDot)
-                continue;
-            var start = new Vector2(segment.Start.X, segment.Start.Z);
-            var end = new Vector2(segment.End.X, segment.End.Z);
-            var location = new Vector2(position.X, position.Z);
-            var delta = end - start;
-            var t = Vector2.Dot(location - start, delta) / delta.LengthSquared();
-            // Fill only the outside wedge at an internal bend: neither adjacent
-            // segment has an interior perpendicular projection there. Never borrow
-            // a later segment endpoint to extend the overall path's start or end.
-            if (t < 0 && (index == 0 || Parameter(location, segments[index - 1]) < 1))
-                continue;
-            if (t > 1 && (index == segments.Count - 1 || Parameter(location, segments[index + 1]) > 0))
-                continue;
-            t = Math.Clamp(t, 0, 1);
-            var projected = Vector3.Lerp(segment.Start, segment.End, t);
-            var horizontalError = Vector2.Distance(location, start + delta * t);
-            var verticalError = Math.Abs(position.Y - projected.Y);
-            if (horizontalError > segment.LateralTolerance || verticalError > _verticalTolerance)
-                continue;
+            double tolerance=Math.Max(segment.ReferenceHalfWidth,_horizontalTolerance);
+            var line=segment.Line;
+            if(position.X<Math.Min(line.Start.X,line.End.X)-tolerance || position.X>Math.Max(line.Start.X,line.End.X)+tolerance
+                ||position.Z<Math.Min(line.Start.Z,line.End.Z)-tolerance || position.Z>Math.Max(line.Start.Z,line.End.Z)+tolerance)continue;
+            if (!TryProject(position, location, heading, segment.Line,
+                segment.Previous<0?null:segments[segment.Previous].Line,
+                segment.Next<0?null:segments[segment.Next].Line, tolerance, out float t, out double error)) continue;
             // An ordered route may revisit the same physical directed road.
             // Keep all geometric candidates in its first qualified live visit,
             // but do not let future visits duplicate that physical projection.
             if(firstQualifiedVisit.TryGetValue(segment.Road,out int first)&&first!=segment.VisitIndex)continue;
             firstQualifiedVisit.TryAdd(segment.Road,segment.VisitIndex);
-            candidates.Add(new Projection(segment.Offset + segment.Length * t,
-                Math.Sqrt(horizontalError * horizontalError + verticalError * verticalError),segment.LateralTolerance));
+            candidates.Add(new(segment.Offset + segment.Length * t, error,
+                tolerance,segment.HasMileage,segment.LegDifference,segment.VisitIndex));
         }
-        if (candidates.Count == 0)
-            return null;
-        var best = candidates.MinBy(projection => projection.Error);
+        Projection? nearest=null;
+        foreach(var candidate in candidates)
+            if(candidate.HasMileage && (nearest is null || candidate.Error < nearest.Value.Error)) nearest=candidate;
+        if(nearest is not {} best)return null;
+        if(requiredVisit is {} visit && (best.Visit!=visit
+            || candidates.Any(c=>c.Visit!=visit && c.Error<=best.Error+ProjectionTieMeters)))return null;
         // Nearby segments at a normal bend/join represent the same projection. A second
         // similarly close location far along a single visit or on a different
         // directed road remains a loop/parallel/level ambiguity.
-        if (candidates.Any(candidate => candidate.Error <= best.Error + 2
-            && Math.Abs(candidate.AlongDistance - best.AlongDistance) > Math.Max(candidate.LateralTolerance,best.LateralTolerance) * 2 + 1))
+        if (candidates.Any(candidate => candidate.Error <= best.Error + ProjectionTieMeters && (candidate.HasMileage
+            ? Math.Abs(candidate.AlongDistance - best.AlongDistance) > Math.Max(candidate.LateralTolerance,best.LateralTolerance) * 2 + 1
+            : Math.Abs(candidate.AlongDistance - best.AlongDistance) > LaneRouteConnections.NativeSeamMeters
+                || Math.Abs(candidate.LegDifference) > LaneRouteConnections.NativeSeamMeters)))
             return null;
         return best;
     }
 
-    private static float Parameter(Vector2 location, Segment segment)
+    private bool TryProject(Vector3 position, Vector2 location, Vector2 heading, Line line, Line? previous, Line? next,
+        double tolerance, out float t, out double error)
+    {
+        t=0;error=0;
+        if (Vector2.Dot(heading, line.Heading) < _minimumDirectionDot) return false;
+        t = Parameter(location, line);
+        // The outside wedge belongs only to adjacent segments on a physically connected line.
+        if (t < 0 && (previous is not {} before || before.End!=line.Start || Parameter(location, before)<1)
+            || t > 1 && (next is not {} after || after.Start!=line.End || Parameter(location, after)>0)) return false;
+        t = Math.Clamp(t, 0, 1);
+        var projected = Vector3.Lerp(line.Start, line.End, t);
+        float horizontal = Vector2.Distance(location, new(projected.X, projected.Z));
+        float vertical = Math.Abs(position.Y - projected.Y);
+        if (horizontal > tolerance || vertical > _verticalTolerance) return false;
+        error=Math.Sqrt(horizontal * horizontal + vertical * vertical);
+        return true;
+    }
+
+    private static float Parameter(Vector2 location, Line segment)
     {
         var start = new Vector2(segment.Start.X, segment.Start.Z);
         var delta = new Vector2(segment.End.X, segment.End.Z) - start;
@@ -235,6 +343,8 @@ public sealed class DirectedPathMatcher
         return true;
     }
 
-    private readonly record struct Segment(Vector3 Start, Vector3 End, Vector2 Heading, double Offset, double Length,double LateralTolerance,int VisitIndex,NativeRoadKey Road);
-    private readonly record struct Projection(double AlongDistance, double Error,double LateralTolerance);
+    private readonly record struct Line(Vector3 Start, Vector3 End, Vector2 Heading);
+    private readonly record struct Segment(Line Line, double Offset, double Length,
+        double ReferenceHalfWidth,int VisitIndex,NativeRoadKey Road,int Previous,int Next,bool HasMileage,double LegDifference);
+    private readonly record struct Projection(double AlongDistance, double Error,double LateralTolerance,bool HasMileage,double LegDifference,int Visit);
 }

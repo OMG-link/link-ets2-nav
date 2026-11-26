@@ -204,4 +204,16 @@ public sealed class DirectedPathMatcherTests
         Assert.Null(matcher.ProjectDistance(Point(103, -3), -Vector3.UnitX, [road]));
         Assert.Null(matcher.ProjectDistance(Point(103, -3, 4), Vector3.UnitX, [road]));
     }
+
+    [Fact]
+    public void RegisteredRouteGeometryUsesCurrentMatcherSettingsAndChecksReplacedVisits()
+    {
+        List<DirectedRoad> route=[Road(Point(0),Point(50))];
+        DirectedPathMatcher.RegisterComponent(route);
+        Assert.Null(new DirectedPathMatcher(3).ProjectDistance(Point(20,4),Forward,route));
+        Assert.Equal(20,new DirectedPathMatcher(5).ProjectDistance(Point(20,4),Forward,route)!.Value,4);
+        route[0]=Road(Point(0,30),Point(50,30));
+        Assert.Null(new DirectedPathMatcher().ProjectDistance(Point(20),Forward,route));
+        Assert.Equal(20,new DirectedPathMatcher().ProjectDistance(Point(20,30),Forward,route)!.Value,4);
+    }
 }

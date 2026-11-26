@@ -60,6 +60,7 @@ public sealed class LaneRoutePlanner
             for(int j=0;j<choices.Count;j++)
             {
                 var choice=choices[j];
+                if(layers[layer].edge.ObservedLane is {} observed && !ReferenceEquals(choice,observed))continue;
                 if(layer==0)
                 {
                     values[j]=(0,choice.LengthMeters);continue;

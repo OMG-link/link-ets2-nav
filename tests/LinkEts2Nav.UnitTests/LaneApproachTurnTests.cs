@@ -40,6 +40,24 @@ public sealed class LaneApproachTurnTests
         Assert.Equal(0,actual.TurnSourceCurveIndex);Assert.Equal(expected,actual.Turn);
         Assert.NotEqual(expected,LaneContinuity.DescribeTurn(g.Curves[1],point.StandardTangent,point.Origin,false));
     }
+
+    [Theory]
+    [InlineData(true,LaneTurnKind.ForwardRight)]
+    [InlineData(false,LaneTurnKind.ForwardLeft)]
+    public void CoincidentSplitAndMergeUseTheTwoRaysAtTheSharedEndpoint(bool merge,LaneTurnKind expected)
+    {
+        var origin=Vector3.Zero;
+        var g=new NativeLaneGeometry(42,[
+            C(0,new(-20,0,0),origin,[2,3],[]) with{StartTangent=new(10,0,5),EndTangent=new(10,0,-5)},
+            C(1,new(-20,0,5),origin,[2,3],[]),
+            C(2,origin,new(20,0,0),[],[0,1]),C(3,origin,new(20,0,5),[],[0,1])])
+            {InputCurveIndices=[0,1],OutputCurveIndices=[2,3]};
+        if(!merge)g=Reverse(g);
+        var turn=LaneContinuity.DescribeTurn(g,0,merge?Vector3.UnitX:-Vector3.UnitX,origin,merge);
+        Assert.Equal(expected,turn.Turn);
+        Assert.Equal(0,turn.SourceCurveIndex);
+        Assert.Null(turn.MapIssue);
+    }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -85,10 +103,18 @@ public sealed class LaneApproachTurnTests
     [Fact]
     public void EarlierUnknownStopsWordingButCannotUndoAnImmediateVeto()
     {
-        var g=Merge();g=g with{InputCurveIndices=[2],Curves=g.Curves.Select(c=>c.Index==1?c with{Blinker=LaneBlinker.Right,Previous=[99]}:c).ToArray()};
-        var point=Point(g);var side=Side(g);
+        var merge = Merge();
+        var g = merge with
+        {
+            InputCurveIndices = [2],
+            Curves = merge.Curves.Select(c => c.Index == 1 ? c with { Blinker = LaneBlinker.Right } : c).ToArray()
+        };
+        var point=Point(g);var side=Assert.Single(point.Branches, b => b.CurveIndex == 1);
         Assert.Null(point.MapIssue);Assert.Equal(LaneContinuityRole.Dead,side.Role);Assert.True(side.VetoedByBlinker);
-        Assert.Null(side.AngleDegrees);Assert.Equal(LaneTurnKind.Unknown,side.Turn);Assert.NotNull(side.MapIssue);
+        Assert.Null(side.AngleDegrees);Assert.Equal(LaneTurnKind.Unknown,side.Turn);
+        var issue = Assert.IsType<MapQueryFailure>(side.MapIssue);
+        Assert.Equal(MapQueryFailureKind.InvalidData, issue.Kind);
+        Assert.Contains("without a confirmed prefab input boundary", issue.Reason);
         Assert.Equal(LaneContinuityRole.Survivor,Assert.Single(point.Branches,b=>b.CurveIndex==2).Role);
     }
     [Fact]

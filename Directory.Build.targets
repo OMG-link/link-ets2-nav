@@ -4,6 +4,8 @@
     <NavOverrides>$(MSBuildThisFileDirectory)artifacts/host-overrides/</NavOverrides>
     <NavUi>$(MSBuildThisFileDirectory)dev-host/ui/</NavUi>
   </PropertyGroup>
+  <Import Project="scripts/ProbeRunner/ScratchProbes.targets"
+          Condition="'$(MSBuildProjectExtension)' == '.csproj' And $([MSBuild]::EnsureTrailingSlash('$(MSBuildProjectDirectory)').StartsWith('$(MSBuildThisFileDirectory).tmp$([System.IO.Path]::DirectorySeparatorChar)'))" />
   <!-- Keep diagnostics enabled for our plugin/tests; suppress known upstream diagnostics only. -->
   <PropertyGroup>
     <NavShowUpstreamWarnings Condition="'$(NavShowUpstreamWarnings)' == ''">false</NavShowUpstreamWarnings>

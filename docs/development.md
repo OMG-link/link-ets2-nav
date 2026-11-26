@@ -97,6 +97,14 @@ dotnet build LinkEts2Nav.slnx --no-restore --no-incremental -p:NavShowUpstreamWa
 
 `tools/LinkEts2Nav.Probe/` 是开发用只读工具，不随插件发布。它读取本机游戏归档，不启动游戏，不修改存档；JSON 输出可重定向到忽略的 `artifacts/`。普通扫描必须提供世界坐标。
 
+Windows 上，临时探针、冻结的旧 DLL、跨语言脚本和批量回放使用同一个启动入口。启动器让普通子进程继承 Windows 崩溃弹窗抑制设置，保留调用目录、标准流和原退出码。标准地图探针和继承仓库构建规则的 `.tmp/` 控制台探针（.NET 5+、C# 9+）也可以直接运行。并行批量回放先构建一次启动器，然后直接运行其 DLL。
+
+```powershell
+dotnet run --project scripts/ProbeRunner -- dotnet ".tmp/旧版本/Check.dll" "带空格的参数"
+dotnet build scripts/ProbeRunner
+dotnet scripts/ProbeRunner/bin/Debug/net10.0/ProbeRunner.dll python .tmp/nav-player-check/run_corpus.py --help
+```
+
 ```powershell
 dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<game-directory>" --x -39000 --z -30000 --radius 1000
 # 检查指定模型的真实测速挂点

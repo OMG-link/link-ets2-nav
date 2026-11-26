@@ -139,7 +139,7 @@ try
 }
 catch (Exception ex)
 {
-    Console.Error.WriteLine($"Probe failed: {ex.Message}");
+    Console.Error.WriteLine($"Probe failed: {ex}");
     return 1;
 }
 finally

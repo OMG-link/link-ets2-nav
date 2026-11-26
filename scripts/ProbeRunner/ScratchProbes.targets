@@ -1,0 +1,17 @@
+<Project>
+  <!-- Repository copies below .tmp own their build configuration. -->
+  <PropertyGroup>
+    <_NavRepositorySolution>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)../../LinkEts2Nav.slnx'))</_NavRepositorySolution>
+    <_NavScratchSolution>$([MSBuild]::GetPathOfFileAbove('LinkEts2Nav.slnx', '$(MSBuildProjectDirectory)'))</_NavScratchSolution>
+  </PropertyGroup>
+  <Target Name="IncludeScratchProbeCrashHandling" BeforeTargets="CoreCompile"
+          Condition="'$(OutputType)' == 'Exe' And '$(IsTestProject)' != 'true' And '$(_NavScratchSolution)' == '$(_NavRepositorySolution)'
+            And '$(TargetFrameworkIdentifier)' == '.NETCoreApp' And $([MSBuild]::VersionGreaterThanOrEquals('$(TargetFrameworkVersion)', '5.0'))
+            And !$([System.Text.RegularExpressions.Regex]::IsMatch('$(LangVersion)', '(?i)^(iso-|[1-8](\.|$))'))">
+    <ItemGroup>
+      <_NavExistingGuard Include="@(Compile)" Condition="'%(Compile.Filename)' == 'ProbeCrashHandling'" />
+      <Compile Include="$(MSBuildThisFileDirectory)../../tools/LinkEts2Nav.Probe/ProbeCrashHandling.cs" Link="ProbeCrashHandling.cs"
+               Condition="'@(_NavExistingGuard)' == ''" />
+    </ItemGroup>
+  </Target>
+</Project>

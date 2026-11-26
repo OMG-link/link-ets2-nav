@@ -15,14 +15,13 @@ public sealed class FerryNavigationTests
         var map=new TruckLib.ScsMap.Map();
         var incoming=Road.Add(map,Vector3.Zero,new(0,0,1200),default);
         var outgoing=Road.Add(map,new(10000,0,100),new(10000,0,1000),default);
-        var a=Ferry.Add(map,new(30,0,1250),"a");var b=Ferry.Add(map,new(10000,0,0),"b");
-        var pa=new Prefab{Nodes=[incoming.ForwardNode],Ferry=a};var pb=new Prefab{Nodes=[outgoing.Node],Ferry=b};
-        map.MapItems[pa.Uid]=pa;map.MapItems[pb.Uid]=pb;a.Prefab=pa;b.Prefab=pb;
+        var a = FerryMapFixture.AddPort(map, incoming.ForwardNode, new(30, 0, 1250), "a");
+        var b = FerryMapFixture.AddPort(map, outgoing.Node, new(10000, 0, 0), "b");
         var route=RouteSnapshot.Parse(new[]{incoming.Node.Uid,incoming.ForwardNode.Uid,a.Node.Uid,b.Node.Uid,outgoing.Node.Uid,outgoing.ForwardNode.Uid}
             .Select((id,i)=>new RouteNode(id,(5-i)*10000,100)),Now);
         var ferry=new FerryJourneyIndex(map,[("a","b")],new Dictionary<string,string>{{"a","Port A"},{"b","Port B"}},_=>4.5);
-        FreeNavigationArea[] areas=[new(pa.Uid.ToString("X16"),[new(-50,0,1200),new(50,0,1200),new(50,0,1300),new(-50,0,1300)],[incoming.ForwardNode.Uid]),
-            new(pb.Uid.ToString("X16"),[new(9950,0,-50),new(10050,0,-50),new(10050,0,150),new(9950,0,150)],[outgoing.Node.Uid])];
+        FreeNavigationArea[] areas=[new(a.Prefab.Uid.ToString("X16"),[new(-50,0,1200),new(50,0,1200),new(50,0,1300),new(-50,0,1300)],[incoming.ForwardNode.Uid]),
+            new(b.Prefab.Uid.ToString("X16"),[new(9950,0,-50),new(10050,0,-50),new(10050,0,150),new(9950,0,150)],[outgoing.Node.Uid])];
         return(new(map,[],[],[]){Ferries=ferry,FreeNavigationAreas=withAreas?areas:[]},route,a,b,outgoing);
     }
     private static GameDataSnapshot Data(RouteSnapshot route,float z,DateTimeOffset now,bool paused=false)

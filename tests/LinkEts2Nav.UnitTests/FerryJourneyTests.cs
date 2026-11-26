@@ -12,11 +12,8 @@ public sealed class FerryJourneyTests
         var map=new TruckLib.ScsMap.Map();
         var before=Road.Add(map,Vector3.Zero,new(100,0,0),default);
         var after=Road.Add(map,new(100000,0,0),new(100200,0,0),default);
-        var a=Ferry.Add(map,new(101,0,0),"a");var b=Ferry.Add(map,new(99999,0,0),"b");
-        var pa=new Prefab{Nodes=[before.ForwardNode],Ferry=a};var pb=new Prefab{Nodes=[after.Node],Ferry=b};
-        map.MapItems[pa.Uid]=pa;map.MapItems[pb.Uid]=pb;
-        before.ForwardNode.ForwardItem=pa;after.Node.BackwardItem=pb;
-        a.Prefab=pa;b.Prefab=pb;
+        var a = FerryMapFixture.AddPort(map, before.ForwardNode, new(101, 0, 0), "a");
+        var b = FerryMapFixture.AddPort(map, after.Node, new(99999, 0, 0), "b");
         return(map,before,after,a,b);
     }
     [Theory] [InlineData(false)] [InlineData(true)]
@@ -126,12 +123,16 @@ public sealed class FerryJourneyTests
     }
 
     [Fact]
-    public void TwoDifferentAttachedRoadsDoNotCreateAnAmbiguousEntrance()
+    public void PortInterfaceClaimedByTwoRoadsIsRejectedWhenTheMapIsRead()
     {
-        var s=Scene();var other=Road.Add(s.Map,new(100,0,0),new(100,0,100),default);
-        other.Node=s.Before.ForwardNode;s.Before.ForwardNode.ForwardItem=other;
-        var index=new FerryJourneyIndex(s.Map,[],roadHalfWidth:_=>4.5);
-        Assert.Empty(index.Ports.Single(p=>p.ItemUid==s.A.Uid).Entrances);
+        var s = Scene();
+        var entrance = s.Before.ForwardNode;
+        entrance.ForwardItem = null!;
+        s.Before.Append(new(100, 0, 100));
+
+        var error = Assert.Throws<InvalidDataException>(() => new FerryJourneyIndex(s.Map, [], roadHalfWidth: _ => 4.5));
+        Assert.Contains(entrance.Uid.ToString("X16"), error.Message);
+        Assert.Contains(s.A.Prefab.Uid.ToString("X16"), error.Message);
     }
 
     [Fact]
@@ -139,6 +140,7 @@ public sealed class FerryJourneyTests
     {
         var s=Scene();var road=Road.Add(s.Map,new(0,0,50),new(100,0,50),default);
         var second=new Prefab{Nodes=[road.ForwardNode],Ferry=s.A};
+        road.ForwardNode.ForwardItem = second;
         s.Map.MapItems[second.Uid]=second;s.A.Prefab=null!;
         var index=new FerryJourneyIndex(s.Map,[("a","b")]);
         Assert.True(index.Connects(road.ForwardNode.Uid,s.B.Node.Uid));

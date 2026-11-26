@@ -113,11 +113,8 @@ public sealed class MainLoopMapRetryTests
     public void AnExplicitFerryLegIsANormalBreakBetweenTwoKnownDrivableComponents()
     {
         var map=new TruckLib.ScsMap.Map();var before=Road.Add(map,Vector3.Zero,new(100,0,0),default);var after=Road.Add(map,new(100000,0,0),new(100100,0,0),default);
-        var a=Ferry.Add(map,new(101,0,0),"a");var b=Ferry.Add(map,new(99999,0,0),"b");
-        var pa=new Prefab{Nodes=[before.ForwardNode],Ferry=a};var pb=new Prefab{Nodes=[after.Node],Ferry=b};
-        map.MapItems[pa.Uid]=pa;map.MapItems[pb.Uid]=pb;a.Prefab=pa;b.Prefab=pb;
-        before.ForwardNode.ForwardItem=pa;
-        after.Node.BackwardItem=pb;
+        FerryMapFixture.AddPort(map, before.ForwardNode, new(101, 0, 0), "a");
+        FerryMapFixture.AddPort(map, after.Node, new(99999, 0, 0), "b");
         var ferries=new FerryJourneyIndex(map,[("a","b")]);var owner=new MapRetryCoordinator();
         owner.Adopt(new(map,[],[],[]){Ferries=ferries},1);
         var route=RouteSnapshot.Parse([new(before.Node.Uid,1000,0),new(before.ForwardNode.Uid,900,0),new(after.Node.Uid,100,0),new(after.ForwardNode.Uid,0,0)],DateTimeOffset.UtcNow);

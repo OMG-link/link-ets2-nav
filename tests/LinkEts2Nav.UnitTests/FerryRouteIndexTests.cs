@@ -13,9 +13,8 @@ public sealed class FerryRouteIndexTests
         var map=new TruckLib.ScsMap.Map();
         var before=Road.Add(map,Vector3.Zero,new(100,0,0),default);
         var after=Road.Add(map,new(10000,0,0),new(10200,0,0),default);
-        var a=Ferry.Add(map,new(140,0,0),"a");var b=Ferry.Add(map,new(9960,0,0),"b");
-        var pa=new Prefab{Nodes=[before.ForwardNode],Ferry=a};var pb=new Prefab{Nodes=[after.Node],Ferry=b};
-        map.MapItems[pa.Uid]=pa;map.MapItems[pb.Uid]=pb;a.Prefab=pa;b.Prefab=pb;
+        var a = FerryMapFixture.AddPort(map, before.ForwardNode, new(140, 0, 0), "a");
+        var b = FerryMapFixture.AddPort(map, after.Node, new(9960, 0, 0), "b");
         return(map,before,after,a,b);
     }
     private static RouteSnapshot Route(params ulong[] nodes)=>RouteSnapshot.Parse(nodes.Select((uid,i)=>new RouteNode(uid,(nodes.Length-i-1)*100,10)),Now);

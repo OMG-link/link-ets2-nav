@@ -102,7 +102,7 @@ Windows 上，临时探针、冻结的旧 DLL、跨语言脚本和批量回放�
 ```powershell
 dotnet run --project scripts/ProbeRunner -- dotnet ".tmp/旧版本/Check.dll" "带空格的参数"
 dotnet build scripts/ProbeRunner
-dotnet scripts/ProbeRunner/bin/Debug/net10.0/ProbeRunner.dll python .tmp/nav-player-check/run_corpus.py --help
+dotnet scripts/ProbeRunner/bin/Debug/net10.0/ProbeRunner.dll python "<批量回放脚本.py>" --help
 ```
 
 ```powershell
@@ -114,6 +114,23 @@ dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<game-directory>" -
 默认扫描已安装官方归档，输出的 `profileResolved` 为 false，不代表当前存档。传入 `--game-log "<game.log.txt>"` 后才按实际挂载日志解析当前地图；会拒绝无法确认兼容的地图或探头资源覆盖。模组以最近一次显式活动列表为准；模组管理界面的临时预览挂载不算启用，也不会重置地图缓存。用 `--help` 查看完整参数。
 
 启用插件后，开发宿主首页的“测速探头诊断”链接进入 `/link-ets2-nav`。该页面随插件 DLL 提供，在标准宿主中也可通过对应路由访问。架构及预警规则见 [预警设计](architecture.md)。
+
+### 随机合法路线回归
+
+下面的命令在意大利的官方地图上生成 160 条路线。固定插件版本、游戏归档、坐标、半径和种子即可复跑。换一组坐标可以检查同一种故障是否也影响其他地图区域。
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<ETS2安装目录>" --x 22000 --z 35000 --radius 2500 --seed 17001 --check-routes 160 --output artifacts/italy-routes.json
+```
+
+生成器从当前已加载区块中可见的道路和预制件取样。它检查道路方向、玩家禁行规则、原生车道槽和相邻接口，排除设置了 GPS 避让的道路。预制件直接相接时还要求原生槽对应且世界坐标端点相距不超过 0.55 米。每条路线含 1 至 48 个路段，按 SDK 节点序列去重。样本可以从预制件内开始、在环岛内结束或再次经过同一节点。轮渡和自由驾驶场地另有专门测试。
+
+回放在每个路段的 20%、50%、80% 处采集合成遥测，按地图的常规距离比例生成 SDK 剩余里程，沿行驶方向更新位置和剩余节点。每一帧依次运行行程通知、导航规划、测速预警、信号灯提醒和语音事件调度。报告分别记录完成的路线、实际建立结构规划的路线、获得位置匹配的路线和帧数。路线执行时抛出异常会保留节点 UID、访问序号、原生车道和异常堆栈。
+
+报告的 `unmatchedSamples` 按路线节点序列和路段访问序号记录未定位的采样比例及对应的原生道路或车道曲线，可直接对照相同种子的两次回放。
+
+退出码 `0` 表示所有请求的路线完成回放并至少匹配了一次位置。退出码 `1` 表示发现异常、样本数不足或有路线完全没有进入结构规划。退出码 `2` 表示所有路线均完成规划及回放，但有路线在全部采样位置都未匹配，可从报告的 `unmatched` 查看。
+
 ## 运行日志
 
 插件日志统一带 `[LinkEts2Nav]` 前缀。加载日志不代表插件已经启用：在插件管理器中启用后，还应看到“插件已启用”和“后台扫描已启动”。日志包含等待遥测、暂停、数据过期、地图挂载、扫描结果、校准配置、发现目标、判定变化及预警播放请求。

@@ -191,19 +191,41 @@ public sealed class GameDataManager:IDisposable
         =>SpeedLimits.Build(window,token,Map.NativeBase,regions);
     internal NativeMap ReadWindow(IEnumerable<SectorCoordinate> requested)
     {
-        var sectors=requested.Distinct().OrderBy(s=>s.X).ThenBy(s=>s.Z).ToArray();
+        var sectors=OrderedSectors(requested);
         if(loadedWindow is not null&&sectors.SequenceEqual(loadedSectors))return loadedWindow;
-        using var evidence=new SectorReadEvidence();
-        var map=new SupplementMap(Map.NativeBase,evidence);
-        try{map.Read(mapPath,resources,sectors);}finally{evidence.End();}
-        if(evidence.Failures.Count>0)throw new MapSectorReadException(evidence.Failures);
+        var map=ReadSupplement(sectors,regionsOnly:false);
         // Capture before merging host metadata: absent files are confirmed empty, not loaded.
         var existing=map.Sectors.Keys.ToHashSet();
         Map.MergeInto(map,sectors);
+        // TruckLib reserves slots for every serialized item, including the scenery filtered during the read.
+        map.MapItems.TrimExcess();
         Map.Publish(map);
         windowReadiness.Add(map,new(sectors.Where(existing.Contains).ToArray(),sectors.Where(s=>!existing.Contains(s)).ToArray()));
         loadedWindow=map;loadedSectors=sectors;return map;
     }
+
+    internal IReadOnlyList<LimitRegion> ReadLimitRegions(IEnumerable<SectorCoordinate> requested)
+    {
+        var sectors=OrderedSectors(requested);
+        var map=ReadSupplement(sectors,regionsOnly:true);
+        Map.MergeInto(map,sectors);
+        // The region values contain their own positions and rules. The temporary map
+        // has no route evidence to publish and can be released after projection.
+        return SpeedLimits.ReadRegions(map);
+    }
+
+    private static SectorCoordinate[] OrderedSectors(IEnumerable<SectorCoordinate> requested)
+        =>requested.Distinct().OrderBy(s=>s.X).ThenBy(s=>s.Z).ToArray();
+
+    private NativeMap ReadSupplement(SectorCoordinate[] sectors,bool regionsOnly)
+    {
+        using var evidence=new SectorReadEvidence();
+        var map=new SupplementMap(Map.NativeBase,evidence,regionsOnly);
+        try{map.Read(mapPath,resources,sectors);}finally{evidence.End();}
+        if(evidence.Failures.Count>0)throw new MapSectorReadException(evidence.Failures);
+        return map;
+    }
+
     internal MapWindowReadiness WindowReadiness(NativeMap window)=>windowReadiness.TryGetValue(window,out var value)?value:throw new InvalidOperationException("Unknown map read window.");
     public void Dispose()=>owner?.Dispose();
     internal static MapQueryIssue DescribeMissingNativeObjects(NativeMap window,ulong boundaryUid)
@@ -266,13 +288,14 @@ public sealed class GameDataManager:IDisposable
         }
     }
 
-    private sealed class SupplementMap(NativeMap? basis,SectorReadEvidence evidence):NativeMap
+    private sealed class SupplementMap(NativeMap? basis,SectorReadEvidence evidence,bool regionsOnly):NativeMap
     {
         protected override void OnSectorLoading(Sector sector,int current,int total)
         {evidence.Begin(sector.Coordinate);base.OnSectorLoading(sector,current,total);}
         protected override bool PostProcessItem(MapItem item)
         {
             if(basis?.MapItems.ContainsKey(item.Uid)==true)return false;
+            if(regionsOnly)return item is CityArea or TrafficArea;
             // TruckLib calls this after the entire native data payload is read.
             switch(item)
             {

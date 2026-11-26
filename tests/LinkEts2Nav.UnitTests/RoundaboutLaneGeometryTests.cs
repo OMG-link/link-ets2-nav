@@ -4,6 +4,33 @@ namespace LinkEts2Nav.UnitTests;
 
 public sealed class RoundaboutLaneGeometryTests
 {
+    [Fact]
+    public void BothRoadDirectionsKeepEveryNativePointAndSignedLateralNormal()
+    {
+        var map=new TruckLib.ScsMap.Map();
+        var road=TruckLib.ScsMap.Road.Add(map,new(0,4,0),new(41,11,-103),default);
+        road.Node.Rotation=Quaternion.Identity;
+        road.ForwardNode.Rotation=Quaternion.CreateFromYawPitchRoll(.65f,.12f,.28f);
+        int intervals=Math.Clamp((int)Math.Ceiling(road.Length/3),8,1024);
+        var native=Enumerable.Range(0,intervals+1).Select(i=>road.InterpolateCurve((float)i/intervals)).ToArray();
+        var points=native.Select(p=>p.Position).ToArray();
+        var normals=native.Select(p=>Vector3.Normalize(Vector3.Transform(Vector3.UnitX,p.Rotation))).ToArray();
+        var samples=RoundaboutMapIndex.SampleRoad(road);
+        Check(points,samples.Points);
+        Check(normals,samples.Normals);
+        Check(points.Reverse().ToArray(),samples.ReversePoints);
+        Check(normals.Reverse().Select(n=>-n).ToArray(),samples.ReverseNormals);
+
+        static (int,int,int) Bits(Vector3 v)=>(BitConverter.SingleToInt32Bits(v.X),
+            BitConverter.SingleToInt32Bits(v.Y),BitConverter.SingleToInt32Bits(v.Z));
+        static void Check(Vector3[] expected,IReadOnlyList<Vector3> actual)
+        {
+            Assert.Equal(expected.Length,actual.Count);
+            Assert.Equal(expected.Select(Bits),actual.Select(Bits));
+            for(int i=0;i<expected.Length;i++)Assert.Equal(Bits(expected[i]),Bits(actual[i]));
+        }
+    }
+
     private static RoundaboutCurve[] Circle()
         => Enumerable.Range(0,8).Select(i=>
         {

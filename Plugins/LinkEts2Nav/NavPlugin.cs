@@ -136,8 +136,8 @@ public sealed class NavPlugin : Plugin
         var calibrations = CameraCalibrationSet.Empty;
         var calibrationPath = Path.Combine(AppContext.BaseDirectory, "Settings", "LinkEts2Nav.CameraCalibrations.json");
         var calibrationCheck = DateTimeOffset.MinValue;
-        await using var mapScanner = new BackgroundMapScanner(cancellationToken: token);
-        guidance.JourneyEstimateProvider=data=>mapScanner.Capture().JourneyEstimator?.Estimate(data.Route);
+        BackgroundMapScanner? mapScanner = null;
+        guidance.JourneyEstimateProvider=data=>mapScanner?.Capture().JourneyEstimator?.Estimate(data.Route);
         string[] gameLog = [];
         long resourceVersion = 0;
         long observedScanRevision = 0;
@@ -154,7 +154,7 @@ public sealed class NavPlugin : Plugin
             do
             {
                 token.ThrowIfCancellationRequested();
-                mapScanner.ThrowIfFaulted();
+                mapScanner?.ThrowIfFaulted();
                 playback.ThrowIfFaulted();
                 motionTrace.ThrowIfFaulted();
                 speechUsage.ThrowIfFaulted();
@@ -181,11 +181,24 @@ public sealed class NavPlugin : Plugin
                 if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2 || !currentInstallation.IsParsed)
                 {
                     speech?.ClearPlan();
-                    if (installation is not null) { mapScanner.Invalidate(); pipeline.Reset(); navigation.Reset(); guidance.Reset(); installation = null; }
+                    if (mapScanner is { } previousScanner)
+                    {
+                        mapScanner = null;
+                        installation = null;
+                        installationMap = null;
+                        gameLog = [];
+                        observedScanRevision = 0;
+                        scanBusySince = DateTimeOffset.MinValue;
+                        pipeline.Reset();
+                        navigation.Reset();
+                        guidance.Reset();
+                        await previousScanner.DisposeAsync();
+                    }
                     Publish(new(now, "等待 ETS2 当前地图就绪。", data.RouteAvailability.ToString(), 0, []));
                     continue;
                 }
                 {
+                    mapScanner ??= new BackgroundMapScanner(cancellationToken: token);
                     if (!ReferenceEquals(installation, currentInstallation) || now >= mountCheck)
                     {
                         mountCheck = now.AddSeconds(5);
@@ -310,8 +323,15 @@ public sealed class NavPlugin : Plugin
             }
             finally
             {
-                ReplayCapture.Detach(motionTrace);
-                logOutput.Event("后台扫描已停止。", DateTimeOffset.UtcNow);
+                try
+                {
+                    ReplayCapture.Detach(motionTrace);
+                    logOutput.Event("后台扫描已停止。", DateTimeOffset.UtcNow);
+                }
+                finally
+                {
+                    if (mapScanner is not null) await mapScanner.DisposeAsync();
+                }
             }
         }
     }

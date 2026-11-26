@@ -124,7 +124,7 @@ public sealed class NearbyCameraScanner
             var regionData=areaCache.Update(nextMap,sectors,
                 junctions.SelectMany(e=>e.Points).Concat(nextMap.MapItems.Values.OfType<Road>()
                     .SelectMany(r=>Enumerable.Range(0,Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)+1)
-                        .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),speedReader!,cancellationToken);
+                        .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),cancellationToken);
             var builtLimits = ProjectedSignBuilder.Build(data.ReadSpeedLimits(nextMap,regionData,cancellationToken),junctions,cancellationToken);
             trafficSignals=new(signalPrefabs.SelectMany(p=>TrafficSignalMap.Build(p.Prefab,p.Projection)));
             // One annotated geometry graph per map version, shared with navigation consumers.

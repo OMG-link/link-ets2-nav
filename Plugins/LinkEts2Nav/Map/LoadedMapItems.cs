@@ -41,7 +41,10 @@ public static class LoadedMapItems
             }
             var nodes=current.MapItems.Values.OfType<SingleNodeItem>().Select(i=>i.Node.Uid).ToHashSet();
             foreach(ulong uid in current.Nodes.Keys.Where(uid=>!nodes.Contains(uid)).ToArray())current.Nodes.Remove(uid);
-            return current.MapItems.Count>0;
+            if(current.MapItems.Count==0)return false;
+            current.MapItems.TrimExcess();
+            current.Nodes.TrimExcess();
+            return true;
         }
         return Trim(compound);
     }

@@ -8,9 +8,9 @@ internal sealed class SpeedLimitAreaCache(GameDataManager data)
 {
     private readonly Dictionary<SectorCoordinate, IReadOnlyList<LimitRegion>> cache = [];
     public IReadOnlyList<LimitRegion> Update(ScsMap loaded, IEnumerable<SectorCoordinate> loadedSectors,
-        IEnumerable<Vector3> queryGeometry, SpeedLimitDefinitionReader reader, CancellationToken token)
+        IEnumerable<Vector3> queryGeometry, CancellationToken token)
     {
-        var regions = reader.ReadRegions(loaded);
+        var regions = data.SpeedLimits.ReadRegions(loaded);
         foreach (var s in loadedSectors)
             cache[s] = regions.Where(r => r.OwnerSector == s).ToArray();
         var required = queryGeometry.SelectMany(LimitRegionIndex.NearestFour).Distinct().ToArray();
@@ -19,8 +19,7 @@ internal sealed class SpeedLimitAreaCache(GameDataManager data)
         {
             token.ThrowIfCancellationRequested();
             // Missing sea sectors are empty and cached too. Map.Read filters absent files.
-            var supplement=data.ReadWindow(missing);
-            var extra = reader.ReadRegions(supplement);
+            var extra = data.ReadLimitRegions(missing);
             foreach (var s in missing) cache[s] = extra.Where(r => r.OwnerSector == s).ToArray();
         }
         token.ThrowIfCancellationRequested();

@@ -29,12 +29,14 @@ public sealed class LoadedMapItemsTests
         var nested=Compound.Add(compound,new(10,0,20));var sign=Sign.Add(nested,new(12,1,23),"town");
         var decoration=Model.Add(compound,new(20,0,30),"decoration",default,default);decoration.ModelHookups=true;
         var enabledDecoration=Model.Add(compound,new(30,0,40),"enabled",default,default);enabledDecoration.ModelHookups=true;
+        for(int i=0;i<64;i++)Model.Add(nested,new(50+i,0,40),"decoration",default,default);
         var position=sign.Node.Position;var owner=sign.Node.Parent;
         Assert.True(LoadedMapItems.RetainSupplementSigns(compound));
         Assert.DoesNotContain(decoration.Uid,compound.MapItems.Keys);Assert.DoesNotContain(decoration.Node.Uid,compound.Nodes.Keys);
         Assert.DoesNotContain(enabledDecoration.Uid,compound.MapItems.Keys);Assert.Same(sign,nested.MapItems[sign.Uid]);
         Assert.Equal(position,sign.Node.Position);Assert.Same(owner,sign.Node.Parent);
         Assert.Same(sign.Node,nested.Nodes[sign.Node.Uid]);
+        Assert.True(nested.MapItems.EnsureCapacity(0)<64);Assert.True(nested.Nodes.EnsureCapacity(0)<64);
     }
 
     [Fact]

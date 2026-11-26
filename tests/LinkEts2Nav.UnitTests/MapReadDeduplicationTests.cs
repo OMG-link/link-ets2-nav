@@ -15,10 +15,52 @@ public sealed class MapReadDeduplicationTests
         public Stream Open(string path)=>new MemoryStream(ReadAllBytes(path));
         public bool FileExists(string path)=>File.Exists(Local(path));
         public bool DirectoryExists(string path)=>Directory.Exists(Local(path));
-        public IList<string> GetFiles(string path)=>Directory.GetFiles(Local(path)).Select(f=>"/"+Path.GetRelativePath(root,f).Replace('\\','/')).ToArray();
+        public IList<string> GetFiles(string path)
+        {
+            var directory=Local(path);
+            return Directory.Exists(directory)
+                ? Directory.GetFiles(directory).Select(f=>"/"+Path.GetRelativePath(root,f).Replace('\\','/')).ToArray()
+                : [];
+        }
         public string GetParent(string path)=>path[..path.LastIndexOf('/')];
         public string ReadAllText(string path)=>Encoding.UTF8.GetString(ReadAllBytes(path));
         public string ReadAllText(string path,Encoding encoding)=>encoding.GetString(ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void ReadingNeighborRegionsKeepsThePublishedNavigationWindow()
+    {
+        string root=Path.Combine(Path.GetTempPath(),"limit-region-window-"+Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var native=new TruckLib.ScsMap.Map();
+            Road.Add(native,new(20,0,20),new(100,0,20),default);
+            var neighboringRoad=Road.Add(native,new(4100,0,20),new(4200,0,20),default);
+            var city=CityArea.Add(native,new(4150,0,25),"test",80,60);
+            native.Save(Path.Combine(root,"map"),"europe");
+            using var data=new GameDataManager(new Files(root));
+            data.Prepare(TestContext.Current.CancellationToken);
+
+            SectorCoordinate[] current=[new(0,0)];
+            var nearby=data.ReadWindow(current);
+            var cache=new SpeedLimitAreaCache(data);
+            var regions=cache.Update(nearby,current,[new(3999,0,20)],TestContext.Current.CancellationToken);
+
+            var region=Assert.Single(regions);
+            Assert.Equal(city.Uid.ToString("X16"),region.Id);
+            Assert.Equal((SectorCoordinate?)new SectorCoordinate(1,0),region.OwnerSector);
+            Assert.False(region.Urban);
+            Assert.Null(data.Map.GetItem(neighboringRoad.Uid));
+            Assert.Null(data.Map.GetNode(neighboringRoad.Node.Uid));
+            Assert.Same(nearby,data.ReadWindow(current));
+
+            var expanded=data.ReadWindow([new(1,0)]);
+            Assert.Contains(neighboringRoad.Uid,expanded.MapItems.Keys);
+            var publishedRegion=Assert.Single(data.SpeedLimits.ReadRegions(expanded));
+            Assert.Equal(publishedRegion.Points,region.Points);
+        }
+        finally{Directory.Delete(root,true);}
     }
     [Fact]
     public void AResourceReadsEachSectorFileOnceAcrossOverlappingAndRevisitedWindows()
@@ -113,6 +155,7 @@ public sealed class MapReadDeduplicationTests
             };
             var prefab=Prefab.Add(native,new(200,0,60),"prefab",descriptor);
             var decoration=Model.Add(native,new(200,0,10),"decor",default,default);decoration.ModelHookups=false;
+            for(int i=0;i<64;i++)Model.Add(native,new(400+i,0,10),"decor",default,default).ModelHookups=false;
             var camera=Model.Add(native,new(200,0,20),"camera",default,default);camera.ModelHookups=true;
             var sign=Sign.Add(native,new(200,0,30),"sign");
             var compound=Compound.Add(native,new(200,0,40));
@@ -122,6 +165,7 @@ public sealed class MapReadDeduplicationTests
             host.Nodes.Add(borrowed.Node.Uid,borrowed.Node);host.Nodes.Add(borrowed.ForwardNode.Uid,borrowed.ForwardNode);
             using var data=new GameDataManager(new Files(root),map:host);
             var window=data.ReadWindow([new(0,0)]);
+            Assert.True(window.MapItems.EnsureCapacity(0)<64);
             var local=Assert.IsType<Road>(window.MapItems[road.Uid]);
             Assert.Null(local.Left.Terrain);Assert.Null(local.Right.Terrain);
             Assert.Same(window.Nodes[road.Node.Uid],local.Node);

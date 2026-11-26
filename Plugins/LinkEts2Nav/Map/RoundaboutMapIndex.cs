@@ -98,10 +98,7 @@ public sealed class RoundaboutMapIndex
     public void AddRoad(Road road,SpeedLimitDefinitionReader? definitions=null)
     {
         if (road.Node is null || road.ForwardNode is null || curves.ContainsKey(new(road.Uid, -1))) return;
-        int samples = Math.Clamp((int)Math.Ceiling(road.Length / 3), 8, 1024);
-        var interpolated=Enumerable.Range(0,samples+1).Select(i=>road.InterpolateCurve((float)i/samples)).ToArray();
-        var points=interpolated.Select(p=>p.Position).ToArray();
-        var normals=interpolated.Select(p=>Vector3.Normalize(Vector3.Transform(Vector3.UnitX,p.Rotation))).ToArray();
+        var (points,normals,reversePoints,reverseNormals)=SampleRoad(road);
         var native=Native(road.Node.Position,road.ForwardNode.Position,
             Vector3.Transform(new Vector3(0,0,-road.Length),road.Node.Rotation),
             Vector3.Transform(new Vector3(0,0,-road.Length),road.ForwardNode.Rotation));
@@ -109,10 +106,43 @@ public sealed class RoundaboutMapIndex
         // Road states describe road connectivity, not a claim about exact lane trajectories.
         curves[new(road.Uid, -1)] = new(new(road.Uid, -1), null, road.LeftHandTraffic, points, [], road.Node.Uid, road.ForwardNode.Uid)
             {NativeCurve=native,ProvenTraffic=traffic?.Forward==true,TrafficKnown=traffic?.Forward.HasValue==true,RoadNormals=normals};
-        curves[new(road.Uid, -2)] = new(new(road.Uid, -2), null, road.LeftHandTraffic, points.Reverse().ToArray(), [], road.ForwardNode.Uid, road.Node.Uid)
+        curves[new(road.Uid, -2)] = new(new(road.Uid, -2), null, road.LeftHandTraffic, reversePoints, [], road.ForwardNode.Uid, road.Node.Uid)
             {NativeCurve=native.Reverse(),ProvenTraffic=traffic?.Reverse==true,TrafficKnown=traffic?.Reverse.HasValue==true,
-                RoadNormals=normals.Reverse().Select(n=>-n).ToArray()};
+                RoadNormals=reverseNormals};
         AttachmentsAdded([road.Node.Uid, road.ForwardNode.Uid]);
+    }
+
+    internal static (IReadOnlyList<Vector3> Points,IReadOnlyList<Vector3> Normals,
+        IReadOnlyList<Vector3> ReversePoints,IReadOnlyList<Vector3> ReverseNormals) SampleRoad(Road road)
+    {
+        int intervals=Math.Clamp((int)Math.Ceiling(road.Length/3),8,1024);
+        var points=new Vector3[intervals+1];
+        var normals=new Vector3[intervals+1];
+        for(int i=0;i<=intervals;i++)
+        {
+            var sample=road.InterpolateCurve((float)i/intervals);
+            points[i]=sample.Position;
+            normals[i]=Vector3.Normalize(Vector3.Transform(Vector3.UnitX,sample.Rotation));
+        }
+        return (points,normals,new ReversedSamples(points,false),new ReversedSamples(normals,true));
+    }
+
+    private sealed class ReversedSamples(Vector3[] samples,bool negate):IReadOnlyList<Vector3>
+    {
+        public int Count=>samples.Length;
+        public Vector3 this[int index]
+        {
+            get
+            {
+                var sample=samples[samples.Length-1-index];
+                return negate?-sample:sample;
+            }
+        }
+        public IEnumerator<Vector3> GetEnumerator()
+        {
+            for(int i=0;i<Count;i++)yield return this[i];
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()=>GetEnumerator();
     }
 
     // Invalidate only searches that actually reached an attachment now supplied

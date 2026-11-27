@@ -42,7 +42,17 @@
     } else $("progress").removeAttribute("value");
     const count = running && job.total > 0 ? "（" + job.completed + " / " + job.total + "）" : "";
     feedback("job-message", generationError || (job.message + count), Boolean(generationError) || phase === "Failed");
+    feedback("job-usage", phase === "Idle" ? "" :
+      "已用输入 token " + job.spentTokens + " / " + job.budget + "，整句 " + job.wholeCount + " 条，拼接 " + job.composedCount + " 条。");
   }
+  function sourceView() {
+    const local = $("source").value === "local";
+    $("api-fields").hidden = local;
+    $("api-fields").disabled = local;
+    $("local-help").hidden = !local;
+  }
+  $("source").addEventListener("change", sourceView);
+  sourceView();
   async function refresh(pack = false) {
     const request = ++revision;
     clearTimeout(timer);
@@ -76,14 +86,29 @@
     event.preventDefault();
     if (starting || phase === "Running") return;
     generationError = "";
-    const template = $("request-template").value.trim();
-    if (template) {
-      try { JSON.parse(template); }
-      catch { $("job").hidden = false; feedback("job-message", "请求模板不是有效的 JSON。", true); return; }
+    const tokenBudget = $("token-budget").value.trim();
+    const input = {source:$("source").value, tokenBudget};
+    try {
+      if (!/^\d+$/.test(tokenBudget) || BigInt(tokenBudget) <= 0n || BigInt(tokenBudget) > 9223372036854775807n)
+        throw new Error("请输入不超过 9223372036854775807 的正整数 token 预算。");
+      if (input.source === "api") {
+        const template = $("request-template").value.trim();
+        if (template) {
+          try { JSON.parse(template); }
+          catch { throw new Error("请求模板不是有效的 JSON。"); }
+        }
+        const endpoint = $("endpoint").value.trim(), counter = $("token-count-endpoint").value.trim();
+        if (counter && new URL(counter).origin !== new URL(endpoint).origin) throw new Error("Token 计数地址须与合成 API 同源。");
+        Object.assign(input, {endpoint, model:$("model").value.trim(), voice:$("voice").value.trim(), apiKey:$("api-key").value || null,
+          requestTemplate:template || null, authHeader:$("auth-header").value.trim() || "Authorization",
+          authPrefix:$("auth-prefix").value, tokenCountEndpoint:counter || null});
+      }
+    } catch (error) {
+      generationError = error.message;
+      $("job").hidden = false;
+      feedback("job-message", generationError, true);
+      return;
     }
-    const input = {endpoint:$("endpoint").value.trim(), model:$("model").value.trim(), voice:$("voice").value.trim(),
-      apiKey:$("api-key").value || null, top:$("top").valueAsNumber, requestTemplate:template || null,
-      authHeader:$("auth-header").value.trim() || "Authorization", authPrefix:$("auth-prefix").value};
     $("api-key").value = "";
     starting = true;
     $("generation-fields").disabled = true;

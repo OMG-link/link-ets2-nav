@@ -18,7 +18,7 @@ public static class ContextualSpeech
         using var stream=file is null?typeof(ContextualSpeech).Assembly.GetManifestResourceStream("LinkEts2Nav.Speech.contextual-fragments.json")!
             :File.OpenRead(file);
         var plan=JsonSerializer.Deserialize<ContextPlan>(stream);
-        if(plan is not {Schema:1,Items:not null} || plan.Items.Length is <1 or >256
+        if(plan is not {Schema:1,Items:not null} || plan.Items.Length < 1
             ||plan.Items.Any(f=>f is null)||plan.Items.Select(f=>f.Text).Distinct(StringComparer.Ordinal).Count()!=plan.Items.Length)
             throw new InvalidDataException("Invalid contextual fragment plan.");
         foreach(var f in plan.Items)

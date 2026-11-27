@@ -101,12 +101,21 @@ if ($ProjectName -eq 'ETS2LA') {
             Environment.ExitCode = LocalHost.RunNavigationOnly();
             return;
         }
-        RunFullHost(args, currentVersion);
+        using var stop = new CancellationTokenSource();
+        void Interrupt(object? sender, ConsoleCancelEventArgs e)
+        {
+            e.Cancel = true;
+            stop.Cancel();
+        }
+        Console.CancelKeyPress += Interrupt;
+        try { RunFullHost(args, currentVersion, stop.Token); }
+        finally { Console.CancelKeyPress -= Interrupt; }
     }
 
-    private static void RunFullHost(string[] args, string currentVersion)
+    private static void RunFullHost(string[] args, string currentVersion, CancellationToken shutdownToken)
     {
 '@
+    $text = Replace-Once $text 'UserInterface.Start(args);' 'UserInterface.Start(args, shutdownToken);'
     Save-Override 'HostProgram.cs' $text
 }
 if ($ProjectName -eq 'ETS2LA.Game') {
@@ -208,4 +217,19 @@ if ($ProjectName -eq 'ETS2LA.UI') {
     $text = Read-Source 'ETS2LA.UI\Settings.cs'
     $text = Replace-Once $text 'public bool StayOnTop = true;' 'public bool StayOnTop = false;'
     Save-Override 'WindowSettings.cs' $text
+    $text = Read-Source 'ETS2LA.UI\Program.cs'
+    $text = Replace-Once $text '    public static void Start(string[] args)' @'
+    public static void Start(string[] args) => Start(args, CancellationToken.None);
+
+    [STAThread]
+    public static void Start(string[] args, CancellationToken shutdownToken)
+'@
+    $text = Replace-Once $text '        app.Run();' @'
+        CancellationTokenRegistration closeOnExit = default;
+        app.MainWindow.WindowCreated += (_, _) =>
+            closeOnExit = shutdownToken.Register(app.MainWindow.Close);
+        try { app.Run(); }
+        finally { closeOnExit.Unregister(); }
+'@
+    Save-Override 'HostUserInterface.cs' $text
 }

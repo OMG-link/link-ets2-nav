@@ -19,7 +19,6 @@ public static class SpeechTextCatalog
                 throw new InvalidDataException("Each speech text must contain 1..2048 printable characters.");
             if (!seen.Add(text)) throw new InvalidDataException("Duplicate speech text: " + text);
             texts.Add(text);
-            if (texts.Count > 4096) throw new InvalidDataException("Too many speech texts.");
         }
         if (texts.Count == 0) throw new InvalidDataException("Speech text list is empty.");
         return texts.ToArray();

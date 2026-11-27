@@ -31,7 +31,7 @@ public sealed class SpeechPackSettings(string hostDirectory)
         directory=directory.Trim();
         string resolved=Path.GetFullPath(directory,hostDirectory);
         // Full checks run away from the UI dispatcher, before touching the old settings.
-        var validated=await Task.Run(()=>Validate(resolved),token);
+        var validated=await Task.Run(()=>Validate(resolved,token),token);
         await saving.WaitAsync(token);
         try
         {
@@ -59,18 +59,22 @@ public sealed class SpeechPackSettings(string hostDirectory)
         string text=File.ReadAllText(ConfigFile);
         return(JsonNode.Parse(text) as JsonObject??throw new InvalidDataException("语音配置格式无效。"),text);
     }
-    private static (IReadOnlyDictionary<string,string> Fixed,IReadOnlyDictionary<string,string> Names) Validate(string directory)
+    private static (IReadOnlyDictionary<string,string> Fixed,IReadOnlyDictionary<string,string> Names) Validate(string directory, CancellationToken token)
     {
         if(!Directory.Exists(directory))throw new DirectoryNotFoundException("语音包目录不存在。");
-        IReadOnlyDictionary<string,string> Load(string path,int limit)
+        IReadOnlyDictionary<string,string> Load(string path,int? limit=null)
         {
             if(!File.Exists(Path.Combine(path,"manifest.json")))return new Dictionary<string,string>();
-            var messages=new List<string>();var files=PreGeneratedSpeech.Load(path,messages.Add,limit);
+            var files=PreGeneratedSpeech.Load(path, maximumEntries: limit, cancellationToken: token);
             if(files.Count==0)throw new InvalidDataException("语音包清单、音频或校验和无效："+path);
-            foreach(string file in files.Values)ValidateWave(file);
+            foreach(string file in files.Values)
+            {
+                token.ThrowIfCancellationRequested();
+                ValidateWave(file);
+            }
             return files;
         }
-        var fixedFiles=Load(directory,256);var names=Load(Path.Combine(directory,"CityNames"),4096);
+        var fixedFiles=Load(directory);var names=Load(Path.Combine(directory,"CityNames"),4096);
         if(fixedFiles.Count+names.Count==0)throw new InvalidDataException("该目录没有可用的 manifest.json 或 CityNames/manifest.json。");
         return(fixedFiles,names);
     }

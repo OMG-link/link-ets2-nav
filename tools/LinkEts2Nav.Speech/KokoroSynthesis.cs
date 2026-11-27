@@ -18,6 +18,7 @@ internal sealed class KokoroSynthesis : IDisposable
     private readonly WorkerOptions options;
     private readonly string fingerprint;
     private OfflineTts? model;
+    internal string Fingerprint => fingerprint;
 
     public KokoroSynthesis(WorkerOptions options)
     {
@@ -48,7 +49,7 @@ internal sealed class KokoroSynthesis : IDisposable
 
     public (string Path, bool CacheHit) Generate(string text)
     {
-        string key = HashText(JsonSerializer.Serialize(new { fingerprint, text }));
+        string key = CacheKey(text);
         string path = Path.Combine(options.CacheDirectory, key + ".wav");
         string metadataPath = Path.Combine(options.CacheDirectory, key + ".json");
         if (IsCached(path, metadataPath, key)) return (path, true);
@@ -87,6 +88,15 @@ internal sealed class KokoroSynthesis : IDisposable
             if (File.Exists(temporaryMetadata)) File.Delete(temporaryMetadata);
         }
     }
+
+    internal string? FindCached(string text)
+    {
+        string key = CacheKey(text);
+        string path = Path.Combine(options.CacheDirectory, key + ".wav");
+        return IsCached(path, Path.ChangeExtension(path, ".json"), key) ? path : null;
+    }
+
+    private string CacheKey(string text) => HashText(JsonSerializer.Serialize(new { fingerprint, text }));
 
     private bool IsCached(string path, string metadataPath, string key)
     {

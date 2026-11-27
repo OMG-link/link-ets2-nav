@@ -45,15 +45,18 @@ public sealed class PopularSpeechPackTests : IDisposable
         return generation.Status;
     }
 
-    private async Task<SpeechPackGenerationStatus> Run(int top, SpeechPackGenerationPhase expected = SpeechPackGenerationPhase.Succeeded)
+    private async Task<SpeechPackGenerationStatus> Run(long budget, SpeechPackGenerationPhase expected = SpeechPackGenerationPhase.Succeeded)
     {
-        Assert.True(generation.TryStart(request with { Top = top }));
+        Assert.True(generation.TryStart(request with { TokenBudget = budget }));
         var result = await Finished();
         Assert.True(result.Phase == expected, result.ToString());
+        Assert.Equal(budget, result.Budget);
         if (expected == SpeechPackGenerationPhase.Succeeded)
         {
             Assert.Equal(Output, result.OutputDirectory);
             Assert.Equal(result.Total, result.Completed);
+            Assert.Equal(result.Completed, result.WholeCount + result.ComposedCount);
+            Assert.InRange(result.SpentTokens, 0L, budget);
         }
         return result;
     }
@@ -76,7 +79,8 @@ public sealed class PopularSpeechPackTests : IDisposable
     {
         var body = JsonSerializer.Serialize(new { model = "{{model}}", voice = "{{voice}}", parameters = new { speed },
             input = new[] { new { text = "{{text}}" } } });
-        request = new(endpoint, "my-model", "my-voice", Secret, RequestTemplate: body, AuthHeader: "X-Test-Key", AuthPrefix: "");
+        request = new(endpoint, "my-model", "my-voice", Secret, RequestTemplate: body, AuthHeader: "X-Test-Key", AuthPrefix: "",
+            TokenCountEndpoint: new Uri(new Uri(endpoint), "/count").AbsoluteUri);
     }
 
     private static async Task<WebApplication> StartApi(RequestDelegate serve)
@@ -86,6 +90,7 @@ public sealed class PopularSpeechPackTests : IDisposable
         builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
         var app = builder.Build();
         app.MapPost("/speak", serve);
+        app.MapPost("/count", () => Results.Json(new { tokens = 1L }));
         await app.StartAsync(TestContext.Current.CancellationToken);
         return app;
     }
@@ -116,21 +121,23 @@ public sealed class PopularSpeechPackTests : IDisposable
         string endpoint = api.Urls.Single() + "/speak";
         SaveConfig(endpoint);
         SaveUsage(("B", 3, 2), (second, 3, 20), ("A", 3, 2), (first, 7, 0), ("prepared only", 0, 999));
-        await Run(3);
+        Assert.Equal(3, (await Run(3)).SpentTokens);
         Assert.Equal(new[] { first, second, "A" }, received);
         var pack = JsonSerializer.Deserialize<PackManifest>(File.ReadAllText(Manifest))!;
-        Assert.Equal(received, pack.Entries.Select(e => e.Text));
+        Assert.Equal(received.Order(), pack.Entries.Select(e => e.Text).Order());
         Assert.Equal("my-model", pack.Model); Assert.Equal("my-voice", pack.Voice);
         var preloaded = PreGeneratedSpeech.Load(Output);
         Assert.Equal(3, preloaded.Count);
         foreach (string chosen in received) Assert.Equal(new byte[] { 2, 0, 3, 0 }, PcmAudio.Read(preloaded[chosen]));
         Assert.DoesNotContain(Secret, File.ReadAllText(Manifest));
-        await Run(256); // Only four phrases have actually played, and three are already paid for.
+        var expanded = await Run(long.MaxValue); // Only four phrases have actually played, and three are already paid for.
+        Assert.Equal(1, expanded.SpentTokens);
+        Assert.Equal(4, expanded.WholeCount);
         Assert.Equal(new[] { first, second, "A", "B" }, received);
         SaveConfig(endpoint, 2);
         await Run(1);
         Assert.Equal(new[] { first, second, "A", "B", first }, received);
-        Assert.Equal(new[] { first }, PreGeneratedSpeech.Load(Output).Keys);
+        Assert.Contains(first, PreGeneratedSpeech.Load(Output).Keys);
     }
 
     [Theory]
@@ -162,6 +169,7 @@ public sealed class PopularSpeechPackTests : IDisposable
         var original = File.ReadAllBytes(Manifest);
         SaveUsage(("new", 9, 0), ("fail", 8, 0));
         var error = await Run(2, SpeechPackGenerationPhase.Failed);
+        Assert.Equal(2, error.SpentTokens);
         Assert.Contains(statusError ? "429" : "WAV", error.Message);
         Assert.DoesNotContain(Secret, error.ToString());
         Assert.Equal(initialOutput, Output);
@@ -176,21 +184,55 @@ public sealed class PopularSpeechPackTests : IDisposable
         Assert.NotEqual(initialOutput, Output);
     }
 
-    [Fact] public async Task ValidatesTheUsageAndRuntimeLimitsBeforeAnyPaidRequest()
+    [Fact] public async Task ValidatesBudgetCounterOriginAndIndividualUsageRecordsBeforeSynthesis()
     {
         int calls = 0;
         await using var api = await StartApi(_ => { calls++; return Task.CompletedTask; });
         SaveConfig(api.Urls.Single() + "/speak");
         SaveUsage(("never played", 0, 999));
         Assert.Contains("播放", (await Run(2, SpeechPackGenerationPhase.Failed)).Message);
-        Assert.Contains("256", (await Run(257, SpeechPackGenerationPhase.Failed)).Message);
-        var tooLarge = Enumerable.Range(0, 64).Select(i => (new string('词', 1000) + i, 1, 0d)).ToArray();
-        SaveUsage(tooLarge);
-        await Run(64, SpeechPackGenerationPhase.Failed);
+        Assert.Contains("预算", (await Run(0, SpeechPackGenerationPhase.Failed)).Message);
+        SaveUsage((new string('词', 2049), 1, 0));
+        await Run(33000, SpeechPackGenerationPhase.Failed);
+        request = request with { TokenCountEndpoint = "https://example.invalid/count" };
+        SaveUsage(("spoken", 1, 0));
+        Assert.Contains("主机", (await Run(50, SpeechPackGenerationPhase.Failed)).Message);
+        request = request with { TokenCountEndpoint = null };
         File.WriteAllText(Usage, """{"Schema":1,"MetricVersion":2,"Entries":[]}""");
         await Run(1, SpeechPackGenerationPhase.Failed);
         Assert.Equal(0, calls);
         Assert.False(Directory.Exists(Output));
+    }
+
+    [Fact] public async Task MoreThan256PlayedPhrasesCanAllBeCoveredByOneNewInput()
+    {
+        byte[] wave = Wave();
+        string source = Directory.CreateDirectory(Path.Combine(root, "recorded")).FullName;
+        string[] recorded = Enumerable.Range(0, 257).Select(i => "recorded " + i).ToArray();
+        var entries = new List<PackEntry>();
+        foreach (string text in recorded)
+        {
+            string file = SpeechPack.FileName(text);
+            File.WriteAllBytes(Path.Combine(source, file), wave);
+            entries.Add(new(text, file, SpeechPack.Hash(wave)));
+        }
+        await File.WriteAllTextAsync(Path.Combine(source, "manifest.json"),
+            JsonSerializer.Serialize(new PackManifest(1, "recorded", "voice", entries.ToArray())), TestContext.Current.CancellationToken);
+        await settings.SaveAsync(source, TestContext.Current.CancellationToken);
+        var requested = new List<string>();
+        await using var api = await StartApi(async context =>
+        {
+            using var json = await JsonDocument.ParseAsync(context.Request.Body);
+            requested.Add(json.RootElement.GetProperty("input")[0].GetProperty("text").GetString()!);
+            await context.Response.Body.WriteAsync(wave);
+        });
+        SaveConfig(api.Urls.Single() + "/speak");
+        SaveUsage(recorded.Select(text => (text, 2, 0d)).Append(("last uncached", 1, 0d)).ToArray());
+        var result = await Run(1);
+        Assert.Equal(258, result.WholeCount);
+        Assert.Equal(1, result.SpentTokens);
+        Assert.Equal(new[] { "last uncached" }, requested);
+        Assert.Equal(258, PreGeneratedSpeech.Load(Output).Count);
     }
 
     [Fact] public async Task CancellingThePrivateWorkerPreservesTheActivePackAndResumesVerifiedClipsWithoutRebilling()
@@ -227,7 +269,7 @@ public sealed class PopularSpeechPackTests : IDisposable
             }
             await context.Response.Body.WriteAsync(wave);
         });
-        request = new(api.Urls.Single() + "/speak", "model", "voice", Secret, 3);
+        request = new(api.Urls.Single() + "/speak", "model", "voice", Secret, 3, TokenCountEndpoint: api.Urls.Single() + "/count");
         SaveUsage(("old disk text", 5, 0));
         await Run(1);
         string old = Output;
@@ -246,8 +288,9 @@ public sealed class PopularSpeechPackTests : IDisposable
             generation.SelectPackAsync(reserved, TestContext.Current.CancellationToken));
         Assert.Contains("正在生成", busy.Message);
         Assert.Equal(old, (await generation.SelectPackAsync(old, TestContext.Current.CancellationToken)).Directory);
-        Assert.True(generation.TryCancel());
+        await generation.CancelAndWaitAsync().WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         Assert.Equal(SpeechPackGenerationPhase.Cancelled, (await Finished()).Phase);
+        Assert.Equal(2, generation.Status.SpentTokens);
         await aborted.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         Assert.Equal(old, Output);
         Assert.False(generation.TryCancel());

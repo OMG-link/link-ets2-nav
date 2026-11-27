@@ -14,12 +14,13 @@ public static class SpeechPackBuilder
         PackManifest? previous = null;
         if (File.Exists(manifestPath))
         {
-            if (new FileInfo(manifestPath).Length > 2097152) throw new InvalidDataException("Speech pack manifest too large.");
-            previous = JsonSerializer.Deserialize<PackManifest>(await File.ReadAllTextAsync(manifestPath, cancellationToken));
+            using var stream = File.OpenRead(manifestPath);
+            previous = await JsonSerializer.DeserializeAsync<PackManifest>(stream, cancellationToken: cancellationToken);
         }
         string[] planned = texts.Distinct(StringComparer.Ordinal).ToArray();
+        var plannedTexts = planned.ToHashSet(StringComparer.Ordinal);
         var checkpoint = reuseCachedAudio && previous is { Schema: 1 } && previous.Model == model && previous.Voice == voice
-            ? (previous.Entries ?? []).Where(e => e is not null && planned.Contains(e.Text, StringComparer.Ordinal)
+            ? (previous.Entries ?? []).Where(e => e is not null && !e.Composed && plannedTexts.Contains(e.Text)
                 && e.File == SpeechPack.FileName(e.Text)).ToDictionary(e => e.Text, StringComparer.Ordinal)
             : new Dictionary<string, PackEntry>(StringComparer.Ordinal);
         var completed = new List<PackEntry>();

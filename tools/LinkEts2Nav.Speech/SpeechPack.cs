@@ -1,11 +1,19 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace LinkEts2Nav.Speech;
 
-public sealed record PackEntry(string Text, string File, string Sha256);
+public sealed record PackEntry(string Text, string File, string Sha256)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Composed { get; init; }
+    // Absent inherits the manifest profile. Empty means an imported recording with unknown synthesis settings.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? VoiceProfile { get; init; }
+}
 public sealed record PackManifest(int Schema, string Model, string Voice, PackEntry[] Entries)
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
@@ -49,6 +57,31 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
 
     public (string Path, bool CacheHit) Generate(string text, Func<string, (string Path, bool CacheHit)> local)
     {
+        PackManifest? pack = null;
+        try
+        {
+            if (directory is not null && File.Exists(Path.Combine(directory, "manifest.json")))
+            {
+                using var manifest = File.OpenRead(Path.Combine(directory, "manifest.json"));
+                pack = JsonSerializer.Deserialize<PackManifest>(manifest);
+                if (pack is not { Schema: 1, Entries: not null } || pack.Entries.Any(e => e is null))
+                    throw new InvalidDataException("Unsupported speech pack.");
+                var exact = pack.Entries.SingleOrDefault(e => e.Text == text);
+                if (exact is not null)
+                {
+                    string source = Resolve(exact);
+                    string target = Path.Combine(cacheDirectory, "qwen-" + exact.Sha256 + ".wav");
+                    if (File.Exists(target) && Hash(File.ReadAllBytes(target)) == exact.Sha256) return (target, true);
+                    PcmAudio.Write(target, PcmAudio.Read(source));
+                    return (target, false);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine("Speech pack unavailable: " + ex.GetType().Name);
+            pack = null;
+        }
         var company=Regex.Match(text,@"^(?<prefix>.*?)(?<arrival>到达)(?<name>[^\r\n]+?)货场(?<suffix>附近，本次导航结束。|。)$",
             RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
         if(company.Success)
@@ -70,25 +103,9 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         var city=Regex.Match(text,@"^(?<prefix>(?:[零一二两三四五六七八九十百千0-9]+米后，|即将)进入)(?<name>[^，。\r\n]+)城区，请注意减速慢行。$",
             RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
         if(city.Success)return GenerateCityEntry(city.Groups["prefix"].Value,city.Groups["name"].Value,text,local);
-        if (directory is null || !File.Exists(Path.Combine(directory, "manifest.json"))) return local(text);
-        PackManifest pack;
+        if (pack is null) return local(text);
         try
         {
-            string manifest = Path.Combine(directory, "manifest.json");
-            if (new FileInfo(manifest).Length > 262144) throw new InvalidDataException("Speech pack manifest is too large.");
-            pack = JsonSerializer.Deserialize<PackManifest>(File.ReadAllText(manifest))
-                ?? throw new InvalidDataException("Empty speech pack.");
-            if (pack.Schema != 1 || pack.Entries is null || pack.Entries.Length > 256 || pack.Entries.Any(e => e is null)) throw new InvalidDataException("Unsupported speech pack.");
-            var exact = pack.Entries.SingleOrDefault(e => e.Text == text);
-            if (exact is not null)
-            {
-                string source = Resolve(exact);
-                string target = Path.Combine(cacheDirectory, "qwen-" + exact.Sha256 + ".wav");
-                if (File.Exists(target) && Hash(File.ReadAllBytes(target)) == exact.Sha256) return (target, true);
-                PcmAudio.Write(target, PcmAudio.Read(source));
-                return (target, false);
-            }
-
             // Capture spoken numbers without inventing a speed limit.
             var match = Regex.Match(text, @"^(?:(?<distance>[零一二两三四五六七八九十百0-9]+)(?<where>米处|米内)，有测速照相|(?<ahead>前方有测速照相))(?:，限速(?<speed>[零一二两三四五六七八九十百0-9]+))?。$",
                 RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));

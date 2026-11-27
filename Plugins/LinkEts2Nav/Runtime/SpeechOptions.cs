@@ -17,7 +17,10 @@ public sealed class SpeechOptions
     public string Voice { get; init; } = "zf_067";
     public int Threads { get; init; } = 2;
 
-    public static SpeechOptions Load(string hostDirectory)
+    public static SpeechOptions Load(string hostDirectory) => Load(hostDirectory, forGeneration: false);
+    internal static SpeechOptions LoadForGeneration(string hostDirectory) => Load(hostDirectory, forGeneration: true);
+
+    private static SpeechOptions Load(string hostDirectory, bool forGeneration)
     {
         string path = Path.Combine(hostDirectory, "Settings", "LinkEts2Nav.Speech.json");
         var value = new SpeechOptions();
@@ -33,7 +36,7 @@ public sealed class SpeechOptions
             }) ?? throw new InvalidDataException("Speech configuration is empty.");
             explicitEnabled = document.RootElement.TryGetProperty("enabled", out _);
             explicitWorker = document.RootElement.TryGetProperty("workerPath", out _);
-            if (explicitEnabled && !value.Enabled) return value;
+            if (!forGeneration && explicitEnabled && !value.Enabled) return value;
         }
 
         string modelDirectory = value.ModelDirectory ?? BundledModel;
@@ -46,7 +49,7 @@ public sealed class SpeechOptions
         string workerExecutable = Path.ChangeExtension(workerPath, ".exe");
         if (!explicitWorker && File.Exists(workerExecutable)) workerPath = workerExecutable;
         string packDirectory = Path.GetFullPath(value.PackDirectory, hostDirectory);
-        if (!explicitEnabled)
+        if (!forGeneration && !explicitEnabled)
         {
             bool hasSpeech = File.Exists(Path.Combine(modelDirectory, "model.onnx"))
                 || File.Exists(Path.Combine(packDirectory, "manifest.json"))
@@ -56,7 +59,7 @@ public sealed class SpeechOptions
 
         return new()
         {
-            Enabled = true, ModelDirectory = modelDirectory,
+            Enabled = !explicitEnabled || value.Enabled, ModelDirectory = modelDirectory,
             WorkerPath = workerPath,
             CacheDirectory = Path.GetFullPath(value.CacheDirectory, hostDirectory),
             PackDirectory = packDirectory,

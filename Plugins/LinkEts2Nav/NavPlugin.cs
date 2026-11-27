@@ -16,6 +16,7 @@ public sealed class NavPlugin : Plugin
     private readonly object lifecycle = new();
     private CancellationTokenSource? stop;
     private Task worker = Task.CompletedTask;
+    private bool shuttingDown;
 
     public override PluginInformation Info => new()
     {
@@ -38,7 +39,7 @@ public sealed class NavPlugin : Plugin
     {
         lock (lifecycle)
         {
-            if (_IsRunning) return;
+            if (_IsRunning || shuttingDown) return;
             _IsRunning = true;
             Logger.Info("[[LinkEts2Nav]] 插件已启用，准备启动后台扫描。");
             var previous = worker;
@@ -87,7 +88,17 @@ public sealed class NavPlugin : Plugin
 
     public override void Shutdown()
     {
-        try { OnDisable(); }
+        Task active;
+        lock (lifecycle)
+        {
+            shuttingDown = true;
+            active = worker;
+        }
+        try
+        {
+            OnDisable();
+            active.GetAwaiter().GetResult();
+        }
         finally { PlayerSettingsSession.CloseAsync().GetAwaiter().GetResult(); }
     }
 

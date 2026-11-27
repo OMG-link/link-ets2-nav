@@ -24,7 +24,6 @@ internal static class QwenPackGenerator
             using var reader = new StreamReader(args[6], Encoding.UTF8, true);
             texts = SpeechTextCatalog.Read(reader);
         }
-        if (!cityNames && texts.Count() > 256) throw new InvalidDataException("Fixed speech packs support at most 256 entries.");
         if(cityNames)
         {
             string[] requested=texts.ToArray();

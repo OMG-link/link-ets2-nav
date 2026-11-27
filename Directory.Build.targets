@@ -60,7 +60,8 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.UI'">
-    <Compile Remove="Settings.cs" />
+    <Compile Remove="Settings.cs;Program.cs" />
+    <Compile Include="$(NavOverrides)HostUserInterface.cs" />
     <Compile Include="$(NavOverrides)WindowSettings.cs" />
     <Content Remove="Pages/Home.razor;Pages/Start.razor;Pages/Plugins/Catalogue.razor" />
     <Content Include="$(NavUi)Home.razor" Link="Pages/Home.razor" TargetPath="Pages/Home.razor" />

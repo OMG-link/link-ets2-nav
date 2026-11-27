@@ -55,6 +55,42 @@ public sealed class SpeechPackSettingsTests:IDisposable
         await Assert.ThrowsAsync<InvalidDataException>(()=>service.SaveAsync("names-only",TestContext.Current.CancellationToken));
     }
     [Fact]
+    public async Task FixedPackStartupAndSelectionAcceptEveryEntryInALargeManifest()
+    {
+        string directory = Path.Combine(root, "large");
+        Directory.CreateDirectory(directory);
+        var entries = new List<PackEntry>();
+        for (int i = 0; i < 260; i++)
+        {
+            string text = new string('x', 940) + i;
+            string file = SpeechPack.FileName(text);
+            string path = Path.Combine(directory, file);
+            PcmAudio.Write(path, [1, 0]);
+            entries.Add(new(text, file, SpeechPack.Hash(File.ReadAllBytes(path))));
+        }
+        string manifest = Path.Combine(directory, "manifest.json");
+        await File.WriteAllTextAsync(manifest, JsonSerializer.Serialize(new PackManifest(1, "m", "v", entries.ToArray())),
+            TestContext.Current.CancellationToken);
+        Assert.True(new FileInfo(manifest).Length > 262144);
+        Assert.Equal(entries.Count, PreGeneratedSpeech.Load(directory).Count);
+        var imported = await new SpeechPackSettings(root).SaveAsync(directory, TestContext.Current.CancellationToken);
+        Assert.Equal(entries.Count, imported.Fixed.Count);
+        Assert.Contains(entries[^1].Text, imported.Fixed.Keys);
+    }
+
+    [Fact]
+    public void LocalGenerationUsesConfiguredModelVoiceAndThreadsWithoutEnablingPlayback()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
+        File.WriteAllText(SettingsFile, """{"enabled":false,"modelDirectory":"custom","voice":"zf_067","threads":6,"cacheDirectory":"existing-cache"}""");
+        var options = SpeechOptions.LoadForGeneration(root);
+        Assert.Equal(Path.Combine(root, "custom"), options.ModelDirectory);
+        Assert.Equal(Path.Combine(root, "existing-cache"), options.CacheDirectory);
+        Assert.Equal("zf_067", options.Voice);
+        Assert.Equal(6, options.Threads);
+        Assert.False(SpeechOptions.Load(root).Enabled);
+    }
+    [Fact]
     public async Task HotSwapPreservesQueuePlansAndNamesReferenceWithoutUsingOldInFlightResult()
     {
         string old=await Pack("old");string next=await Pack("new");await Pack(Path.Combine("new","CityNames"),"Paris");

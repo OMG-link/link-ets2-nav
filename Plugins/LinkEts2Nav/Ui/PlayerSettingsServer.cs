@@ -7,6 +7,8 @@ using LinkEts2Nav.Runtime;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace LinkEts2Nav.Ui;
@@ -28,6 +30,8 @@ public sealed class PlayerSettingsServer : IAsyncDisposable
         { Args = [], EnvironmentName = "Production", ContentRootPath = AppContext.BaseDirectory });
         builder.Configuration.Sources.Clear();
         builder.Logging.ClearProviders();
+        // The surrounding desktop or standalone host owns Ctrl+C and process exit.
+        builder.Services.AddSingleton<IHostLifetime, SettingsLifetime>();
         builder.WebHost.ConfigureKestrel(server =>
         {
             server.AddServerHeader = false;
@@ -109,15 +113,18 @@ public sealed class PlayerSettingsServer : IAsyncDisposable
             activeDirectory = SpeechPackSettings.Current.ActiveDirectory,
             pack,
             packError,
-            job = new { phase = job.Phase.ToString(), job.Completed, job.Total, job.Message }
+            job = new { phase = job.Phase.ToString(), job.Completed, job.Total, job.Message,
+                budget = job.Budget.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                spentTokens = job.SpentTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                job.WholeCount, job.ComposedCount }
         });
     }
 
     private static async Task<IResult> Generate(HttpRequest request, CancellationToken token)
     {
         var input = await request.ReadFromJsonAsync<SpeechPackGenerationRequest>(token);
-        if (input is null || string.IsNullOrWhiteSpace(input.Endpoint) || string.IsNullOrWhiteSpace(input.Model)
-            || string.IsNullOrWhiteSpace(input.Voice) || input.Top is < 1 or > 256) return Message(400, "请填写 API 地址、模型和音色，常用语句数须为 1 至 256。");
+        if (input is null) return Message(400, "请填写生成设置。");
+        if (input.ValidationError() is { } invalid) return Message(400, invalid);
         return SpeechPackGeneration.Current.TryStart(input) ? Results.Accepted() : Message(409, "已有语音包正在生成。");
     }
 
@@ -157,8 +164,14 @@ public sealed class PlayerSettingsServer : IAsyncDisposable
         try { await app.StopAsync().ConfigureAwait(false); }
         finally
         {
-            SpeechPackGeneration.Current.TryCancel();
-            await app.DisposeAsync().ConfigureAwait(false);
+            try { await SpeechPackGeneration.Current.CancelAndWaitAsync().ConfigureAwait(false); }
+            finally { await app.DisposeAsync().ConfigureAwait(false); }
         }
+    }
+
+    private sealed class SettingsLifetime : IHostLifetime
+    {
+        public Task WaitForStartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

@@ -48,6 +48,39 @@ public sealed record LimitRegion(string Id, IReadOnlyList<Vector3> Points, float
     private readonly float minZ = Points.Count == 0 ? 0 : Points.Min(p => p.Z);
     private readonly float maxZ = Points.Count == 0 ? 0 : Points.Max(p => p.Z);
 
+    // On a straight road segment the polygon and its vertical range can only change
+    // membership at these fractions. Include the full height of elevated traffic areas.
+    internal void AddBoundaryCrossings(Vector3 from, Vector3 to, ref List<double>? crossings)
+    {
+        if (Points.Count < 3 || Math.Max(from.X,to.X)<minX || Math.Min(from.X,to.X)>maxX
+            || Math.Max(from.Z,to.Z)<minZ || Math.Min(from.Z,to.Z)>maxZ) return;
+        var delta=to-from;
+        if(Height>0)
+        {
+            var floor=Points[0].Y;
+            if(Math.Max(from.Y,to.Y)<floor||Math.Min(from.Y,to.Y)>floor+Height)return;
+            if(delta.Y!=0)
+            {
+                Add((floor-from.Y)/delta.Y,ref crossings);
+                Add((floor+Height-from.Y)/delta.Y,ref crossings);
+            }
+        }
+        for(int i=0,j=Points.Count-1;i<Points.Count;j=i++)
+        {
+            var a=Points[j];var edge=Points[i]-a;
+            double denominator=(double)delta.X*edge.Z-(double)delta.Z*edge.X;
+            if(denominator==0)continue;
+            var offset=a-from;
+            double onEdge=((double)offset.X*delta.Z-(double)offset.Z*delta.X)/denominator;
+            if(onEdge is >=0 and <=1)
+                Add(((double)offset.X*edge.Z-(double)offset.Z*edge.X)/denominator,ref crossings);
+        }
+        static void Add(double t,ref List<double>? result)
+        {
+            if(t is >0 and <1)(result??=[]).Add(t);
+        }
+    }
+
     public bool Contains(Vector3 p)
     {
         if (Points.Count < 3 || p.X < minX || p.X > maxX || p.Z < minZ || p.Z > maxZ) return false;

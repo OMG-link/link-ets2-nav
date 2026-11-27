@@ -220,15 +220,62 @@ public sealed class RouteSpeedLimitTests
     }
     [Theory]
     [InlineData(40,80,60,120,40)]
-    [InlineData(100,80,90,120,80)]
+    [InlineData(100,80,90,120,90)]
     [InlineData(100,110,60,120,60)]
     [InlineData(150,160,140,120,120)]
-    public void PostedRoadAreaAndTruckMaximumUseTheLowestValue(int posted,int rural,int area,int maximum,int expected)
+    public void SameRoadPostedLimitIsSubjectToAreaAndTruckCaps(int posted,int rural,int area,int maximum,int expected)
     {
         var data=Source([Road],Sign("posted",100,new(SetKph:posted))) with{
             Limits=new Dictionary<string,TruckSpeedLimit>{{"test/local_road",new(rural,50,maximum)}},
             Regions=[new("numeric",[P(650,-20),P(1000,-20),P(1000,20),P(650,20)],0,false,area)]};
         Assert.Equal(expected,Sim(Build(data),[Road]).Kph);
+    }
+
+    [Theory]
+    [InlineData(0,60)]
+    [InlineData(490,60)]
+    [InlineData(810,80)]
+    public void SwedishHundredSignAndTruckSeedBothGiveEightyAtTheCamera(float start,double sdk)
+    {
+        var a=R(1,10,11,P(0),P(850));var b=R(2,11,12,P(850),P(1100));
+        var data=Source([a,b],Sign("limit_100",800,new(SetKph:100))) with
+            { Limits=new Dictionary<string,TruckSpeedLimit>{{"test/local_road",new(70,50,80)}} };
+        Assert.Equal(80,Sim(Build(data),[a,b],start:P(start),target:P(920),seed:sdk).Kph);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HighSdkSeedCannotCrossAnotherRoadClassOrCountryAndReturn(bool countryChange)
+    {
+        var a=R(1,10,11,P(0),P(300));var b=R(2,11,12,P(300),P(600));var c=R(3,12,13,P(600),P(1000));
+        var data=Source([a,b,c]);var roads=data.Roads.ToDictionary();
+        roads[2]=countryChange?roads[2] with{Country="other"}:roads[2] with{SpeedClass="expressway"};
+        Assert.Equal(80,Sim(Build(data with{Roads=roads}),[a,b,c],seed:100).Kph);
+    }
+
+    [Theory]
+    [InlineData(498,70)]
+    [InlineData(506,50)]
+    public void HigherUrbanSignSurvivesContinuousCoverageButNotAGap(float nextCityStarts,int expected)
+    {
+        static LimitRegion Urban(string id,float left,float right) =>
+            new(id,[P(left,-20),P(right,-20),P(right,20),P(left,20)],0,true);
+        var data=Source([Road],Sign("posted",200,new(SetKph:70))) with
+            {Regions=[Urban("city-a",100,500),Urban("city-b",nextCityStarts,1000)]};
+        Assert.Equal(expected,Sim(Build(data),[Road]).Kph);
+    }
+
+    [Fact]
+    public void SignAfterAPolylineBreakUsesOnlyDrivenSegmentsAndKeepsItsPhysicalPosition()
+    {
+        var split=R(1,10,11,P(0),P(60),P(100),P(400),P(500)) with{SegmentStarts=[3]};
+        var data=Build(Source([split],Sign("in-the-gap",250,new(SetKph:10)),Sign("posted",400,new(SetKph:60))));
+        var projected=Assert.Single(data.SignProjections!.On(split));
+        Assert.Equal("posted",projected.SignId);
+        Assert.Equal(100,projected.AlongMeters);
+        Assert.Equal(P(400),projected.Position);
+        Assert.Equal(60,Sim(data,[split],target:P(475)).Kph);
     }
     [Fact]
     public void CancellationClearsThePostedValueAndRestoresUrbanDefaultAtCamera()

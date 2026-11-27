@@ -6,6 +6,7 @@ namespace LinkEts2Nav.Map;
 /// <summary>Simulates temporary limits only along the selected player-to-camera path.</summary>
 public sealed class SpeedLimitResolver
 {
+    private readonly record struct RoutePoint(int Visit,double Along,Vector3 Position);
     private readonly SpeedLimitData data;
     private readonly RoadPathSource paths;
     private readonly DirectedPathMatcher matcher=new();
@@ -38,13 +39,19 @@ public sealed class SpeedLimitResolver
         int? temporary=currentSdkKph is >0 and <=300?(int)Math.Round(currentSdkKph.Value):null;
         bool unknown=temporary is null;bool? urban=null,motorway=null;
         string reason=temporary.HasValue?"SDK 当前限速初始化":"当前限速种子不可用";
-        double offset=0;DirectedRoad? targetRoad=null;string? lastSign=null;
-        foreach(var road in route)
+        double offset=0;RoutePoint target=default;RoutePoint? source=null;bool reachedPlayer=false;string? lastSign=null;
+        for(int visit=0;visit<route.Count;visit++)
         {
-            double length=road.Points.Zip(road.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+            var road=route[visit];
+            double length=RouteGeometry.Length(road);
             if(offset>goal.Value+.01)break;
             if(offset+length>=start.Value-.01)
             {
+                if(!reachedPlayer)
+                {
+                    reachedPlayer=true;
+                    source=new(visit,Math.Max(0,start.Value-offset),position);
+                }
                 if(!data.SignProjections!.Contains(road))return Unavailable("路径区段的标牌投影尚未加载",
                     MapQueryFailureKind.DefinitionUnavailable,camera.MonitoringPosition,missingProjection?.Invoke(road));
                 // An observed lane uses the exact native chain from the sign index. Other
@@ -60,16 +67,17 @@ public sealed class SpeedLimitResolver
                     if(action.Unsupported){unknown=true;reason="路径标牌未确认："+lastSign;continue;}
                     // There is one active temporary value, not a stack. One reset clears it all.
                     if(action.Reset){temporary=null;unknown=false;}
-                    if(action.SetKph.HasValue){temporary=action.SetKph;unknown=false;}
+                    if((action.Urban.HasValue&&action.Urban!=urban)||(action.Motorway.HasValue&&action.Motorway!=motorway))source=null;
                     if(action.Urban.HasValue)urban=action.Urban;
                     if(action.Motorway.HasValue)motorway=action.Motorway;
+                    if(action.SetKph.HasValue){temporary=action.SetKph;unknown=false;source=new(visit,item.At.Value,item.Sign.Position);}
                     reason=(action.Reset&&!action.SetKph.HasValue?"解除标牌 ":"路径标牌 ")+lastSign;
                 }
             }
-            targetRoad=road;offset+=length;
+            target=new(visit,Math.Clamp(goal.Value-offset,0,length),camera.MonitoringPosition);offset+=length;
         }
         if(unknown)return Unavailable(reason,MapQueryFailureKind.DefinitionUnavailable,camera.MonitoringPosition);
-        return Compose(camera.MonitoringPosition,targetRoad!,temporary,urban,motorway,reason);
+        return Compose(route,source,target,temporary,urban,motorway,reason);
     }
     private SpeedLimitResult Unavailable(string reason,MapQueryFailureKind kind,Vector3 queryAnchor,MapQueryIssue? issue=null)
     {
@@ -77,9 +85,10 @@ public sealed class SpeedLimitResolver
         paths.ReportMapIssue(problem);
         return new(null,reason){MapIssue=problem};
     }
-    // Temporary values constrain the target's road/area defaults; they cannot raise them.
-    private SpeedLimitResult Compose(Vector3 position,DirectedRoad road,int? temporary,bool? urbanOverride,bool? motorway,string reason)
+    private SpeedLimitResult Compose(IReadOnlyList<DirectedRoad> route,RoutePoint? source,RoutePoint target,
+        int? temporary,bool? urbanOverride,bool? motorway,string reason)
     {
+        var position=target.Position;var road=route[target.Visit];
         var metadata=data.SignProjections!.Context(road);
         var regions=data.RegionIndex!.At(position);
         if(metadata is null)return Unavailable("Road country metadata is unavailable",MapQueryFailureKind.DefinitionUnavailable,position);
@@ -95,13 +104,48 @@ public sealed class SpeedLimitResolver
         if(usedDefault)reason+="；"+TruckSpeedLimitRules.DefaultReasonFor(country,speedClass);
         bool urban=urbanOverride??regions.Any(r=>r.Urban);
         int baseline=urban?rule.Urban:rule.Rural;
-        int? value=baseline>0?(temporary.HasValue?Math.Min(temporary.Value,baseline):baseline):temporary;
+        int? value=temporary??baseline;
         if(value is not >0)return Unavailable("道路默认限速或解除后的限速未知",MapQueryFailureKind.DefinitionUnavailable,position);
-        if(rule.Maximum>0)value=Math.Min(value.Value,rule.Maximum);
-        var area=regions.Where(r=>r.SetKph is >0).Select(r=>r.SetKph!.Value).ToArray();
-        if(area.Length>0)value=Math.Min(value.Value,area.Min());
-        if(baseline>0)reason+="；"+(urban?"城区默认限速":"国家道路默认限速");
-        if(area.Length>0)reason+="；交通区域限速";
+        if(rule.Maximum>0&&value>=rule.Maximum){value=rule.Maximum;reason+="；货车最高限速";}
+        int? area=regions.Where(r=>r.SetKph is >0).Min(r=>r.SetKph);
+        if(area.HasValue){value=Math.Min(value.Value,area.Value);reason+="；交通区域限速";}
+        bool useDefault=temporary is null;
+        if(baseline>0&&value>baseline)
+        {
+            if(source is {} from&&country is not null&&SameEnvironment(route,from,target,country,speedClass,urban,urbanOverride,motorway))
+                reason+="；沿途限速环境一致";
+            else {value=baseline;useDefault=true;}
+        }
+        if(useDefault&&baseline>0)reason+="；"+(urban?"城区默认限速":"国家道路默认限速");
         return new(value,"实验估算："+reason+"；"+country+"/"+speedClass);
+    }
+
+    private bool SameEnvironment(IReadOnlyList<DirectedRoad> route,RoutePoint source,RoutePoint target,
+        string country,string speedClass,bool urban,bool? urbanOverride,bool? motorway)
+    {
+        var regions=data.RegionIndex!;
+        if(urbanOverride is null&&regions.At(source.Position).Any(r=>r.Urban)!=urban)return false;
+        for(int visit=source.Visit;visit<=target.Visit;visit++)
+        {
+            var road=route[visit];var metadata=data.SignProjections!.Context(road);
+            if(metadata?.QueryCountry().Value!=country||(motorway!=true&&metadata.ClassFor(road)!=speedClass))return false;
+            if(urbanOverride.HasValue)continue;
+            double from=visit==source.Visit?source.Along:0;
+            double to=visit==target.Visit?target.Along:double.PositiveInfinity;
+            double along=0;
+            for(int i=1;i<road.Points.Count&&along<to;i++)
+            {
+                if(road.SegmentStarts.Contains(i))continue;
+                var a=road.Points[i-1];var b=road.Points[i];double length=Vector3.Distance(a,b);
+                if(length>0&&along+length>from)
+                {
+                    var first=Vector3.Lerp(a,b,(float)Math.Max(0,(from-along)/length));
+                    var last=Vector3.Lerp(a,b,(float)Math.Min(1,(to-along)/length));
+                    if(!regions.MatchesUrbanAlong(first,last,urban))return false;
+                }
+                along+=length;
+            }
+        }
+        return true;
     }
 }

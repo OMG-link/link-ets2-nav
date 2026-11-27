@@ -9,7 +9,7 @@ internal static class SignProjector
 {
     internal const float InterfaceToleranceMeters=2;
     private static readonly PrefabLanePath?[] RoadReference=[null];
-    private sealed record Binding(int Edge,PrefabLanePath? Lane,double At,float Error,float Dot,bool AtEntry,bool AtExit);
+    private sealed record Binding(int Edge,PrefabLanePath? Lane,double At,Vector3 Position,float Error,float Dot,bool AtEntry,bool AtExit);
     public static SignProjection Build(SpeedLimitData data,DirectedRoad[] graph,CancellationToken token)
     {
         var events=graph.Select(edge=>new DirectedSignEvents(edge.LanePaths)).ToArray();
@@ -27,16 +27,16 @@ internal static class SignProjector
                 if(edge.LanePaths.Count>0)lanes=edge.LanePaths;
                 foreach(var lane in lanes)
                 {
-                    var shape=lane is null?edge:edge with{Points=lane.Points};
+                    var shape=lane is null?edge:edge with{Points=lane.Points,SegmentStarts=[]};
                     var p=SpeedLimitGeometry.Nearest(sign.Position,shape);
                     if(p is not {Error:<=18,Vertical:<=3})continue;
                     var heading=new Vector3(sign.Direction.X,0,sign.Direction.Z);
                     float dot=heading.LengthSquared()>.001f?Vector3.Dot(Vector3.Normalize(heading),p.Value.Heading):0;
                     if(dot<-.65f)continue;
-                    double shapeLength=shape.Points.Zip(shape.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
+                    double shapeLength=RouteGeometry.Length(shape);
                     if(p.Value.Along<.01 && Vector3.Dot(sign.Position-shape.Points[0],p.Value.Heading)<-InterfaceToleranceMeters)continue;
                     if(shapeLength-p.Value.Along<.01 && Vector3.Dot(sign.Position-shape.Points[^1],p.Value.Heading)>InterfaceToleranceMeters)continue;
-                    candidates.Add(new(i,lane,p.Value.Along,p.Value.Error,dot,p.Value.Along<.01,shapeLength-p.Value.Along<.01));
+                    candidates.Add(new(i,lane,p.Value.Along,p.Value.Position,p.Value.Error,dot,p.Value.Along<.01,shapeLength-p.Value.Along<.01));
                 }
             }
             var onEdge=candidates.ToLookup(b=>b.Edge);
@@ -56,8 +56,9 @@ internal static class SignProjector
             {
                 var edge=graph[binding.Edge];
                 var action=uncertain?new(Unsupported:true):sign.Action;
-                double at=binding.Lane is null?binding.At:SpeedLimitGeometry.Nearest(sign.Position,edge)!.Value.Along;
-                events[binding.Edge].Add(new(sign.Id,at,SpeedLimitGeometry.PointAt(edge,at),action));
+                if(binding.Lane is null)events[binding.Edge].Add(new(sign.Id,binding.At,binding.Position,action));
+                else if(SpeedLimitGeometry.Nearest(sign.Position,edge) is {} reference)
+                    events[binding.Edge].Add(new(sign.Id,reference.Along,reference.Position,action));
 
                 // Different native branches can share both SDK interfaces. Keep the sign's
                 // physical owner and station for a visit whose lane has been observed.
@@ -65,9 +66,8 @@ internal static class SignProjector
                 {
                     if(candidate.Lane is not {} lane || candidate.Error-binding.Error>=2
                         || candidate.Dot<.65f && binding.Dot>=.65f)continue;
-                    var shape=edge with{Points=lane.Points};
                     var laneAction=candidate.Dot<.65f?new(Unsupported:true):action;
-                    events[binding.Edge].Add(new(sign.Id,candidate.At,SpeedLimitGeometry.PointAt(shape,candidate.At),laneAction),lane);
+                    events[binding.Edge].Add(new(sign.Id,candidate.At,candidate.Position,laneAction),lane);
                 }
             }
         }

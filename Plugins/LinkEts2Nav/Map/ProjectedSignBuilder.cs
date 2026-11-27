@@ -10,7 +10,9 @@ public static class ProjectedSignBuilder
         if(data.Error is not null)return data;
         var roads=data.Roads.Values.SelectMany(r=>
             (r.ForwardTraffic?new[]{r.Geometry}:Array.Empty<DirectedRoad>()).Concat(r.ReverseTraffic
-                ?new[]{r.Geometry with{StartNodeUid=r.Geometry.EndNodeUid,EndNodeUid=r.Geometry.StartNodeUid,Points=r.Geometry.Points.Reverse().ToArray()}}
+                ?new[]{r.Geometry with{StartNodeUid=r.Geometry.EndNodeUid,EndNodeUid=r.Geometry.StartNodeUid,
+                    Points=r.Geometry.Points.Reverse().ToArray(),SegmentStarts=r.Geometry.SegmentStarts.Count==0?[]:
+                        r.Geometry.SegmentStarts.Reverse().Select(i=>r.Geometry.Points.Count-i).ToArray()}}
                 :Array.Empty<DirectedRoad>()));
         var graph=roads.Concat(prefabPaths).Where(e=>e.Points.Count>=2).DistinctBy(LimitEdgeKey.Of).ToArray();
         var projection=SignProjector.Build(data,graph,token);

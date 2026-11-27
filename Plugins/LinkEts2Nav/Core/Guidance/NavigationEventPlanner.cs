@@ -6,6 +6,7 @@ namespace LinkEts2Nav.Core.Guidance;
 public sealed class NavigationEventPlanner
 {
     private static readonly int[] Stages = [NavigationPrompts.MaximumPreviewDistanceMeters,500,200,100];
+    private const int JunctionLaneDistance=200;
     private sealed class ActionPlan(NavigationManeuver maneuver, string id, double along,double discoveredAlong)
     {
         public NavigationManeuver Maneuver = maneuver;
@@ -169,6 +170,14 @@ public sealed class NavigationEventPlanner
                     state.BriefingAlong=Math.Max(playerAlong,end);state.BriefingStrict=state.BriefingAlong==end;
                 }
             }
+            if(m.JunctionLaneInstruction is not null&&state.BriefingAlong is {} briefing
+                &&state.Along-briefing>JunctionLaneDistance&&(m.Kind==ManeuverKind.ChooseLanes
+                    ||DistancePreviewStages.FirstStage(state.Along-briefing,Stages)==JunctionLaneDistance))
+            {
+                // If the first briefing already belongs to the 200 m stage, give
+                // direction and lanes together at that point.
+                state.BriefingAlong=state.Along-JunctionLaneDistance;state.BriefingStrict=false;
+            }
             double? initial=state.BriefingAlong is {} anchor?Math.Max(0,state.Along-anchor):null;
             int? firstStage=initial is {} initialDistance?DistancePreviewStages.FirstStage(initialDistance,Stages):null;
             const int countStage=200;
@@ -258,7 +267,7 @@ public sealed class NavigationEventPlanner
                 triggers.Where(t=>g.Any(e=>e.Id==t.EventId)).ToArray(),sequences[g.Key].Ended)).ToArray();
         // Later actions now have their actual first-speaking boundary. Compose
         // executions only after that shared planning step, rather than predicting it.
-        var executionTexts=ordered.Select((p,i)=>(p.Id,Text:Execution(ordered,i))).ToDictionary(p=>p.Id,p=>p.Text);
+        var executionTexts=ordered.Select((p,i)=>(p.Id,Text:Execution(ordered,i,playerAlong))).ToDictionary(p=>p.Id,p=>p.Text);
         complete=complete.Select(s=>s.MapTriggers(t=>t.Kind==SpeechTriggerKind.Execution
             ?t with{Text=executionTexts[t.EventId]}:t)).ToArray();
         complete=JoinPassages(ordered,complete,auxiliaries);
@@ -304,13 +313,14 @@ public sealed class NavigationEventPlanner
     private string SequenceId(ActionPlan state)=>state.Maneuver.SpeechSequenceId is not {} shared?state.Id
         :shared+(state.SequenceStartAlong is {} visit?VisitSuffix(visit,state.SdkRouteGeneration):"@"+state.Generation)+FrameSuffix();
     private string ContinuationId(ActionPlan? previous)=>"continuation:"+(previous is null?"origin"+FrameSuffix():SequenceId(previous));
-    private static string? Instruction(NavigationManeuver m,int stage)=>stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
+    private static string? Instruction(NavigationManeuver m,int stage)=>stage<=JunctionLaneDistance&&m.JunctionLaneInstruction is {} lanes
+        ?lanes:stage is 0 or 100?m.NearInstruction??m.Instruction:m.Instruction;
     private static int ActionIndex(IReadOnlyList<ActionPlan> list,int start)
     {for(int i=start;i<list.Count;i++)if(IsNavigationAction(list[i].Maneuver))return i;return -1;}
     private static bool ExecutionDue(SpeechTriggerContext context)
         =>context.DistanceToEventMeters<=Math.Max(0,context.SpeedMetersPerSecond)*2;
 
-    private static string Execution(IReadOnlyList<ActionPlan> list,int i)
+    private static string Execution(IReadOnlyList<ActionPlan> list,int i,double playerAlong)
     {
         var m=list[i].Maneuver;string text=NavigationPrompts.Execute(m.Kind,m.ExecutionInstruction??Instruction(m,0));
         if(m.ExecutionOnly||m.Kind==ManeuverKind.EnterRoundabout||m.AnnouncementMode!=NavigationAnnouncementMode.Normal)return text;
@@ -321,6 +331,11 @@ public sealed class NavigationEventPlanner
         if(gap<=0||available<0||available>=100)return text;
         string? nextInstruction=list[next].Maneuver.Kind==ManeuverKind.Destination&&list[next].Maneuver.DestinationCompanyName is {} company
             ?"到达"+company+"货场":list[next].Maneuver.Instruction;
+        if(list[next].Maneuver.JunctionLaneInstruction is {} lanes)
+        {
+            if(list[next].Along-playerAlong<=JunctionLaneDistance)nextInstruction=lanes;
+            else if(list[next].Maneuver.Kind==ManeuverKind.ChooseLanes)return text;
+        }
         return NavigationPrompts.Then(text,list[next].Maneuver.Kind,gap,nextInstruction);
     }
 }

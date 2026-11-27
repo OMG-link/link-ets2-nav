@@ -17,6 +17,7 @@ public static class SpeechPackCommands
         {
             "--export-jobs" => ["--output", "--texts", "--kind"],
             "--import-pack" => ["--jobs", "--input", "--output", "--model", "--voice"],
+            "--generate-popular-pack" => ["--usage", "--top", "--api-config", "--output"],
             _ => throw new ArgumentException("Unknown pack command.")
         };
         for (int i = 1; i < args.Length; i += 2)
@@ -26,6 +27,8 @@ public static class SpeechPackCommands
         string Required(string key) => options.TryGetValue(key, out var value) ? value
             : throw new ArgumentException("Missing " + key);
         string output = Path.GetFullPath(Required("--output"));
+        if (args[0] == "--generate-popular-pack")
+            return await PopularSpeechPack.GenerateAsync(Required("--usage"), Required("--top"), Required("--api-config"), output);
         if (args[0] == "--export-jobs")
         {
             string kind = options.GetValueOrDefault("--kind", "fixed");
@@ -52,13 +55,7 @@ public static class SpeechPackCommands
             ?? throw new InvalidDataException("Empty speech jobs.");
         Validate(imported);
         string model = options.GetValueOrDefault("--model", "external"), voice = options.GetValueOrDefault("--voice", "default");
-        if (model.Length > 128 || voice.Length > 128 || model.Any(char.IsControl) || voice.Any(char.IsControl))
-            throw new InvalidDataException("Invalid model/voice metadata.");
-        var projected = new PackManifest(1, model, voice, imported.Items.Select(j =>
-            new PackEntry(j.Text, SpeechPack.FileName(j.Text), new string('0', 64))).ToArray());
-        if (JsonSerializer.SerializeToUtf8Bytes(projected, new JsonSerializerOptions { WriteIndented = true }).Length
-            > (imported.Kind == "fixed" ? 262144 : 2097152))
-            throw new InvalidDataException("Imported manifest exceeds the runtime pack size limit.");
+        ValidateManifest(imported, model, voice);
         var sources = new Dictionary<string, string>(StringComparer.Ordinal);
         string root = Path.TrimEndingDirectorySeparator(input) + Path.DirectorySeparatorChar;
         string outputRoot = Path.TrimEndingDirectorySeparator(output) + Path.DirectorySeparatorChar;
@@ -82,7 +79,21 @@ public static class SpeechPackCommands
         return 0;
     }
 
-    private static void Validate(SpeechJobs jobs)
+    internal static void ValidateManifest(SpeechJobs jobs, string model, string voice, string? apiProfile = null)
+    {
+        if (jobs.Kind == "fixed" && jobs.Items.Length > 256)
+            throw new InvalidDataException("Fixed speech packs support at most 256 entries.");
+        if (string.IsNullOrWhiteSpace(model) || string.IsNullOrWhiteSpace(voice)
+            || model.Length > 128 || voice.Length > 128 || model.Any(char.IsControl) || voice.Any(char.IsControl))
+            throw new InvalidDataException("Invalid model/voice metadata.");
+        var projected = new PackManifest(1, model, voice, jobs.Items.Select(j =>
+            new PackEntry(j.Text, SpeechPack.FileName(j.Text), new string('0', 64))).ToArray()) { ApiProfile = apiProfile };
+        if (JsonSerializer.SerializeToUtf8Bytes(projected, new JsonSerializerOptions { WriteIndented = true }).Length
+            > (jobs.Kind == "fixed" ? 262144 : 2097152))
+            throw new InvalidDataException("Speech manifest exceeds the runtime pack size limit.");
+    }
+
+    internal static void Validate(SpeechJobs jobs)
     {
         if (jobs.Schema != 1 || jobs.Kind is not ("fixed" or "city-names") || jobs.Items is null
             || jobs.Items.Length < 1 || jobs.Kind == "city-names" && jobs.Items.Length > 4096)

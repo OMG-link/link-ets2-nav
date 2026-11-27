@@ -19,15 +19,15 @@ public sealed class NavigationManeuverTests
     private static readonly NavigationManeuverDetector Detector = new();
 
     [Theory]
-    [InlineData(false,false,false,false,ManeuverKind.ChooseLanes,"走左侧两车道，直行")]
-    [InlineData(false,true,false,false,ManeuverKind.ChooseLanes,"走左侧两车道，直行")]
-    [InlineData(true,false,false,false,ManeuverKind.TurnRight,"走最右侧车道，右转")]
+    [InlineData(false,false,false,false,ManeuverKind.ChooseLanes,"直行，走左侧两车道")]
+    [InlineData(false,true,false,false,ManeuverKind.ChooseLanes,"直行，走左侧两车道")]
+    [InlineData(true,false,false,false,ManeuverKind.TurnRight,"右转，走最右侧车道")]
     [InlineData(false,true,true,false,ManeuverKind.Straight,null)]
     [InlineData(false,true,false,true,ManeuverKind.Straight,null)]
     public void OrdinaryJunctionSpeaksOnlyAProvenLaneRestriction(bool turning,bool shallowBranch,
         bool allThrough,bool missingConnection,ManeuverKind expectedKind,string? instruction)
     {
-        var incoming=R("in",1,2,P(0,240),P(0,0));
+        var incoming=R("in",1,2,P(0,500),P(0,0));
         var through=J("through",2,3,P(0,0),P(0,-60));
         var right=J("right",2,4,P(0,0),shallowBranch?P(16,-60):P(60,0));
         // Native slots need not run left-to-right. The other approach has its own slot 3.
@@ -43,14 +43,27 @@ public sealed class NavigationManeuverTests
         var target=turning?right:through;
         var action=Assert.Single(Detector.FindSequence([incoming,target],0,[incoming,through,right]));
         Assert.Equal(expectedKind,action.Kind);
-        Assert.Equal(instruction,action.Instruction);
+        Assert.Equal(instruction,action.JunctionLaneInstruction);
 
         var now=DateTimeOffset.UnixEpoch;
         var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
-        timeline.Publish(new NavigationEventPlanner().Build("s","route",now,0,[action],true,false,false,scheduler));
-        var queued=scheduler.Update(timeline,now,0).Where(r=>r.Disposition==TriggerDisposition.Queued);
-        if(instruction is null)Assert.Empty(queued);
-        else Assert.Contains(instruction,Assert.Single(queued).Trigger.Text);
+        var planner=new NavigationEventPlanner();
+        string[] Step(int distance)
+        {
+            double along=500-distance;
+            timeline.Publish(planner.Build("s","route",now,along,[action with{DistanceMeters=distance,
+                EndDistanceMeters=action.EndDistanceMeters-along}],true,false,false,scheduler));
+            return scheduler.Update(timeline,now,0).Where(r=>r.Disposition==TriggerDisposition.Queued).Select(r=>r.Trigger.Text).ToArray();
+        }
+        if(turning)Assert.Equal("五百米后，右转。",Assert.Single(Step(500)));else Assert.Empty(Step(500));
+        Assert.Empty(Step(201));
+        if(instruction is null)Assert.Empty(Step(200));
+        else
+        {
+            Assert.Equal("两百米后，"+instruction+"。",Assert.Single(Step(200)));
+            Assert.Empty(Step(199));
+            Assert.Equal(instruction+"。",Assert.Single(Step(20)));
+        }
     }
 
     [Theory]

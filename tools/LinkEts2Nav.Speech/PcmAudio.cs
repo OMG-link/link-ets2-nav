@@ -4,11 +4,17 @@ namespace LinkEts2Nav.Speech;
 /// <summary>Canonical 24 kHz mono PCM16; joins samples rather than concatenating WAV containers.</summary>
 public static class PcmAudio
 {
+    internal const int MaximumWaveBytes = 64 * 1024 * 1024;
     public static byte[] Read(string path)
     {
         using var stream = File.OpenRead(path);
-        using var reader = new BinaryReader(stream);
-        if (stream.Length < 44 || stream.Length > 64 * 1024 * 1024 ||
+        return Read(stream);
+    }
+
+    internal static byte[] Read(Stream stream)
+    {
+        using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
+        if (stream.Length < 44 || stream.Length > MaximumWaveBytes ||
             reader.ReadUInt32() != 0x46464952 || reader.ReadUInt32() != stream.Length - 8 ||
             reader.ReadUInt32() != 0x45564157) throw new InvalidDataException("Invalid WAV container.");
         bool format = false;

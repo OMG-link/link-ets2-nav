@@ -46,6 +46,8 @@ public sealed record NavigationManeuver(string Id, ManeuverKind Kind, double Dis
     public NavigationAnnouncementMode AnnouncementMode { get; init; }
     /// <summary>Optional action-specific wording; distance scheduling remains shared.</summary>
     public string? Instruction { get; init; }
+    /// <summary>Direction and required entry lanes for the final approach to an ordinary junction.</summary>
+    public string? JunctionLaneInstruction { get; init; }
     public string? NearInstruction { get; init; }
     public string? ExecutionInstruction { get; init; }
     public string? DestinationCompanyName { get; init; }
@@ -292,7 +294,8 @@ public sealed class NavigationManeuverDetector
                             EndDistanceMeters = end - vehicleAlong,
                             JunctionId = "prefab:" + prefab,
                             HasSeparateApproachRoad = previous is not null && PrefabKey(previous) is null,
-                            Instruction=lanes is null?null:lanes+"，"+NavigationPrompts.Action(kind),
+                            Instruction=chooseForStraight?NavigationPrompts.Action(kind):null,
+                            JunctionLaneInstruction=lanes is null?null:NavigationPrompts.Action(kind)+"，"+lanes,
                             IsMainRoadContinuation = mainContinuation&&!chooseForStraight,
                             IsMinorStraight=kind==ManeuverKind.Straight&&!chooseForStraight&&current.IsMinorStraight,
                             StraightExitSides=AlternativeExitSides(entry.Value,chosen.Value,current.EndNodeUid,exits.Select(e=>(e.End,e.Direction)))

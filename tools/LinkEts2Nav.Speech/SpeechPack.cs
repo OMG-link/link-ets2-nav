@@ -6,7 +6,11 @@ using System.Text.RegularExpressions;
 namespace LinkEts2Nav.Speech;
 
 public sealed record PackEntry(string Text, string File, string Sha256);
-public sealed record PackManifest(int Schema, string Model, string Voice, PackEntry[] Entries);
+public sealed record PackManifest(int Schema, string Model, string Voice, PackEntry[] Entries)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? ApiProfile { get; init; }
+}
 
 /// <summary>Only explicitly generated pack entries can override the local voice.</summary>
 public sealed class SpeechPack(string? directory, string cacheDirectory)

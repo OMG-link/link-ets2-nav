@@ -4,6 +4,42 @@
 
 仓库保存文本和工具，不保存生成的 WAV、模型或 API 密钥。默认中文清单位于 `tools/LinkEts2Nav.Speech/Texts/zh-CN.txt`，它同时是工具嵌入的默认清单；修改后需要重新构建工具。
 
+## 用自己的 API 生成常用语音
+
+工具按实际成功播报次数选句。同次数时，累计准备耗时较长的句子优先。`--top` 可填 1 到 256，播报过的句子不足时生成现有全部。
+
+在宿主目录保存 `SpeechApi.json`，按你的服务填写地址、模型、音色和请求字段。`{{text}}` 会被替换成完整播报句子，`{{model}}` 和 `{{voice}}` 使用配置中的名称。接口接收 HTTP POST 的 JSON，并直接返回 24 kHz 单声道 PCM16 WAV。
+
+```json
+{
+  "endpoint": "https://tts.example.com/v1/audio/speech",
+  "model": "my-model",
+  "voice": "my-voice",
+  "auth": {
+    "header": "Authorization",
+    "environmentVariable": "NAV_TTS_TOKEN",
+    "prefix": "Bearer "
+  },
+  "request": {
+    "model": "{{model}}",
+    "voice": "{{voice}}",
+    "input": "{{text}}",
+    "response_format": "wav"
+  }
+}
+```
+
+在宿主目录打开 PowerShell。第一行会提示输入密钥，第二条命令中的 `50` 换成所需条数。使用无需认证的本地服务时，省略配置中的 `auth`，直接运行生成命令。
+
+```powershell
+$env:NAV_TTS_TOKEN = [Net.NetworkCredential]::new('', (Read-Host 'API 密钥' -AsSecureString)).Password
+.\Tools\LinkEts2Nav.Speech\LinkEts2Nav.Speech.exe --generate-popular-pack `
+  --usage .\Cache\LinkEts2Nav\SpeechUsage\summary.json --top 50 `
+  --api-config .\SpeechApi.json --output .\Assets\LinkEts2Nav\MySpeechPack
+```
+
+生成时按服务的计费规则调用 API。同一配置下再次生成会复用有效音频。全部完成后才发布语音包，可在插件页的“预生成语音包目录”选中它。[使用语音包](#使用语音包)
+
 ## 导出待生成任务
 
 在仓库根目录执行：

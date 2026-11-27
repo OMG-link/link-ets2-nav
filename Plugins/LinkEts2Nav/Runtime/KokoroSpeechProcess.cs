@@ -14,7 +14,12 @@ public interface ISpeechSynthesisDiagnostics
     bool? LastCacheHit {get;}
 }
 
-internal sealed class SpeechModelUnavailableException(string resource) : Exception(resource);
+internal sealed class SpeechModelUnavailableException(string resource, string? readError = null)
+    : Exception(readError is null ? $"本地语音模型文件缺失或为空（{resource}）。"
+        : $"本地语音模型文件无法读取（{resource}）。系统原因：{readError}")
+{
+    internal bool Unreadable => readError is not null;
+}
 
 /// <summary>One persistent child process keeps native inference out of the host and serializes requests.</summary>
 public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesizer,ISpeechSynthesisDiagnostics
@@ -49,7 +54,8 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
                     && !string.IsNullOrWhiteSpace(missing.GetString()))
                 {
                     completed = true;
-                    throw new SpeechModelUnavailableException(missing.GetString()!);
+                    bool unreadable = root.TryGetProperty("modelResourceUnreadable", out var flag) && flag.GetBoolean();
+                    throw new SpeechModelUnavailableException(missing.GetString()!, unreadable ? error.GetString() : null);
                 }
                 throw new IOException(error.GetString());
             }

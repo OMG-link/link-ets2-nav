@@ -123,7 +123,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
 
     private async Task PrepareAsync()
     {
-        bool reportedMissingModel = false;
+        var reportedModelFailures = new HashSet<bool>();
         try
         {
             while (await changed.Reader.WaitToReadAsync(stop.Token))
@@ -144,17 +144,16 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested)
                     {cancelled=true;usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,null,cancelled:true);break;}
-                    catch (SpeechModelUnavailableException missing)
+                    catch (SpeechModelUnavailableException issue)
                     {
                         lock (gate)
                         {
                             if (version != audioVersion) continue;
                             unavailable.Add(text);
                         }
-                        if (!reportedMissingModel)
+                        if (reportedModelFailures.Add(issue.Unreadable))
                         {
-                            reportedMissingModel = true;
-                            log($"本地语音模型文件缺失或为空（{missing.Message}）。已安装的录音可继续使用，其余语句将播放提示音。");
+                            log($"{issue.Message} 已安装的录音可继续使用，其余语句将播放提示音。");
                         }
                         CacheChanged?.Invoke();
                         continue;

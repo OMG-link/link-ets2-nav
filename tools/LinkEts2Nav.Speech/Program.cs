@@ -9,7 +9,7 @@ if (args.Contains("--help", StringComparer.Ordinal))
 {
     Console.WriteLine("Usage: LinkEts2Nav.Speech --model-dir DIR --cache-dir DIR [--voice zf_067] [--threads 2] [--pack-dir DIR]");
     Console.WriteLine("Reads UTF-8 JSON lines {\"id\":\"request-id\",\"text\":\"完整短句\"} from stdin, in order.");
-    Console.WriteLine("Writes {id,path,cacheHit,error} JSON lines. A missing local model also returns missingModelResource; recorded clips remain available.");
+    Console.WriteLine("Writes {id,path,cacheHit,error} JSON lines. Unavailable model inputs return missingModelResource and read failures also set modelResourceUnreadable.");
     Console.WriteLine("Kokoro multi-lang v1.1-zh preset: zf_067 = speaker 36, speed 1.0, CPU only.");
     Console.WriteLine("Export provider-neutral jobs: --export-jobs --output FILE [--texts UTF8_FILE] [--kind fixed|city-names].");
     Console.WriteLine("Prepare missing names: --prepare-name-jobs --texts UTF8_FILE [--texts UTF8_FILE] --output FILE [--pack CityNames_DIR].");
@@ -34,7 +34,7 @@ try
     if (args.Length > 0 && args[0] is "--generate-pack" or "--generate-city-names") return await QwenPackGenerator.RunAsync(args);
     var options = WorkerOptions.Parse(args);
     var pack = new SpeechPack(options.PackDirectory, options.CacheDirectory);
-    var synthesis = new Lazy<KokoroSynthesis>(() => new(options));
+    KokoroSynthesis? synthesis = null;
     try
     {
         while (true)
@@ -51,12 +51,13 @@ try
                     throw new InvalidDataException("Request id must contain 1-128 printable characters.");
                 if (string.IsNullOrWhiteSpace(request.Text) || request.Text.Length > 2048)
                     throw new InvalidDataException("Text must contain 1-2048 characters.");
-                var result = pack.Generate(request.Text.Trim().Normalize(NormalizationForm.FormC), text => synthesis.Value.Generate(text));
+                var result = pack.Generate(request.Text.Trim().Normalize(NormalizationForm.FormC), text => (synthesis ??= new(options)).Generate(text));
                 Write(new Response(id, result.Path, result.CacheHit, null));
             }
-            catch (MissingModelResource ex)
+            catch (UnavailableModelResource ex)
             {
-                Write(new Response(id, null, false, ex.Message, ex.ResourcePath));
+                // Older plugins recognize this path and keep playing recordings and warning tones.
+                Write(new Response(id, null, false, ex.Message, ex.ResourcePath, ex.InnerException is null ? null : true));
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
@@ -65,7 +66,7 @@ try
             }
         }
     }
-    finally { if (synthesis.IsValueCreated) synthesis.Value.Dispose(); }
+    finally { synthesis?.Dispose(); }
     return 0;
 }
 catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -82,4 +83,5 @@ void Write(Response response)
 
 internal sealed record Request(string Id, string Text);
 internal sealed record Response(string? Id, string? Path, bool CacheHit, string? Error,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? MissingModelResource = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? MissingModelResource = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ModelResourceUnreadable = null);

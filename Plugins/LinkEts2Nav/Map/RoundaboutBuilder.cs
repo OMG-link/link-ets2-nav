@@ -1,4 +1,5 @@
 using System.Numerics;
+using LinkEts2Nav.Core;
 
 namespace LinkEts2Nav.Map;
 
@@ -175,6 +176,38 @@ public sealed class RoundaboutBuilder
         var candidates = current.Next.Select(k => graph[k]).ToArray();
         if (candidates.Length == 1) return candidates[0].Key;
         var tangent = Direction(current.Points, false);
+        if(current.ExitNode!=0 && candidates[0].PrefabUid is {} nextPrefab && current.PrefabUid!=nextPrefab
+            && candidates.All(c=>c.PrefabUid==nextPrefab&&c.EntryNode==current.ExitNode&&c.EntryLane>=0))
+        {
+            var end=current.Points[^1];
+            var heading=Vector3.Normalize(tangent);
+            bool Parallel(RoundaboutCurve c)=>Vector3.Dot(heading,Vector3.Normalize(Direction(c.Points,true)))>=.98f;
+            if(current.PrefabUid.HasValue&&current.ExitLane>=0)
+            {
+                // Adjacent prefab ports share a control node across every lane. Only
+                // a physical seam continues this lane, even if the next PPD renumbers it.
+                candidates=candidates.Where(c=>Parallel(c)&&Vector3.Distance(end,c.Points[0])<=LaneRouteConnections.NativeSeamMeters).ToArray();
+                if(candidates.Length==0)return null;
+                if(candidates.Length==1)return candidates[0].Key;
+            }
+            else if(current.PrefabUid is null && current.RoadNormals is {Count:>0} normals)
+            {
+                // An ordinary road supplies a reference line. Its innermost parallel
+                // entrance is determined by lateral position at the native cross-section.
+                var normal=normals[^1];
+                bool OnCrossSection(RoundaboutCurve c)
+                {
+                    var offset=c.Points[0]-end;
+                    return (offset-normal*Vector3.Dot(normal,offset)).Length()<=LaneRouteConnections.NativeSeamMeters;
+                }
+                if(candidates.All(c=>Parallel(c)&&OnCrossSection(c)))
+                {
+                    var side=new Vector3(-heading.Z,0,heading.X)*(current.LeftHandTraffic?-1:1);
+                    var ordered=candidates.Select(c=>(c.Key,Side:Vector3.Dot(c.Points[0]-end,side))).OrderBy(c=>c.Side).ToArray();
+                    if(ordered[1].Side-ordered[0].Side>LaneRouteConnections.NativeSeamMeters)return ordered[0].Key;
+                }
+            }
+        }
         double distance = Math.Min(3, candidates.Min(c => Length(c.Points)) * .2);
         return candidates.Select(c => (c.Key, Angle: Angle(tangent, Ahead(c.Points, distance) - c.Points[0])))
             .OrderBy(c => current.LeftHandTraffic ? -c.Angle : c.Angle)

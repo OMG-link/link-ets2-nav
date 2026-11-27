@@ -13,6 +13,27 @@ public sealed class RoundaboutBuilderTests
             [new((ulong)(1+((i+1)%32)*owners/32),(i+1)%32)])).ToArray();
     private static Vector3 Point(double angle)=>new((float)(20*Math.Cos(angle)),0,(float)(20*Math.Sin(angle)));
 
+    [Theory]
+    [InlineData(true,false)]
+    [InlineData(false,false)]
+    [InlineData(true,true)]
+    [InlineData(false,true)]
+    public void ParallelEntranceLanesUseTheRoadsInnerSideOrTheActualPrefabSeam(bool road,bool left)
+    {
+        var ring=Circle(2,left);
+        var current=ring[15];var next=ring[16];var end=current.Points[^1];
+        var heading=Vector3.Normalize(end-current.Points[^2]);
+        var outward=new Vector3(-heading.Z,0,heading.X)*(left?-1:1);
+        var start=end+4.5f*outward;
+        // The exit-only lane bends slightly further inward, but starts one lane away.
+        var exit=new RoundaboutCurve(new(2,100),2,left,[start,start+heading*4-outward*.3f],[],EntryNode:50){EntryLane=7};
+        ring[16]=next with{EntryNode=50,EntryLane=1};
+        ring[15]=current with{PrefabUid=road?null:current.PrefabUid,ExitNode=50,ExitLane=road?-1:7,
+            RoadNormals=road?Enumerable.Repeat(outward,current.Points.Count).ToArray():null,Next=[exit.Key,next.Key]};
+        var found=new RoundaboutBuilder(ring.Append(exit)).Find(1,[ring[0].Key],TestContext.Current.CancellationToken);
+        Assert.NotNull(found);Assert.Contains(next.Key,found.Ring);Assert.DoesNotContain(exit.Key,found.Ring);
+    }
+
     [Fact]
     public void ExtractsOnlyCycleAndReusesSuffixForAnotherEntrance()
     {

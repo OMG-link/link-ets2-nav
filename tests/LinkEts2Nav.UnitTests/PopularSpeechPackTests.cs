@@ -9,6 +9,10 @@ using Microsoft.Extensions.Logging;
 
 namespace LinkEts2Nav.UnitTests;
 
+[CollectionDefinition("Local speech API", DisableParallelization = true)]
+public sealed class LocalSpeechApiCollection;
+
+[Collection("Local speech API")]
 public sealed class PopularSpeechPackTests : IDisposable
 {
     private readonly string root = Directory.CreateTempSubdirectory("nav-popular-test-").FullName;
@@ -16,6 +20,7 @@ public sealed class PopularSpeechPackTests : IDisposable
     private readonly SpeechPackGeneration generation;
     private readonly SpeechPackSettings settings;
     private SpeechUsageSnapshot? liveUsage;
+    private readonly string? priorNoProxy = Environment.GetEnvironmentVariable("no_proxy");
     private SpeechPackGenerationRequest request = new("", "my-model", "my-voice", Secret);
     private string Output => settings.Read().ResolvedDirectory;
     private string Usage => Path.Combine(root, "Cache", "LinkEts2Nav", "SpeechUsage", "summary.json");
@@ -23,6 +28,11 @@ public sealed class PopularSpeechPackTests : IDisposable
 
     public PopularSpeechPackTests()
     {
+        // Let the fake server observe the worker's socket, including disconnects. This testhost and
+        // its child are isolated from other tests and no persistent system/user variables are changed.
+        string? bypass = priorNoProxy ?? Environment.GetEnvironmentVariable("NO_PROXY");
+        Environment.SetEnvironmentVariable("no_proxy", string.IsNullOrEmpty(bypass) ? "127.0.0.1,localhost" : bypass + ",127.0.0.1,localhost",
+            EnvironmentVariableTarget.Process);
         settings = new(root);
         generation = new(root, settings, () => liveUsage, typeof(SpeechPack).Assembly.Location);
     }
@@ -198,9 +208,21 @@ public sealed class PopularSpeechPackTests : IDisposable
             received.Enqueue(text);
             if (text == "two" && Volatile.Read(ref hang))
             {
-                inFlight.TrySetResult();
-                try { await Task.Delay(Timeout.Infinite, context.RequestAborted); }
-                catch (OperationCanceledException) { aborted.TrySetResult(); }
+                context.Response.ContentType = "audio/wav";
+                context.Response.ContentLength = 16 * 1024 * 1024;
+                try
+                {
+                    // Keep an actual response in flight so Kestrel observes a disconnected reader
+                    // on Windows as well as a reset before the provider sends response headers.
+                    while (true)
+                    {
+                        await context.Response.Body.WriteAsync(wave, context.RequestAborted);
+                        await context.Response.Body.FlushAsync(context.RequestAborted);
+                        inFlight.TrySetResult();
+                        await Task.Delay(25, context.RequestAborted);
+                    }
+                }
+                catch (Exception e) when (e is OperationCanceledException or IOException) { aborted.TrySetResult(); }
                 return;
             }
             await context.Response.Body.WriteAsync(wave);
@@ -215,6 +237,9 @@ public sealed class PopularSpeechPackTests : IDisposable
         Assert.True(generation.TryStart(request));
         await inFlight.Task.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
         Assert.False(generation.TryStart(request));
+        using var progressTimeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        progressTimeout.CancelAfter(TimeSpan.FromSeconds(5));
+        while (generation.Status.Completed == 0) await Task.Delay(10, progressTimeout.Token);
         Assert.Equal(1, generation.Status.Completed);
         string reserved = Path.Combine(root, "SpeechPacks", "LinkEts2Nav", "Popular-2");
         var busy = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -234,5 +259,9 @@ public sealed class PopularSpeechPackTests : IDisposable
         Assert.DoesNotContain(Secret, request.ToString());
     }
 
-    public void Dispose() { Directory.Delete(root, recursive: true); }
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("no_proxy", priorNoProxy, EnvironmentVariableTarget.Process);
+        Directory.Delete(root, recursive: true);
+    }
 }

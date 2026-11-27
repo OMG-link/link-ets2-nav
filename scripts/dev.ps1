@@ -165,6 +165,29 @@ try {
         }
         Write-Host "Local speech pack deployed to $packDeployment."
     }
+
+    . (Join-Path $PSScriptRoot 'speech-model.ps1')
+    $modelDeployment = Join-Path $hostOutput 'Assets\LinkEts2Nav\SpeechModel'
+    if (-not (Test-NavSpeechModel -Directory $modelDeployment)) {
+        try {
+            $speechSettingsPath = Join-Path $hostOutput 'Settings\LinkEts2Nav.Speech.json'
+            $speechSettings = if (Test-Path -LiteralPath $speechSettingsPath -PathType Leaf) {
+                Get-Content -LiteralPath $speechSettingsPath -Raw | ConvertFrom-Json
+            }
+            $selectedModel = $speechSettings.modelDirectory
+            if ($selectedModel -and -not [IO.Path]::IsPathRooted($selectedModel)) {
+                $selectedModel = Join-Path $hostOutput $selectedModel
+            }
+            if ($speechSettings.enabled -ne $false -and
+                (-not $selectedModel -or [IO.Path]::GetFullPath($selectedModel).TrimEnd('\', '/') -eq $modelDeployment)) {
+                $modelSource = Get-NavSpeechModel -ProjectRoot $projectRoot
+                Install-NavSpeechModel -Source $modelSource -Destination $modelDeployment
+            }
+        }
+        catch {
+            Write-Warning "Could not install the default local speech model. Available recordings and the alert tone can still play. $($_.Exception.Message)"
+        }
+    }
     if ($Action -eq 'Run') {
         Push-Location $hostOutput
         try { Invoke-Checked dotnet @((Join-Path $hostOutput $hostAssembly)) }

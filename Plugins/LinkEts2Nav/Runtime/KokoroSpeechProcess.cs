@@ -76,14 +76,16 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
     private async Task StartAsync()
     {
         if (!File.Exists(options.WorkerPath)) throw new FileNotFoundException("Speech worker is not deployed.", options.WorkerPath);
-        var start = new ProcessStartInfo("dotnet")
+        bool managedAssembly = string.Equals(Path.GetExtension(options.WorkerPath), ".dll", StringComparison.OrdinalIgnoreCase);
+        var start = new ProcessStartInfo(managedAssembly ? "dotnet" : options.WorkerPath)
         {
             UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
             StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8, WorkingDirectory = Path.GetDirectoryName(options.WorkerPath)!
         };
-        foreach (string argument in new[] { options.WorkerPath, "--model-dir", options.ModelDirectory!,
+        if (managedAssembly) start.ArgumentList.Add(options.WorkerPath);
+        foreach (string argument in new[] { "--model-dir", options.ModelDirectory!,
             "--cache-dir", options.CacheDirectory, "--pack-dir", options.PackDirectory, "--voice", options.Voice, "--threads",
             options.Threads.ToString(System.Globalization.CultureInfo.InvariantCulture) }) start.ArgumentList.Add(argument);
         await DisposeAsync().ConfigureAwait(false);

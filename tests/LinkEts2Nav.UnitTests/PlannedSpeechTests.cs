@@ -147,7 +147,7 @@ public sealed class PlannedSpeechTests : IDisposable
         => Assert.Equal(expected, PlannedSpeechAnnouncer.Text(stage, actual));
 
     [Fact]
-    public void SpeechSettingsResolvePathsFromHostAndRemainOptIn()
+    public void SpeechSettingsResolvePathsFromHostEvenWithoutBundledAssets()
     {
         Assert.False(SpeechOptions.Load(directory).Enabled);
         Directory.CreateDirectory(Path.Combine(directory, "Settings"));
@@ -157,5 +157,32 @@ public sealed class PlannedSpeechTests : IDisposable
         Assert.Equal(Path.Combine(directory, "Models", "kokoro"), options.ModelDirectory);
         Assert.Equal(Path.Combine(directory, "Tools", "LinkEts2Nav.Speech", "LinkEts2Nav.Speech.dll"), options.WorkerPath);
         Assert.StartsWith(directory, options.CacheDirectory);
+    }
+
+    [Theory]
+    [InlineData(null, true, "SpeechPack", ".exe")]
+    [InlineData("""{"packDirectory":"recordings"}""", true, "recordings", ".exe")]
+    [InlineData("""{"enabled":false}""", false, "SpeechPack", ".exe")]
+    [InlineData("""{"workerPath":"Tools/LinkEts2Nav.Speech/LinkEts2Nav.Speech.dll"}""", true, "SpeechPack", ".dll")]
+    public void BundledSpeechWorksWithFreshAndExistingSettings(string? settings, bool enabled, string pack, string workerExtension)
+    {
+        string model = Directory.CreateDirectory(Path.Combine(directory, "Assets", "LinkEts2Nav", "SpeechModel")).FullName;
+        System.IO.File.WriteAllBytes(Path.Combine(model, "model.onnx"), [1]);
+        string worker = Directory.CreateDirectory(Path.Combine(directory, "Tools", "LinkEts2Nav.Speech")).FullName;
+        System.IO.File.WriteAllBytes(Path.Combine(worker, "LinkEts2Nav.Speech.exe"), [1]);
+        System.IO.File.WriteAllBytes(Path.Combine(worker, "LinkEts2Nav.Speech.dll"), [1]);
+        if (settings is not null)
+        {
+            string folder = Directory.CreateDirectory(Path.Combine(directory, "Settings")).FullName;
+            System.IO.File.WriteAllText(Path.Combine(folder, "LinkEts2Nav.Speech.json"), settings);
+        }
+
+        var options = SpeechOptions.Load(directory);
+        Assert.Equal(enabled, options.Enabled);
+        if (!enabled) return;
+        Assert.Equal(model, options.ModelDirectory);
+        Assert.Equal(Path.Combine(worker, "LinkEts2Nav.Speech" + workerExtension), options.WorkerPath);
+        Assert.Equal(pack == "SpeechPack" ? Path.Combine(directory, "Assets", "LinkEts2Nav", pack) : Path.Combine(directory, pack),
+            options.PackDirectory);
     }
 }

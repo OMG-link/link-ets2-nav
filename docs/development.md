@@ -25,6 +25,8 @@ git submodule update --init --recursive --depth 1
 
 `Deploy` 构建并复制插件到开发宿主的 `Plugins/`；`Run` 在此基础上启动宿主。VS Code 的 `Nav:` 任务提供相同入口，F5 构建部署后启动调试。重新部署前卸载正在运行的插件，避免文件被锁定。
 
+在仓库根目录运行 `.\scripts\package.ps1`，在 `artifacts/packages/` 生成 Windows x64 的原版插件和轻量宿主安装包。两份 ZIP 均包含语音模型和独立的合成程序。解压后的使用步骤见 [安装与使用](../README.md#安装与使用)。
+
 日常开车只听导航时，运行 `.\scripts\dev.ps1 -Action Run -NavigationOnly`。这个入口默认使用 Release 构建并启动 `dev-host/LinkEts2Nav.Host`，只需 .NET 10 SDK 和 Git。按 Ctrl+C 停止并保存日志。普通的 `Run` 可打开开发诊断页面和录制行车回放。
 
 轻量宿主使用游戏 `bin/win_x64/plugins` 中已安装的 `scs-telemetry.dll` 和与当前游戏版本对应的 `ets2la_plugin.dll`。Steam 安装和默认存档目录自动识别。手动指定目录时，可在构建后运行 `LinkEts2Nav.Host.exe --game-path "游戏安装目录" --documents-path "ETS2 存档目录"`。轻量宿主的产物、设置和日志位于 `dev-host/LinkEts2Nav.Host/bin/<配置>/net10.0`。脚本会从开发宿主补齐缺失的插件设置，优先使用同一构建配置。手动配置的相对路径以当前宿主目录为基准。
@@ -175,24 +177,23 @@ Get-Content .\ETS2LA\ETS2LA\bin\Debug\net10.0\ets2la.log -Tail 30 -Wait
 
 ## 离线语音合成
 
-可选的 `tools/LinkEts2Nav.Speech/` 是常驻 .NET 合成子进程，使用 sherpa-onnx 2.0.1、CPU 推理和 Kokoro multi-lang v1.1-zh。当前预设音色为 `zf_067`（该模型 Speaker 36），默认使用 2 个线程。开发脚本自动构建并将 Windows x64 worker 及原生依赖部署到宿主的 `Tools/LinkEts2Nav.Speech/`；无需安装 Python、CUDA 或系统语音服务。
+`tools/LinkEts2Nav.Speech/` 在独立进程中使用 sherpa-onnx 2.0.1 和 Kokoro multi-lang v1.1 INT8，以 CPU 合成语音。当前预设音色为 `zf_067`（该模型 Speaker 36），默认使用 2 个线程。安装包内的模型和合成程序分别位于 `Assets/LinkEts2Nav/SpeechModel/` 和 `Tools/LinkEts2Nav.Speech/`。首次合成动态文案时才加载模型。
 
-模型需另行下载并解压：[官方模型包](https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2)。模型权重、音色、词典和生成音频不提交到代码仓库。模型与运行库各自保留原有许可证；[Kokoro 模型说明](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh)和[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)提供来源及许可证。
+源码部署和打包脚本首次需要模型时会自动下载、校验并解压，之后复用 `artifacts/speech/models/kokoro-int8-multi-lang-v1_1/`。模型与合成程序各自保留原有许可证。来源见 [官方 INT8 模型包](https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2)、[Kokoro 模型说明](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh)及 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)。
 
-在宿主输出目录创建 `Settings/LinkEts2Nav.Speech.json`：
+正常安装会自动启用语音。要使用自选模型，可在宿主目录的 `Settings/LinkEts2Nav.Speech.json` 写入这些选项。
 
 ```json
 {
   "enabled": true,
-  "modelDirectory": "Models/kokoro-multi-lang-v1_1",
-  "workerPath": "Tools/LinkEts2Nav.Speech/LinkEts2Nav.Speech.dll",
+  "modelDirectory": "Models/custom-kokoro",
   "cacheDirectory": "Cache/LinkEts2Nav/Speech",
   "voice": "zf_067",
   "threads": 2
 }
 ```
 
-相对路径均以宿主输出目录为基准，也可配置绝对路径。配置缺失或 `enabled=false` 时继续使用已有音频。TTS 配置在启用插件时读取；修改后停用再启用，更新 DLL 后需重启宿主。本地合成需要 `model.onnx`、`voices.bin`、`tokens.txt`、`lexicon-zh.txt` 和 `lexicon-us-en.txt`。模型文件缺失或为空时，已装录音继续播放，需要本地合成的提示使用提示音。
+相对路径均以宿主目录为基准，也可配置绝对路径。设置 `"enabled": false` 可关闭语音并继续使用提示音。语音配置在启动导航时读取。模型需要 `model.onnx`、`voices.bin`、`tokens.txt`、`lexicon-zh.txt` 和 `lexicon-us-en.txt`。模型文件缺失或为空时，已装录音继续播放，需要本地合成的提示使用提示音。
 
 默认文案为“五百米处，有测速照相。”和“两百米处，有测速照相。”；只有本次接近首次确认目标时距离已小于 200 米，才只播放“两百米内，有测速照相。”。正常经过 200 米阈值时，即使采样距离略低于 200 米，仍使用“两百米处”。迟发现但仍超过 200 米时使用“前方有测速照相。”。实验限速解析能确认结果时附加“限速五十”等文案；未知时仍不附加。遥测中的当前位置限速只用于实测核对，不能直接代替前方探头限速。
 

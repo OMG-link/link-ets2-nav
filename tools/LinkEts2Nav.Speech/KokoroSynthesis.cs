@@ -5,6 +5,12 @@ using SherpaOnnx;
 
 namespace LinkEts2Nav.Speech;
 
+internal sealed class MissingModelResource(string path)
+    : Exception("Required model resource missing or empty: " + path)
+{
+    internal string ResourcePath { get; } = path;
+}
+
 internal sealed class KokoroSynthesis : IDisposable
 {
     private static readonly string[] ModelFiles =
@@ -19,9 +25,14 @@ internal sealed class KokoroSynthesis : IDisposable
         var files = ModelFiles.Select(name =>
         {
             string path = Path.Combine(options.ModelDirectory, name);
-            var file = new FileInfo(path);
-            if (!file.Exists || file.Length == 0) throw new FileNotFoundException("Required model resource missing or empty: " + name, path);
-            return new { name, length = file.Length, sha256 = HashFile(path) };
+            try
+            {
+                using var file = File.OpenRead(path);
+                if (file.Length == 0) throw new MissingModelResource(path);
+                return new { name, length = file.Length, sha256 = Convert.ToHexString(SHA256.HashData(file)) };
+            }
+            catch (FileNotFoundException) { throw new MissingModelResource(path); }
+            catch (DirectoryNotFoundException) { throw new MissingModelResource(path); }
         }).ToArray();
         // Stable content keys bind the text, selected voice, tokenizer/lexicons,
         // synthesis settings and engine. Moving the same model does not invalidate cache.

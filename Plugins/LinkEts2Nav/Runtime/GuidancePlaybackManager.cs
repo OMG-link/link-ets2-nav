@@ -175,7 +175,7 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
                             string? file=null;var origin=SpeechPlaybackOrigin.Fallback;
                             if(cache?.TryGetAudio(speech.Text,out var ready,out bool exact)==true)
                             {file=ready;origin=exact?SpeechPlaybackOrigin.ExactPack:SpeechPlaybackOrigin.Prepared;}
-                            else if(cache is null)
+                            else if(cache is null || cache.IsUnavailable(speech.Text))
                             {
                                 file=fallback();
                             }

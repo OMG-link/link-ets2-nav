@@ -14,6 +14,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
     { SingleReader = true, FullMode = BoundedChannelFullMode.DropWrite });
     private readonly object gate = new();
     private readonly Dictionary<string, string> ready = new(StringComparer.Ordinal);
+    private readonly HashSet<string> unavailable = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (int Priority, string[] Texts)> plans = new(StringComparer.Ordinal);
     private readonly Task worker;
     private long audioVersion;
@@ -70,7 +71,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
         ThrowIfFaulted();
         lock(gate)
         {
-            replaceSynthesizer();audioVersion++;ready.Clear();exactPack.Clear();
+            replaceSynthesizer();audioVersion++;ready.Clear();exactPack.Clear();unavailable.Clear();
             foreach(var entry in files){ready[entry.Key]=entry.Value;exactPack.Add(entry.Key);}
             usage?.SetExactPack(exactPack);
         }
@@ -80,6 +81,11 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
     {
         ThrowIfFaulted();
         lock (gate) return ready.TryGetValue(text, out string? file) && File.Exists(file);
+    }
+    internal bool IsUnavailable(string text)
+    {
+        ThrowIfFaulted();
+        lock (gate) return unavailable.Contains(text);
     }
 
     public bool TryGetAudio(string text,out string file)
@@ -117,6 +123,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
 
     private async Task PrepareAsync()
     {
+        bool reportedMissingModel = false;
         try
         {
             while (await changed.Reader.WaitToReadAsync(stop.Token))
@@ -125,7 +132,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
                 while (!stop.IsCancellationRequested)
                 {
                     string? text;long version;
-                    lock (gate){version=audioVersion;text = plans.OrderBy(p => p.Value.Priority).ThenBy(p => p.Key, StringComparer.Ordinal).SelectMany(p => p.Value.Texts).FirstOrDefault(p => !ready.ContainsKey(p));}
+                    lock (gate){version=audioVersion;text = plans.OrderBy(p => p.Value.Priority).ThenBy(p => p.Key, StringComparer.Ordinal).SelectMany(p => p.Value.Texts).FirstOrDefault(p => !ready.ContainsKey(p) && !unavailable.Contains(p));}
                     if (text is null) break;
                     var preparation=Stopwatch.StartNew();
                     log("开始准备 TTS 音频：" + text);
@@ -137,6 +144,21 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested)
                     {cancelled=true;usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,null,cancelled:true);break;}
+                    catch (SpeechModelUnavailableException missing)
+                    {
+                        lock (gate)
+                        {
+                            if (version != audioVersion) continue;
+                            unavailable.Add(text);
+                        }
+                        if (!reportedMissingModel)
+                        {
+                            reportedMissingModel = true;
+                            log($"本地语音模型文件缺失或为空（{missing.Message}）。已安装的录音可继续使用，其余语句将播放提示音。");
+                        }
+                        CacheChanged?.Invoke();
+                        continue;
+                    }
                     finally
                     {
                         // Telemetry does not turn an exception into a normal failed-text result.

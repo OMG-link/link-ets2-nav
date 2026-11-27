@@ -14,6 +14,8 @@ public interface ISpeechSynthesisDiagnostics
     bool? LastCacheHit {get;}
 }
 
+internal sealed class SpeechModelUnavailableException(string resource) : Exception(resource);
+
 /// <summary>One persistent child process keeps native inference out of the host and serializes requests.</summary>
 public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesizer,ISpeechSynthesisDiagnostics
 {
@@ -42,7 +44,15 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
             var root = response.RootElement;
             if (root.GetProperty("id").GetString() != id) throw new IOException("Speech worker response ID mismatch.");
             if (root.TryGetProperty("error", out var error) && error.ValueKind != JsonValueKind.Null)
+            {
+                if (root.TryGetProperty("missingModelResource", out var missing) && missing.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(missing.GetString()))
+                {
+                    completed = true;
+                    throw new SpeechModelUnavailableException(missing.GetString()!);
+                }
                 throw new IOException(error.GetString());
+            }
             string path = Path.GetFullPath(root.GetProperty("path").GetString() ?? throw new IOException("No speech file."));
             if(root.TryGetProperty("cacheHit",out var hit)&&hit.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 LastCacheHit=hit.GetBoolean();

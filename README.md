@@ -47,7 +47,7 @@
 
 选择适合自己的 Windows x64 安装包。两个版本都附带中文语音模型，解压后即可在开车时离线生成播报。游戏里的 ETS2LA 通信组件须与游戏版本匹配。
 
-- **原版 ETS2LA**。将 `LinkEts2Nav-Plugin-win-x64.zip` 解压到 ETS2LA 程序目录，在插件管理器中启用 **Link ETS2 Nav**。从插件卡片点“导航”，再点“打开导航设置”。其他插件可继续使用。
+- **原版 ETS2LA**。将 `LinkEts2Nav-Plugin-win-x64.zip` 解压到 ETS2LA 程序目录，在插件管理器中启用 **Link ETS2 Nav**。从插件卡片点“导航”，再点“打开导航设置”，设置页会在默认浏览器中打开。宿主主窗口的置顶可在“设置 → 显示 → 窗口置顶”中调整。
 - **轻量导航**。将 `LinkEts2Nav-Standalone-win-x64.zip` 解压到独立目录，双击 `LinkEts2Nav.Host.exe`。导航设置会在浏览器里打开。轻量版通过游戏里已安装的 ETS2LA 通信组件自动连接 Steam 版 ETS2。
 
 从源码启动或制作安装包的步骤见 [开发指南](docs/development.md#构建和运行)。

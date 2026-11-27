@@ -121,8 +121,7 @@ public sealed class LocalHostTests(LocalHostFixture fixture) : IClassFixture<Loc
                     .Cast<RouteAttribute>().Any(a => a.Template == "/link-ets2-nav"));
             Assert.Contains(page.GetCustomAttributes(typeof(RouteAttribute), false).Cast<RouteAttribute>(),
                 route => route.Template == $"/plugins/adjustments/{plugin.Info.Id}");
-            await using var services = new ServiceCollection().AddLogging()
-                .AddSingleton<NavigationManager>(new RenderNavigation()).BuildServiceProvider();
+            await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
             await using var renderer = new HtmlRenderer(services,
                 services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>());
             var html = await renderer.Dispatcher.InvokeAsync(async () =>
@@ -132,6 +131,7 @@ public sealed class LocalHostTests(LocalHostFixture fixture) : IClassFixture<Loc
             Assert.Contains("驾驶状态", html);
             Assert.Contains("下一条提示", html);
             Assert.Contains("打开导航设置", html);
+            Assert.Contains("默认浏览器", html);
             Assert.Contains("/plugins/manager", html);
             Assert.Contains("/link-ets2-nav/diagnostics", html);
             Assert.DoesNotContain("语音使用统计", html);
@@ -143,9 +143,4 @@ public sealed class LocalHostTests(LocalHostFixture fixture) : IClassFixture<Loc
         finally { handler.UnloadPlugins(); }
     }
 
-    private sealed class RenderNavigation : NavigationManager
-    {
-        public RenderNavigation() => Initialize("http://localhost/", "http://localhost/link-ets2-nav");
-        protected override void NavigateToCore(string uri, bool forceLoad) => throw new NotSupportedException();
-    }
 }

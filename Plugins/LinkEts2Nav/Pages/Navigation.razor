@@ -1,9 +1,8 @@
 @page "/link-ets2-nav"
 @page "/plugins/adjustments/link.ets2.nav"
-@using Microsoft.AspNetCore.Components
+@using System.Diagnostics
 @using LinkEts2Nav.Core
 @using LinkEts2Nav.Runtime
-@inject NavigationManager Navigator
 @implements IAsyncDisposable
 
 <style>
@@ -16,6 +15,7 @@
     .link-navigation button { margin-bottom: .55rem; padding: .65rem 1.1rem; border-radius: .4rem; background: var(--text-h, #243446); color: var(--bg, #fff); font: inherit; font-weight: 600; cursor: pointer; }
     .link-navigation button:hover { opacity: .85; }
     .link-navigation button:disabled { opacity: .7; cursor: wait; }
+    .link-navigation .settings input { display: block; box-sizing: border-box; width: 100%; margin-top: .35rem; padding: .5rem; font: inherit; }
     .link-navigation :is(button,a):focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
     .link-navigation footer { display: flex; flex-wrap: wrap; gap: 1.25rem; }
     .link-navigation footer a { text-decoration: underline; }
@@ -44,10 +44,15 @@
     </section>
     <section class="settings">
         <button type="button" disabled="@openingSettings" @onclick="OpenSettings">@(openingSettings ? "正在打开…" : "打开导航设置")</button>
-        <p>生成语音、使用已有语音包或保存驾驶回放。</p>
+        <p>在默认浏览器中生成语音、使用已有语音包或保存驾驶回放。</p>
         @if (settingsError is not null)
         {
             <p role="alert">@settingsError</p>
+        }
+        @if (manualAddress is not null)
+        {
+            <label for="navigation-settings-url">复制此链接，粘贴到浏览器地址栏</label>
+            <input id="navigation-settings-url" type="url" readonly value="@manualAddress.AbsoluteUri" />
         }
     </section>
     <footer>
@@ -62,6 +67,8 @@
     private Task? refresh;
     private bool openingSettings;
     private string? settingsError;
+    private Uri? manualAddress;
+    internal Func<ProcessStartInfo, Process?> StartBrowser { get; set; } = Process.Start;
 
     private string DrivingState => snapshot.State switch
     {
@@ -84,23 +91,24 @@
         }
     }
 
-    private async Task OpenSettings()
+    internal async Task OpenSettings()
     {
         if (openingSettings) return;
         openingSettings = true;
         settingsError = null;
-        Uri address;
+        manualAddress = null;
+        Uri? address = null;
         try
         {
             address = await PlayerSettingsSession.OpenAsync();
+            StartBrowser(new ProcessStartInfo(address.AbsoluteUri) { UseShellExecute = true })?.Dispose();
         }
         catch (Exception)
         {
-            settingsError = "导航设置未能打开，请重试。";
-            return;
+            manualAddress = address;
+            settingsError = address is null ? "本机导航设置未能启动，请重试。" : "未能打开默认浏览器。";
         }
         finally { openingSettings = false; }
-        Navigator.NavigateTo(address.AbsoluteUri, forceLoad: true);
     }
 
     public async ValueTask DisposeAsync()

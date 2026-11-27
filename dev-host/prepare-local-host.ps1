@@ -204,3 +204,8 @@ if ($ProjectName -eq 'ETS2LA.Controls') {
         Save-Override ([IO.Path]::GetFileName($platform)) $text
     }
 }
+if ($ProjectName -eq 'ETS2LA.UI') {
+    $text = Read-Source 'ETS2LA.UI\Settings.cs'
+    $text = Replace-Once $text 'public bool StayOnTop = true;' 'public bool StayOnTop = false;'
+    Save-Override 'WindowSettings.cs' $text
+}

@@ -93,7 +93,18 @@ public sealed class SpeedLimitDefinitionReader
     public SpeedLimitResult RoadCategoryLimit(Road road,bool forward)
     {
         if(hostCountries is null)return new(null,"宿主国家索引尚未准备");
-        var result=hostCountries.QueryCountry(road.Uid);
+        return RoadCategoryLimit(road,forward,hostCountries);
+    }
+
+    internal Func<Road,bool,SpeedLimitResult> RouteSpeedLookup(TruckLib.ScsMap.Map route,CancellationToken token)
+    {
+        var countries=RoadCountryIndex.Build(route,countryNames,token);
+        return (road,forward)=>RoadCategoryLimit(road,forward,countries);
+    }
+
+    private SpeedLimitResult RoadCategoryLimit(Road road,bool forward,RoadCountryIndex countries)
+    {
+        var result=countries.QueryCountry(road.Uid);
         if(result.Issue is {} issue&&issue is not UndeterminedRoadCountry)return new(null,issue.Reason){MapIssue=issue};
         string? country=result.Value;
         string? speedClass=RoadClass(road,forward?road.LeftHandTraffic:!road.LeftHandTraffic);
@@ -156,7 +167,7 @@ public sealed class SpeedLimitDefinitionReader
             regions.Add(new(city.Uid.ToString("X16"),corners,0,false)
                 {Country=country,OwnerSector=TruckLib.ScsMap.Map.GetSectorOfCoordinate(p)});
         }
-        foreach(var area in map.MapItems.Values.OfType<TrafficArea>())
+        foreach(var area in map.MapItems.Values.OfType<TrafficArea>().Where(a=>a.Nodes.All(n=>n is Node)))
         {
             var action=Action("traffic_rule."+area.Rule,[]);
             if(action.Urban==true||action.SetKph.HasValue||action.Unsupported)

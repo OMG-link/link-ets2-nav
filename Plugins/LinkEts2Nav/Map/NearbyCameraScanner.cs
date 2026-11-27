@@ -102,6 +102,13 @@ public sealed class NearbyCameraScanner
             foreach(var prefab in nextMap.MapItems.Values.OfType<Prefab>())
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var missing=prefab.Nodes.Where(n=>n is not null and not Node).Select(n=>new MapObjectKey(MapObjectKind.Node,n.Uid)).ToArray();
+                if(missing.Length>0)
+                {
+                    typedIssues.Add(new MissingMapObjects(missing,$"Prefab {prefab.Uid:X16} needs its native interfaces before geometry is available.")
+                        {QueryAnchor=prefab.Nodes.OfType<Node>().FirstOrDefault()?.Position});
+                    continue;
+                }
                 var resource=data.World.Prefabs.GetValueOrDefault(prefab.Model.ToString())?.Descriptor;
                 if(data.GetPrefabNavigationDescription(prefab,resource) is not {} descriptor)continue;
                 prefabSources.Add(new(prefab,descriptor));prefabResources[prefab.Uid]=resource!;
@@ -127,7 +134,7 @@ public sealed class NearbyCameraScanner
             typedIssues.AddRange(roundaboutIndex.MapIssues);
             areaCache ??= new(data);
             var regionData=areaCache.Update(nextMap,sectors,
-                junctions.SelectMany(e=>e.Points).Concat(nextMap.MapItems.Values.OfType<Road>()
+                junctions.SelectMany(e=>e.Points).Concat(nextMap.MapItems.Values.OfType<Road>().Where(r=>r.Node is Node&&r.ForwardNode is Node)
                     .SelectMany(r=>Enumerable.Range(0,Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)+1)
                         .Select(i=>r.InterpolateCurve((float)i/Math.Clamp((int)Math.Ceiling(r.Length/100),1,256)).Position))).Append(playerPosition),cancellationToken);
             var builtLimits = ProjectedSignBuilder.Build(data.ReadSpeedLimits(nextMap,regionData,cancellationToken),junctions,cancellationToken);

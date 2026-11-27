@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using System.Text;
+using LinkEts2Nav.Runtime;
 using TruckLib;
 using PrefabDescriptor=TruckLib.Models.Ppd.PrefabDescriptor;
 using TruckLib.ScsMap;
@@ -38,6 +40,9 @@ public sealed class GameDataManager:IDisposable
     private readonly ConditionalWeakTable<NativeMap,MapWindowReadiness> windowReadiness=new();
     private readonly IReadOnlyList<string> mods;
     internal IFileSystem Resources=>resources;
+    internal IFileSystem SequentialMapReads()=>resources.SequentialMapReads();
+    internal string? NavigationIndexFile {get;}
+    internal string MapPath=>mapPath;
     public GameMapData Map {get;}
     public WorldDefinitionIndex World=>world.Value;
     public IReadOnlyList<string> Diagnostics=>Array.Empty<string>();
@@ -50,32 +55,46 @@ public sealed class GameDataManager:IDisposable
     public GameDataManager(IFileSystem source,IReadOnlyList<string>? activeMods=null,NativeMap? map=null,string mapPath="/map/europe.mbd")
         :this(source,activeMods,map,mapPath,null) { }
     private GameDataManager(IFileSystem source,IReadOnlyList<string>? activeMods,NativeMap? map,string mapPath,IDisposable? owner,
-        bool retainSupplementHistory=true)
+        string? navigationIndexFile=null)
     {
         mods=activeMods?.ToArray()??[];this.mapPath=mapPath;this.owner=owner;
         resources=new(this,()=>GameDefinitionFileSystem.Create(source,mods),mapPath);
-        Map=new(map,retainSupplementHistory);world=new(()=>new WorldDefinitionIndex(this),LazyThreadSafetyMode.ExecutionAndPublication);
+        NavigationIndexFile=navigationIndexFile;
+        Map=new(map,retainSupplementHistory:navigationIndexFile is null);
+        world=new(()=>new WorldDefinitionIndex(this),LazyThreadSafetyMode.ExecutionAndPublication);
     }
     public static GameDataManager Open(string gamePath,IEnumerable<string> logLines,NativeMap? map=null)
-        =>Open(gamePath,logLines,map,loadNavigationBase:false,CancellationToken.None);
+        =>Open(gamePath,logLines,map,onDemand:false,CancellationToken.None);
 
     internal static GameDataManager OpenNavigationOnly(string gamePath,IEnumerable<string> logLines,CancellationToken token)
-        =>Open(gamePath,logLines,null,loadNavigationBase:true,token);
+        =>Open(gamePath,logLines,null,onDemand:true,token);
 
-    private static GameDataManager Open(string gamePath,IEnumerable<string> logLines,NativeMap? map,bool loadNavigationBase,CancellationToken token)
+    private static GameDataManager Open(string gamePath,IEnumerable<string> logLines,NativeMap? map,bool onDemand,CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         var mount=OfficialArchiveMount.FromGameLog(gamePath,logLines);
         bool transferred=false;
         try
         {
             const string mapPath="/map/europe.mbd";
-            if(loadNavigationBase)map=NavigationBaseMap.Read(mount.FileSystem,mapPath,token);
-            var manager=new GameDataManager(mount.FileSystem,mount.ActiveModPaths,map,mapPath,mount,
-                retainSupplementHistory:!loadNavigationBase);
+            string? indexFile=onDemand?NavigationIndexPath(mount.ArchivePaths):null;
+            var manager=new GameDataManager(mount.FileSystem,mount.ActiveModPaths,map,mapPath,mount,indexFile);
             transferred=true;
             return manager;
         }
         finally { if(!transferred)mount.Dispose(); }
+    }
+
+    private static string NavigationIndexPath(IReadOnlyList<string> archives)
+    {
+        // Preserve archive priority. A game or DLC update invalidates the old index.
+        var parts=archives.Select(path=>
+        {
+            var file=new FileInfo(path);
+            return FormattableString.Invariant($"{file.FullName}\0{file.Length}\0{file.LastWriteTimeUtc.Ticks}");
+        });
+        string key=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n',parts))));
+        return Path.Combine(AppContext.BaseDirectory,"Cache","LinkEts2Nav","NavigationIndex",key+".bin");
     }
     // Also makes standalone readers and tools using the same filesystem share one dataset.
     public static GameDataManager From(IFileSystem source,IReadOnlyList<string>? mods=null)
@@ -124,14 +143,38 @@ public sealed class GameDataManager:IDisposable
     /// <summary>Effective passage lengths after the normal player-permission projection.</summary>
     public IReadOnlyList<double> GetPrefabPassageLengths(ulong prefabUid,ulong entry,ulong exit)
     {
-        var prefab=GetPrefab(prefabUid);
-        if(prefab?.Description is not {} description)return [];
+        var prefab=Map.GetItem<Prefab>(prefabUid);
+        return prefab is null?[]:ReadPrefabPassageLengths(Map,prefab,entry,exit);
+    }
+    private IReadOnlyList<double> ReadPrefabPassageLengths(GameMapData map,Prefab prefab,ulong entry,ulong exit)
+    {
+        var resource=World.Prefabs.GetValueOrDefault(prefab.Model.ToString())?.Descriptor;
+        if(GetPrefabNavigationDescription(prefab,resource) is not {} description)return [];
         SpeedLimitDefinitionReader definitions;
         lock(preparation)definitions=speedLimits??=new(this);
-        var projected=PrefabPlayerAccessWindow.Build([new(prefab.Instance,description)],definitions,Map)[prefabUid];
-        return Projection("prefab-passage-lengths",$"{prefabUid:X16}:{entry:X16}:{exit:X16}:{projected.CacheKey}",
-            ()=>PrefabPassageLengths.Read(prefab.Instance,projected.Descriptor,entry,exit));
+        var projected=PrefabPlayerAccessWindow.Build([new(prefab,description)],definitions,map)[prefab.Uid];
+        return Projection("prefab-passage-lengths",$"{prefab.Uid:X16}:{entry:X16}:{exit:X16}:{projected.CacheKey}",
+            ()=>PrefabPassageLengths.Read(prefab,projected.Descriptor,entry,exit));
     }
+
+    internal RouteJourneyEstimator CreateRouteEstimator(NativeMap native,FerryJourneyIndex ferryIndex,
+        RouteSnapshot snapshot,CancellationToken token)
+    {
+        var route=new GameMapData(native);
+        var returns=new Dictionary<(ulong Prefab,ulong Interface),IReadOnlyList<double>>();
+        var returnNodes=snapshot.Nodes.Zip(snapshot.Nodes.Skip(1))
+            .Where(pair=>pair.First.Uid==pair.Second.Uid).Select(pair=>pair.First.Uid).Distinct();
+        foreach(ulong uid in returnNodes)
+        {
+            token.ThrowIfCancellationRequested();
+            foreach(var prefab in route.ConnectedItems(uid).OfType<Prefab>())
+                returns.Add((prefab.Uid,uid),ReadPrefabPassageLengths(route,prefab,uid,uid));
+        }
+        return new(route,SpeedLimits.RouteSpeedLookup(native,token),JourneyEstimationCalibration.PrefabDistanceFactor,
+            ferryIndex,(p,a,b)=>a==b?returns.GetValueOrDefault((p.Uid,a))??[]:[]);
+    }
+
+    internal void PublishFerries(FerryJourneyIndex ferryIndex)=>ferries=ferryIndex;
     public PrefabDescriptor GetPrefabDescription(string path)
     {
         string resource = GameResourceStore.Key(path);
@@ -285,6 +328,7 @@ public sealed class GameDataManager:IDisposable
         foreach(ulong uid in shared)
         {
             if(window.MapItems.GetValueOrDefault(uid) is not Prefab prefab)continue;
+            if(prefab.Nodes.Any(n=>n is not null and not Node))continue;
             if(prefab.Ferry is not null||Ferries?.Ports.Any(port=>port.PrefabUid==uid)==true
                 ||prefab.SlaveItems.Any(item=>item is Company)
                 ||companies.Places.Any(company=>company.PrefabUid==uid))continue;

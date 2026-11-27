@@ -103,10 +103,10 @@ public sealed class GameMapData
                         GetNode, (basis?.Nodes.Values ?? []).Concat(extraNodes.Values));
             }
 
-            connections.Validate(map.Nodes.Values, map.MapItems.Values, NodeAt, ItemAt);
+            connections.Validate(map.Nodes.Values,map.MapItems.Values,NodeAt,ItemAt,retainMissingHistory:retainSupplementHistory);
             Header??=new(map.NormalScale,map.CityScale,map.StartPosition,map.StartRotation,map.EuropeMapUiCorrections,map.EditorMapId);
-            // The standalone map already holds the full native road and prefab network.
-            // Its extra objects are needed only in the current window.
+            // Standalone navigation can recover native objects by UID from its sector index.
+            // Its local data is needed only in the current window.
             var items=retainSupplementHistory?extraItems.ToDictionary():new Dictionary<ulong,MapItem>();
             if(!retainSupplementHistory)extraReferenceCounts.Clear();
             foreach (var (uid, item) in map.MapItems)

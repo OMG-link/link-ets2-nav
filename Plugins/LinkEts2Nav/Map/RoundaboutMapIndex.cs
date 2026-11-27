@@ -98,7 +98,7 @@ public sealed class RoundaboutMapIndex
 
     public void AddRoad(Road road,SpeedLimitDefinitionReader? definitions=null)
     {
-        if (road.Node is null || road.ForwardNode is null || curves.ContainsKey(new(road.Uid, -1))) return;
+        if (road.Node is not Node || road.ForwardNode is not Node || curves.ContainsKey(new(road.Uid, -1))) return;
         var (points,normals,reversePoints,reverseNormals)=SampleRoad(road);
         var native=Native(road.Node.Position,road.ForwardNode.Position,
             Vector3.Transform(new Vector3(0,0,-road.Length),road.Node.Rotation),

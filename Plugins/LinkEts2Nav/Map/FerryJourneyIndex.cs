@@ -138,7 +138,7 @@ public sealed class FerryJourneyIndex
     }
     public static FerryJourneyIndex Load(GameDataManager data,CancellationToken token=default,Func<Road,double?>? roadHalfWidth=null)
         =>Read(data,data.Map,token,roadHalfWidth);
-    private static FerryJourneyIndex Read(GameDataManager fs,GameMapData map,CancellationToken token,Func<Road,double?>? roadHalfWidth)
+    internal static FerryJourneyIndex Read(GameDataManager fs,GameMapData map,CancellationToken token,Func<Road,double?>? roadHalfWidth)
     {
         var links=new List<(string,string)>();
         const string directory="/def/ferry/connection/";

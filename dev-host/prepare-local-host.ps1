@@ -54,6 +54,32 @@ if ($ProjectName -eq 'TruckLib') {
 '@
     $text = Replace-Once $text ($before.Replace("`r`n", "`n")) ($after.Replace("`r`n", "`n"))
     Save-Override 'TruckLibMap.cs' $text
+
+    $text = Read-Source 'TruckLib\TruckLib\ScsMap\Serialization\MapItemSerializerFactory.cs'
+    $before = @'
+        private static readonly Dictionary<ItemType, MapItemSerializer> cache = [];
+
+        public static MapItemSerializer Get(ItemType type)
+        {
+            if (cache.TryGetValue(type, out var cached))
+            {
+                return cached;
+            }
+            else
+            {
+                var serializer = Create(type);
+                cache.Add(type, serializer);
+                return serializer;
+            }
+        }
+'@
+    $after = @'
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<ItemType, MapItemSerializer> cache = new();
+
+        public static MapItemSerializer Get(ItemType type) => cache.GetOrAdd(type, Create);
+'@
+    $text = Replace-Once $text ($before.Replace("`r`n", "`n")) ($after.Replace("`r`n", "`n"))
+    Save-Override 'TruckLibSerializerFactory.cs' $text
 }
 if ($ProjectName -eq 'ETS2LA') {
     $text = Read-Source 'ETS2LA\Program.cs'

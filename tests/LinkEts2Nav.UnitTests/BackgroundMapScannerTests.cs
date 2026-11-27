@@ -226,6 +226,39 @@ public sealed class BackgroundMapScannerTests
         Assert.Same(ready.Map, scanner.AdoptReady().Map?.Map);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StationaryUpdatesDoNotDiscardACompletedRouteRefresh(bool movementQueued)
+    {
+        using var release=new ManualResetEventSlim();
+        var started=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resolved=Map("route-ready");
+        int reads=0;
+        var token=TestContext.Current.CancellationToken;
+        await using var scanner=new BackgroundMapScanner(_=>new Backend((_,cancellation)=>
+        {
+            if(Interlocked.Increment(ref reads)!=1)return resolved;
+            started.TrySetResult();
+            release.Wait(cancellation);
+            return Map("nearby");
+        }),token);
+        var request=Request();
+        var now=DateTimeOffset.UtcNow;
+        scanner.Request(request,now);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(8),token);
+        try
+        {
+            if(movementQueued)Assert.True(scanner.Request(Request(x:30),now));
+            scanner.RefreshRoute(request.ResourceId);
+            Assert.False(scanner.Request(request,now));
+        }
+        finally { release.Set(); }
+        await WaitFor(()=>ReferenceEquals(scanner.AdoptReady().Map?.Map,resolved.Map));
+        Assert.Equal(request.Position,scanner.Capture().Position);
+        Assert.Equal(2,reads);
+    }
+
     [Fact]
     public async Task InvalidateDiscardsInFlightMapAndShutdownWaitsBeforeDisposingArchive()
     {

@@ -102,6 +102,34 @@ internal sealed class GameResourceStore(GameDataManager owner,Func<IFileSystem> 
         }
     }
     internal ReadOnlyMemory<byte> Read(string path)=>Buffer(path);
+    internal IFileSystem SequentialMapReads()=>new SequentialMapReader(this);
+
+    // A one-pass index or far-route read can share hot bytes without evicting the driving window.
+    private byte[] ReadWithoutRetaining(string path)
+    {
+        string key=Key(path);
+        if(bytes.TryGetValue(key,out var entry)&&entry.IsValueCreated)return entry.Value;
+        lock(io)
+        {
+            Interlocked.Increment(ref reads);
+            return source.Value.ReadAllBytes(key);
+        }
+    }
+
+    private sealed class SequentialMapReader(GameResourceStore owner) : IFileSystem
+    {
+        public char DirectorySeparator=>owner.DirectorySeparator;
+        public Stream Open(string path)=>new MemoryStream(owner.ReadWithoutRetaining(path),false);
+        public byte[] ReadAllBytes(string path)=>owner.ReadWithoutRetaining(path).ToArray();
+        public string ReadAllText(string path)=>ReadAllText(path,Encoding.UTF8);
+        public string ReadAllText(string path,Encoding encoding)
+        {using var reader=new StreamReader(Open(path),encoding,true);return reader.ReadToEnd();}
+        public bool FileExists(string path)=>owner.FileExists(path);
+        public bool DirectoryExists(string path)=>owner.DirectoryExists(path);
+        public IList<string> GetFiles(string path)=>owner.GetFiles(path);
+        public string GetParent(string path)=>owner.GetParent(path);
+    }
+
     public byte[] ReadAllBytes(string path)=>Buffer(path).ToArray();
     public Stream Open(string path)=>new MemoryStream(Buffer(path),false);
     public string ReadAllText(string path)=>ReadAllText(path,Encoding.UTF8);

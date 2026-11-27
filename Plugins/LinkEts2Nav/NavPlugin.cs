@@ -145,7 +145,7 @@ public sealed class NavPlugin : Plugin
         var calibrationPath = Path.Combine(AppContext.BaseDirectory, "Settings", "LinkEts2Nav.CameraCalibrations.json");
         var calibrationCheck = DateTimeOffset.MinValue;
         BackgroundMapScanner? mapScanner = null;
-        guidance.JourneyEstimateProvider=data=>mapScanner?.Capture().JourneyEstimator?.Estimate(data.Route);
+        guidance.JourneyEstimateProvider=data=>mapScanner?.Capture().Estimate(data.Route);
         string[] gameLog = [];
         long resourceVersion = 0;
         long observedScanRevision = 0;
@@ -236,12 +236,12 @@ public sealed class NavPlugin : Plugin
                     mapScanner.ObserveRoute(data.NavigationRoute.Generation);
                     var preparation = mapScanner.AdoptReady();
                     if (preparation.IsPrepared)
-                        logOutput.Change("map-preparation", "全局地图准备已完成。", now);
+                        logOutput.Change("map-preparation", standalone?"附近导航资料已准备好。":"全局地图准备已完成。", now);
                     else if (preparation.Error is not null)
                         logOutput.Change("map-preparation", "全局地图准备失败，将重试：" + preparation.Error, now, isWarning: true);
                     if (mapScanner.Prepare(new(resourceVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        "", currentInstallation.Path, gameLog, default) { HostMap = installationMap, UseNavigationBase = standalone }, now))
-                        logOutput.Event("开始全局地图准备（不等待车辆位置）。", now);
+                        "", currentInstallation.Path, gameLog, default) { HostMap = installationMap, UseNavigationIndex = standalone }, now))
+                        logOutput.Event(standalone?"开始准备附近导航资料。":"开始全局地图准备（不等待车辆位置）。", now);
                     if (!data.CanPrepareMap(now) || data.Vehicle is not { } vehicle)
                     {
                         string reason = data.Vehicle switch
@@ -270,7 +270,7 @@ public sealed class NavPlugin : Plugin
                     if (mapScanner.Request(new(scanSample.Item1,
                         session, currentInstallation.Path, gameLog, position) {
                         HostMap = standalone ? null : currentInstallation.GetMapData(),
-                        UseNavigationBase = standalone,
+                        UseNavigationIndex = standalone,
                         Route = data.RouteAvailability == RouteAvailability.Available ? data.Route : null,
                         RouteGeneration=data.NavigationRoute.Generation,
                         NavigationRemainingMeters = vehicle.NavigationDistanceRemainingMeters }, now))

@@ -76,9 +76,10 @@
     <ProjectReference Include="$(MSBuildThisFileDirectory)dev-host/TruckLib.Sii/TruckLib.Sii/TruckLib.Sii.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'TruckLib'">
-    <Compile Remove="ScsMap/Map.cs;ScsMap/Node.cs;ScsMap/Collections/NodeDictionary.cs" />
+    <Compile Remove="ScsMap/Map.cs;ScsMap/Node.cs;ScsMap/Collections/NodeDictionary.cs;ScsMap/Serialization/MapItemSerializerFactory.cs" />
     <Compile Include="$(NavOverrides)TruckLibMap.cs" />
     <Compile Include="$(NavOverrides)TruckLibNode.cs" />
+    <Compile Include="$(NavOverrides)TruckLibSerializerFactory.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)dev-host/TruckLibNodeDictionary.cs" Link="ScsMap/Collections/NodeDictionary.cs" />
     <PackageReference Remove="TruckLib.HashFs" />
     <PackageReference Update="TruckLib.Models" Version="0.4.3" />

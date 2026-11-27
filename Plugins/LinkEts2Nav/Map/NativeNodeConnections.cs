@@ -26,11 +26,13 @@ internal sealed class NativeNodeConnections
 
     /// <summary>Checks both declarations of a connection when both native objects are visible.</summary>
     public void Validate(IEnumerable<INode> nodes, IEnumerable<MapItem> items,
-        Func<ulong, INode?> getNode, Func<ulong, MapItem?> getItem, Action<ulong>? onUnresolvedItem = null)
+        Func<ulong, INode?> getNode, Func<ulong, MapItem?> getItem, Action<ulong>? onUnresolvedItem = null,
+        bool retainMissingHistory = true)
     {
         var nextNodes = new HashSet<NodeReference>();
         foreach (var reference in pendingNodes)
-            CheckOwner(reference.NodeUid, reference.ItemUid);
+            if(retainMissingHistory||getNode(reference.NodeUid) is Node)
+                CheckOwner(reference.NodeUid, reference.ItemUid);
 
         foreach (var item in items)
         {

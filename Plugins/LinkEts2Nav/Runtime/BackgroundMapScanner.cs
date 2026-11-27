@@ -9,7 +9,7 @@ public sealed record MapScanRequest(string ResourceId, string SessionId, string 
     IReadOnlyList<string> LogLines, Vector3 Position)
 {
     public TruckLib.ScsMap.Map? HostMap { get; init; }
-    internal bool UseNavigationBase { get; init; }
+    internal bool UseNavigationIndex { get; init; }
     public bool PreparationOnly { get; init; }
     public RouteSnapshot? Route { get; init; }
     public long RouteGeneration {get;init;}
@@ -29,11 +29,13 @@ public sealed record MapScanState(NearbyMapSnapshot? Map, Vector3 Position, Time
 {
     public bool IsPrepared { get; init; }
     public RouteJourneyEstimator? JourneyEstimator {get;init;}
+    internal LoadedNavigationRoute? LoadedRoute {get;init;}
+    internal RouteJourneyEstimate? Estimate(RouteSnapshot route)
+        =>LoadedRoute is {} loaded?loaded.Estimate(route):JourneyEstimator?.Estimate(route);
 }
 
 /// <summary>
-/// A single worker owns all archive streams and mutable scanner caches. Only completed snapshots
-/// cross the gate; neither reading nor projection holds the gate while doing actual work.
+/// One worker owns mutable nearby scan state. Archive reads and route preparation run outside the gate.
 /// </summary>
 public sealed class BackgroundMapScanner : IAsyncDisposable
 {
@@ -51,7 +53,8 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     private readonly Task worker;
     private string? resourceId, sessionId, requestedRoute;
     private long generation;
-    private (MapScanRequest Request, long Generation)? pending;
+    private (MapScanRequest Request,long Generation,bool RouteRefresh)? pending;
+    private MapScanRequest? lastScan;
     private Vector3 requestedPosition = new(float.PositiveInfinity);
     private DateTimeOffset requestedAt = DateTimeOffset.MinValue;
     private DateTimeOffset retryAfter = DateTimeOffset.MinValue;
@@ -62,7 +65,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     {
         stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         retries=new MapRetryCoordinator();
-        this.factory = factory ?? (request => new OfficialBackend(request, stop.Token));
+        this.factory = factory ?? (request => new OfficialBackend(request,stop.Token,()=>RefreshRoute(request.ResourceId)));
         worker = Task.Run(WorkAsync);
     }
 
@@ -97,20 +100,25 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
             if(newSession)
             {
                 generation++;resourceId=request.ResourceId;sessionId=request.SessionId;
-                pending=null;completedWindows.Clear();requestedPosition=new(float.PositiveInfinity);
+                pending=null;lastScan=null;completedWindows.Clear();requestedPosition=new(float.PositiveInfinity);
                 requestedAt=retryAfter=DateTimeOffset.MinValue;
                 state=new(null,default,default,state.Revision,null,false);
             }
             requestedRoute=request.Route?.Revision;
+            if(!request.PreparationOnly)lastScan=request;
             if(stop.IsCancellationRequested||now<retryAfter)return false;
             if(inFlight is {} active&&active.ResourceId==request.ResourceId&&active.SessionId==request.SessionId
                 &&active.Position==request.Position&&active.Route?.Revision==request.Route?.Revision)
-            {pending=null;requestedPosition=request.Position;requestedAt=now;return false;}
+            {
+                pending=pending is {RouteRefresh:true}?(request,generation,true):null;
+                requestedPosition=request.Position;requestedAt=now;return false;
+            }
             if(!changedRoute&&!request.PreparationOnly&&request.Position==requestedPosition)return false;
             if(!changedRoute&&!newSession&&!request.PreparationOnly&&Vector3.Distance(request.Position,requestedPosition)<25
                 &&now-requestedAt<TimeSpan.FromSeconds(3))return false;
             requestedPosition=request.Position;requestedAt=now;
-            pending=(request,generation);state=state with{IsScanning=true};wake.Writer.TryWrite(true);return true;
+            pending=(request,generation,pending is {RouteRefresh:true});
+            state=state with{IsScanning=true};wake.Writer.TryWrite(true);return true;
         }
     }
     /// <summary>Cancel obsolete route operations without requesting a scan. Called on the main loop even without a new position sample.</summary>
@@ -124,9 +132,21 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         lock(gate)
         {
             retries.Reset();generation++;resourceId=sessionId=requestedRoute=null;routeScope=null;
-            pending=null;completedWindows.Clear();requestedPosition=new(float.PositiveInfinity);
+            pending=null;lastScan=null;completedWindows.Clear();requestedPosition=new(float.PositiveInfinity);
             requestedAt=retryAfter=DateTimeOffset.MinValue;
             state=new(null,default,default,state.Revision,null,false);
+        }
+    }
+
+    // A ready route also refreshes a stationary player's map and journey estimate.
+    internal void RefreshRoute(string sourceResource)
+    {
+        lock(gate)
+        {
+            if(stop.IsCancellationRequested||resourceId!=sourceResource||lastScan is not {} request)return;
+            pending=(request,generation,true);
+            state=state with{IsScanning=true};
+            wake.Writer.TryWrite(true);
         }
     }
     /// <summary>Main-loop boundary: adopt each complete window, then execute its ready callbacks before any judgement.</summary>
@@ -152,13 +172,13 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     }
     private NearbyMapSnapshot Decorate(NearbyMapSnapshot snapshot)=>snapshot with{Retries=retries};
     private void EnqueueWindow(NearbyMapSnapshot? snapshot,MapScanRequest request,TimeSpan elapsed,bool scanning,
-        RouteJourneyEstimator? estimator,long expectedGeneration)
+        IMapScanBackend? backend,long expectedGeneration)
     {
         lock(gate)
         {
             if(expectedGeneration!=generation||stop.IsCancellationRequested)return;
             completedWindows.Enqueue(new(snapshot,request.Position,elapsed,++producedRevision,null,scanning)
-                {IsPrepared=true,JourneyEstimator=estimator});
+                {IsPrepared=true,JourneyEstimator=backend?.JourneyEstimator,LoadedRoute=(backend as OfficialBackend)?.LoadedRoute});
             state=state with{IsScanning=scanning};
         }
     }
@@ -172,7 +192,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
             while (await wake.Reader.WaitToReadAsync(stop.Token).ConfigureAwait(false))
             {
                 while (wake.Reader.TryRead(out _)) { }
-                (MapScanRequest Request, long Generation)? job;
+                (MapScanRequest Request,long Generation,bool RouteRefresh)? job;
                 lock (gate) { job = pending; pending = null;inFlight=job?.Request; }
                 if (job is not { } item) continue;
                 var watch = Stopwatch.StartNew();
@@ -198,7 +218,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                         if(error is null)
                         {
                             var nearby=Decorate(read!);
-                            EnqueueWindow(nearby,item.Request,watch.Elapsed,true,readyBackend.JourneyEstimator,item.Generation);
+                            EnqueueWindow(nearby,item.Request,watch.Elapsed,true,readyBackend,item.Generation);
                             watch.Restart();
                         }
                     }
@@ -214,7 +234,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
                     inFlight=null;
                     if(stop.IsCancellationRequested||item.Generation!=generation)continue;
                     if(error is null)
-                        EnqueueWindow(completed,item.Request,watch.Elapsed,pending.HasValue,backend?.JourneyEstimator,item.Generation);
+                        EnqueueWindow(completed,item.Request,watch.Elapsed,pending.HasValue,backend,item.Generation);
                     else
                     {
                         // Keep an already usable snapshot when a refresh fails. Retry without
@@ -262,9 +282,11 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
     {
         private readonly GameDataManager data;
         private readonly NearbyCameraScanner scanner;
-        public OfficialBackend(MapScanRequest request, CancellationToken token)
+        private readonly NavigationRouteCache? routes;
+        internal LoadedNavigationRoute? LoadedRoute {get;private set;}
+        public OfficialBackend(MapScanRequest request,CancellationToken token,Action refresh)
         {
-            data=request.UseNavigationBase
+            data=request.UseNavigationIndex
                 ?GameDataManager.OpenNavigationOnly(request.GamePath,request.LogLines,token)
                 :GameDataManager.Open(request.GamePath,request.LogLines,request.HostMap);
             bool prepared=false;
@@ -272,10 +294,7 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
             {
                 scanner=new NearbyCameraScanner(data);
                 scanner.Prepare(token);
-                // The global pass deserializes scenery before filtering it. Release those
-                // pages once, ahead of the first driving window and its own allocations.
-                if(request.UseNavigationBase)
-                    GC.Collect(GC.MaxGeneration,GCCollectionMode.Aggressive,blocking:true,compacting:true);
+                if(data.NavigationIndexFile is {} indexFile)routes=new(data,indexFile,refresh);
                 prepared=true;
             }
             finally { if(!prepared)data.Dispose(); }
@@ -285,11 +304,17 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
             => scanner.ReadNearby(position, 1100, cancellationToken);
         public NearbyMapSnapshot Read(MapScanRequest request, CancellationToken cancellationToken)
         {
-            var coverage = MapScanCoverage.CreateFromData(request.Position, 1100, data.Map,
-                request.Route, request.NavigationRemainingMeters);
+            LoadedRoute=routes?.Resolve(request.Route);
+            var coverage=routes is null
+                ?MapScanCoverage.CreateFromData(request.Position,1100,data.Map,request.Route,request.NavigationRemainingMeters)
+                :MapScanCoverage.Create(request.Position,1100,LoadedRoute?.Map,request.Route,request.NavigationRemainingMeters);
             return scanner.ReadNearby(request.Position, 1100, cancellationToken, coverage);
         }
-        public void Dispose() => data.Dispose();
+        public void Dispose()
+        {
+            try { routes?.Dispose(); }
+            finally { data.Dispose(); }
+        }
     }
 }
 

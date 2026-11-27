@@ -12,15 +12,41 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class PopularSpeechPackTests : IDisposable
 {
     private readonly string root = Directory.CreateTempSubdirectory("nav-popular-test-").FullName;
-    private readonly string variable = "NAV_TEST_TTS_" + Guid.NewGuid().ToString("N");
     private const string Secret = "test-only-local-credential";
-    private string Output => Path.Combine(root, "pack");
-    private string Usage => Path.Combine(root, "summary.json");
-    private string Config => Path.Combine(root, "api.json");
+    private readonly SpeechPackGeneration generation;
+    private readonly SpeechPackSettings settings;
+    private SpeechUsageSnapshot? liveUsage;
+    private SpeechPackGenerationRequest request = new("", "my-model", "my-voice", Secret);
+    private string Output => settings.Read().ResolvedDirectory;
+    private string Usage => Path.Combine(root, "Cache", "LinkEts2Nav", "SpeechUsage", "summary.json");
     private string Manifest => Path.Combine(Output, "manifest.json");
 
-    private Task<int> Run(int top) => SpeechPackCommands.RunAsync(["--generate-popular-pack", "--usage", Usage,
-        "--top", top.ToString(System.Globalization.CultureInfo.InvariantCulture), "--api-config", Config, "--output", Output]);
+    public PopularSpeechPackTests()
+    {
+        settings = new(root);
+        generation = new(root, settings, () => liveUsage, typeof(SpeechPack).Assembly.Location);
+    }
+
+    private async Task<SpeechPackGenerationStatus> Finished()
+    {
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        stop.CancelAfter(TimeSpan.FromSeconds(30));
+        while (generation.Status.Phase == SpeechPackGenerationPhase.Running) await Task.Delay(10, stop.Token);
+        return generation.Status;
+    }
+
+    private async Task<SpeechPackGenerationStatus> Run(int top, SpeechPackGenerationPhase expected = SpeechPackGenerationPhase.Succeeded)
+    {
+        Assert.True(generation.TryStart(request with { Top = top }));
+        var result = await Finished();
+        Assert.True(result.Phase == expected, result.ToString());
+        if (expected == SpeechPackGenerationPhase.Succeeded)
+        {
+            Assert.Equal(Output, result.OutputDirectory);
+            Assert.Equal(result.Total, result.Completed);
+        }
+        return result;
+    }
 
     private void SaveUsage(params (string Text, int Plays, double Preparation)[] entries)
     {
@@ -32,16 +58,15 @@ public sealed class PopularSpeechPackTests : IDisposable
         }
         for (int i = 0; i < 20; i++) collector.Played("fallback tone only", SpeechPlaybackOrigin.Fallback);
         var snapshot = collector.Capture();
+        Directory.CreateDirectory(Path.GetDirectoryName(Usage)!);
         File.WriteAllText(Usage, JsonSerializer.Serialize(snapshot with { Entries = snapshot.Entries.Reverse().ToArray() }));
     }
 
     private void SaveConfig(string endpoint, int speed = 1)
     {
-        Environment.SetEnvironmentVariable(variable, Secret);
-        File.WriteAllText(Config, JsonSerializer.Serialize(new { endpoint, model = "my-model", voice = "my-voice",
-            auth = new { header = "X-Test-Key", environmentVariable = variable, prefix = "" },
-            request = new { model = "{{model}}", voice = "{{voice}}", parameters = new { speed },
-                input = new[] { new { text = "{{text}}" } } } }));
+        var body = JsonSerializer.Serialize(new { model = "{{model}}", voice = "{{voice}}", parameters = new { speed },
+            input = new[] { new { text = "{{text}}" } } });
+        request = new(endpoint, "my-model", "my-voice", Secret, RequestTemplate: body, AuthHeader: "X-Test-Key", AuthPrefix: "");
     }
 
     private static async Task<WebApplication> StartApi(RequestDelegate serve)
@@ -81,7 +106,7 @@ public sealed class PopularSpeechPackTests : IDisposable
         string endpoint = api.Urls.Single() + "/speak";
         SaveConfig(endpoint);
         SaveUsage(("B", 3, 2), (second, 3, 20), ("A", 3, 2), (first, 7, 0), ("prepared only", 0, 999));
-        Assert.Equal(0, await Run(3));
+        await Run(3);
         Assert.Equal(new[] { first, second, "A" }, received);
         var pack = JsonSerializer.Deserialize<PackManifest>(File.ReadAllText(Manifest))!;
         Assert.Equal(received, pack.Entries.Select(e => e.Text));
@@ -90,10 +115,10 @@ public sealed class PopularSpeechPackTests : IDisposable
         Assert.Equal(3, preloaded.Count);
         foreach (string chosen in received) Assert.Equal(new byte[] { 2, 0, 3, 0 }, PcmAudio.Read(preloaded[chosen]));
         Assert.DoesNotContain(Secret, File.ReadAllText(Manifest));
-        Assert.Equal(0, await Run(256)); // Only four phrases have actually played, and three are already paid for.
+        await Run(256); // Only four phrases have actually played, and three are already paid for.
         Assert.Equal(new[] { first, second, "A", "B" }, received);
         SaveConfig(endpoint, 2);
-        Assert.Equal(0, await Run(1));
+        await Run(1);
         Assert.Equal(new[] { first, second, "A", "B", first }, received);
         Assert.Equal(new[] { first }, PreGeneratedSpeech.Load(Output).Keys);
     }
@@ -120,22 +145,25 @@ public sealed class PopularSpeechPackTests : IDisposable
         SaveConfig(api.Urls.Single() + "/speak");
         SaveUsage(("old", 1, 0));
         await Run(1);
-        string companion = Path.Combine(Directory.CreateDirectory(Path.Combine(Output, "CityNames")).FullName, "keep.txt");
-        File.WriteAllText(companion, "unchanged");
+        string initialOutput = Output;
+        string names = Path.Combine(Output, "CityNames");
+        await SpeechPackBuilder.BuildAsync(names, "original", "voice", ["Oslo"], (_, _) => Task.FromResult(new byte[] { 2, 0 }),
+            cancellationToken: TestContext.Current.CancellationToken);
         var original = File.ReadAllBytes(Manifest);
         SaveUsage(("new", 9, 0), ("fail", 8, 0));
-        var error = await Record.ExceptionAsync(() => Run(2));
-        if (statusError) { Assert.IsType<HttpRequestException>(error); Assert.Contains("429", error.Message); }
-        else Assert.IsType<InvalidDataException>(error);
-        Assert.DoesNotContain(Secret, error!.ToString());
+        var error = await Run(2, SpeechPackGenerationPhase.Failed);
+        Assert.Contains(statusError ? "429" : "WAV", error.Message);
+        Assert.DoesNotContain(Secret, error.ToString());
+        Assert.Equal(initialOutput, Output);
         Assert.Equal(new[] { "old", "new", "fail" }, received);
         Assert.Equal(original, File.ReadAllBytes(Manifest));
-        Assert.Equal("unchanged", File.ReadAllText(companion));
+        Assert.Contains("Oslo", PreGeneratedSpeech.Load(names, maximumEntries: 4096).Keys);
         Assert.Equal(new[] { "old" }, PreGeneratedSpeech.Load(Output).Keys);
         Assert.False(File.Exists(Path.Combine(Output, SpeechPack.FileName("new"))));
         SaveUsage(("later", 2, 0));
         await Run(1);
-        Assert.Equal("unchanged", File.ReadAllText(companion));
+        Assert.Contains("Oslo", settings.Pending!.Names.Keys);
+        Assert.NotEqual(initialOutput, Output);
     }
 
     [Fact] public async Task ValidatesTheUsageAndRuntimeLimitsBeforeAnyPaidRequest()
@@ -144,16 +172,67 @@ public sealed class PopularSpeechPackTests : IDisposable
         await using var api = await StartApi(_ => { calls++; return Task.CompletedTask; });
         SaveConfig(api.Urls.Single() + "/speak");
         SaveUsage(("never played", 0, 999));
-        await Assert.ThrowsAsync<InvalidDataException>(() => Run(2));
-        await Assert.ThrowsAsync<ArgumentException>(() => Run(257));
+        Assert.Contains("播放", (await Run(2, SpeechPackGenerationPhase.Failed)).Message);
+        Assert.Contains("256", (await Run(257, SpeechPackGenerationPhase.Failed)).Message);
         var tooLarge = Enumerable.Range(0, 64).Select(i => (new string('词', 1000) + i, 1, 0d)).ToArray();
         SaveUsage(tooLarge);
-        await Assert.ThrowsAsync<InvalidDataException>(() => Run(64));
+        await Run(64, SpeechPackGenerationPhase.Failed);
         File.WriteAllText(Usage, """{"Schema":1,"MetricVersion":2,"Entries":[]}""");
-        await Assert.ThrowsAsync<InvalidDataException>(() => Run(1));
+        await Run(1, SpeechPackGenerationPhase.Failed);
         Assert.Equal(0, calls);
         Assert.False(Directory.Exists(Output));
     }
 
-    public void Dispose() { Environment.SetEnvironmentVariable(variable, null); Directory.Delete(root, recursive: true); }
+    [Fact] public async Task CancellingThePrivateWorkerPreservesTheActivePackAndResumesVerifiedClipsWithoutRebilling()
+    {
+        var inFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var aborted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        byte[] wave = Wave();
+        var received = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        bool hang = true;
+        await using var api = await StartApi(async context =>
+        {
+            Assert.Equal("Bearer " + Secret, context.Request.Headers.Authorization.ToString());
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            string text = doc.RootElement.GetProperty("input").GetString()!;
+            received.Enqueue(text);
+            if (text == "two" && Volatile.Read(ref hang))
+            {
+                inFlight.TrySetResult();
+                try { await Task.Delay(Timeout.Infinite, context.RequestAborted); }
+                catch (OperationCanceledException) { aborted.TrySetResult(); }
+                return;
+            }
+            await context.Response.Body.WriteAsync(wave);
+        });
+        request = new(api.Urls.Single() + "/speak", "model", "voice", Secret, 3);
+        SaveUsage(("old disk text", 5, 0));
+        await Run(1);
+        string old = Output;
+        var collector = new SpeechUsageCollector();
+        foreach (string text in new[] { "one", "two", "one", "three", "two", "one" }) collector.Played(text, SpeechPlaybackOrigin.Prepared);
+        liveUsage = collector.Capture();
+        Assert.True(generation.TryStart(request));
+        await inFlight.Task.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+        Assert.False(generation.TryStart(request));
+        Assert.Equal(1, generation.Status.Completed);
+        string reserved = Path.Combine(root, "SpeechPacks", "LinkEts2Nav", "Popular-2");
+        var busy = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            generation.SelectPackAsync(reserved, TestContext.Current.CancellationToken));
+        Assert.Contains("正在生成", busy.Message);
+        Assert.Equal(old, (await generation.SelectPackAsync(old, TestContext.Current.CancellationToken)).Directory);
+        Assert.True(generation.TryCancel());
+        Assert.Equal(SpeechPackGenerationPhase.Cancelled, (await Finished()).Phase);
+        await aborted.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.Equal(old, Output);
+        Assert.False(generation.TryCancel());
+        Volatile.Write(ref hang, false);
+        await Run(3);
+        Assert.Equal(new[] { "old disk text", "one", "two", "two", "three" }, received);
+        foreach (var file in Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories))
+            Assert.DoesNotContain(Secret, File.ReadAllText(file));
+        Assert.DoesNotContain(Secret, request.ToString());
+    }
+
+    public void Dispose() { Directory.Delete(root, recursive: true); }
 }

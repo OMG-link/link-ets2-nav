@@ -7,7 +7,7 @@ namespace LinkEts2Nav.Runtime;
 public sealed class SpeechOptions
 {
     private const string BundledModel = "Assets/LinkEts2Nav/SpeechModel";
-    private const string DefaultWorker = "Tools/LinkEts2Nav.Speech/LinkEts2Nav.Speech.dll";
+    internal const string DefaultWorker = "Tools/LinkEts2Nav.Speech/LinkEts2Nav.Speech.dll";
 
     public bool Enabled { get; init; }
     public string? ModelDirectory { get; init; }

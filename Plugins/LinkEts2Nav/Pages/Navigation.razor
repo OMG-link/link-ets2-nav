@@ -1,0 +1,111 @@
+@page "/link-ets2-nav"
+@page "/plugins/adjustments/link.ets2.nav"
+@using Microsoft.AspNetCore.Components
+@using LinkEts2Nav.Core
+@using LinkEts2Nav.Runtime
+@inject NavigationManager Navigator
+@implements IAsyncDisposable
+
+<style>
+    .link-navigation { max-width: 44rem; margin: 0 auto; padding: clamp(1.25rem, 4vw, 3rem); }
+    .link-navigation h1 { margin: 0 0 1.5rem; font-size: 2rem; font-weight: 700; }
+    .link-navigation h2 { margin: 0 0 .4rem; font-size: 1rem; font-weight: 600; }
+    .link-navigation section { margin: 0 0 1.5rem; }
+    .link-navigation .next { margin-top: .3rem; font-size: 1.5rem; font-weight: 600; }
+    .link-navigation .settings { border-top: 1px solid var(--border, #78818d); padding-top: 1.5rem; }
+    .link-navigation button { margin-bottom: .55rem; padding: .65rem 1.1rem; border-radius: .4rem; background: var(--text-h, #243446); color: var(--bg, #fff); font: inherit; font-weight: 600; cursor: pointer; }
+    .link-navigation button:hover { opacity: .85; }
+    .link-navigation button:disabled { opacity: .7; cursor: wait; }
+    .link-navigation :is(button,a):focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+    .link-navigation footer { display: flex; flex-wrap: wrap; gap: 1.25rem; }
+    .link-navigation footer a { text-decoration: underline; }
+</style>
+
+<main class="link-navigation">
+    <h1>Link ETS2 Nav</h1>
+    <section>
+        <h2>驾驶状态</h2>
+        <p>@DrivingState</p>
+    </section>
+    <section>
+        <h2>下一条提示</h2>
+        @if (snapshot.Navigation?.Next is { } next)
+        {
+            <p class="next">@(next.NearInstruction ?? next.Instruction ?? NavigationPrompts.Action(next.Kind))</p>
+            @if (next.DistanceMeters > 0)
+            {
+                <p>前方 @(next.DistanceMeters >= 1000 ? $"{next.DistanceMeters / 1000:0.#} 公里" : $"{next.DistanceMeters:0} 米")</p>
+            }
+        }
+        else
+        {
+            <p>暂无导航提示</p>
+        }
+    </section>
+    <section class="settings">
+        <button type="button" disabled="@openingSettings" @onclick="OpenSettings">@(openingSettings ? "正在打开…" : "打开导航设置")</button>
+        <p>生成语音、使用已有语音包或保存驾驶回放。</p>
+        @if (settingsError is not null)
+        {
+            <p role="alert">@settingsError</p>
+        }
+    </section>
+    <footer>
+        <a href="/plugins/manager">插件管理</a>
+        <a href="/link-ets2-nav/diagnostics">开发诊断</a>
+    </footer>
+</main>
+
+@code {
+    private NavDiagnosticSnapshot snapshot = NavDiagnostics.Current;
+    private readonly PeriodicTimer timer = new(TimeSpan.FromSeconds(1));
+    private Task? refresh;
+    private bool openingSettings;
+    private string? settingsError;
+
+    private string DrivingState => snapshot.State switch
+    {
+        var state when state.Contains("游戏已暂停", StringComparison.Ordinal) => "游戏已暂停",
+        var state when state.StartsWith("插件发生错误", StringComparison.Ordinal) => "导航已停止。错误详情见开发诊断。",
+        _ when snapshot.VehiclePosition is not null && snapshot.Navigation is {} nav => nav.State,
+        _ => snapshot.State.Split(['：', '；', '。'], 2)[0]
+    };
+
+    protected override void OnInitialized() => refresh = Refresh();
+
+    private async Task Refresh()
+    {
+        while (await timer.WaitForNextTickAsync())
+        {
+            var current = NavDiagnostics.Current;
+            if (ReferenceEquals(snapshot, current)) continue;
+            snapshot = current;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OpenSettings()
+    {
+        if (openingSettings) return;
+        openingSettings = true;
+        settingsError = null;
+        Uri address;
+        try
+        {
+            address = await PlayerSettingsSession.OpenAsync();
+        }
+        catch (Exception)
+        {
+            settingsError = "导航设置未能打开，请重试。";
+            return;
+        }
+        finally { openingSettings = false; }
+        Navigator.NavigateTo(address.AbsoluteUri, forceLoad: true);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        timer.Dispose();
+        if (refresh is not null) await refresh;
+    }
+}

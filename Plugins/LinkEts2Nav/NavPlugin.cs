@@ -22,11 +22,16 @@ public sealed class NavPlugin : Plugin
         Id = "link.ets2.nav",
         Version = "0.2.0",
         Name = "Link ETS2 Nav",
-        Description = "Fixed speed-camera discovery, directed warning rules and diagnostics.",
+        Description = "Navigation, speed-camera alerts and speech settings.",
+        PluginPageButtonName = "导航",
         AuthorName = "Link",
     };
 
-    public override void Init() => Logger.Info("[[LinkEts2Nav]] 插件已加载（尚不代表已启用）；请在插件管理中启用。诊断页：/link-ets2-nav");
+    public override void Init()
+    {
+        PlayerSettingsSession.Initialize();
+        Logger.Info("[[LinkEts2Nav]] 插件已加载。请在插件管理中启用。导航页 /link-ets2-nav");
+    }
 
     // Own an async worker rather than restarting the host's non-joinable Tick thread.
     public override void OnEnable()
@@ -80,7 +85,11 @@ public sealed class NavPlugin : Plugin
         NavDiagnostics.Publish(new(DateTimeOffset.UtcNow, "插件已停用。", "Unknown", 0, []));
     }
 
-    public override void Shutdown() => OnDisable();
+    public override void Shutdown()
+    {
+        try { OnDisable(); }
+        finally { PlayerSettingsSession.CloseAsync().GetAwaiter().GetResult(); }
+    }
 
     private static PlannedSpeechAnnouncer? CreateSpeech(NavigationLogReporter log, CancellationToken token,out IReadOnlySet<string> cityNames,out ReloadableSpeech? resources,SpeechUsageCollector? usage=null)
     {

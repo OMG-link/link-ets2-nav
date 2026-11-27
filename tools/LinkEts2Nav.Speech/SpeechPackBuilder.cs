@@ -6,7 +6,8 @@ public static class SpeechPackBuilder
 {
     public static async Task<PackManifest> BuildAsync(string output, string model, string voice,
         IEnumerable<string> texts, Func<string, CancellationToken, Task<byte[]>> generate,
-        Action<string>? log = null, CancellationToken cancellationToken = default, bool reuseCachedAudio = true)
+        Action<string>? log = null, CancellationToken cancellationToken = default, bool reuseCachedAudio = true,
+        Action<int>? completedCount = null)
     {
         Directory.CreateDirectory(output);
         string manifestPath = Path.Combine(output, "manifest.json");
@@ -40,6 +41,7 @@ public static class SpeechPackBuilder
             if (valid)
             {
                 completed.Add(cached!);
+                completedCount?.Invoke(completed.Count);
                 log?.Invoke("Cached: " + text);
                 continue;
             }
@@ -52,6 +54,7 @@ public static class SpeechPackBuilder
             // Keep later cached entries as well, so an interrupted mixed cached/new
             // run does not forget their provenance and bill them again on resume.
             await SaveAsync(new(1, model, voice, checkpoint.Values.ToArray()));
+            completedCount?.Invoke(completed.Count);
         }
         var result = new PackManifest(1, model, voice, completed.ToArray());
         // Also save after all-cache runs and cached tails following the last new clip.

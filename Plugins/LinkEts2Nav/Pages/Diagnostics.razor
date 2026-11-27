@@ -1,4 +1,4 @@
-@page "/link-ets2-nav"
+@page "/link-ets2-nav/diagnostics"
 @using LinkEts2Nav.Runtime
 @using LinkEts2Nav.Core
 @implements IAsyncDisposable
@@ -15,22 +15,6 @@
     <p>@snapshot.State</p>
     <button type="button" class="link-nav-action" disabled="@previewing" @onclick="PreviewAudio">@(previewing ? "试听中…" : "试听预警音")</button>
     <p>@audioMessage</p>
-    <div style="margin:16px 0">
-        <label for="speech-pack-directory">预生成语音包目录</label><br />
-        <input id="speech-pack-directory" type="text" @bind="speechPackDirectory" @bind:event="oninput" disabled="@savingSpeechPack"
-               style="width:100%;padding:8px;border:1px solid #6b7280;border-radius:6px;background:transparent;color:inherit" />
-        <p>可填写绝对路径，或相对于宿主目录的路径。目录应包含语音包清单，名称片段放在其 CityNames 子目录。</p>
-        <button type="button" class="link-nav-action" disabled="@savingSpeechPack" @onclick="SaveSpeechPack">@(savingSpeechPack ? "校验并保存中…" : "保存并应用")</button>
-        <p role="status">@speechPackMessage</p>
-        <p>当前生效目录：@(speechPackView?.ActiveDirectory ?? "语音工作进程尚未启用")</p>
-    </div>
-    <div style="margin:16px 0">
-        <label for="replay-comment">回放评论（可选）</label><br />
-        <textarea id="replay-comment" @bind="replayComment" @bind:event="oninput" maxlength="4000"
-                  disabled="@savingReplay" rows="3" style="width:100%;padding:8px;border:1px solid #6b7280;border-radius:6px;background:transparent;color:inherit" placeholder="描述刚才遇到的问题，也可以直接保存"></textarea><br />
-        <button type="button" class="link-nav-action" disabled="@(savingReplay || !ReplayCapture.IsAvailable)" @onclick="SaveReplay">@(savingReplay ? "保存中…" : "保存回放")</button>
-        <p role="status">@replayMessage</p>
-    </div>
     <details style="margin:16px 0">
         <summary>语音使用统计</summary>
         <p>按原文累计。入队、准备和实际播放分别统计，重复规划不增加次数；回退提示音不算已播报文本。准备耗时包含工作进程请求与缓存读取，不等于纯本地推理耗时。</p>
@@ -147,7 +131,7 @@
         </table>
     }
     <p>已校准探头按路线和方向预警；未校准的有效探头仅作直线500米接近提醒，可能包括对向或邻路探头。此页面不会控制车辆或阻止罚款。</p>
-    <p><a href="/plugins/manager">插件管理</a></p>
+    <p><a href="/link-ets2-nav">返回导航主页</a> · <a href="/plugins/manager">插件管理</a></p>
 </div>
 
 @code {
@@ -170,49 +154,6 @@
         catch(Exception ex){speechUsageMessage="导出失败："+ex.Message;}
         finally{exportingSpeechUsage=false;}
     }
-    private bool savingSpeechPack;
-    private string speechPackDirectory="";
-    private string speechPackMessage="保存后自动切换，无需重启宿主；已经开始的语音允许播完。";
-    private SpeechPackSettingView? speechPackView;
-    private async Task SaveSpeechPack()
-    {
-        if(savingSpeechPack)return;
-        savingSpeechPack=true;
-        try
-        {
-            var pack=await SpeechPackSettings.Current.SaveAsync(speechPackDirectory,stop.Token);
-            speechPackView=SpeechPackSettings.Current.Read();
-            speechPackMessage=$"已保存，固定语音 {pack.Fixed.Count} 条、名称 {pack.Names.Count} 条。"+
-                (speechPackView.ActiveDirectory is null?"启用插件语音后生效。":"正在应用；下一条语音使用新包，当前播放不打断。");
-        }
-        catch(OperationCanceledException)when(stop.IsCancellationRequested) { }
-        catch(Exception ex){speechPackMessage="保存失败："+ex.Message;}
-        finally {savingSpeechPack=false;}
-    }
-
-    private bool savingReplay;
-    private string replayComment = "";
-    private string replayMessage = "保存最近的滚动驾驶记录、诊断和日志；评论会一并保留。";
-    private async Task SaveReplay()
-    {
-        if (savingReplay) return;
-        savingReplay = true;
-        replayMessage = "正在保存……";
-        ETS2LA.Logging.Logger.Info("[[LinkEts2Nav]] 收到手动保存回放请求。");
-        try
-        {
-            string directory = await ReplayCapture.SaveAsync(replayComment);
-            replayMessage = "已保存：" + directory;
-            replayComment = "";
-        }
-        catch (Exception ex)
-        {
-            replayMessage = "保存失败：" + ex.Message;
-            ETS2LA.Logging.Logger.Warn("[[LinkEts2Nav]] " + replayMessage);
-        }
-        finally { savingReplay = false; }
-    }
-
     private bool previewing;
     private string audioMessage = "可先试听，确认预警音在游戏中可听见。";
     private async Task PreviewAudio()
@@ -251,8 +192,6 @@
     protected override void OnInitialized()
     {
         RefreshSpeechUsage();
-        try{speechPackView=SpeechPackSettings.Current.Read();speechPackDirectory=speechPackView.ConfiguredDirectory;}
-        catch(Exception ex){speechPackMessage="读取语音配置失败："+ex.Message;}
         refresh=Refresh();
     }
 
@@ -262,9 +201,7 @@
         try
         {
             while (await timer.WaitForNextTickAsync(stop.Token))
-                await InvokeAsync(() => { snapshot = NavDiagnostics.Current;
-                    try{speechPackView=SpeechPackSettings.Current.Read();}catch{ }
-                    StateHasChanged(); });
+                await InvokeAsync(() => { snapshot = NavDiagnostics.Current; StateHasChanged(); });
         }
         catch (OperationCanceledException) { }
     }

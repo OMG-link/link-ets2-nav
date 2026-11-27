@@ -18,11 +18,12 @@ public sealed class SpeechPackSettings(string hostDirectory)
     private long revision;
     private string ConfigFile=>Path.Combine(hostDirectory,"Settings","LinkEts2Nav.Speech.json");
     public SpeechPackSelection? Pending=>Volatile.Read(ref pending);
+    internal string? ActiveDirectory => Volatile.Read(ref active);
     public void MarkActive(string? directory)=>Volatile.Write(ref active,directory);
     public SpeechPackSettingView Read()
     {
         string path=ReadDocument().Node["packDirectory"]?.GetValue<string>()??DefaultDirectory;
-        return new(path,Path.GetFullPath(path,hostDirectory),Volatile.Read(ref active));
+        return new(path,Path.GetFullPath(path,hostDirectory),ActiveDirectory);
     }
     public async Task<SpeechPackSelection> SaveAsync(string directory,CancellationToken token=default)
     {

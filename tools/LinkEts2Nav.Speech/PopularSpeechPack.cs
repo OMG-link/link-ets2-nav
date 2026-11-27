@@ -1,122 +1,148 @@
-using System.Globalization;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using LinkEts2Nav.SpeechProtocol;
 
 namespace LinkEts2Nav.Speech;
 
+internal sealed class PackGenerationException(string code) : Exception { public string Code { get; } = code; }
+
 internal static class PopularSpeechPack
 {
-    // Read only the published speech-usage fields needed by this standalone executable.
-    private sealed record Usage([property: JsonRequired] int Schema, [property: JsonRequired] int MetricVersion,
-        [property: JsonRequired] Entry[] Entries);
-    private sealed record Entry([property: JsonRequired] string Text, [property: JsonRequired] long PlayedCount,
-        [property: JsonRequired] double PreparationMilliseconds);
-    private static readonly JsonSerializerOptions ManifestJson = new() { WriteIndented = true };
-
-    public static async Task<int> GenerateAsync(string usagePath, string topValue, string configPath, string outputPath)
+    public static async Task<int> RunWorkerAsync()
     {
-        if (!int.TryParse(topValue, NumberStyles.None, CultureInfo.InvariantCulture, out int top) || top is < 1 or > 256)
-            throw new ArgumentException("--top must be between 1 and 256.");
-        var jobs = await SelectAsync(usagePath, top);
-        var api = await SpeechApi.ReadAsync(configPath);
-        var profile = api.Profile;
-        SpeechPackCommands.Validate(jobs);
-        SpeechPackCommands.ValidateManifest(jobs, api.Model, api.Voice, profile);
+        using var stop = new CancellationTokenSource();
+        static void Send(GenerationReply reply) { Console.WriteLine(JsonSerializer.Serialize(reply)); Console.Out.Flush(); }
+        try
+        {
+            var line = await Console.In.ReadLineAsync();
+            var job = JsonSerializer.Deserialize<GenerationJob>(line ?? "") ?? throw new PackGenerationException("request");
+            // The parent holds stdin open for this job. EOF also stops requests if the host exits.
+            _ = Task.Run(() => { try { Console.In.ReadLine(); } finally { try { stop.Cancel(); } catch (ObjectDisposedException) { } } });
+            await GenerateAsync(job, count => Send(new("progress", count)), stop.Token);
+            Send(new("done", job.Texts.Length));
+            return 0;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            string code = e switch {
+                OperationCanceledException => stop.IsCancellationRequested ? "cancelled" : "timeout",
+                PackGenerationException error => error.Code,
+                HttpRequestException => "http",
+                JsonException => "template",
+                InvalidDataException => "pack",
+                UnauthorizedAccessException or IOException => "storage",
+                _ => "worker"
+            };
+            int? http = e is HttpRequestException { StatusCode: { } status } ? (int)status : null;
+            Send(new("error", Code: code, HttpStatus: http));
+            return 2;
+        }
+    }
 
-        var output = new DirectoryInfo(outputPath);
-        if (output.Parent is null) throw new ArgumentException("Choose a dedicated speech pack directory.");
-        output.Parent.Create();
+    private static async Task GenerateAsync(GenerationJob job, Action<int> progress, CancellationToken token)
+    {
+        var api = SpeechApi.Create(job);
+        var profile = api.Profile;
+        var jobs = new SpeechJobs(1, "fixed", job.Texts.Select(t => new SpeechJob(t, SpeechPack.FileName(t))).ToArray());
+        SpeechPackCommands.Validate(jobs);
+        SpeechPackCommands.ValidateManifest(jobs, job.Model, job.Voice, profile);
+        var output = new DirectoryInfo(job.OutputDirectory);
+        output.Parent!.Create();
         string sibling = Path.Combine(output.Parent.FullName, "." + output.Name + ".popular-");
         using var exclusive = new FileStream(sibling + "writer.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite,
             FileShare.None, 1, FileOptions.DeleteOnClose);
-        var stage = new DirectoryInfo(sibling + Guid.NewGuid().ToString("N"));
-        stage.Create();
+        var stage = Directory.CreateDirectory(sibling + Guid.NewGuid().ToString("N"));
         try
         {
-            bool reuse = PrepareStage(output, stage, jobs, profile);
+            var previous = ReadManifest(job.SourcePack);
+            var source = previous?.ApiProfile == profile
+                ? previous.Entries.ToDictionary(e => e.Text, StringComparer.Ordinal) : new Dictionary<string, PackEntry>();
+            var old = ReadManifest(output.FullName);
+            if (output.Exists && output.EnumerateFileSystemInfos().Any())
+            {
+                if (old?.ApiProfile is null) throw new PackGenerationException("occupied");
+                var owned = old.Entries.Select(e => e.File).Append("manifest.json").Append("CityNames").ToHashSet(StringComparer.OrdinalIgnoreCase);
+                CopyDirectory(output, stage, token, owned);
+            }
+            var names = new DirectoryInfo(Path.Combine(job.SourcePack, "CityNames"));
+            if (File.Exists(Path.Combine(names.FullName, "manifest.json")))
+                CopyDirectory(names, stage.CreateSubdirectory("CityNames"), token);
+
+            var cache = Directory.CreateDirectory(Path.Combine(job.CacheDirectory, profile));
             using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
                 { MaxResponseContentBufferSize = PcmAudio.MaximumWaveBytes };
-            var built = await SpeechPackBuilder.BuildAsync(stage.FullName, api.Model, api.Voice, jobs.Items.Select(j => j.Text),
-                (text, token) => api.GenerateAsync(client, text, token), Console.WriteLine, reuseCachedAudio: reuse);
+            async Task<byte[]> Clip(string text, CancellationToken ct)
+            {
+                string file = SpeechPack.FileName(text), path = Path.Combine(cache.FullName, file), checksum = path + ".sha256";
+                if (File.Exists(checksum) && VerifiedPcm(path, await File.ReadAllTextAsync(checksum, ct)) is { } cached) return cached;
+                byte[]? pcm = source.TryGetValue(text, out var entry) ? VerifiedPcm(Path.Combine(job.SourcePack, file), entry.Sha256) : null;
+                pcm ??= await api.GenerateAsync(client, text, ct);
+                // Commit the verified response before reporting a finished clip. A later cancellation never bills it again.
+                PcmAudio.Write(path, pcm);
+                string temporary = checksum + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    await File.WriteAllTextAsync(temporary, SpeechPack.Hash(await File.ReadAllBytesAsync(path)));
+                    File.Move(temporary, checksum, true);
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
+                return pcm;
+            }
+            var result = await SpeechPackBuilder.BuildAsync(stage.FullName, job.Model, job.Voice, job.Texts, Clip,
+                cancellationToken: token, completedCount: progress);
             await File.WriteAllTextAsync(Path.Combine(stage.FullName, "manifest.json"),
-                JsonSerializer.Serialize(built with { ApiProfile = profile }, ManifestJson));
-            Publish(stage.FullName, output.FullName, sibling + "previous-" + Guid.NewGuid().ToString("N"));
-            Console.WriteLine("Popular speech pack ready: " + jobs.Items.Length + " entries.");
-            return 0;
+                JsonSerializer.Serialize(result with { ApiProfile = profile }, new JsonSerializerOptions { WriteIndented = true }), token);
+            token.ThrowIfCancellationRequested();
+            if (!output.Exists) Directory.Move(stage.FullName, output.FullName);
+            else
+            {
+                string backup = sibling + "previous-" + Guid.NewGuid().ToString("N");
+                Directory.Move(output.FullName, backup);
+                try { Directory.Move(stage.FullName, output.FullName); }
+                catch { Directory.Move(backup, output.FullName); throw; }
+                CleanUp(backup);
+            }
         }
         finally { CleanUp(stage.FullName); }
     }
 
-    private static async Task<SpeechJobs> SelectAsync(string path, int top)
+    private static PackManifest? ReadManifest(string directory)
     {
-        // The running navigator replaces the summary by rename at a checkpoint.
-        await using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
-        var usage = await JsonSerializer.DeserializeAsync<Usage>(input);
-        if (usage is not { Schema: 1, MetricVersion: 1, Entries: not null })
-            throw new InvalidDataException("Unsupported speech usage summary schema or metric version.");
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var e in usage.Entries)
-            if (e is null || string.IsNullOrWhiteSpace(e.Text) || !seen.Add(e.Text) || e.PlayedCount < 0
-                || !double.IsFinite(e.PreparationMilliseconds) || e.PreparationMilliseconds < 0)
-                throw new InvalidDataException("Invalid or duplicate speech usage entry.");
-        var items = usage.Entries.Where(e => e.PlayedCount > 0).OrderByDescending(e => e.PlayedCount)
-            .ThenByDescending(e => e.PreparationMilliseconds).ThenBy(e => e.Text, StringComparer.Ordinal).Take(top)
-            .Select(e => new SpeechJob(e.Text, SpeechPack.FileName(e.Text))).ToArray();
-        if (items.Length == 0) throw new InvalidDataException("The usage summary contains no phrases with a positive PlayedCount.");
-        return new(1, "fixed", items);
+        string path = Path.Combine(directory, "manifest.json");
+        if (!File.Exists(path)) return null;
+        if (new FileInfo(path).Length > 262144) throw new PackGenerationException("source");
+        var pack = JsonSerializer.Deserialize<PackManifest>(File.ReadAllText(path));
+        if (pack is not { Schema: 1, Entries: not null } || pack.Entries.Length > 256
+            || pack.Entries.Any(e => e is null || string.IsNullOrWhiteSpace(e.Text) || e.File != SpeechPack.FileName(e.Text)))
+            throw new PackGenerationException("source");
+        return pack;
     }
 
-    private static bool PrepareStage(DirectoryInfo output, DirectoryInfo stage, SpeechJobs jobs, string profile)
+    private static byte[]? VerifiedPcm(string path, string sha)
     {
-        if (!output.Exists) return false;
-        string manifest = Path.Combine(output.FullName, "manifest.json");
-        PackManifest? previous = null;
-        if (File.Exists(manifest))
-        {
-            if (new FileInfo(manifest).Length > 262144) throw new InvalidDataException("Existing speech pack manifest is too large.");
-            previous = JsonSerializer.Deserialize<PackManifest>(File.ReadAllText(manifest));
-            if (previous is not { Schema: 1, Entries: not null } || previous.Entries.Length > 256
-                || previous.Entries.Any(e => e is null || string.IsNullOrWhiteSpace(e.Text) || e.File != SpeechPack.FileName(e.Text)))
-                throw new InvalidDataException("Existing output does not contain a valid fixed speech pack.");
-        }
-        else if (output.EnumerateFileSystemInfos().Any() && !File.Exists(Path.Combine(output.FullName, "CityNames", "manifest.json")))
-            throw new InvalidDataException("Use a new or empty output directory, or an existing speech pack.");
-
-        bool reuse = previous?.ApiProfile == profile;
-        var wanted = jobs.Items.Select(j => j.File).ToHashSet(StringComparer.Ordinal);
-        var omit = (previous?.Entries ?? []).Where(e => !reuse || !wanted.Contains(e.File))
-            .Select(e => e.File).ToHashSet(StringComparer.Ordinal);
-        CopyDirectory(output, stage, omit);
-        return reuse;
+        if (!File.Exists(path) || new FileInfo(path).Length is < 44 or > PcmAudio.MaximumWaveBytes) return null;
+        byte[] data = File.ReadAllBytes(path);
+        if (sha != SpeechPack.Hash(data)) return null;
+        using var wave = new MemoryStream(data, writable: false);
+        try { return PcmAudio.Read(wave); } catch (InvalidDataException) { return null; }
     }
 
-    // Keep CityNames and other accompanying files. Never traverse a link out of the pack being replaced.
-    private static void CopyDirectory(DirectoryInfo source, DirectoryInfo destination, HashSet<string>? omit = null)
+    private static void CopyDirectory(DirectoryInfo source, DirectoryInfo destination, CancellationToken token, HashSet<string>? omit = null)
     {
-        if (source.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw new IOException("The speech pack contains a directory link.");
+        if (source.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw new PackGenerationException("link");
         foreach (var entry in source.EnumerateFileSystemInfos())
         {
+            token.ThrowIfCancellationRequested();
             if (omit?.Contains(entry.Name) == true) continue;
-            if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw new IOException("The speech pack contains a filesystem link.");
-            string target = Path.Combine(destination.FullName, entry.Name);
-            if (entry is DirectoryInfo subdirectory) CopyDirectory(subdirectory, Directory.CreateDirectory(target));
-            else File.Copy(entry.FullName, target);
+            if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw new PackGenerationException("link");
+            if (entry is DirectoryInfo subdirectory) CopyDirectory(subdirectory, destination.CreateSubdirectory(entry.Name), token);
+            else File.Copy(entry.FullName, Path.Combine(destination.FullName, entry.Name));
         }
-    }
-
-    private static void Publish(string stage, string output, string backup)
-    {
-        if (!Directory.Exists(output)) { Directory.Move(stage, output); return; }
-        Directory.Move(output, backup);
-        try { Directory.Move(stage, output); }
-        catch { Directory.Move(backup, output); throw; }
-        CleanUp(backup);
     }
 
     private static void CleanUp(string directory)
     {
         try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { Console.Error.WriteLine("Could not remove temporary speech pack directory: " + directory); }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        { Console.Error.WriteLine("Temporary generation directory could not be removed."); }
     }
 }

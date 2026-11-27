@@ -82,7 +82,7 @@ public sealed class SpeechPackSettingsTests:IDisposable
         public ValueTask DisposeAsync(){Disposed=true;return ValueTask.CompletedTask;}
     }
     [Fact]
-    public async Task SettingsPageRendersTheEditablePackPathApplyActionAndActiveDirectory()
+    public async Task DeveloperPageLinksBackToPlayerNavigationAndKeepsStatisticsExport()
     {
         await using var services=new ServiceCollection().AddLogging().BuildServiceProvider();
         await using var renderer=new HtmlRenderer(services,services.GetRequiredService<ILoggerFactory>());
@@ -91,8 +91,10 @@ public sealed class SpeechPackSettingsTests:IDisposable
             var component=typeof(NavPlugin).Assembly.GetTypes().Single(t=>t.Name=="Diagnostics"&&typeof(IComponent).IsAssignableFrom(t));
             var rendered=await renderer.RenderComponentAsync(component,ParameterView.Empty);
             string html=System.Net.WebUtility.HtmlDecode(rendered.ToHtmlString());
-            Assert.Contains("预生成语音包目录",html);Assert.Contains("id=\"speech-pack-directory\"",html);
-            Assert.Contains("保存并应用",html);Assert.Contains("当前生效目录",html);
+            Assert.Contains("返回导航主页",html);
+            Assert.Contains("导出 JSON / CSV",html);
+            Assert.DoesNotContain("speech-pack-directory",html);
+            Assert.DoesNotContain("replay-comment",html);
         });
     }
     public void Dispose(){if(Directory.Exists(root))Directory.Delete(root,true);}

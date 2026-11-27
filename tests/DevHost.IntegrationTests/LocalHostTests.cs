@@ -110,7 +110,7 @@ public sealed class LocalHostTests(LocalHostFixture fixture) : IClassFixture<Loc
     }
 
     [Fact]
-    public async Task PluginDiagnosticsPage_LoadsFromPluginAssemblyWithoutGame()
+    public async Task PlayerNavigationPage_LoadsFromPluginAssemblyWithoutGame()
     {
         var handler = new PluginHandler();
         try
@@ -119,14 +119,33 @@ public sealed class LocalHostTests(LocalHostFixture fixture) : IClassFixture<Loc
             var plugin = Assert.Single(handler.LoadedPlugins);
             var page = Assert.Single(plugin.GetType().Assembly.GetTypes(), t => t.GetCustomAttributes(typeof(RouteAttribute), false)
                     .Cast<RouteAttribute>().Any(a => a.Template == "/link-ets2-nav"));
-            await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+            Assert.Contains(page.GetCustomAttributes(typeof(RouteAttribute), false).Cast<RouteAttribute>(),
+                route => route.Template == $"/plugins/adjustments/{plugin.Info.Id}");
+            await using var services = new ServiceCollection().AddLogging()
+                .AddSingleton<NavigationManager>(new RenderNavigation()).BuildServiceProvider();
             await using var renderer = new HtmlRenderer(services,
                 services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>());
             var html = await renderer.Dispatcher.InvokeAsync(async () =>
                 (await renderer.RenderComponentAsync(page, ParameterView.Empty)).ToHtmlString());
+            html = System.Net.WebUtility.HtmlDecode(html);
             Assert.Contains("Link ETS2 Nav", html);
+            Assert.Contains("驾驶状态", html);
+            Assert.Contains("下一条提示", html);
+            Assert.Contains("打开导航设置", html);
             Assert.Contains("/plugins/manager", html);
+            Assert.Contains("/link-ets2-nav/diagnostics", html);
+            Assert.DoesNotContain("语音使用统计", html);
+            Assert.DoesNotContain("车辆世界坐标", html);
+            Assert.DoesNotContain("speech-pack-directory", html);
+            Assert.Contains(plugin.GetType().Assembly.GetTypes(), type => type.GetCustomAttributes(typeof(RouteAttribute), false)
+                .Cast<RouteAttribute>().Any(a => a.Template == "/link-ets2-nav/diagnostics"));
         }
         finally { handler.UnloadPlugins(); }
+    }
+
+    private sealed class RenderNavigation : NavigationManager
+    {
+        public RenderNavigation() => Initialize("http://localhost/", "http://localhost/link-ets2-nav");
+        protected override void NavigateToCore(string uri, bool forceLoad) => throw new NotSupportedException();
     }
 }

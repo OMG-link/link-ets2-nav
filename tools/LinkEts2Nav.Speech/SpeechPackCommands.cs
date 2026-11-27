@@ -17,7 +17,6 @@ public static class SpeechPackCommands
         {
             "--export-jobs" => ["--output", "--texts", "--kind"],
             "--import-pack" => ["--jobs", "--input", "--output", "--model", "--voice"],
-            "--generate-popular-pack" => ["--usage", "--top", "--api-config", "--output"],
             _ => throw new ArgumentException("Unknown pack command.")
         };
         for (int i = 1; i < args.Length; i += 2)
@@ -27,8 +26,6 @@ public static class SpeechPackCommands
         string Required(string key) => options.TryGetValue(key, out var value) ? value
             : throw new ArgumentException("Missing " + key);
         string output = Path.GetFullPath(Required("--output"));
-        if (args[0] == "--generate-popular-pack")
-            return await PopularSpeechPack.GenerateAsync(Required("--usage"), Required("--top"), Required("--api-config"), output);
         if (args[0] == "--export-jobs")
         {
             string kind = options.GetValueOrDefault("--kind", "fixed");

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>导航设置 · Link ETS2 Nav</title>
+  <link rel="stylesheet" href="/settings.css">
+  <script defer src="/settings.js"></script>
+</head>
+<body>
+  <header><div class="shell brand"><span class="mark" aria-hidden="true">↗</span> Link ETS2 Nav</div></header>
+  <main class="shell">
+    <h1>导航设置</h1>
+    <p id="connection" role="alert" hidden></p>
+    <section class="status" aria-labelledby="status-title">
+      <div><h2 id="status-title">导航状态</h2><p id="navigation">正在连接宿主…</p><p id="next" class="help" hidden></p></div>
+      <div class="route"><span>游戏路线</span><strong id="route">等待连接</strong></div>
+    </section>
+    <div class="panels">
+      <section aria-labelledby="generate-title" class="panel">
+        <h2 id="generate-title">生成语音包</h2>
+        <p class="intro">按实际播报次数选择常用语句，通过你的语音 API 生成并应用。</p>
+        <form id="generation-form" autocomplete="off">
+          <fieldset id="generation-fields">
+            <label for="endpoint">API 地址</label>
+            <input id="endpoint" type="url" placeholder="https://api.example.com/v1/audio/speech" required maxlength="2048">
+            <div class="pair">
+              <div><label for="model">模型</label><input id="model" required maxlength="256" placeholder="服务提供的模型名"></div>
+              <div><label for="voice">音色</label><input id="voice" required maxlength="256" placeholder="音色名称或 ID"></div>
+            </div>
+            <label for="api-key">API 密钥 <small>可选</small></label>
+            <input id="api-key" type="password" autocomplete="off" maxlength="8192">
+            <label for="top">常用语句数</label>
+            <input id="top" class="number" type="number" value="20" min="1" max="256" required>
+            <details>
+              <summary>高级请求设置</summary>
+              <label for="request-template">请求 JSON</label>
+              <textarea id="request-template" class="code" rows="5" maxlength="32768" spellcheck="false" aria-describedby="template-help"></textarea>
+              <p class="help" id="template-help">留空使用默认请求。自定义模板可将字段值写成 <code>{{text}}</code>、<code>{{model}}</code> 或 <code>{{voice}}</code>。</p>
+              <div class="pair">
+                <div><label for="auth-header">认证请求头</label><input id="auth-header" value="Authorization" maxlength="256"></div>
+                <div><label for="auth-prefix">密钥前缀</label><input id="auth-prefix" value="Bearer " maxlength="256"></div>
+              </div>
+            </details>
+            <button id="generate" type="submit" class="primary">生成并应用</button>
+          </fieldset>
+        </form>
+        <div class="job" id="job" hidden>
+          <progress id="progress" aria-label="语音包生成进度"></progress>
+          <p id="job-message" role="status" aria-live="polite"></p>
+          <button id="cancel" type="button" hidden>取消生成</button>
+        </div>
+      </section>
+      <aside>
+        <section class="panel" aria-labelledby="pack-title">
+          <h2 id="pack-title">使用已有语音包</h2>
+          <p class="intro">填写本机含有语音清单的目录，可以使用相对于宿主的路径。</p>
+          <form id="import-form" autocomplete="off">
+            <label for="directory">语音包目录</label><input id="directory" required maxlength="4096" placeholder="Assets/LinkEts2Nav/SpeechPack">
+            <button id="import-pack" type="submit">校验并应用</button>
+          </form>
+          <p id="pack-info" class="foot"></p><p id="pack-message" role="status" class="feedback" hidden></p>
+        </section>
+        <section id="replay-section" class="panel" aria-labelledby="replay-title" hidden>
+          <h2 id="replay-title">保存驾驶回放</h2>
+          <form id="replay-form" autocomplete="off">
+            <label for="comment">备注 <small>可选</small></label>
+            <textarea id="comment" rows="3" maxlength="4000" placeholder="描述刚才的驾驶情况"></textarea>
+            <button id="save-replay" type="submit">保存回放</button>
+          </form>
+          <p id="replay-message" role="status" class="feedback" hidden></p>
+        </section>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

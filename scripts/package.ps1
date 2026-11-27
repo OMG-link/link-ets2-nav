@@ -56,7 +56,7 @@ function Add-Source($archive, [string]$repo, [string]$prefix, [string[]]$paths, 
     $names = @(Invoke-Checked 'git' (@('-C', $repo, '-c', 'core.quotepath=false', 'ls-files', '--cached', '--') + $paths))
     if ($LocalSources) {
         $newFiles = @(Invoke-Checked 'git' (@('-C', $repo, '-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard', '--') + $paths))
-        $names += @($newFiles | Where-Object { $_ -match '\.(cs|csproj|razor|ps1|props|targets)$' })
+        $names += @($newFiles | Where-Object { $_ -match '\.(cs|csproj|razor|ps1|props|targets|html|css|js)$' })
     }
     foreach ($name in $names) {
         $file = Join-Path $repo $name

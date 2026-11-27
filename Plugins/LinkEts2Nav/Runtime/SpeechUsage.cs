@@ -222,7 +222,7 @@ public sealed class SpeechUsageStore:IAsyncDisposable
     private void Error(string action,Exception ex)
     {LastError=action+"："+ex;log(LastError);}
     public async ValueTask DisposeAsync()
-    {stop.Cancel();try{await worker;await FlushAsync();}finally{stop.Dispose();}}
+    {stop.Cancel();try{await worker;await FlushAsync();}finally{SpeechUsageReports.Detach(this);stop.Dispose();}}
 }
 
 public static class SpeechUsageReports
@@ -230,4 +230,5 @@ public static class SpeechUsageReports
     private static SpeechUsageStore? current;
     public static SpeechUsageStore? Current=>Volatile.Read(ref current);
     public static void Attach(SpeechUsageStore store)=>Volatile.Write(ref current,store);
+    internal static void Detach(SpeechUsageStore store)=>Interlocked.CompareExchange(ref current,null,store);
 }

@@ -4,12 +4,16 @@ using ETS2LA.Game.SDK;
 using ETS2LA.Game.Telemetry;
 using ETS2LA.Logging;
 using LinkEts2Nav.Runtime;
+using LinkEts2Nav.Ui;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Net.Sockets;
 
 namespace LinkEts2Nav.Host;
 
 internal static class Program
 {
-    private const string Usage = "LinkEts2Nav.Host [--game-path <ETS2 installation>] [--documents-path <ETS2 documents folder>]";
+    private const string Usage = "LinkEts2Nav.Host [--game-path <ETS2 installation>] [--documents-path <ETS2 documents folder>] [--no-browser]";
 
     private static async Task<int> Main(string[] args)
     {
@@ -20,8 +24,10 @@ internal static class Program
         }
 
         string? gamePath = null, documentsPath = null;
-        for (int i = 0; i < args.Length; i += 2)
+        bool openBrowser = true;
+        for (int i = 0; i < args.Length; i++)
         {
+            if (args[i] == "--no-browser" && openBrowser) { openBrowser = false; continue; }
             if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]) || args[i + 1].StartsWith("--", StringComparison.Ordinal))
                 return UsageError("Expected a directory after " + args[i]);
             switch (args[i])
@@ -30,6 +36,7 @@ internal static class Program
                 case "--documents-path" when documentsPath is null: documentsPath = Path.GetFullPath(args[i + 1]); break;
                 default: return UsageError("Unexpected or repeated option: " + args[i]);
             }
+            i++;
         }
         if (gamePath != null && GameHandler.DetectGameType(gamePath) != GameType.EuroTruckSimulator2)
             return UsageError("No Euro Truck Simulator 2 executable found under " + gamePath);
@@ -54,12 +61,23 @@ internal static class Program
         Console.CancelKeyPress += Stop;
         var events = Events.Current;
         GameTelemetry? telemetry = null;
+        PlayerSettingsServer? settings = null;
         try
         {
             events.Subscribe<GameTelemetryData>(Ets2LaGameDataSource.TelemetryTopic, session.Observe);
             telemetry = GameTelemetry.Current;
             _ = NavigationProvider.Current;
             _ = SemaphoreProvider.Current;
+            try
+            {
+                settings = await PlayerSettingsServer.StartAsync(stop.Token).ConfigureAwait(false);
+                Console.WriteLine("导航设置：" + settings.Address.AbsoluteUri);
+                if (openBrowser) Process.Start(new ProcessStartInfo(settings.Address.AbsoluteUri) { UseShellExecute = true })?.Dispose();
+            }
+            catch (Exception ex) when (ex is IOException or SocketException or Win32Exception or PlatformNotSupportedException)
+            {
+                Console.Error.WriteLine(settings is null ? "本机设置页面未能启动，导航将继续运行。" : "未能打开默认浏览器，请使用上方的导航设置地址。");
+            }
             Logger.Info("Standalone navigation is running. Open ETS2 with scs-telemetry and the matching ETS2LA SDK enabled. Press Ctrl+C to exit.");
             await NavPlugin.RunStandaloneAsync(session.Current, stop.Token).ConfigureAwait(false);
             return 0;
@@ -73,6 +91,7 @@ internal static class Program
         }
         finally
         {
+            if (settings is not null) await settings.DisposeAsync().ConfigureAwait(false);
             events.Unsubscribe<GameTelemetryData>(Ets2LaGameDataSource.TelemetryTopic, session.Observe);
             telemetry?.Shutdown();
             Logger.Info("Standalone navigation stopped.");

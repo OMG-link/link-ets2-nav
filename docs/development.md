@@ -27,7 +27,7 @@ git submodule update --init --recursive --depth 1
 
 在仓库根目录运行 `.\scripts\package.ps1`，在 `artifacts/packages/` 生成 Windows x64 的原版插件和轻量宿主安装包。两份 ZIP 均包含语音模型和独立的合成程序。解压后的使用步骤见 [安装与使用](../README.md#安装与使用)。
 
-日常开车只听导航时，运行 `.\scripts\dev.ps1 -Action Run -NavigationOnly`。这个入口默认使用 Release 构建并启动 `dev-host/LinkEts2Nav.Host`，只需 .NET 10 SDK 和 Git。按 Ctrl+C 停止并保存日志。普通的 `Run` 可打开开发诊断页面和录制行车回放。
+日常开车只听导航时，运行 `.\scripts\dev.ps1 -Action Run -NavigationOnly`。这个入口默认使用 Release 构建并启动 `dev-host/LinkEts2Nav.Host`，只需 .NET 10 SDK 和 Git。启动后浏览器会打开导航设置。按 Ctrl+C 停止并保存日志。普通的 `Run` 可打开开发诊断页面和录制行车回放。
 
 轻量宿主使用游戏 `bin/win_x64/plugins` 中已安装的 `scs-telemetry.dll` 和与当前游戏版本对应的 `ets2la_plugin.dll`。Steam 安装和默认存档目录自动识别。手动指定目录时，可在构建后运行 `LinkEts2Nav.Host.exe --game-path "游戏安装目录" --documents-path "ETS2 存档目录"`。轻量宿主的产物、设置和日志位于 `dev-host/LinkEts2Nav.Host/bin/<配置>/net10.0`。脚本会从开发宿主补齐缺失的插件设置，优先使用同一构建配置。手动配置的相对路径以当前宿主目录为基准。
 
@@ -121,7 +121,7 @@ dotnet run --project tools/LinkEts2Nav.Probe -- --game-path "<game-directory>" -
 
 默认扫描已安装官方归档，输出的 `profileResolved` 为 false，不代表当前存档。传入 `--game-log "<game.log.txt>"` 后才按实际挂载日志解析当前地图；会拒绝无法确认兼容的地图或探头资源覆盖。模组以最近一次显式活动列表为准；模组管理界面的临时预览挂载不算启用，也不会重置地图缓存。用 `--help` 查看完整参数。
 
-启用插件后，开发宿主首页的“测速探头诊断”链接进入 `/link-ets2-nav`。该页面随插件 DLL 提供，在标准宿主中也可通过对应路由访问。架构及预警规则见 [预警设计](architecture.md)。
+启用插件后，打开导航页 `/link-ets2-nav`，点击“开发诊断”进入 `/link-ets2-nav/diagnostics`。两个页面随插件 DLL 提供，在标准宿主中也可通过对应路由访问。架构及预警规则见 [预警设计](architecture.md)。
 
 ### 随机合法路线回归
 

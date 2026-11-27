@@ -7,6 +7,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Plugins/LinkEts2Nav/Runtime/SpeechGenerationProtocol.cs" Link="SpeechGenerationProtocol.cs" />
     <EmbeddedResource Include="Texts/zh-CN.txt" LogicalName="LinkEts2Nav.Speech.zh-CN.txt" />
     <EmbeddedResource Include="Texts/contextual-fragments.json" LogicalName="LinkEts2Nav.Speech.contextual-fragments.json" />
     <PackageReference Include="org.k2fsa.sherpa.onnx" Version="2.0.1" />

@@ -16,7 +16,6 @@ if (args.Contains("--help", StringComparer.Ordinal))
     Console.WriteLine("Context fragments: --export-context-jobs --output DIR [--plan FILE]; --generate-context-pack --keys FILE --output DIR [--plan FILE]; --slice-context-pack --carriers DIR --output DIR [--plan FILE].");
     Console.WriteLine("Import external WAVs: --import-pack --jobs FILE --input DIR --output DIR [--model NAME] [--voice NAME].");
     Console.WriteLine("Generate cloud pack: --generate-pack --keys FILE --output DIR [--texts UTF8_FILE] (explicit network calls, billed by provider).");
-    Console.WriteLine("Generate most-played phrases with your JSON-to-WAV API: --generate-popular-pack --usage FILE --top 1..256 --api-config FILE --output DIR.");
     Console.WriteLine("Generate city-name fragments: --generate-city-names --keys FILE --output DIR --texts UTF8_FILE.");
     Console.WriteLine("No playback or model downloads. EOF exits 0; startup errors exit 2; request errors keep the worker alive.");
     return 0;
@@ -31,7 +30,8 @@ try
 {
     if (args.Length > 0 && args[0] is "--export-context-jobs" or "--generate-context-pack" or "--slice-context-pack") return await ContextualSpeech.RunAsync(args);
     if (args.Length > 0 && args[0] == "--prepare-name-jobs") return await NameSpeechJobs.RunAsync(args);
-    if (args.Length > 0 && args[0] is "--export-jobs" or "--import-pack" or "--generate-popular-pack") return await SpeechPackCommands.RunAsync(args);
+    if (args is [LinkEts2Nav.SpeechProtocol.GenerationJob.Mode]) return await PopularSpeechPack.RunWorkerAsync();
+    if (args.Length > 0 && args[0] is "--export-jobs" or "--import-pack") return await SpeechPackCommands.RunAsync(args);
     if (args.Length > 0 && args[0] is "--generate-pack" or "--generate-city-names") return await QwenPackGenerator.RunAsync(args);
     var options = WorkerOptions.Parse(args);
     var pack = new SpeechPack(options.PackDirectory, options.CacheDirectory);

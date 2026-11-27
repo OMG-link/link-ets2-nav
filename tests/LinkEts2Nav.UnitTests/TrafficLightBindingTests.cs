@@ -27,6 +27,26 @@ public sealed class TrafficLightBindingTests
     private static DirectedRoad Edge(PrefabLanePath lane) =>
         new($"prefab:7:{lane.ExitNodeUid}", lane.EntryNodeUid, lane.ExitNodeUid, lane.Points)
         { LanePaths = [lane], NativeEntryTangent = Vector3.UnitX, NativeExitTangent = Vector3.UnitX };
+
+    [Theory]
+    [InlineData(true,0,true)]
+    [InlineData(true,1,false)]
+    [InlineData(true,null,false)]
+    [InlineData(false,0,false)]
+    public void ParallelWaitingLaneRequiresTheSameRoutePassageAndSignal(bool sameExit,int? actualSignal,bool expected)
+    {
+        var planned=Lane(1,2,1,1);
+        var actual=Lane(1,sameExit?2ul:3ul);
+        var edge=Edge(planned);
+        DirectedRoad[] roads=sameExit?[edge with{LanePaths=[planned,actual]}]:[edge,Edge(actual)];
+        var controls=new List<TrafficSignalControl>{Control(1,z:3.5f)};
+        if(actualSignal is {} signal)controls.Add(Control(0,signal));
+        var map=Nearby(controls,paths:roads) with{NativeGraph=new(roads)};
+        var navigation=new NavigationDiagnostic("routed"){LaneRoute=new([new(edge.Id,planned,0)],[],true,null)};
+        var selection=new TrafficSignalBinder().Match(Data(),map,navigation,out _);
+        Assert.Equal(expected,selection!=null);
+        if(expected)Assert.Equal(0,selection!.Control.CurveIndex);
+    }
     private static TrafficSignalControl Control(int curve=0,int signal=0,float z=0)=>new(7,curve,signal,new(100,0,z),Vector3.UnitX,
         [new(new(100,0,4+z),Quaternion.Identity)]);
     private static GameDataSnapshot Data(bool navigation=true,float x=90,float z=0)=>new(

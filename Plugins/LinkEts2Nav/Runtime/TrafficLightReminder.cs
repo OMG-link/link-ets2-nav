@@ -42,9 +42,13 @@ public sealed class TrafficSignalBinder
         if(!routed)PrepareUnroutedApproach(nearby);
         var selected=routed?navigation.LaneRoute?.Sections.Select(s=>s.Path).ToArray()??[]:
             throughTraffic!.Edges.SelectMany(p=>p.LanePaths).ToArray();
-        var candidates=selected.Select(path=>(Path:path,Control:First(path,nearby.TrafficSignals)))
+        (PrefabLanePath Path,TrafficSignalControl Control,double? Distance)[] Waiting(IEnumerable<PrefabLanePath> lanes)
+            =>lanes.Select(path=>(Path:path,Control:First(path,nearby.TrafficSignals)))
             .Where(p=>p.Control is not null).Select(p=>(p.Path,Control:p.Control!,Distance:WaitingDistance(p.Control!,position,vehicle.ForwardDirection)))
             .Where(p=>p.Distance is not null).OrderBy(p=>p.Distance).ToArray();
+        var candidates=Waiting(selected);
+        if(candidates.Length==0&&routed&&navigation.LaneRoute is {} route)
+            candidates=Waiting(ParallelApproaches(route,nearby));
         if(candidates.Length==0)return null;
         var closest=candidates[0];
         // Selected navigation curves may span several future intersections. Only the nearest stop applies.
@@ -66,6 +70,21 @@ public sealed class TrafficSignalBinder
         {reason="同组实时灯色或倒计时不一致";return null;}
         reason="已绑定必经受控灯组";
         return new(closest.Control,matches.MaxBy(s=>s.PhaseRemaining)!,game.TrafficSignals.ReceivedAt,closest.Distance!.Value);
+    }
+    private static IEnumerable<PrefabLanePath> ParallelApproaches(LaneNavigationPlan route,NearbyMapSnapshot nearby)
+    {
+        foreach(var section in route.Sections)
+        {
+            var planned=section.Path;
+            if(First(planned,nearby.TrafficSignals) is not {} control)continue;
+            var outgoing=nearby.NativeGraph?.From(planned.EntryNodeUid)??nearby.PrefabPaths;
+            var edge=outgoing.FirstOrDefault(e=>e.Id==section.EdgeId&&e.StartNodeUid==planned.EntryNodeUid&&e.EndNodeUid==planned.ExitNodeUid);
+            // A route can select a representative lane on a multilane passage. Another lane on that
+            // passage can confirm the stop only when every legal lane shares the planned control.
+            if(edge is null||edge.LanePaths.Count<2||edge.LanePaths.Any(l=>l.PrefabUid!=planned.PrefabUid
+                ||First(l,nearby.TrafficSignals)?.SignalId!=control.SignalId))continue;
+            foreach(var lane in edge.LanePaths)if(!ReferenceEquals(lane,planned))yield return lane;
+        }
     }
     private void PrepareUnroutedApproach(NearbyMapSnapshot nearby)
     {

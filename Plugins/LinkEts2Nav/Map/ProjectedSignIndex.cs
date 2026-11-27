@@ -41,6 +41,19 @@ public sealed class ProjectedSignIndex
         IReadOnlyDictionary<LimitEdgeKey,LimitRoad?> metadata)
     {this.events=events;this.metadata=metadata;}
     public IReadOnlyList<ProjectedLimitSign> On(DirectedRoad road)=>events.GetValueOrDefault(LimitEdgeKey.Of(road))?.On(road.ObservedLane)??[];
+    internal bool ShareNativeStation(DirectedRoad road,string first,string second)
+    {
+        if(road.ObservedLane is not null||road.LanePaths.Count<2)return true;
+        if(!events.TryGetValue(LimitEdgeKey.Of(road),out var edge))return false;
+        foreach(var lane in road.LanePaths)
+        {
+            var signs=edge.On(lane);
+            var a=signs.FirstOrDefault(s=>s.SignId==first&&!s.Action.Unsupported);
+            var b=signs.FirstOrDefault(s=>s.SignId==second&&!s.Action.Unsupported);
+            if(a is not null&&b is not null&&Math.Abs(a.AlongMeters-b.AlongMeters)<=SignProjector.InterfaceToleranceMeters)return true;
+        }
+        return false;
+    }
     internal LimitRoad? Context(DirectedRoad road)=>metadata.GetValueOrDefault(LimitEdgeKey.Of(road));
     internal bool Contains(DirectedRoad road)=>events.TryGetValue(LimitEdgeKey.Of(road),out var edge)&&edge.Contains(road.ObservedLane);
 }

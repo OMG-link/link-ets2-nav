@@ -7,6 +7,7 @@ internal sealed record SignProjection(DirectedSignEvents[] Events,IReadOnlyList<
 /// <summary>Associates sign events with directed road/native PPD geometry; does not propagate state.</summary>
 internal static class SignProjector
 {
+    internal const float InterfaceToleranceMeters=2;
     private static readonly PrefabLanePath?[] RoadReference=[null];
     private sealed record Binding(int Edge,PrefabLanePath? Lane,double At,float Error,float Dot,bool AtEntry,bool AtExit);
     public static SignProjection Build(SpeedLimitData data,DirectedRoad[] graph,CancellationToken token)
@@ -33,8 +34,8 @@ internal static class SignProjector
                     float dot=heading.LengthSquared()>.001f?Vector3.Dot(Vector3.Normalize(heading),p.Value.Heading):0;
                     if(dot<-.65f)continue;
                     double shapeLength=shape.Points.Zip(shape.Points.Skip(1)).Sum(p=>(double)Vector3.Distance(p.First,p.Second));
-                    if(p.Value.Along<.01 && Vector3.Dot(sign.Position-shape.Points[0],p.Value.Heading)<-2)continue;
-                    if(shapeLength-p.Value.Along<.01 && Vector3.Dot(sign.Position-shape.Points[^1],p.Value.Heading)>2)continue;
+                    if(p.Value.Along<.01 && Vector3.Dot(sign.Position-shape.Points[0],p.Value.Heading)<-InterfaceToleranceMeters)continue;
+                    if(shapeLength-p.Value.Along<.01 && Vector3.Dot(sign.Position-shape.Points[^1],p.Value.Heading)>InterfaceToleranceMeters)continue;
                     candidates.Add(new(i,lane,p.Value.Along,p.Value.Error,dot,p.Value.Along<.01,shapeLength-p.Value.Along<.01));
                 }
             }

@@ -168,7 +168,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             if(cityFrame!=progress.Frame)
             {
                 guidance.ClearSource(CityEntryEventBuilder.Kind);cityPlanner.Reset();guidance.ClearSource(NarrowRoadEventBuilder.Kind);
-                narrowPlanner.Reset();cityEntries.Rebase();cityFrame=progress.Frame;
+                narrowPlanner.Reset();cityFrame=progress.Frame;
             }
             if(structuralUpdate)
             {
@@ -199,7 +199,6 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 guidance.Publish(new(NarrowRoadEventBuilder.Kind,data.SessionId,routeRevision,playerAlong,true,vehicle.ReceivedAt,narrowPlan.Sequences){CoordinateFrame=progress.Frame});
                 publishedStructure=structure;EventPlanBuildCount++;
             }
-            cityEntries.Advance(playerAlong);
             foreach(string source in new[]{"navigation",CityEntryEventBuilder.Kind,NarrowRoadEventBuilder.Kind})
                 guidance.UpdateProgress(source,data.SessionId,playerAlong,vehicle.ReceivedAt,true);
             lastSpoken=guidance.LastPlayed("navigation");

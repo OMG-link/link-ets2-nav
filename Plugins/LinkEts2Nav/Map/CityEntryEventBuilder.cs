@@ -6,20 +6,17 @@ using LinkEts2Nav.Core.Guidance;
 namespace LinkEts2Nav.Map;
 
 /// <summary>
-/// Urban sign transitions on the confirmed directed route. Only actually passed
-/// signs update persistent state; future signs are simulated on a local copy.
-/// Polygon membership never creates an entry or supplies an assumed initial state.
+/// Each confirmed urban entry sign on the directed route marks a physical entrance.
+/// The same town may have multiple entrances without an intervening signed exit.
 /// </summary>
 public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<string>? spokenCityNames=null)
 {
     public const string Kind="city-entry";
     private sealed record Landmark(string SignId,string RoadId,ulong From,ulong To,
-        double Along,Vector3 Position,bool? Urban,string? CityName,int Visit)
+        double Along,Vector3 Position,float? Side,string? CityName,int Visit)
     {
         public string? EventId {get;set;}
     }
-    private bool? actualUrban;
-    private double? actualStateAlong;
     private string? diagnosticSignature;
     private SpeedLimitData? projectionSource,cachedProjection;
     private IReadOnlyList<DirectedRoad>? projectionGeometry;
@@ -27,11 +24,9 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
 
     public void Reset()
     {
-        actualUrban=null;actualStateAlong=null;diagnosticSignature=null;
+        diagnosticSignature=null;
         projectionSource=cachedProjection=null;projectionGeometry=null;currentLandmarks=[];
     }
-    /// <summary>A new route coordinate frame does not change the actual observed urban state.</summary>
-    public void Rebase()=>actualStateAlong=null;
 
     /// <param name="routeOriginAlongMeters">Canonical coordinate of route[0].Points[0],
     /// kept stable when trimming a driven prefix.</param>
@@ -53,7 +48,9 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
         {Report(["入城标牌暂不可用："+data.Error]);return [];}
         var projected=Projection(data,projectionPrefabPaths??route);
         var originals=data.Signs.DistinctBy(s=>s.Id).ToDictionary(s=>s.Id,StringComparer.Ordinal);
-        var landmarks=new List<Landmark>();double along=routeOriginAlongMeters;
+        var landmarks=new List<Landmark>();
+        var onRoute=new HashSet<string>(StringComparer.Ordinal);
+        double along=routeOriginAlongMeters;
         for(int visit=0;visit<route.Count;visit++)
         {
             var road=route[visit];
@@ -61,39 +58,67 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
             foreach(var sign in projected.SignProjections!.On(road))
             {
                 originals.TryGetValue(sign.SignId,out var original);
-                bool relevant=sign.Action.Urban.HasValue||original?.Action.Urban.HasValue==true;
-                if(!relevant)continue;
+                if(sign.Action.Urban!=true&&original?.Action.Urban!=true)continue;
                 // The cache and current route may use different sampling densities.
                 // Reuse the cached world point, not another polyline's local distance.
                 var at=SpeedLimitGeometry.Nearest(sign.Position,road);
                 if(at is not {Error:<=18,Vertical:<=3})
                 {warnings.Add("入城标牌未采用："+sign.SignId+"；挂点未匹配当前路线几何。");continue;}
-                bool reliable=!sign.Action.Unsupported&&original?.TemplateOverride!=true&&original?.OwnershipAmbiguous!=true;
-                if(!reliable)warnings.Add("入城标牌未采用："+sign.SignId+"；规则、模板、归属或方向未确认。");
+                onRoute.Add(sign.SignId);
+                if(sign.Action.Urban!=true||sign.Action.Unsupported||original?.TemplateOverride==true||original?.OwnershipAmbiguous==true)
+                {warnings.Add("入城标牌未采用："+sign.SignId+"；规则、模板、归属或方向未确认。");continue;}
+                float? side=original is null?null:Vector3.Cross(at.Value.Heading,original.Position-sign.Position).Y;
                 landmarks.Add(new(sign.SignId,road.Id,road.StartNodeUid,road.EndNodeUid,
                     along+(road.ObservedLane is null?at.Value.Along:sign.AlongMeters),sign.Position,
-                    reliable?sign.Action.Urban:null,original?.CityName,visit));
+                    side,original?.CityName,visit));
             }
             along+=length;
         }
-        var onRoute=landmarks.Select(s=>s.SignId).ToHashSet(StringComparer.Ordinal);
-        foreach(var sign in originals.Values.Where(s=>s.Action.Urban.HasValue&&!onRoute.Contains(s.Id)))
+        foreach(var sign in originals.Values.Where(s=>s.Action.Urban==true&&!onRoute.Contains(s.Id)))
             foreach(string issue in projected.Diagnostics.Where(d=>d.Contains(sign.Id,StringComparison.Ordinal)))
                 warnings.Add("入城标牌未采用："+issue);
         Report(warnings);
         if(previousVisits is not null)
             removed=ReconcileObservedVisits(previousVisits,route,landmarks,projected.SignProjections!,playerAlongMeters);
-        var ordered=currentLandmarks=landmarks.OrderBy(s=>s.Along).ThenBy(s=>s.SignId,StringComparer.Ordinal).ToArray();
-        Advance(playerAlongMeters);
-        bool? forecast=actualUrban;var result=new List<EnvironmentPreviewEvent>();
-        foreach(var sign in ordered.Where(s=>s.Along>=playerAlongMeters))
+        currentLandmarks=landmarks.OrderBy(s=>s.Along).ThenBy(s=>s.SignId,StringComparer.Ordinal).ToArray();
+        var stations=new List<List<Landmark>>();
+        foreach(var sign in currentLandmarks)
         {
-            if(sign.Urban==true&&forecast!=true)
-                result.Add(new(sign.EventId??=Identity(sign),Kind,sign.Along,sign.Along,meters=>Text(meters,sign.CityName is {} name&&spokenCityNames?.Contains(name)==true?name:null)));
-            forecast=sign.Urban;
+            List<Landmark>? pair=null;
+            for(int i=stations.Count-1;i>=0;i--)
+            {
+                var first=stations[i][0];
+                if(sign.Along-first.Along>SignProjector.InterfaceToleranceMeters)break;
+                if(sign.Visit==first.Visit&&SameCrossSection(first,sign)
+                    &&projected.SignProjections!.ShareNativeStation(route[sign.Visit],first.SignId,sign.SignId))
+                {pair=stations[i];break;}
+            }
+            if(pair is null)stations.Add([sign]);else pair.Add(sign);
+        }
+        var ids=new HashSet<string>(StringComparer.Ordinal);
+        var result=new List<EnvironmentPreviewEvent>();
+        foreach(var station in stations)
+        {
+            var sign=station[0];
+            string id=station.FirstOrDefault(s=>s.EventId is not null)?.EventId??Identity(sign);
+            // Away from a common lane, different native branches can have the same station on the SDK reference line.
+            if(!ids.Add(id))id+=":"+sign.SignId;
+            foreach(var board in station)board.EventId=id;
+            if(sign.Along>=playerAlongMeters)
+                result.Add(new(id,Kind,sign.Along,sign.Along,meters=>Text(meters,sign.CityName is {} name&&spokenCityNames?.Contains(name)==true?name:null)));
         }
         if(removed.Count>0)removed=removed.Except(result.Select(e=>e.Id),StringComparer.Ordinal).ToArray();
         return result;
+    }
+
+    private static bool SameCrossSection(Landmark a,Landmark b)
+    {
+        if(Identity(a)==Identity(b))return true;
+        if(a.Side is not {} left||b.Side is not {} right)return false;
+        // A divided road can put its reference line on a shoulder. Require the physical poles
+        // to span that line (within sign projection accuracy) as well as a shared route station.
+        const float tolerance=SignProjector.InterfaceToleranceMeters;
+        return Math.Abs(left-right)>tolerance&&Math.Min(left,right)<=tolerance&&Math.Max(left,right)>=-tolerance;
     }
 
     private IReadOnlyList<string> ReconcileObservedVisits(IReadOnlyList<DirectedRoad> previous,IReadOnlyList<DirectedRoad> route,
@@ -111,14 +136,6 @@ public sealed class CityEntryEventBuilder(Action<string>? log=null,IReadOnlySet<
                 &&signs.On(prior).Any(s=>s.SignId==old.SignId)&&!signs.On(edge).Any(s=>s.SignId==old.SignId))removed.Add(id);
         }
         return removed;
-    }
-
-    /// <summary>Passage state uses already projected signs; no map/sign parsing or event planning on position ticks.</summary>
-    public void Advance(double playerAlongMeters)
-    {
-        var passed=currentLandmarks.LastOrDefault(s=>s.Along<playerAlongMeters);
-        if(passed is not null&&(actualStateAlong is null||passed.Along>=actualStateAlong))
-        {actualUrban=passed.Urban;actualStateAlong=passed.Along;}
     }
 
     private SpeedLimitData Projection(SpeedLimitData data,IReadOnlyList<DirectedRoad> geometry)

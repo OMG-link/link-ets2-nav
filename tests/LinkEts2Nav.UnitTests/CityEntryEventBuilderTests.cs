@@ -31,7 +31,7 @@ public sealed class CityEntryEventBuilderTests
         DirectedRoad[] edges=[approach,passage,onward];
         var sdk=RouteSnapshot.Parse([new(5,3000,100),new(10,2500,80),new(10,300,10),new(20,0,0)],now);
         var sign=new LimitSign("outer-city",new(34,0,announceBeforeFork?-300:-720),-Vector3.UnitZ,false,new(Urban:true));
-        var inner=new LimitSign("inner-city",new(0,0,-760),-Vector3.UnitZ,false,new(Urban:true)){CityName="内城"};
+        var inner=new LimitSign("inner-city",new(0,0,-720),-Vector3.UnitZ,false,new(Urban:true)){CityName="内城"};
         var scene=new NearbyMapSnapshot(new TruckLib.ScsMap.Map(),[],[],[]){PrefabPaths=edges,
             SpeedLimits=ProjectedSignBuilder.Build(innerCity?Data(sign,inner):Data(sign),edges,TestContext.Current.CancellationToken)};
         var guidance=new GuidanceCoordinator();var runtime=new NavigationRuntime(guidance:guidance,spokenCityNames:new HashSet<string>{"内城"});
@@ -45,7 +45,9 @@ public sealed class CityEntryEventBuilderTests
         }
 
         Step(2,400);
-        Assert.Single(guidance.Timeline.Sources.Single(s=>s.Source==CityEntryEventBuilder.Kind).Sequences);
+        var plan=guidance.Timeline.Sources.Single(s=>s.Source==CityEntryEventBuilder.Kind);
+        Assert.Equal(innerCity?2:1,plan.Sequences.Count);
+        Assert.Equal(plan.Sequences.Count,plan.Sequences.Select(s=>s.Id).Distinct().Count());
         Assert.DoesNotContain(queued,q=>q.Source==CityEntryEventBuilder.Kind);
         if(announceBeforeFork)
         {
@@ -97,21 +99,26 @@ public sealed class CityEntryEventBuilderTests
         Assert.Empty(Events(Data() with{Regions=[urban]}));
         Assert.Empty(Events(Data() with{Regions=[urban]},500));
     }
-    [Fact] public void ContinuousEntriesAreDeduplicatedUntilARealExitSign()
+    [Fact] public void EachDistinctSignedEntranceIsAnnouncedAndParallelBoardsShareOneAnnouncement()
     {
         var e=Events(Data(Sign("entry",600),Sign("parallel-board",600.005f),Sign("repeat",800),
             Sign("exit",900,false),Sign("new-entry",1000)));
-        Assert.Equal(new[]{600d,1000d},e.Select(s=>s.AlongMeters));Assert.NotEqual(e[0].Id,e[1].Id);
+        Assert.Equal(new[]{600d,800d,1000d},e.Select(s=>Math.Round(s.AlongMeters,3)));Assert.Equal(3,e.Select(s=>s.Id).Distinct().Count());
     }
-    [Fact] public void ActuallyPassedStateSurvivesSlidingMapWindows()
+    [Fact] public void TwoSignedEntrancesToTheSameCityRemainIndependentAcrossRoadsAndSlidingWindows()
     {
-        var builder=new CityEntryEventBuilder();var full=ProjectedSignBuilder.Build(Data(Sign("entry",600),Sign("repeat",900)),[],TestContext.Current.CancellationToken);
-        Assert.Single(builder.Build([Road],0,full));
-        Assert.Empty(builder.Build([Road],650,full));
-        var slide=ProjectedSignBuilder.Build(Data(Sign("repeat",900)),[],TestContext.Current.CancellationToken);
-        Assert.Empty(builder.Build([Road],700,slide));
-        var exit=ProjectedSignBuilder.Build(Data(Sign("exit",800,false),Sign("repeat",900)),[],TestContext.Current.CancellationToken);
-        Assert.Single(builder.Build([Road],700,exit));
+        var first=Road with{Id="48290EB806960000",Points=[new(0,0,0),new(900,0,0)]};
+        var next=Road with{Id="5080B5AD1D1D0001",StartNodeUid=2,EndNodeUid=3,Points=[new(900,0,0),new(3000,0,0)]};
+        var signs=new[]{Sign("5CE81E83899D0001",600),Sign("5CEC8396A01D0002",2400)}
+            .Select(s=>s with{CityName="JYVÄSKYLÄ"}).ToArray();
+        var data=Data(signs) with{Roads=new Dictionary<ulong,LimitRoad>{
+            [0x48290EB806960000]=new(first,"local_road"),[0x5080B5AD1D1D0001]=new(next,"local_road")}};
+        var builder=new CityEntryEventBuilder();var full=ProjectedSignBuilder.Build(data,[],TestContext.Current.CancellationToken);
+        var both=builder.Build([first,next],0,full);
+        Assert.Equal(new[]{600d,2400d},both.Select(s=>s.AlongMeters));Assert.NotEqual(both[0].Id,both[1].Id);
+        Assert.Equal(both[1].Id,Assert.Single(builder.Build([first,next],650,full)).Id);
+        var slide=ProjectedSignBuilder.Build(data with{Signs=[signs[1]]},[],TestContext.Current.CancellationToken);
+        Assert.Equal(both[1].Id,Assert.Single(builder.Build([next],1200,slide,900)).Id);
     }
     [Fact] public void ReplacingAParallelBoardBeforeArrivalKeepsTheSameLandmarkIdentity()
     {
@@ -119,6 +126,27 @@ public sealed class CityEntryEventBuilderTests
         var first=Assert.Single(builder.Build([Road],0,Data(Sign("first-board",600))));
         var second=Assert.Single(builder.Build([Road],100,Data(Sign("parallel-board",600.005f))));
         Assert.Equal(first.Id,second.Id);
+    }
+    [Fact] public void OppositeShoulderBoardsAtOneStationStayPassedWhenRebuiltBetweenTheirPoles()
+    {
+        // The two Finnish signs project 0.45 m apart, on shoulders 5.78 m and 6.05 m from their road.
+        var first=Sign("5CE6C771189D0000",600) with{Position=new(600,0,-6.05f)};
+        var second=Sign("5CE6C711ED1D0002",600.45f) with{Position=new(600.45f,0,5.78f)};
+        var data=ProjectedSignBuilder.Build(Data(first,second),[],TestContext.Current.CancellationToken);
+        var builder=new CityEntryEventBuilder();
+        Assert.Equal(600,Assert.Single(builder.Build([Road],0,data)).AlongMeters);
+        Assert.Empty(builder.Build([Road],600.2,data));
+
+        var next=Sign("next",601.8f) with{Position=new(601.8f,0,-6.05f)};
+        var nearby=Events(Data(first,second,next));
+        Assert.Equal(2,nearby.Count);Assert.Equal(601.8,nearby[1].AlongMeters,2);
+    }
+    [Fact] public void VisitingTheSameSignedRoadAgainProducesAnotherOccurrence()
+    {
+        var back=Road with{StartNodeUid=2,EndNodeUid=1,Points=Road.Points.Reverse().ToArray()};
+        var data=ProjectedSignBuilder.Build(Data(Sign("entry",600)),[],TestContext.Current.CancellationToken);
+        var entries=new CityEntryEventBuilder().Build([Road,back,Road],0,data);
+        Assert.Equal(new[]{600d,3600d},entries.Select(e=>e.AlongMeters));Assert.NotEqual(entries[0].Id,entries[1].Id);
     }
     [Fact] public void FutureForecastDoesNotChangeActualUrbanState()
     {
@@ -146,14 +174,8 @@ public sealed class CityEntryEventBuilderTests
         Assert.Equal(expected,e.AlongMeters,3);
         Assert.NotEqual(Assert.Single(data.SignProjections!.On(coarse)).AlongMeters,e.AlongMeters);
     }
-    [Fact] public void RebasePreservesActualStateButSessionResetClearsIt()
-    {
-        var builder=new CityEntryEventBuilder();builder.Build([Road],650,Data(Sign("passed",600)));
-        builder.Rebase();Assert.Empty(builder.Build([Road],0,Data(Sign("repeat",900))));
-        builder.Reset();Assert.Single(builder.Build([Road],0,Data(Sign("repeat",900))));
-    }
     [Fact] public void InitialActivationAfterEntryDoesNotReplayIt()
-        =>Assert.Empty(Events(Data(Sign("passed-entry",600),Sign("repeat",900)),650));
+        =>Assert.Equal(900,Assert.Single(Events(Data(Sign("passed-entry",600),Sign("next-entry",900)),650)).AlongMeters,3);
 
     [Fact] public void TrimmedRoutePrefixKeepsTheSameCanonicalLandmark()
     {
@@ -176,7 +198,7 @@ public sealed class CityEntryEventBuilderTests
         Assert.Empty(builder.Build([Road],0,data));Assert.Empty(builder.Build([Road],0,data));
         Assert.Single(lines);Assert.Contains("未确认",lines[0]);
     }
-    [Fact] public void UncertainExitDoesNotFalselyProveThatUrbanStatePersists()
+    [Fact] public void UncertainExitDoesNotSuppressAnotherSignedEntrance()
     {
         var e=Events(Data(Sign("entry",600),Sign("uncertain-exit",800,false) with{TemplateOverride=true},Sign("next-entry",1000)));
         Assert.Equal(new[]{600d,1000d},e.Select(s=>s.AlongMeters));

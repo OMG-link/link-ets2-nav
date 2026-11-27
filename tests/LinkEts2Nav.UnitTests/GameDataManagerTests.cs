@@ -475,22 +475,26 @@ public sealed class GameDataManagerTests
         Assert.Equal(preparedParses+2,data.Statistics.SiiParses);
     }
 
-    [Fact]
-    public void LaterSectorPublicationPreservesPreviouslyQueriedObjectsAndNativeOwnership()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void LaterSectorPublicationPreservesExistingSnapshotsAndNativeOwnership(bool keepHistory)
     {
         var native=new TruckLib.ScsMap.Map();var road=Road.Add(native,new(0,0,0),new(20,0,0),default);
-        var data=new GameDataManager(new Files(),map:native);
+        var data=new GameMapData(native,keepHistory);
         var first=new TruckLib.ScsMap.Map();var a=Sign.Add(first,new(4100,0,0),default);
-        data.Map.Publish(first);
-        var old=data.Map.GetItems<Sign>();
+        data.Publish(first);
+        var old=data.GetItems<Sign>();
         var second=new TruckLib.ScsMap.Map();var b=Sign.Add(second,new(8100,0,0),default);
-        data.Map.Publish(second);
-        Assert.Same(a,data.Map.GetItem<Sign>(a.Uid));
-        Assert.Same(b,data.Map.GetItem<Sign>(b.Uid));
-        Assert.Same(road,data.Map.GetItem<Road>(road.Uid));
-        Assert.Single(old);Assert.Equal(2,data.Map.GetItems<Sign>().Count);
-        Assert.Single(data.Map.GetSector(new(1,0)).Items);
-        Assert.Single(data.Map.GetSector(new(2,0)).Items);
+        data.Publish(second);
+        Assert.Same(keepHistory?a:null,data.GetItem<Sign>(a.Uid));
+        Assert.Same(keepHistory?a.Node:null,data.GetNode(a.Node.Uid));
+        Assert.Same(b,data.GetItem<Sign>(b.Uid));
+        Assert.Same(road,data.GetItem<Road>(road.Uid));
+        Assert.Same(a,Assert.Single(old));
+        Assert.Equal(keepHistory?2:1,data.GetItems<Sign>().Count);
+        Assert.Equal(keepHistory?1:0,data.GetSector(new(1,0)).Items.Count);
+        Assert.Single(data.GetSector(new(2,0)).Items);
         Assert.Single(native.MapItems);
     }
 

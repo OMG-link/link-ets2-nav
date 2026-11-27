@@ -53,6 +53,7 @@
     <Compile Include="$(NavOverrides)SDL3ControlsBackend.cs" Condition="'$(OS)' == 'Unix'" />
   </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'ETS2LA.Game'">
+    <InternalsVisibleTo Include="LinkEts2Nav.Host" />
     <Compile Remove="Program.cs;Output/Output.cs" />
     <Compile Include="$(NavOverrides)GameHandler.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)dev-host/GameOutput.cs" Link="Output/Output.cs" />
@@ -75,7 +76,8 @@
     <ProjectReference Include="$(MSBuildThisFileDirectory)dev-host/TruckLib.Sii/TruckLib.Sii/TruckLib.Sii.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'TruckLib'">
-    <Compile Remove="ScsMap/Node.cs;ScsMap/Collections/NodeDictionary.cs" />
+    <Compile Remove="ScsMap/Map.cs;ScsMap/Node.cs;ScsMap/Collections/NodeDictionary.cs" />
+    <Compile Include="$(NavOverrides)TruckLibMap.cs" />
     <Compile Include="$(NavOverrides)TruckLibNode.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)dev-host/TruckLibNodeDictionary.cs" Link="ScsMap/Collections/NodeDictionary.cs" />
     <PackageReference Remove="TruckLib.HashFs" />

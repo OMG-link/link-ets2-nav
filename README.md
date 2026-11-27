@@ -48,7 +48,7 @@
 
 将 `LinkEts2Nav.dll` 放入宿主的 `Plugins/` 目录，在插件管理器中启用 **Link ETS2 Nav**。在宿主打开 `/link-ets2-nav` 查看车辆连接、路线状态、下一路口操作、沿路距离、附近探头及拒绝播报的原因。开发宿主首页提供相应链接。
 
-如果开车时只需要听导航，可以在仓库根目录运行 `.\scripts\dev.ps1 -Action Run -NavigationOnly`。本地宿主会自动启用导航，使用现有语音与音量设置，在终端按 Ctrl+C 退出。查看下一路口画面或修改设置时，用 `.\scripts\dev.ps1 -Action Run` 打开界面。
+如果开车时只需要听导航，可以在仓库根目录运行 `.\scripts\dev.ps1 -Action Run -NavigationOnly`。独立轻量宿主使用游戏中已安装的 ETS2LA 通信组件，自动连接 Steam 版 ETS2。在终端按 Ctrl+C 退出。需要其他插件时，可以继续在原版 ETS2LA 中启用同一份导航插件。查看开发诊断页面时，用 `.\scripts\dev.ps1 -Action Run` 打开界面。其他安装路径见[开发指南](docs/development.md#构建和运行)。
 
 发现问题后，可在诊断页填写可选评论并点击“保存回放”。回放保存在宿主目录的 `Cache/LinkEts2Nav/Replays/`，包含最近两份滚动驾驶轨迹、诊断、日志及探头校准配置，不会被后续驾驶覆盖，也不会自动上传。记录覆盖时长随场景复杂度变化；离线分析需要匹配的游戏资源，并非游戏画面录像。
 

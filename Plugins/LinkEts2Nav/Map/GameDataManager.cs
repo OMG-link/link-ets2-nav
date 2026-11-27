@@ -49,19 +49,29 @@ public sealed class GameDataManager:IDisposable
 
     public GameDataManager(IFileSystem source,IReadOnlyList<string>? activeMods=null,NativeMap? map=null,string mapPath="/map/europe.mbd")
         :this(source,activeMods,map,mapPath,null) { }
-    private GameDataManager(IFileSystem source,IReadOnlyList<string>? activeMods,NativeMap? map,string mapPath,IDisposable? owner)
+    private GameDataManager(IFileSystem source,IReadOnlyList<string>? activeMods,NativeMap? map,string mapPath,IDisposable? owner,
+        bool retainSupplementHistory=true)
     {
         mods=activeMods?.ToArray()??[];this.mapPath=mapPath;this.owner=owner;
         resources=new(this,()=>GameDefinitionFileSystem.Create(source,mods),mapPath);
-        Map=new(map);world=new(()=>new WorldDefinitionIndex(this),LazyThreadSafetyMode.ExecutionAndPublication);
+        Map=new(map,retainSupplementHistory);world=new(()=>new WorldDefinitionIndex(this),LazyThreadSafetyMode.ExecutionAndPublication);
     }
     public static GameDataManager Open(string gamePath,IEnumerable<string> logLines,NativeMap? map=null)
+        =>Open(gamePath,logLines,map,loadNavigationBase:false,CancellationToken.None);
+
+    internal static GameDataManager OpenNavigationOnly(string gamePath,IEnumerable<string> logLines,CancellationToken token)
+        =>Open(gamePath,logLines,null,loadNavigationBase:true,token);
+
+    private static GameDataManager Open(string gamePath,IEnumerable<string> logLines,NativeMap? map,bool loadNavigationBase,CancellationToken token)
     {
         var mount=OfficialArchiveMount.FromGameLog(gamePath,logLines);
         bool transferred=false;
         try
         {
-            var manager=new GameDataManager(mount.FileSystem,mount.ActiveModPaths,map,"/map/europe.mbd",mount);
+            const string mapPath="/map/europe.mbd";
+            if(loadNavigationBase)map=NavigationBaseMap.Read(mount.FileSystem,mapPath,token);
+            var manager=new GameDataManager(mount.FileSystem,mount.ActiveModPaths,map,mapPath,mount,
+                retainSupplementHistory:!loadNavigationBase);
             transferred=true;
             return manager;
         }

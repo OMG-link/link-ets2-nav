@@ -21,6 +21,7 @@
     <Project Path="ETS2LA/TruckLib/TruckLib/TruckLib.csproj" />
   </Folder>
   <Folder Name="/DevHost/">
+    <Project Path="dev-host/LinkEts2Nav.Host/LinkEts2Nav.Host.csproj" />
     <Project Path="dev-host/TruckLib.Sii/TruckLib.Sii/TruckLib.Sii.csproj" />
     <Project Path="dev-host/TruckLib.HashFs/TruckLib.HashFs/TruckLib.HashFs.csproj" />
   </Folder>

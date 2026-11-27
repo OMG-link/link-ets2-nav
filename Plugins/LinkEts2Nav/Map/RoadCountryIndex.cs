@@ -8,18 +8,20 @@ public sealed record UndeterminedRoadCountry(string Detail):MapQueryIssue(Detail
 /// <summary>Immutable native road endpoint evidence. Validation occurs only when a road is queried.</summary>
 public sealed class RoadCountryIndex
 {
-    private sealed record Endpoint(ulong? Uid,bool Loaded,ulong Backward,ulong Forward,byte BackwardCountry,byte ForwardCountry);
-    private sealed record Evidence(Endpoint Start,Endpoint End);
-    private readonly IReadOnlyDictionary<ulong,Evidence> roads;
+    private readonly record struct Endpoint(ulong? Uid,bool Loaded,ulong Backward,ulong Forward,byte BackwardCountry,byte ForwardCountry);
+    private readonly record struct Evidence(Endpoint Start,Endpoint End);
+    private readonly Dictionary<ulong,string> confirmed;
+    private readonly Dictionary<ulong,Evidence> unresolved;
     private readonly IReadOnlyDictionary<byte,string> names;
-    private RoadCountryIndex(IReadOnlyDictionary<ulong,Evidence> roads,IReadOnlyDictionary<byte,string> names)
-    {this.roads=roads;this.names=names;}
-    public bool Contains(ulong roadUid)=>roads.ContainsKey(roadUid);
+    private RoadCountryIndex(Dictionary<ulong,string> confirmed,Dictionary<ulong,Evidence> unresolved,IReadOnlyDictionary<byte,string> names)
+    {this.confirmed=confirmed;this.unresolved=unresolved;this.names=names;}
+    public bool Contains(ulong roadUid)=>confirmed.ContainsKey(roadUid)||unresolved.ContainsKey(roadUid);
 
     /// <summary>Only each endpoint's actual road-item side supplies a country. Missing nodes are map dependencies, never country zero.</summary>
     public MapQueryResult<string> QueryCountry(ulong roadUid,Func<ulong,MapQueryIssue>? missingConnection=null)
     {
-        if(!roads.TryGetValue(roadUid,out var road))
+        if(confirmed.TryGetValue(roadUid,out var known))return MapQueryResult<string>.Ready(known);
+        if(!unresolved.TryGetValue(roadUid,out var road))
             return MapQueryResult<string>.Unavailable(new MapQueryFailure(MapQueryFailureKind.UnresolvedReference,$"Road {roadUid:X16} has no retained native country evidence."));
         foreach(var endpoint in new[]{road.Start,road.End})
         {
@@ -40,11 +42,16 @@ public sealed class RoadCountryIndex
 
         byte Country(Endpoint endpoint)
         {
-            bool backward=endpoint.Backward==roadUid,forward=endpoint.Forward==roadUid;
-            if(!backward&&!forward||backward&&forward&&endpoint.BackwardCountry!=endpoint.ForwardCountry)
-                throw new InvalidDataException($"Road {roadUid:X16}: node {endpoint.Uid:X16} does not identify one consistent road-item country side (backward {endpoint.Backward:X16}/{endpoint.BackwardCountry}, forward {endpoint.Forward:X16}/{endpoint.ForwardCountry}).");
-            return backward?endpoint.BackwardCountry:endpoint.ForwardCountry;
+            if(TryCountrySide(roadUid,endpoint,out byte country))return country;
+            throw new InvalidDataException($"Road {roadUid:X16}: node {endpoint.Uid:X16} does not identify one consistent road-item country side (backward {endpoint.Backward:X16}/{endpoint.BackwardCountry}, forward {endpoint.Forward:X16}/{endpoint.ForwardCountry}).");
         }
+    }
+
+    private static bool TryCountrySide(ulong roadUid,Endpoint endpoint,out byte country)
+    {
+        bool backward=endpoint.Backward==roadUid,forward=endpoint.Forward==roadUid;
+        country=backward?endpoint.BackwardCountry:endpoint.ForwardCountry;
+        return (backward||forward)&&(!backward||!forward||endpoint.BackwardCountry==endpoint.ForwardCountry);
     }
 
     public static RoadCountryIndex Build(GameMap map,IReadOnlyDictionary<byte,string> countryNames,CancellationToken token=default)
@@ -54,12 +61,20 @@ public sealed class RoadCountryIndex
         Endpoint Snapshot(INode? input)=>input is Node node
             ?new(node.Uid,true,node.BackwardItem?.Uid??0,node.ForwardItem?.Uid??0,node.BackwardCountry,node.ForwardCountry)
             :new(input?.Uid,false,0,0,0,0);
-        var roads=new Dictionary<ulong,Evidence>();
+        var names=new Dictionary<byte,string>(countryNames);
+        var confirmed=new Dictionary<ulong,string>();
+        var unresolved=new Dictionary<ulong,Evidence>();
         foreach(var road in map.MapItems.Values.OfType<Road>())
         {
             token.ThrowIfCancellationRequested();
-            roads.Add(road.Uid,new(Snapshot(road.Node),Snapshot(road.ForwardNode)));
+            var first=Snapshot(road.Node);
+            var last=Snapshot(road.ForwardNode);
+            if(first.Loaded&&last.Loaded&&TryCountrySide(road.Uid,first,out byte a)&&TryCountrySide(road.Uid,last,out byte b)
+                &&(a!=0||b!=0)&&(a==0||b==0||a==b)&&names.TryGetValue(a!=0?a:b,out var name)&&!string.IsNullOrWhiteSpace(name))
+                confirmed.Add(road.Uid,name);
+            else
+                unresolved.Add(road.Uid,new(first,last));
         }
-        return new(roads,new Dictionary<byte,string>(countryNames));
+        return new(confirmed,unresolved,names);
     }
 }

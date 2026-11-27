@@ -12,6 +12,7 @@ public sealed record GameSectorData(SectorCoordinate Coordinate,Sector? Metadata
 public sealed class GameMapData
 {
     private readonly NativeMap? basis;
+    private readonly bool retainSupplementHistory;
     private readonly HostMapView? view;
     private readonly NativeNodeConnections connections = new();
     private readonly UnresolvedItemReferenceCounts hostReferenceCounts = UnresolvedItemReferenceCounts.Empty;
@@ -28,9 +29,10 @@ public sealed class GameMapData
     public IReadOnlyDictionary<ulong,INode> Nodes {get;}
     public IReadOnlyDictionary<SectorCoordinate,Sector> Sectors {get;}
 
-    internal GameMapData(NativeMap? map)
+    internal GameMapData(NativeMap? map,bool retainSupplementHistory=true)
     {
         basis=map;
+        this.retainSupplementHistory=retainSupplementHistory;
         if(map is not null)
         {
             var unresolvedItems = new List<ulong>();
@@ -103,23 +105,26 @@ public sealed class GameMapData
 
             connections.Validate(map.Nodes.Values, map.MapItems.Values, NodeAt, ItemAt);
             Header??=new(map.NormalScale,map.CityScale,map.StartPosition,map.StartRotation,map.EuropeMapUiCorrections,map.EditorMapId);
-            var items=extraItems.ToDictionary();
+            // The standalone map already holds the full native road and prefab network.
+            // Its extra objects are needed only in the current window.
+            var items=retainSupplementHistory?extraItems.ToDictionary():new Dictionary<ulong,MapItem>();
+            if(!retainSupplementHistory)extraReferenceCounts.Clear();
             foreach (var (uid, item) in map.MapItems)
             {
                 if (basis?.MapItems.ContainsKey(uid) != true)
                     items[uid] = item;
                 extraReferenceCounts.Remove(uid);
             }
-            var nodes=extraNodes.ToDictionary();
+            var nodes=retainSupplementHistory?extraNodes.ToDictionary():new Dictionary<ulong,INode>();
             foreach (var (uid, node) in map.Nodes)
             {
                 if (basis?.Nodes.ContainsKey(uid) == true)
                     continue;
-                if (!extraNodes.ContainsKey(uid))
-                    RecordExtraReferences(node);
+                if (!nodes.ContainsKey(uid))
+                    RecordExtraReferences(node,items);
                 nodes[uid] = node;
             }
-            var sectors=extraSectors.ToDictionary();
+            var sectors=retainSupplementHistory?extraSectors.ToDictionary():new Dictionary<SectorCoordinate,Sector>();
             foreach(var p in map.Sectors)if(basis?.Sectors.ContainsKey(p.Key)!=true)sectors[p.Key]=p.Value;
             extraItems=new ReadOnlyDictionary<ulong,MapItem>(items);
             extraNodes=new ReadOnlyDictionary<ulong,INode>(nodes);
@@ -137,20 +142,20 @@ public sealed class GameMapData
         MapItem? ItemAt(ulong uid)
             => basis?.MapItems.GetValueOrDefault(uid) ?? map.MapItems.GetValueOrDefault(uid) ?? extraItems.GetValueOrDefault(uid);
 
-        void RecordExtraReferences(INode raw)
+        void RecordExtraReferences(INode raw,Dictionary<ulong,MapItem> items)
         {
             if (raw is not Node node)
                 return;
             var (backward, forward) = NativeNodeConnections.DistinctReferences(node);
             if (backward is ulong backwardUid)
-                RecordReference(backwardUid);
+                RecordReference(backwardUid,items);
             if (forward is ulong forwardUid)
-                RecordReference(forwardUid);
+                RecordReference(forwardUid,items);
         }
 
-        void RecordReference(ulong uid)
+        void RecordReference(ulong uid,Dictionary<ulong,MapItem> items)
         {
-            if (ItemAt(uid) is not null)
+            if (items.ContainsKey(uid)||basis?.MapItems.ContainsKey(uid)==true)
                 return;
             extraReferenceCounts[uid] = extraReferenceCounts.GetValueOrDefault(uid) + 1;
         }

@@ -9,6 +9,7 @@ public sealed record MapScanRequest(string ResourceId, string SessionId, string 
     IReadOnlyList<string> LogLines, Vector3 Position)
 {
     public TruckLib.ScsMap.Map? HostMap { get; init; }
+    internal bool UseNavigationBase { get; init; }
     public bool PreparationOnly { get; init; }
     public RouteSnapshot? Route { get; init; }
     public long RouteGeneration {get;init;}
@@ -263,12 +264,18 @@ public sealed class BackgroundMapScanner : IAsyncDisposable
         private readonly NearbyCameraScanner scanner;
         public OfficialBackend(MapScanRequest request, CancellationToken token)
         {
-            data=GameDataManager.Open(request.GamePath,request.LogLines,request.HostMap);
+            data=request.UseNavigationBase
+                ?GameDataManager.OpenNavigationOnly(request.GamePath,request.LogLines,token)
+                :GameDataManager.Open(request.GamePath,request.LogLines,request.HostMap);
             bool prepared=false;
             try
             {
                 scanner=new NearbyCameraScanner(data);
                 scanner.Prepare(token);
+                // The global pass deserializes scenery before filtering it. Release those
+                // pages once, ahead of the first driving window and its own allocations.
+                if(request.UseNavigationBase)
+                    GC.Collect(GC.MaxGeneration,GCCollectionMode.Aggressive,blocking:true,compacting:true);
                 prepared=true;
             }
             finally { if(!prepared)data.Dispose(); }

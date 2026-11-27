@@ -25,9 +25,11 @@ git submodule update --init --recursive --depth 1
 
 `Deploy` 构建并复制插件到开发宿主的 `Plugins/`；`Run` 在此基础上启动宿主。VS Code 的 `Nav:` 任务提供相同入口，F5 构建部署后启动调试。重新部署前卸载正在运行的插件，避免文件被锁定。
 
-日常开车只听导航时，运行 `.\scripts\dev.ps1 -Action Run -NavigationOnly`。宿主在当前终端自动启动插件，复用该构建配置的游戏连接、语音包和设置。按 Ctrl+C 停止并保存日志。要查看画面、调整设置或录制行车回放，可以改用普通的 `Run` 命令。
+日常开车只听导航时，运行 `.\scripts\dev.ps1 -Action Run -NavigationOnly`。这个入口默认使用 Release 构建并启动 `dev-host/LinkEts2Nav.Host`，只需 .NET 10 SDK 和 Git。按 Ctrl+C 停止并保存日志。普通的 `Run` 可打开开发诊断页面和录制行车回放。
 
-仅导航模式按 UID 直接查询地图节点，空间范围索引由首次范围查询建立。HashFS V2 的普通文件和目录使用精简条目，读取所需的偏移、大小和压缩标志随条目保存。
+轻量宿主使用游戏 `bin/win_x64/plugins` 中已安装的 `scs-telemetry.dll` 和与当前游戏版本对应的 `ets2la_plugin.dll`。Steam 安装和默认存档目录自动识别。手动指定目录时，可在构建后运行 `LinkEts2Nav.Host.exe --game-path "游戏安装目录" --documents-path "ETS2 存档目录"`。轻量宿主的产物、设置和日志位于 `dev-host/LinkEts2Nav.Host/bin/<配置>/net10.0`。脚本会从开发宿主补齐缺失的插件设置，优先使用同一构建配置。手动配置的相对路径以当前宿主目录为基准。
+
+轻量宿主准备全图的路线连接，沿玩家附近与现有路线读取测速、路口和信号灯所需的地图细节。仅导航模式按 UID 直接查询地图节点，空间范围索引由首次范围查询建立。HashFS V2 的普通文件和目录使用精简条目，读取所需的偏移、大小和压缩标志随条目保存。
 
 ## 工程结构
 

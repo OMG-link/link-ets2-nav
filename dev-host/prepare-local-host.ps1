@@ -39,6 +39,21 @@ if ($ProjectName -eq 'TruckLib') {
 '@
     $text = Replace-Once $text ($before.Replace("`r`n", "`n")) ($after.Replace("`r`n", "`n"))
     Save-Override 'TruckLibNode.cs' $text
+
+    $text = Read-Source 'TruckLib\TruckLib\ScsMap\Map.cs'
+    $before = @'
+            Console.WriteLine($"Finished reading sectors with {failed} failures.");
+            Console.WriteLine($"Expect missing map data and navigation errors in affected regions.");
+'@
+    $after = @'
+            if (failed != 0 || !AppContext.TryGetSwitch("LinkEts2Nav.NavigationOnly", out bool navigationOnly) || !navigationOnly)
+            {
+                Console.WriteLine($"Finished reading sectors with {failed} failures.");
+                Console.WriteLine($"Expect missing map data and navigation errors in affected regions.");
+            }
+'@
+    $text = Replace-Once $text ($before.Replace("`r`n", "`n")) ($after.Replace("`r`n", "`n"))
+    Save-Override 'TruckLibMap.cs' $text
 }
 if ($ProjectName -eq 'ETS2LA') {
     $text = Read-Source 'ETS2LA\Program.cs'

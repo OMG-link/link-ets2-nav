@@ -45,7 +45,7 @@ public sealed class NavPlugin : Plugin
                 {
                     await previous.ConfigureAwait(false);
                     next.Token.ThrowIfCancellationRequested();
-                    await RunAsync(next.Token).ConfigureAwait(false);
+                    await RunAsync(() => ApplicationState.Current.RunningGame, standalone: false, next.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (next.IsCancellationRequested) { }
                 catch (Exception ex)
@@ -96,11 +96,18 @@ public sealed class NavPlugin : Plugin
             resources.Fixed,usage);
     }
 
-    private static async Task RunAsync(CancellationToken token)
+    /// <summary>Runs navigation with telemetry supplied by the standalone host.</summary>
+    public static Task RunStandaloneAsync(Func<Installation?> currentGame, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(currentGame);
+        return RunAsync(currentGame, standalone: true, token);
+    }
+
+    private static async Task RunAsync(Func<Installation?> currentGame, bool standalone, CancellationToken token)
     {
         using var source = new Ets2LaGameDataSource(Events.Current);
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
-        bool navigationOnly = AppContext.TryGetSwitch("LinkEts2Nav.NavigationOnly", out bool enabled) && enabled;
+        bool navigationOnly = standalone || (AppContext.TryGetSwitch("LinkEts2Nav.NavigationOnly", out bool enabled) && enabled);
         (string Resource,string? Session,DateTimeOffset ReceivedAt)? lastScanSample=null;
         var logOutput = new NavigationLogReporter();
         await using var speechUsage=new SpeechUsageStore(Path.Combine(AppContext.BaseDirectory,"Cache","LinkEts2Nav","SpeechUsage"),
@@ -178,8 +185,8 @@ public sealed class NavPlugin : Plugin
                         ? "校准配置为空或不存在：有效探头仅作500米未校准接近提醒。配置位置：" + calibrationPath
                         : $"已加载 {calibrations.Count} 条模型校准配置。", now);
                 }
-                var currentInstallation = ApplicationState.Current.RunningGame;
-                if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2 || !currentInstallation.IsParsed)
+                var currentInstallation = currentGame();
+                if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2 || (!standalone && !currentInstallation.IsParsed))
                 {
                     speech?.ClearPlan();
                     if (mapScanner is { } previousScanner)
@@ -195,7 +202,7 @@ public sealed class NavPlugin : Plugin
                         guidance.Reset();
                         await previousScanner.DisposeAsync();
                     }
-                    Publish(new(now, "等待 ETS2 当前地图就绪。", data.RouteAvailability.ToString(), 0, []));
+                    Publish(new(now, standalone ? "等待 ETS2 进入游戏。" : "等待 ETS2 当前地图就绪。", data.RouteAvailability.ToString(), 0, []));
                     continue;
                 }
                 {
@@ -205,15 +212,16 @@ public sealed class NavPlugin : Plugin
                         mountCheck = now.AddSeconds(5);
                         var log = currentInstallation.GetLogFileContents().ToArray();
                         string nextSignature = OfficialArchiveMount.ResolveGameLog(currentInstallation.Path, log).Signature;
-                        if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature || !ReferenceEquals(installationMap, currentInstallation.GetMapData()))
+                        var hostMap = standalone ? null : currentInstallation.GetMapData();
+                        if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature || !ReferenceEquals(installationMap, hostMap))
                         {
                             mapScanner.Invalidate();
                             pipeline.Reset(); navigation.Reset(); guidance.Reset();
-                            logOutput.ResetTargets("准备复用宿主地图并补充附近缺失对象：" + currentInstallation.Path, now);
+                            logOutput.ResetTargets((standalone ? "准备导航地图：" : "准备复用宿主地图并补充附近缺失对象：") + currentInstallation.Path, now);
                             gameLog = log;
                             resourceVersion++;
                             installation = currentInstallation;
-                            installationMap = currentInstallation.GetMapData();
+                            installationMap = hostMap;
                             signature = nextSignature;
                         }
                     }
@@ -232,7 +240,7 @@ public sealed class NavPlugin : Plugin
                     else if (preparation.Error is not null)
                         logOutput.Change("map-preparation", "全局地图准备失败，将重试：" + preparation.Error, now, isWarning: true);
                     if (mapScanner.Prepare(new(resourceVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        "", currentInstallation.Path, gameLog, default) { HostMap = installationMap }, now))
+                        "", currentInstallation.Path, gameLog, default) { HostMap = installationMap, UseNavigationBase = standalone }, now))
                         logOutput.Event("开始全局地图准备（不等待车辆位置）。", now);
                     if (!data.CanPrepareMap(now) || data.Vehicle is not { } vehicle)
                     {
@@ -261,7 +269,8 @@ public sealed class NavPlugin : Plugin
                     lastScanSample=scanSample;
                     if (mapScanner.Request(new(scanSample.Item1,
                         session, currentInstallation.Path, gameLog, position) {
-                        HostMap = currentInstallation.GetMapData(),
+                        HostMap = standalone ? null : currentInstallation.GetMapData(),
+                        UseNavigationBase = standalone,
                         Route = data.RouteAvailability == RouteAvailability.Available ? data.Route : null,
                         RouteGeneration=data.NavigationRoute.Generation,
                         NavigationRemainingMeters = vehicle.NavigationDistanceRemainingMeters }, now))

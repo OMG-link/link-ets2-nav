@@ -283,16 +283,21 @@ public sealed class NavigationManeuverDetector
                     }
                     if (chosen is null) return result;
                     if (ClassifyJunctionAngles(entry.Value, chosen.Value, exits, previous?.RoadType, current.EndNodeUid, out bool mainContinuation) is { } kind)
+                    {
+                        string? lanes=JunctionLaneSelection(current);
+                        bool chooseForStraight=lanes is not null&&kind==ManeuverKind.Straight;
                         result.Add(new($"prefab:{prefab}:{current.StartNodeUid:X16}:{current.EndNodeUid:X16}",
-                            kind, offset - vehicleAlong, previous?.Id ?? current.Id, following?.Id ?? current.Id)
+                            chooseForStraight?ManeuverKind.ChooseLanes:kind, offset - vehicleAlong, previous?.Id ?? current.Id, following?.Id ?? current.Id)
                         {
                             EndDistanceMeters = end - vehicleAlong,
                             JunctionId = "prefab:" + prefab,
                             HasSeparateApproachRoad = previous is not null && PrefabKey(previous) is null,
-                            IsMainRoadContinuation = mainContinuation,
-                            IsMinorStraight=kind==ManeuverKind.Straight&&current.IsMinorStraight,
+                            Instruction=lanes is null?null:lanes+"，"+NavigationPrompts.Action(kind),
+                            IsMainRoadContinuation = mainContinuation&&!chooseForStraight,
+                            IsMinorStraight=kind==ManeuverKind.Straight&&!chooseForStraight&&current.IsMinorStraight,
                             StraightExitSides=AlternativeExitSides(entry.Value,chosen.Value,current.EndNodeUid,exits.Select(e=>(e.End,e.Direction)))
                         });
+                    }
                 }
             }
             else if (PrefabKey(current) is null && i + 1 < route.Count
@@ -339,6 +344,21 @@ public sealed class NavigationManeuverDetector
             .GroupBy(e => (Prefab: PrefabKey(e)!, End: e.EndNodeUid))
             .ToDictionary(g => g.Key, g => g.ToArray());
         indexedGraph = graph;
+    }
+
+    private static string? JunctionLaneSelection(DirectedRoad passage)
+    {
+        if(passage.LaneConnections is not {} topology || passage.LanePaths.FirstOrDefault() is not {} path
+            || path.EntryLaneCount<2 || path.NativeGeometry is not {} geometry)return null;
+
+        // Slots identify native connections. Orders count from the driver's left.
+        // An unaccounted entrance lane is missing evidence about its possible exits.
+        var inputs=geometry.Inputs.Where(p=>p.NodeUid==passage.StartNodeUid).OrderBy(p=>p.Order).ToArray();
+        var outlets=topology.Where(c=>c.EntryNode==passage.StartNodeUid).ToLookup(c=>c.EntryLane);
+        if(inputs.Length!=path.EntryLaneCount||inputs.Where((p,i)=>p.Order!=i||!outlets.Contains(p.Slot)).Any())return null;
+        var selected=inputs.Where(p=>outlets[p.Slot].Any(c=>c.ExitNode==passage.EndNodeUid)).ToArray();
+        if(!selected.Select(p=>p.Slot).ToHashSet().SetEquals(passage.LanePaths.Select(p=>p.EntryLane)))return null;
+        return LaneInstructionFormatter.Selection(inputs.Length,selected.Select(p=>p.Order).ToArray());
     }
 
     private (ManeuverKind? Kind, bool Ambiguous) MergeDecision(DirectedRoad selected, string prefab)

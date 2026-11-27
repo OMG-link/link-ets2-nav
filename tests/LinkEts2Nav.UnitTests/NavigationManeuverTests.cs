@@ -1,5 +1,6 @@
 using System.Numerics;
 using LinkEts2Nav.Core;
+using LinkEts2Nav.Core.Guidance;
 
 namespace LinkEts2Nav.UnitTests;
 
@@ -16,6 +17,41 @@ public sealed class NavigationManeuverTests
     private static DirectedRoad J(string id, ulong start, ulong end, params Vector3[] points)
         => R($"prefab:{start}:0:{end}", start, end, points) with { Junction = new(2, 2, 1) };
     private static readonly NavigationManeuverDetector Detector = new();
+
+    [Theory]
+    [InlineData(false,false,false,false,ManeuverKind.ChooseLanes,"走左侧两车道，直行")]
+    [InlineData(false,true,false,false,ManeuverKind.ChooseLanes,"走左侧两车道，直行")]
+    [InlineData(true,false,false,false,ManeuverKind.TurnRight,"走最右侧车道，右转")]
+    [InlineData(false,true,true,false,ManeuverKind.Straight,null)]
+    [InlineData(false,true,false,true,ManeuverKind.Straight,null)]
+    public void OrdinaryJunctionSpeaksOnlyAProvenLaneRestriction(bool turning,bool shallowBranch,
+        bool allThrough,bool missingConnection,ManeuverKind expectedKind,string? instruction)
+    {
+        var incoming=R("in",1,2,P(0,240),P(0,0));
+        var through=J("through",2,3,P(0,0),P(0,-60));
+        var right=J("right",2,4,P(0,0),shallowBranch?P(16,-60):P(60,0));
+        // Native slots need not run left-to-right. The other approach has its own slot 3.
+        int[] slots=[5,1,3];
+        var geometry=new NativeLaneGeometry(2,[]){Inputs=[new(2,5,0,0),new(2,1,1,1),new(2,3,2,2),new(7,3,0,3)]};
+        var connections=new List<LaneConnection>{new(2,5,3,0),new(2,1,3,1),new(7,3,3,0)};
+        if(!missingConnection)connections.Add(new(2,3,4,0));
+        if(allThrough)connections.Add(new(2,3,3,2));
+        PrefabLanePath Lane(DirectedRoad passage,int order,int exit)=>new(2,2,passage.EndNodeUid,slots[order],exit,
+            order,exit,3,3,[order],passage.Points,RouteGeometry.Length(passage)){NativeGeometry=geometry};
+        through=through with{LaneConnections=connections,LanePaths=Enumerable.Range(0,allThrough?3:2).Select(i=>Lane(through,i,i)).ToArray()};
+        right=right with{LaneConnections=connections,LanePaths=[Lane(right,2,0)]};
+        var target=turning?right:through;
+        var action=Assert.Single(Detector.FindSequence([incoming,target],0,[incoming,through,right]));
+        Assert.Equal(expectedKind,action.Kind);
+        Assert.Equal(instruction,action.Instruction);
+
+        var now=DateTimeOffset.UnixEpoch;
+        var scheduler=new SpeechTriggerScheduler();var timeline=new GuidanceTimeline();
+        timeline.Publish(new NavigationEventPlanner().Build("s","route",now,0,[action],true,false,false,scheduler));
+        var queued=scheduler.Update(timeline,now,0).Where(r=>r.Disposition==TriggerDisposition.Queued);
+        if(instruction is null)Assert.Empty(queued);
+        else Assert.Contains(instruction,Assert.Single(queued).Trigger.Text);
+    }
 
     [Theory]
     [InlineData(-1)]

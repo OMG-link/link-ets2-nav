@@ -1,3 +1,4 @@
+using ETS2LA.Game;
 using LinkEts2Nav.Map;
 
 namespace LinkEts2Nav.UnitTests;
@@ -35,6 +36,44 @@ public sealed class OfficialArchiveMountTests
         Assert.Empty(plan.ArchivePaths);
         Assert.True(plan.HasMods);
         Assert.Equal(mod, Assert.Single(plan.ModPaths));
+    }
+
+    [Fact]
+    public async Task NavigationWaitsWhenGameUnloadsItsArchivesBeforeTheHostClearsTheInstallation()
+    {
+        string root = Directory.CreateTempSubdirectory("nav-game-exit-").FullName;
+        string log = Path.Combine(root, "game.log.txt");
+        await File.WriteAllLinesAsync(log,
+        [
+            $"[fs] device {Path.Combine(root, "base.scs")} mounted to scs pool.",
+            "[hashfs] base.scs: Unmounted."
+        ], TestContext.Current.CancellationToken);
+        var game = new Installation
+        {
+            Type = GameType.EuroTruckSimulator2, Path = root, DocumentsPath = root,
+            ExecutablePath = Path.Combine(root, "eurotrucks2.exe"), IsParsed = true
+        };
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var observations = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int ticks = 0;
+        Task run = NavPlugin.RunStandaloneAsync(() =>
+        {
+            if (++ticks == 3) observations.SetResult();
+            return game;
+        }, stop.Token);
+        try
+        {
+            var completed = await Task.WhenAny(run, observations.Task).WaitAsync(TimeSpan.FromSeconds(5), stop.Token);
+            if (completed == run) await run;
+            Assert.Same(observations.Task, completed);
+        }
+        finally
+        {
+            stop.Cancel();
+            try { await run.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+            finally { File.Delete(log); Directory.Delete(root); }
+        }
     }
 
     [Fact]

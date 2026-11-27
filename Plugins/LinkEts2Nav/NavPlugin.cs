@@ -159,11 +159,30 @@ public sealed class NavPlugin : Plugin
         long resourceVersion = 0;
         long observedScanRevision = 0;
         Installation? installation = null;
+        Installation? checkedInstallation = null;
         TruckLib.ScsMap.Map? installationMap = null;
         string signature = "";
         string session = "";
         var mountCheck = DateTimeOffset.MinValue;
         var scanBusySince = DateTimeOffset.MinValue;
+
+        async ValueTask ReleaseMapAsync()
+        {
+            speech?.ClearPlan();
+            if (mapScanner is not { } previousScanner) return;
+
+            mapScanner = null;
+            installation = null;
+            installationMap = null;
+            gameLog = [];
+            observedScanRevision = 0;
+            scanBusySince = DateTimeOffset.MinValue;
+            pipeline.Reset();
+            navigation.Reset();
+            guidance.Reset();
+            await previousScanner.DisposeAsync();
+        }
+
         if (motionTrace is not null) ReplayCapture.Attach(motionTrace);
         try
         {
@@ -197,42 +216,45 @@ public sealed class NavPlugin : Plugin
                 var currentInstallation = currentGame();
                 if (currentInstallation is null || currentInstallation.Type != GameType.EuroTruckSimulator2 || (!standalone && !currentInstallation.IsParsed))
                 {
-                    speech?.ClearPlan();
-                    if (mapScanner is { } previousScanner)
-                    {
-                        mapScanner = null;
-                        installation = null;
-                        installationMap = null;
-                        gameLog = [];
-                        observedScanRevision = 0;
-                        scanBusySince = DateTimeOffset.MinValue;
-                        pipeline.Reset();
-                        navigation.Reset();
-                        guidance.Reset();
-                        await previousScanner.DisposeAsync();
-                    }
+                    checkedInstallation = null;
+                    await ReleaseMapAsync();
                     Publish(new(now, standalone ? "等待 ETS2 进入游戏。" : "等待 ETS2 当前地图就绪。", data.RouteAvailability.ToString(), 0, []));
                     continue;
                 }
                 {
-                    mapScanner ??= new BackgroundMapScanner(cancellationToken: token);
-                    if (!ReferenceEquals(installation, currentInstallation) || now >= mountCheck)
+                    if (!ReferenceEquals(checkedInstallation, currentInstallation) || now >= mountCheck)
                     {
+                        checkedInstallation = currentInstallation;
                         mountCheck = now.AddSeconds(5);
                         var log = currentInstallation.GetLogFileContents().ToArray();
-                        string nextSignature = OfficialArchiveMount.ResolveGameLog(currentInstallation.Path, log).Signature;
-                        var hostMap = standalone ? null : currentInstallation.GetMapData();
-                        if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature || !ReferenceEquals(installationMap, hostMap))
+                        var mount = OfficialArchiveMount.ResolveGameLog(currentInstallation.Path, log);
+                        if (mount.ArchivePaths.Count == 0)
                         {
-                            mapScanner.Invalidate();
-                            pipeline.Reset(); navigation.Reset(); guidance.Reset();
-                            logOutput.ResetTargets((standalone ? "准备导航地图：" : "准备复用宿主地图并补充附近缺失对象：") + currentInstallation.Path, now);
-                            gameLog = log;
-                            resourceVersion++;
-                            installation = currentInstallation;
-                            installationMap = hostMap;
-                            signature = nextSignature;
+                            // The host can still report the installation while ETS2 unloads its archives.
+                            await ReleaseMapAsync();
                         }
+                        else
+                        {
+                            string nextSignature = mount.Signature;
+                            var hostMap = standalone ? null : currentInstallation.GetMapData();
+                            mapScanner ??= new BackgroundMapScanner(cancellationToken: token);
+                            if (!ReferenceEquals(installation, currentInstallation) || nextSignature != signature || !ReferenceEquals(installationMap, hostMap))
+                            {
+                                mapScanner.Invalidate();
+                                pipeline.Reset(); navigation.Reset(); guidance.Reset();
+                                logOutput.ResetTargets((standalone ? "准备导航地图：" : "准备复用宿主地图并补充附近缺失对象：") + currentInstallation.Path, now);
+                                gameLog = log;
+                                resourceVersion++;
+                                installation = currentInstallation;
+                                installationMap = hostMap;
+                                signature = nextSignature;
+                            }
+                        }
+                    }
+                    if (mapScanner is null)
+                    {
+                        Publish(new(now, "等待 ETS2 加载地图资源。", data.RouteAvailability.ToString(), 0, []));
+                        continue;
                     }
                     if (session != data.SessionId)
                     {

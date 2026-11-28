@@ -1,4 +1,5 @@
 using System.Numerics;
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Map;
 using LinkEts2Nav.Runtime;
 
@@ -128,24 +129,104 @@ public sealed class FerryTravelTests
         else Assert.Null(result.Notice);
     }
 
-    [Fact]
-    public void TheRealHostObserveOrderPreservesOnlyVerifiedFerryJourneys()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HostResumesAVerifiedFerryJourneyAndReplansOnlyForANewGoal(bool changedGoal)
     {
-        var store=Store();var coordinator=new GuidanceCoordinator{JourneyEstimateProvider=_=>new(1000,60,null)};
-        var spoken=new List<QueuedGuidanceSpeech>();coordinator.Queued+=spoken.Add;
-        var initial=store.Capture(Now);coordinator.Observe(initial,Now);
-        Assert.Single(spoken,p=>p.Text.StartsWith("准备出发"));
-        store.UpdateVehicle(Pose(0,.1,2),Raw(true,"a","b"));store.UpdateVehicle(Pose(0,.2,3),Raw(true,"a","b"));
-        store.UpdateVehicle(Pose(10000,.3,4),Raw(true,"a","b"));var arrived=store.Capture(Now.AddSeconds(.3));
-        coordinator.Observe(arrived,Now.AddSeconds(.3),processJourney:false); // NavPlugin's first, early call.
-        Assert.True(coordinator.HasVerifiedFerryContinuation(arrived));
-        if(!coordinator.HasVerifiedFerryContinuation(arrived))coordinator.Reset(); // Session branch in NavPlugin.
-        coordinator.Observe(arrived,Now.AddSeconds(.3));
-        Assert.Single(spoken,p=>p.Text.StartsWith("准备出发"));
-        store.UpdateVehicle(Pose(15000,.4,5),Raw(true,"a","b"));var teleported=store.Capture(Now.AddSeconds(.4));
-        store.UpdateRoute(RouteSnapshot.Parse([new(301,1000,10),new(999,0,0)],Now.AddSeconds(.4)));
-        teleported=store.Capture(Now.AddSeconds(.4));coordinator.Observe(teleported,Now.AddSeconds(.4),processJourney:false);
-        Assert.False(coordinator.HasVerifiedFerryContinuation(teleported));coordinator.Reset();coordinator.Observe(teleported,Now.AddSeconds(.4));
-        Assert.Equal(2,spoken.Count(p=>p.Text.StartsWith("准备出发")));
+        var store = Store();
+        var guidance = new GuidanceCoordinator { JourneyEstimateProvider = _ => new(1000, 60, null) };
+        var warnings = new WarningPlans();
+        var host = new NavigationHostSession(guidance, new(warnings, guidance), new(guidance: guidance));
+        var spoken = new List<string>();
+        guidance.Queued += item => spoken.Add(item.Text);
+        Assert.True(host.Observe(store.Capture(Now), Now, null));
+        store.UpdateVehicle(Pose(0,.1,2), Raw(true,"a","b"));
+        store.UpdateVehicle(Pose(0,.2,3), Raw(true,"a","b"));
+        store.UpdateVehicle(Pose(10000,.3,4), Raw(true,"a","b"));
+        var now = Now.AddSeconds(.3);
+        store.UpdateRoute(RouteSnapshot.Parse([new(changedGoal ? 1001UL : 999UL, 0, 0)], now));
+        var arrived = store.Capture(now);
+        Assert.NotNull(arrived.FerryArrival);
+        Assert.True(host.Observe(arrived, now, null, processJourney: false));
+        Assert.Single(spoken);
+        Assert.False(host.Observe(arrived, now, null));
+        Assert.False(host.Observe(arrived, now, null));
+        Assert.Equal(2, warnings.Clears);
+        string start = NavigationJourneyPrompts.Format(NavigationJourneyNoticeKind.Start, 1000, 60);
+        string replan = NavigationJourneyPrompts.Format(NavigationJourneyNoticeKind.Replanned, 1000, 60);
+        Assert.Equal(changedGoal ? new[] { start, replan } : [start], spoken);
+    }
+
+    [Fact]
+    public async Task OrdinaryHostSessionChangeInvalidatesMapNavigationWarningsAndPendingSpeechOnce()
+    {
+        await using var scanner = new BackgroundMapScanner(cancellationToken: TestContext.Current.CancellationToken);
+        await using var playback = new GuidancePlaybackManager(null, new NoAudio(), () => null, cancellationToken: TestContext.Current.CancellationToken);
+        var guidance = new GuidanceCoordinator(playback: playback) { JourneyEstimateProvider = _ => new(1000, 60, null) };
+        var navigation = new NavigationRuntime(guidance: guidance);
+        var warnings = new WarningPlans();
+        var host = new NavigationHostSession(guidance, new(warnings, guidance), navigation);
+        var map = new TruckLib.ScsMap.Map();
+        var road = TruckLib.ScsMap.Road.Add(map, Vector3.Zero, new(0, 0, 300), default);
+        var route = RouteSnapshot.Parse([new(road.Node.Uid, 300, 30), new(road.ForwardNode.Uid, 0, 0)], Now);
+        var first = new GameDataSnapshot(Pose(0,0) with { Z = 20, HeadingTurns = .5 }, route, RouteAvailability.Available, "old", true);
+        var nearby = new NearbyMapSnapshot(map, [], [], []);
+        var spoken = new List<string>();
+        guidance.Queued += item => spoken.Add(item.Text);
+        Assert.True(host.Observe(first, Now, scanner));
+        navigation.Process(first, nearby, Now);
+        int built = navigation.StructureBuildCount;
+        Assert.True(built > 0);
+        long scope = scanner.Retries.ScopeVersion;
+        Assert.NotEmpty(playback.Pending);
+
+        Assert.False(host.Observe(first, Now, scanner));
+        navigation.Process(first, nearby, Now);
+        Assert.Equal(scope, scanner.Retries.ScopeVersion);
+        Assert.Equal(built, navigation.StructureBuildCount);
+        Assert.Equal(1, warnings.Clears);
+
+        var other = first with { SessionId = "teleported" };
+        Assert.True(host.Observe(other, Now, scanner, processJourney: false));
+        Assert.Empty(playback.Pending);
+        Assert.Empty(guidance.Timeline.Sources);
+        Assert.Equal(scope + 1, scanner.Retries.ScopeVersion);
+        Assert.Equal(2, warnings.Clears);
+        Assert.False(host.Observe(other, Now, scanner));
+        navigation.Process(other, nearby, Now);
+        Assert.Equal(built + 1, navigation.StructureBuildCount);
+        Assert.Equal(2, spoken.Count(text => text.StartsWith("准备出发")));
+    }
+
+    [Fact]
+    public void EarlyHostFramesReportLostPositionOnceAndWaitForActiveTelemetryToStartTheJourney()
+    {
+        var guidance = new GuidanceCoordinator { JourneyEstimateProvider = _ => new(1000, 60, null) };
+        var host = new NavigationHostSession(guidance, new(guidance: guidance), new(guidance: guidance));
+        var spoken = new List<string>();
+        guidance.Queued += item => spoken.Add(item.Text);
+        var first = Store().Capture(Now);
+        var weak = first with { IsVehicleUsable = false, PositionSignal = new(true, 1) };
+        host.Observe(weak with { Vehicle = weak.Vehicle! with { Paused = true } }, Now, null);
+        Assert.Empty(spoken);
+        host.Observe(weak, Now, null, processJourney: false);
+        host.Observe(weak, Now, null, processJourney: false);
+        Assert.Equal([PositionSignalTracker.Text], spoken);
+        host.Observe(first, Now, null);
+        Assert.Equal(2, spoken.Count);
+        Assert.StartsWith("准备出发", spoken[1]);
+    }
+
+    private sealed class WarningPlans : IWarningPlanner
+    {
+        public int Clears { get; private set; }
+        public void ClearPlan() => Clears++;
+        public void UpdatePlan(WarningSnapshot? snapshot, IReadOnlyList<PlannedCameraWarning> plans, DateTimeOffset now) { }
+    }
+
+    private sealed class NoAudio : IGuidanceAudioPlayer
+    {
+        public Task PlayAsync(string file, CancellationToken token) => throw new InvalidOperationException("Unexpected audio playback.");
     }
 }

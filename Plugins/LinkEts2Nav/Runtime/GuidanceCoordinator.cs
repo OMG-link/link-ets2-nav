@@ -191,10 +191,15 @@ public sealed class GuidanceCoordinator
         =>Timeline.ObservePassage(source,eventPrefix,observedAt);
     public void Observe(GameDataSnapshot data,DateTimeOffset now,bool processJourney=true)
     {
+        var route = ObserveFrame(data, now);
+        if(processJourney) UpdateJourney(data, now, route);
+    }
+    internal NavigationRouteState ObserveFrame(GameDataSnapshot data,DateTimeOffset now)
+    {
         if(data.FerryArrival is {} arrival&&arrival.PreviousSessionId==session&&arrival.CurrentSessionId==data.SessionId
             &&journey.ResumeAfterFerry(data.SessionId))
         {
-            Reset(preserveJourney:true);session=data.SessionId;resumedFerrySession=data.SessionId;
+            Reset(preserveJourney:true);session=data.SessionId;
             routes.ResumeAfterFerry(data.SessionId);
             log("已确认轮渡抵达："+arrival.SourceId+" → "+arrival.TargetId+"；空间状态已重置，继续原导航旅程。");
         }
@@ -211,7 +216,10 @@ public sealed class GuidanceCoordinator
         // Playback is released only after the whole trigger batch has been applied.
         playback?.SetActive(data.IsVehicleUsable&&data.Vehicle is {Paused:false,SdkActive:true,IsFinite:true,SpeedMetersPerSecond:>=-.1} v
             &&now>=v.ReceivedAt&&now-v.ReceivedAt<=TimeSpan.FromSeconds(2));
-        if(!processJourney)return;
+        return route;
+    }
+    internal void UpdateJourney(GameDataSnapshot data,DateTimeOffset now,NavigationRouteState route)
+    {
         var lifecycle=journey.Update(data,now,route);
         if(lifecycle.WithdrawNotices)WithdrawNotifications(NavigationJourneyTracker.Source);
         if(lifecycle.Ended){pendingJourney=null;ClearSource("navigation");ClearSource("city-entry");ClearSource("narrow-road");}
@@ -267,13 +275,9 @@ public sealed class GuidanceCoordinator
     }
     private void EnsureSession(string value)
     {if(session!=value){Reset();session=value;}}
-    private string? resumedFerrySession;
-    public bool HasVerifiedFerryContinuation(GameDataSnapshot data)=>resumedFerrySession==data.SessionId
-        &&data.FerryArrival?.CurrentSessionId==data.SessionId;
     public void Reset(bool preserveJourney=false)
     {
         pendingJourney=null;nextJourneyEstimate=default;journeyEstimateFailure=null;Timeline.Reset();Scheduler.Reset();if(!preserveJourney)journey.Reset();playback?.Reset();ClearPreparation();
-        resumedFerrySession=null;
         latest=[];lastQueued.Clear();notifications.Clear();environment.Reset();environmentFrame=null;session=null;
         if(!preserveJourney)routes.Reset();
         publishedContinuity.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}

@@ -328,7 +328,8 @@ public sealed class NavigationEventPlanner
         if(list[next].BriefingAlong is not {} first)return text;
         double available=list[next].Along-first;
         double gap=list[next].Along-list[i].Along;
-        if(gap<=0||available<0||available>=100)return text;
+        // A late briefing can be close to the next action even after a long drive from this one.
+        if(gap<=0||gap>=100||available<0||available>=100)return text;
         string? nextInstruction=list[next].Maneuver.Kind==ManeuverKind.Destination&&list[next].Maneuver.DestinationCompanyName is {} company
             ?"到达"+company+"货场":list[next].Maneuver.Instruction;
         if(list[next].Maneuver.JunctionLaneInstruction is {} lanes)

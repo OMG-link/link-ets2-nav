@@ -123,6 +123,36 @@ public sealed class NavigationEventPlannerTests
         var plan=planner.Build("s","r",Now,0,[Turn(20),Turn(80,"second")],true,false,false,new());
         Assert.Equal("左转，然后六十米左转。",Assert.Single(plan.Triggers,t=>t.Id.StartsWith("turn@")&&t.Kind==SpeechTriggerKind.Execution).Text);
     }
+    [Theory]
+    [InlineData(90, "左转，然后九十米左转。")]
+    [InlineData(100, "左转。")]
+    [InlineData(10060, "左转。")]
+    public void LateRerouteChainsOnlyActionsActuallyWithinOneHundredMeters(double gap, string expectedFirst)
+    {
+        var planner = new NavigationEventPlanner();
+        var scheduler = new SpeechTriggerScheduler();
+        planner.Build("s", "old", Now, 0, [Turn(20, "first"), Turn(20 + gap + 500, "old-branch")],
+            true, false, false, scheduler);
+        // The new turn is discovered only 55 m ahead, regardless of how far the truck
+        // has already driven since the previous turn.
+        double playerAtReroute = 20 + gap - 55;
+        var plan = planner.Build("s", "new", Now.AddSeconds(1), playerAtReroute, [Turn(55, "new-branch")],
+            true, false, false, scheduler, replaceRoute: true);
+        Assert.DoesNotContain(plan.Events, e => e.Id.StartsWith("old-branch@"));
+        Assert.Equal(expectedFirst, Assert.Single(plan.Triggers, t => t.EventId.StartsWith("first@")
+            && t.Kind == SpeechTriggerKind.Execution).Text);
+        Assert.Equal("左转。", Assert.Single(plan.Triggers, t => t.EventId.StartsWith("new-branch@")
+            && t.Kind == SpeechTriggerKind.Execution).Text);
+        var timeline = new GuidanceTimeline();
+        timeline.Publish(plan);
+        scheduler.Update(timeline, Now.AddSeconds(1), 10);
+        timeline.Publish(planner.Build("s", "new", Now.AddSeconds(5), playerAtReroute + 45,
+            [Turn(10, "new-branch")], true, false, false, scheduler));
+        var triggered = scheduler.Update(timeline, Now.AddSeconds(5), 10);
+        Assert.Contains(triggered, t => t.Disposition == TriggerDisposition.Queued
+            && t.Trigger.EventId.StartsWith("new-branch@") && t.Trigger.Kind == SpeechTriggerKind.Execution
+            && t.Trigger.Text == "左转。");
+    }
     [Fact]
     public void RoundaboutExitHasOnlyExecutionAndStandaloneStraightRemainsStructural()
     {

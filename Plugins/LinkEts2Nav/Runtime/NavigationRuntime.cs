@@ -30,15 +30,14 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     private int routeBuildGeneration;
     private string? laneSession;
     private long laneGeneration=-1;
+    private long structureFirstNodeOrdinal;
     private double routeOrigin;
     public int StructureBuildCount { get; private set; }
     public int EventPlanBuildCount { get; private set; }
     /// <summary>Reword future named events without resetting progress or consumed triggers.</summary>
     public void RefreshSpeechNames(){structures.Clear();publishedStructure=null;}
-    private readonly GuidanceTimeline analysisTimeline=new();
-    private readonly SpeechTriggerScheduler analysisScheduler=new();
+    internal GuidanceCoordinator Coordinator { get; } = guidance ?? GuidanceCoordinator.ForAnalysis(speech);
     private string? planningSession;
-    private RouteSnapshot? analysisRoute;
     private readonly NavigationEventPlanner eventPlanner=new();
     private readonly RouteProgressTracker progress=new();
     private readonly EnvironmentPreviewPlanner cityPlanner=new();
@@ -54,16 +53,33 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
 
     public NavigationDiagnostic Process(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
     {
+        if (guidance is not null) return Collect(data, nearby, now);
+        Coordinator.Observe(data, now);
+        if (Coordinator.LastQueued("navigation") is null) lastSpoken = null;
+        var diagnostic = Collect(data, nearby, now);
+        Coordinator.Tick(data, now);
+        foreach (var due in Coordinator.LatestTriggers.Where(r => r.Source == "navigation" && r.Disposition == TriggerDisposition.Queued)
+                     .OrderBy(r => r.Trigger.Priority))
+        {
+            lastSpoken = due.Trigger.Text;
+            log?.Invoke("导航指令：" + lastSpoken + " 当前路口=" + diagnostic.Upcoming.FirstOrDefault()?.Id + "；下一动作=" + diagnostic.Next?.Id);
+        }
+        return diagnostic with { LastSpoken = lastSpoken };
+    }
+
+    private NavigationDiagnostic Collect(GameDataSnapshot data, NearbyMapSnapshot nearby, DateTimeOffset now)
+    {
+        var stable=Coordinator.RouteFor(data);
         ferryProgress.Observe(data,nearby,now);
         if(ferryProgress.TakeEntryPassage() is {} entered)
-            guidance?.ObservePassage("navigation",entered,now);
+            Coordinator.ObservePassage("navigation",entered,now);
         var vehicle = data.Vehicle;
         if (!data.IsVehicleUsable || vehicle is not { SdkActive: true, Paused: false, IsFinite: true }
             || vehicle.SpeedMetersPerSecond < -.1 || now < vehicle.ReceivedAt || now - vehicle.ReceivedAt > TimeSpan.FromSeconds(2))
             return Suspend("等待有效的行驶数据。", now);
         if (data.RouteAvailability != RouteAvailability.Available)
         {
-            if(data.RouteAvailability is RouteAvailability.None or RouteAvailability.Unknown)paths?.ResetObservedLanes();
+            if(data.RouteAvailability == RouteAvailability.None)paths?.ResetObservedLanes();
             return Suspend(data.RouteAvailability == RouteAvailability.None
                 ? "未设置游戏导航路线，转向提示暂挂。" : "等待有效的游戏导航路线。", now);
         }
@@ -74,12 +90,15 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             paths=new RoadPathSource(nearby,log);
             structures.Clear();publishedStructure=null;routeBuildGeneration=0;
         }
-        var stable=data.NavigationRoute;
         var sdkRoute=stable.FullRoute;
-        if(laneSession!=data.SessionId || laneGeneration!=stable.Generation)
+        if(laneSession!=data.SessionId || laneGeneration!=stable.GeometryGeneration)
         {
             paths!.ResetObservedLanes();
-            laneSession=data.SessionId;laneGeneration=stable.Generation;
+            laneSession=data.SessionId;laneGeneration=stable.GeometryGeneration;
+        }
+        if(structureFirstNodeOrdinal!=stable.FirstNodeOrdinal)
+        {
+            structures.Clear();publishedStructure=null;structureFirstNodeOrdinal=stable.FirstNodeOrdinal;
         }
 #if DEBUG
         if(sdkRoute.Availability!=RouteAvailability.Available)
@@ -100,7 +119,7 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
         {
             if(structures.TryGetValue(component,out var known))return known;
             var selectedLanes=lanePlanner.Build(component);
-            var built=structurePlanner.Build(component,sdkRoute,nearby,paths,selectedLanes,paths.SourceNodeIndices(component));
+            var built=structurePlanner.Build(component,sdkRoute,nearby,paths,selectedLanes,paths.SourceNodeIndices(component),firstNodeOrdinal:stable.FirstNodeOrdinal);
             structures.Add(component,built);
             StructureBuildCount++;
             return built;
@@ -136,11 +155,11 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
                 log?.Invoke($"道路分流未定：{issue.Prefab}，入口={issue.EntryNode:X16}，出口={issue.ExitNode:X16}；{issue.Reason}");
         }
         var laneRoute=structure.Lanes;
-        bool structuralUpdate=!ReferenceEquals(publishedStructure,structure)||planningSession!=data.SessionId||publishedGeneration!=stable.Generation;
+        bool structuralUpdate=!ReferenceEquals(publishedStructure,structure)||planningSession!=data.SessionId||publishedGeneration!=stable.GeometryGeneration;
         if(structuralUpdate)
         {
             double? knownOrigin=publishedStructure is {} previous && planningSession==data.SessionId
-                && publishedGeneration==stable.Generation && paths.IsSameSdkComponent(previous.Route,route)?routeOrigin:null;
+                && publishedGeneration==stable.GeometryGeneration && paths.IsSameSdkComponent(previous.Route,route)?routeOrigin:null;
             routeOrigin=progress.Update(data.SessionId,route,0,knownOrigin);
         }
         double playerAlong=routeOrigin+along.Value;
@@ -162,89 +181,45 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
             .Where(m=>m.DistanceMeters<along&&m.EndDistanceMeters>along).Select(m=>m.EndDistanceMeters).FirstOrDefault();
         if(!yardApproach&&currentRing is {StartsInside:true})componentEnd=currentRing.EndMeters;
         bool defer=componentEnd is not null&&currentJunction is not null&&next is not null&&currentJunction!=next.JunctionId;
-        if(guidance is not null)
+        if(citySession!=data.SessionId){cityEntries.Reset();citySession=data.SessionId;}
+        if(cityFrame!=progress.Frame)
         {
-            if(citySession!=data.SessionId){cityEntries.Reset();citySession=data.SessionId;}
-            if(cityFrame!=progress.Frame)
-            {
-                guidance.ClearSource(CityEntryEventBuilder.Kind);cityPlanner.Reset();guidance.ClearSource(NarrowRoadEventBuilder.Kind);
-                narrowPlanner.Reset();cityFrame=progress.Frame;
-            }
-            if(structuralUpdate)
-            {
-                // Only newly discovered structure can create/re-anchor speech points.
-                // Ordinary progress never calls any event planner or geometry recognizer.
-                double? initialEnd=componentEnd is {} end?routeOrigin+end:null;
-                bool tail=!yardApproach&&(lastActionEnd??0)<continuationEnd;
-                guidance.Publish(eventPlanner.Build(data.SessionId,routeRevision,vehicle.ReceivedAt,
-                    playerAlong,plannedActions,true,false,tail,guidance.Scheduler,progress.Frame,initialEnd,
-                    guidance.WillReplaceSource("navigation",routeRevision),routeOrigin+continuationEnd,stable.Generation));
-                var previousCityRoute=planningSession==data.SessionId&&publishedGeneration==stable.Generation?publishedStructure?.Route:null;
-                if(previousCityRoute is not null&&(!route.Any(e=>e.ObservedLane is not null)
-                    ||!paths.SourceNodeIndices(previousCityRoute).SequenceEqual(paths.SourceNodeIndices(route))))previousCityRoute=null;
-                var entries=cityEntries.Build(route,playerAlong,nearby.SpeedLimits,routeOrigin,nearby.PrefabPaths,previousCityRoute,out var removedEntries)
-                    .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
-                var withdrawn=removedEntries.Select(id=>id+"#"+progress.Frame).ToArray();
-                foreach(string id in withdrawn)cityPlanner.Withdraw(id);
-                if(guidance.WillReplaceSource(CityEntryEventBuilder.Kind,routeRevision))
-                    cityPlanner.Reconcile(entries.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,guidance.Scheduler,CityEntryEventBuilder.Kind);
-                var city=cityPlanner.Build(CityEntryEventBuilder.Kind,playerAlong,entries,guidance.Scheduler,true);
-                guidance.Publish(new(CityEntryEventBuilder.Kind,data.SessionId,routeRevision,playerAlong,true,vehicle.ReceivedAt,city.Sequences)
-                    {CoordinateFrame=progress.Frame,ReplacedSequenceIds=withdrawn});
-                var narrow=NarrowRoadEventBuilder.Build(route,nearby.SpeedLimits,routeOrigin)
-                    .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
-                if(guidance.WillReplaceSource(NarrowRoadEventBuilder.Kind,routeRevision))
-                    narrowPlanner.Reconcile(narrow.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,guidance.Scheduler,NarrowRoadEventBuilder.Kind);
-                var narrowPlan=narrowPlanner.Build(NarrowRoadEventBuilder.Kind,playerAlong,narrow,guidance.Scheduler,true);
-                guidance.Publish(new(NarrowRoadEventBuilder.Kind,data.SessionId,routeRevision,playerAlong,true,vehicle.ReceivedAt,narrowPlan.Sequences){CoordinateFrame=progress.Frame});
-                publishedStructure=structure;EventPlanBuildCount++;
-            }
-            foreach(string source in new[]{"navigation",CityEntryEventBuilder.Kind,NarrowRoadEventBuilder.Kind})
-                guidance.UpdateProgress(source,data.SessionId,playerAlong,vehicle.ReceivedAt,true);
-            lastSpoken=guidance.LastPlayed("navigation");
+            Coordinator.ClearSource(CityEntryEventBuilder.Kind);cityPlanner.Reset();Coordinator.ClearSource(NarrowRoadEventBuilder.Kind);
+            narrowPlanner.Reset();cityFrame=progress.Frame;
         }
-        else
+        if(structuralUpdate)
         {
-            if(structuralUpdate)
-            {
-                double? initialEnd=componentEnd is {} end?routeOrigin+end:null;
-                bool tail=!yardApproach&&(lastActionEnd??0)<continuationEnd;
-                bool replaced=analysisRoute is {} previous
-                    &&!RouteStructureIdentity.Nodes(previous).SequenceEqual(RouteStructureIdentity.Nodes(sdkRoute))
-                    &&!RouteContinuity.IsForwardExtension(previous,sdkRoute);
-                var plan=eventPlanner.Build(data.SessionId,routeRevision,vehicle.ReceivedAt,
-                    playerAlong,plannedActions,true,false,tail,analysisScheduler,progress.Frame,initialEnd,
-                    replaceRoute:replaced,confirmedContinuationEndAlong:routeOrigin+continuationEnd,sdkRouteGeneration:stable.Generation);
-                if(replaced)
-                {
-                    var retained=plan.Events.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal);
-                    var old=analysisTimeline.Sources.FirstOrDefault(p=>p.Source=="navigation");
-                    if(old is not null)analysisScheduler.ForgetEvents("navigation",old.Events.Where(e=>!retained.Contains(e.Id)&&e.AlongMeters>old.PlayerAlongMeters).Select(e=>e.Id));
-                    analysisTimeline.Clear("navigation");
-                }
-                analysisTimeline.Publish(plan);analysisRoute=sdkRoute;
-                EventPlanBuildCount++;
-            }
-            analysisTimeline.UpdateProgress("navigation",data.SessionId,playerAlong,vehicle.ReceivedAt,true);
-            speech?.UpdatePlan("navigation",analysisScheduler.Prepare(analysisTimeline,now),priority:10);
-            // This read-only adapter owns no player. Unready audio stays pending
-            // in the same trigger ledger instead of becoming a diagnostic beep.
-            if(speech is not null)
-            {
-                var pending=analysisTimeline.Sources.Single(p=>p.Source=="navigation");
-                analysisTimeline.Publish(pending with{Sequences=pending.Sequences.Select(sequence=>sequence.MapTriggers(t=>t with
-                {Enabled=t.Silent||t.SkipAtSpeedKph is {} threshold&&vehicle.SpeedMetersPerSecond*3.6>=threshold
-                    ||speech.IsReady(t.Text)})).ToArray()});
-            }
-            foreach(var due in analysisScheduler.Update(analysisTimeline,now,vehicle.SpeedMetersPerSecond)
-                .Where(r=>r.Disposition==TriggerDisposition.Queued).OrderBy(r=>r.Trigger.Priority))
-            {
-                string text=due.Trigger.Text;
-                log?.Invoke("导航指令："+text+" 当前路口="+upcoming.FirstOrDefault()?.Id+"；下一动作="+next?.Id);
-                lastSpoken=text;
-            }
+            // Only newly discovered structure can create/re-anchor speech points.
+            // Ordinary progress never calls any event planner or geometry recognizer.
+            double? initialEnd=componentEnd is {} end?routeOrigin+end:null;
+            bool tail=!yardApproach&&(lastActionEnd??0)<continuationEnd;
+            Coordinator.Publish(eventPlanner.Build(data.SessionId,routeRevision,vehicle.ReceivedAt,
+                playerAlong,plannedActions,true,false,tail,Coordinator.Scheduler,progress.Frame,initialEnd,
+                Coordinator.WillReplaceSource("navigation",routeRevision),routeOrigin+continuationEnd,stable.ContinuityGeneration));
+            var previousCityRoute=planningSession==data.SessionId&&publishedGeneration==stable.GeometryGeneration?publishedStructure?.Route:null;
+            if(previousCityRoute is not null&&(!route.Any(e=>e.ObservedLane is not null)
+                ||!paths.SourceNodeIndices(previousCityRoute).SequenceEqual(paths.SourceNodeIndices(route))))previousCityRoute=null;
+            var entries=cityEntries.Build(route,playerAlong,nearby.SpeedLimits,routeOrigin,nearby.PrefabPaths,previousCityRoute,out var removedEntries)
+                .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
+            var withdrawn=removedEntries.Select(id=>id+"#"+progress.Frame).ToArray();
+            foreach(string id in withdrawn)cityPlanner.Withdraw(id);
+            if(Coordinator.WillReplaceSource(CityEntryEventBuilder.Kind,routeRevision))
+                cityPlanner.Reconcile(entries.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,Coordinator.Scheduler,CityEntryEventBuilder.Kind);
+            var city=cityPlanner.Build(CityEntryEventBuilder.Kind,playerAlong,entries,Coordinator.Scheduler,true);
+            Coordinator.Publish(new(CityEntryEventBuilder.Kind,data.SessionId,routeRevision,playerAlong,true,vehicle.ReceivedAt,city.Sequences)
+                {CoordinateFrame=progress.Frame,ReplacedSequenceIds=withdrawn});
+            var narrow=NarrowRoadEventBuilder.Build(route,nearby.SpeedLimits,routeOrigin)
+                .Select(e=>e with{Id=e.Id+"#"+progress.Frame}).ToArray();
+            if(Coordinator.WillReplaceSource(NarrowRoadEventBuilder.Kind,routeRevision))
+                narrowPlanner.Reconcile(narrow.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal),playerAlong,Coordinator.Scheduler,NarrowRoadEventBuilder.Kind);
+            var narrowPlan=narrowPlanner.Build(NarrowRoadEventBuilder.Kind,playerAlong,narrow,Coordinator.Scheduler,true);
+            Coordinator.Publish(new(NarrowRoadEventBuilder.Kind,data.SessionId,routeRevision,playerAlong,true,vehicle.ReceivedAt,narrowPlan.Sequences){CoordinateFrame=progress.Frame});
+            EventPlanBuildCount++;
         }
-        publishedStructure=structure;planningSession=data.SessionId;publishedGeneration=stable.Generation;
+        foreach(string source in new[]{"navigation",CityEntryEventBuilder.Kind,NarrowRoadEventBuilder.Kind})
+            Coordinator.UpdateProgress(source,data.SessionId,playerAlong,vehicle.ReceivedAt,true);
+        if(guidance is not null)lastSpoken=Coordinator.LastPlayed("navigation");
+        publishedStructure=structure;planningSession=data.SessionId;publishedGeneration=stable.GeometryGeneration;
         string state = yardApproach ? "货场出口方向提示（距出口采用直线距离）。" : defer ? "正在通过当前路口。" : next is not null ? "沿游戏导航路线提供基础路口提示。"
             : confirmedContinuation ? "当前可见路线没有非直行动作，沿当前道路行驶，等待下一操作提示。"
             : "当前连续路径内没有可确认的普通路口操作。";
@@ -301,9 +276,17 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
 
     public NavigationDiagnostic Suspend(string state, DateTimeOffset now)
     {
-        speech?.ClearPlan("navigation");guidance?.Suspend("navigation");guidance?.Suspend(CityEntryEventBuilder.Kind);guidance?.Suspend(NarrowRoadEventBuilder.Kind);
+        SuspendSources();
+        if(guidance is null)Coordinator.ClearPreparation();
         Report(state, null, now);
         return new(state, null, lastSpoken);
+    }
+
+    private void SuspendSources()
+    {
+        Coordinator.Suspend("navigation");
+        Coordinator.Suspend(CityEntryEventBuilder.Kind);
+        Coordinator.Suspend(NarrowRoadEventBuilder.Kind);
     }
 
     private void Report(string state, NavigationManeuver? next, DateTimeOffset now)
@@ -319,10 +302,10 @@ public sealed class NavigationRuntime(SpeechAnnouncementQueue? speech = null,
     public void Reset()
     {
         ferryProgress.Reset();
-        analysisTimeline.Reset();analysisScheduler.Reset();analysisRoute=null;planningSession=null;eventPlanner.Reset();progress.Reset();narrowPlanner.Reset();cityPlanner.Reset();cityEntries.Reset();citySession=null;cityFrame=null;guidance?.Suspend("navigation");guidance?.Suspend(CityEntryEventBuilder.Kind);guidance?.Suspend(NarrowRoadEventBuilder.Kind);
-        structures.Clear();publishedStructure=null;publishedGeneration=-1;mapIdentity=null;routeBuildGeneration=0;
+        if(guidance is null)Coordinator.Reset();else SuspendSources();
+        planningSession=null;eventPlanner.Reset();progress.Reset();narrowPlanner.Reset();cityPlanner.Reset();cityEntries.Reset();citySession=null;cityFrame=null;
+        structures.Clear();publishedStructure=null;publishedGeneration=-1;mapIdentity=null;routeBuildGeneration=0;structureFirstNodeOrdinal=0;
         connectionFailureSignature=null;
-        speech?.ClearPlan("navigation");
         map = null;
         paths?.Dispose();paths = null;
         lastSpoken = signature = null;

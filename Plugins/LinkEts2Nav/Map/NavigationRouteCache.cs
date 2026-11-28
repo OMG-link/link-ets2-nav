@@ -7,14 +7,8 @@ internal sealed record LoadedNavigationRoute(RouteSnapshot Source,NativeMap Map,
 {
     internal static bool Covers(RouteSnapshot loaded,RouteSnapshot requested)
     {
-        if(requested.Availability!=RouteAvailability.Available)return false;
-        int offset=loaded.Nodes.Count-requested.Nodes.Count;
-        if(offset<0)return false;
-        if(loaded.Revision==requested.Revision)return true;
-        // The SDK normally trims nodes already driven. Their tail is already available.
-        for(int i=0;i<requested.Nodes.Count;i++)
-            if(loaded.Nodes[i+offset].Uid!=requested.Nodes[i].Uid)return false;
-        return true;
+        return requested.Availability == RouteAvailability.Available
+            && RouteContinuity.ExactSuffixOffset(loaded, requested) >= 0;
     }
 
     internal RouteJourneyEstimate? Estimate(RouteSnapshot requested)

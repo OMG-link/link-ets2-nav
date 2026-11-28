@@ -103,16 +103,46 @@ public sealed class NavigationStructurePlanTests
         Assert.Equal(1,runtime.StructureBuildCount);Assert.Equal(1,runtime.EventPlanBuildCount);
     }
 
-    [Fact]
-    public void ReadOnlyRouteReplacementWithdrawsTheOldFutureTurn()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void RouteReplacementWithdrawsTheSameFutureTurnInBothDrivers(bool hostDrives, bool explicitObservation)
     {
-        var scene=Scene();var lines=new List<string>();var runtime=new NavigationRuntime(log:lines.Add);
-        runtime.Process(Data(scene.Route,10,Now),scene.Scene,Now);lines.Clear();
-        var road=scene.Scene.Map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Position.Z==760);
-        var changed=RouteSnapshot.Parse([scene.Route.Nodes[0],scene.Route.Nodes[1],new(road.Node.Uid,500,20),new(road.ForwardNode.Uid,0,0)],Now);
-        runtime.Process(Data(changed,600,Now),scene.Scene,Now);
-        Assert.DoesNotContain(lines,line=>line.StartsWith("导航指令：")&&line.Contains("右转"));
-        Assert.Equal(2,runtime.StructureBuildCount);
+        var scene = Scene();
+        var host = hostDrives ? new GuidanceCoordinator() : null;
+        var runtime = new NavigationRuntime(guidance: host);
+        var guidance = runtime.Coordinator;
+        var queued = new List<QueuedGuidanceSpeech>();
+        guidance.Queued += queued.Add;
+        var stable = NavigationRouteState.Empty.Accept(scene.Route);
+        void Step(float z)
+        {
+            var data = Data(stable.CurrentSnapshot, z, Now) with { NavigationRoute = stable };
+            if (explicitObservation) host!.Observe(data, Now);
+            int before = queued.Count;
+            runtime.Process(data, scene.Scene, Now);
+            if (host is null) return;
+            Assert.Equal(before, queued.Count);
+            host.Tick(data, Now);
+        }
+
+        Step(250);
+        var old = Assert.Single(queued, q => q.Source == "navigation");
+        Assert.Contains("右转", old.Text);
+        Assert.True(guidance.Scheduler.IsConsumed(old.Source, old.TriggerId));
+        var straight = scene.Scene.Map.MapItems.Values.OfType<Road>().Single(r => r.Node.Position.Z == 760);
+        stable = stable.Accept(RouteSnapshot.Parse([scene.Route.Nodes[0], scene.Route.Nodes[1],
+            new(straight.Node.Uid, 500, 20), new(straight.ForwardNode.Uid, 0, 0)], Now));
+        queued.Clear();
+        Step(600);
+        Step(680);
+        var current = Assert.Single(guidance.Timeline.Sources, p => p.Source == "navigation");
+        Assert.DoesNotContain(current.Events, e => e.Id == old.EventId);
+        Assert.False(guidance.Scheduler.IsConsumed(old.Source, old.TriggerId));
+        Assert.DoesNotContain(queued, q => q.Text.Contains("右转"));
+        Assert.Equal(2, runtime.StructureBuildCount);
+        Assert.Equal(2, runtime.EventPlanBuildCount);
     }
 
     [Fact]
@@ -189,25 +219,42 @@ public sealed class NavigationStructurePlanTests
         var second=Assert.Single(refined.Triggers,t=>t.Id.StartsWith("second")&&t.Kind==SpeechTriggerKind.Overview);
         Assert.Equal(980,second.AlongMeters);
     }
-    private sealed class NoAudioPlayer:IGuidanceAudioPlayer
+    private sealed class SilentPlayer:IGuidanceAudioPlayer
     {
-        public Task PlayAsync(string file,CancellationToken token)=>throw new InvalidOperationException("No audio should be loaded in this planning fixture.");
+        public Task PlayAsync(string file,CancellationToken token)=>Task.CompletedTask;
     }
-    [Fact]
-    public async Task DivergentStableRouteWithdrawsTheOldQueuedNavigationPreview()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task UnlocatedVehicleDefersOnlyUnplayedSpeechFromAReplacedRoute(bool replan, bool alreadyPlayed)
     {
         var scene=Scene();var stable=NavigationRouteState.Empty.Accept(scene.Route);
-        await using var playback=new GuidancePlaybackManager(null,new NoAudioPlayer(),()=>null,cancellationToken:TestContext.Current.CancellationToken);
+        await using var playback=new GuidancePlaybackManager(null,new SilentPlayer(),()=>alreadyPlayed ? "test-audio" : null,cancellationToken:TestContext.Current.CancellationToken);
         var coordinator=new GuidanceCoordinator(playback:playback);var runtime=new NavigationRuntime(guidance:coordinator);
-        void Step()
+        var queued=new List<QueuedGuidanceSpeech>();coordinator.Queued+=queued.Add;
+        var completed=new TaskCompletionSource<QueuedGuidanceSpeech>(TaskCreationOptions.RunContinuationsAsynchronously);
+        playback.Played+=item=>completed.TrySetResult(item);
+        void Step(bool located)
         {
             var data=Data(stable.CurrentSnapshot,250,Now) with{NavigationRoute=stable};
+            if(!located)data=data with{Vehicle=data.Vehicle! with{X=3000}};
             coordinator.Observe(data,Now,processJourney:false);runtime.Process(data,scene.Scene,Now);coordinator.Tick(data,Now);
         }
-        Step();var old=Assert.Single(playback.Pending,p=>p.Source=="navigation");
-        var straight=scene.Scene.Map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Position.Z==760);
-        stable=stable.Accept(RouteSnapshot.Parse([scene.Route.Nodes[0],scene.Route.Nodes[1],new(straight.Node.Uid,500,20),new(straight.ForwardNode.Uid,0,0)],Now));
-        Step();Assert.DoesNotContain(playback.Pending,p=>p.Source=="navigation"&&p.EventId==old.EventId);
+        Step(true);var old=Assert.Single(queued,p=>p.Source=="navigation");
+        if(alreadyPlayed)Assert.Equal(old,await completed.Task.WaitAsync(TimeSpan.FromSeconds(4),TestContext.Current.CancellationToken));
+        else Assert.Contains(old,playback.Pending);
+        if(replan)
+        {
+            var straight=scene.Scene.Map.MapItems.Values.OfType<Road>().Single(r=>r.Node.Position.Z==760);
+            stable=stable.Accept(RouteSnapshot.Parse([scene.Route.Nodes[0],scene.Route.Nodes[1],new(straight.Node.Uid,500,20),new(straight.ForwardNode.Uid,0,0)],Now));
+        }
+        Step(false);
+        Assert.False(Assert.Single(coordinator.Timeline.Sources,p=>p.Source==old.Source).Active);
+        Assert.Equal(!alreadyPlayed && !replan,playback.Pending.Contains(old));
+        Assert.Equal(alreadyPlayed || !replan,coordinator.Scheduler.IsConsumed(old.Source,old.TriggerId));
+        Step(true);
+        Assert.Equal(!alreadyPlayed && !replan,playback.Pending.Contains(old));
     }
     [Fact]
     public void ClearingAndRestoringIdenticalSdkNodesRepublishesWithoutRebuildingGeometry()

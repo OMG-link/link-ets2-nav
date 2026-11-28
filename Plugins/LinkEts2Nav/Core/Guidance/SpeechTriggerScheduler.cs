@@ -33,6 +33,10 @@ public sealed class SpeechTriggerScheduler
 
     public IReadOnlyList<GuidanceTriggerResult> Update(GuidanceTimeline timeline,DateTimeOffset now,
         double speedMetersPerSecond,string? onlySource=null,bool observedEndsOnly=false)
+        =>Update(timeline,now,speedMetersPerSecond,onlySource,observedEndsOnly,null);
+
+    internal IReadOnlyList<GuidanceTriggerResult> Update(GuidanceTimeline timeline,DateTimeOffset now,
+        double speedMetersPerSecond,string? onlySource,bool observedEndsOnly,Func<string,bool>? canQueue)
     {
         var sources=timeline.Sources;
         if(sources.Count==0)return [];
@@ -58,6 +62,8 @@ public sealed class SpeechTriggerScheduler
             else if(t.Silent||t.Text.Length==0)disposition=TriggerDisposition.Silent;
             else
             {
+                // A text-only driver can wait for prepared audio without consuming the point.
+                if(canQueue is not null&&!canQueue(t.Text))continue;
                 disposition=TriggerDisposition.Queued;
             }
             if(t.Window is not null&&disposition==TriggerDisposition.Queued)

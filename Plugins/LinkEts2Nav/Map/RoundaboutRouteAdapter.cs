@@ -12,6 +12,11 @@ public static class RoundaboutRouteAdapter
     public static IReadOnlyList<RoundaboutRouteRange> Build(IReadOnlyList<DirectedRoad> route,
         IReadOnlyDictionary<ulong, RoundaboutStructure> annotations,IReadOnlyList<int> sourceNodeIndices,
         Func<ulong,Vector3?>? mapNodePosition=null)
+        => Build(route, annotations, sourceNodeIndices, 0, mapNodePosition);
+
+    internal static IReadOnlyList<RoundaboutRouteRange> Build(IReadOnlyList<DirectedRoad> route,
+        IReadOnlyDictionary<ulong,RoundaboutStructure> annotations,IReadOnlyList<int> sourceNodeIndices,
+        long firstNodeOrdinal,Func<ulong,Vector3?>? mapNodePosition)
     {
         ValidateSourceNodes(route,sourceNodeIndices);
         var result = new List<RoundaboutRouteRange>();
@@ -25,14 +30,14 @@ public static class RoundaboutRouteAdapter
             while (last + 1 < route.Count && TryOwner(route[last + 1], out var nextUid)
                 && annotations.TryGetValue(nextUid, out var nextRing) && nextRing.Id == ring.Id
                 && !ring.ExitPorts.Any(p=>p.BoundaryNodeUid==route[last].EndNodeUid)) last++;
-            result.Add(BuildRange(route,ring,i,last,sourceNodeIndices[i],offsets[i],offsets[last+1],mapNodePosition));
+            result.Add(BuildRange(route,ring,i,last,firstNodeOrdinal+sourceNodeIndices[i],offsets[i],offsets[last+1],mapNodePosition));
             i = last;
         }
         return result;
     }
 
     private static RoundaboutRouteRange BuildRange(IReadOnlyList<DirectedRoad> route, RoundaboutStructure ring,
-        int first, int last, int sourceNodeIndex, double startMeters, double endMeters, Func<ulong,Vector3?>? mapNodePosition)
+        int first, int last, long sourceNodeIndex, double startMeters, double endMeters, Func<ulong,Vector3?>? mapNodePosition)
     {
         ulong firstNode=route[first].StartNodeUid;
         var entry = ring.EntryPorts.SingleOrDefault(p => p.NodeUid == firstNode);
@@ -139,7 +144,7 @@ public static class RoundaboutRouteAdapter
         if(sourceNodeIndices.Count!=route.Count||sourceNodeIndices.Any(i=>i<0)||sourceNodeIndices.Distinct().Count()!=route.Count)
             throw new NavigationContractException("Each raw route visit requires its unique original SDK source-node index.");
     }
-    private static IReadOnlyList<NavigationManeuver> BuildActions(string ringId,int sourceNodeIndex,DirectedRoad entry,
+    private static IReadOnlyList<NavigationManeuver> BuildActions(string ringId,long sourceNodeIndex,DirectedRoad entry,
         DirectedRoad exit,double start,double end,int? exitNumber,IReadOnlyList<(int Number,double AlongMeters)> passed,double? departure,bool startsInside)
     {
         // Use the complete SDK route occurrence, not this active component's

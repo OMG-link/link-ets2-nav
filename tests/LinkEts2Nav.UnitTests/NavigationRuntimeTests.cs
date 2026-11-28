@@ -372,18 +372,37 @@ public sealed class NavigationRuntimeTests
         }
         finally { File.Delete(file);File.Delete(startFile); }
     }
-    [Fact]
-    public async Task StandaloneAnalysisNeverPlaysEvenWhenItsSpeechIsAlreadyCached()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StandaloneAnalysisReportsReadySpeechOnceWithoutPlayingIt(bool initiallyReady)
     {
         var scene=Scene();string file=Path.GetTempFileName();int directPlayback=0;
         try
         {
             const string text="五十米后，右转。";
-            await using var queue=new SpeechAnnouncementQueue(new DelayedSynth(),_=>directPlayback++,
-                preGenerated:new Dictionary<string,string>{{text,file}});
-            Assert.True(queue.IsReady(text));
+            var synth = new DelayedSynth();
+            await using var queue=new SpeechAnnouncementQueue(synth,_=>directPlayback++,
+                preGenerated:initiallyReady ? new Dictionary<string,string>{{text,file}} : null);
             var runtime=new NavigationRuntime(queue);
-            Assert.Equal(text,runtime.Process(Data(scene.Route,621,speed:10),scene.Map,Now).LastSpoken);
+            var data = Data(scene.Route,621,speed:10);
+            var queued = new List<QueuedGuidanceSpeech>();
+            runtime.Coordinator.Queued += queued.Add;
+            if (!initiallyReady)
+            {
+                var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                queue.CacheChanged += () => { if(queue.IsReady(text))ready.TrySetResult(); };
+                Assert.Null(runtime.Process(data,scene.Map,Now).LastSpoken);
+                Assert.Empty(queued);
+                var preparation = runtime.Coordinator.Scheduler.Prepare(runtime.Coordinator.Timeline, Now);
+                Assert.Contains(text, preparation);
+                Assert.Contains(await synth.Started.Task.WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken), preparation);
+                synth.Result.SetResult(file);
+                await ready.Task.WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
+            }
+            Assert.Equal(text,runtime.Process(data,scene.Map,Now).LastSpoken);
+            runtime.Process(data,scene.Map,Now);
+            Assert.Equal(text, Assert.Single(queued).Text);
             Assert.Equal(0,directPlayback);
         }
         finally{File.Delete(file);}

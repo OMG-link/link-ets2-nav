@@ -102,17 +102,17 @@ public sealed class GameSnapshotStore
     private RouteSnapshot route
     {
         get => navigationRoute.CurrentSnapshot;
-        set => navigationRoute = navigationRoute.Accept(value);
+        set => navigationRoute = navigationRoute.Clear(value); // A placement/session reset explicitly clears its geometry.
     }
     /// <summary>
-    /// First available route, explicit clear, and non-suffix SDK replacements only.
-    /// Called outside the store lock; payload identifies the change even if another
-    /// producer has since published a later generation. Session resets use SessionId.
+    /// The first available route, confirmed clear, or new geometry window. Called outside the
+    /// store lock. Consumers can compare the payload's geometry and continuity generations.
     /// </summary>
     public event Action<NavigationRouteState>? RouteChanged;
     private long session;
     private DateTimeOffset? zeroNavigationSince;
     private int zeroNavigationSamples;
+    private bool routeClearedByTelemetry;
     private readonly string instanceId = Guid.NewGuid().ToString("N");
 
     private readonly FerryObservationTracker ferryEvents=new();
@@ -169,7 +169,7 @@ public sealed class GameSnapshotStore
                     if(verified)handledFerryEvent=ferryEvents.Latest!.Sequence;
                     else route=new(Array.Empty<RouteNode>(),string.Empty,RouteAvailability.Unknown,default);
                     pendingFerry=null;ferryExpectation=null;
-                    zeroNavigationSince=null;zeroNavigationSamples=0;fines.ResetSession();positionSignal.Reset();
+                    zeroNavigationSince=null;zeroNavigationSamples=0;routeClearedByTelemetry=false;fines.ResetSession();positionSignal.Reset();
                     if(identityChanged)ferryEvents.Reset();
                 }
                 else if(pendingFerry is not null)
@@ -184,6 +184,8 @@ public sealed class GameSnapshotStore
                 if (vehicle is null || next.SimulationTime != vehicle.SimulationTime) zeroNavigationSamples++;
             }
             else { zeroNavigationSince = null; zeroNavigationSamples = 0; }
+            if (next is { SdkActive:true, Paused:false, IsFinite:true, NavigationDistanceRemainingMeters:>0 })
+                routeClearedByTelemetry = false;
             positionSignal.Update(vehicle,next);
             vehicle = next;
         }
@@ -195,11 +197,13 @@ public sealed class GameSnapshotStore
         long generation;
         lock (gate)
         {
-            generation = navigationRoute.Generation;
-            route = next;
+            generation = navigationRoute.GeometryGeneration;
+            // Route and vehicle callbacks can arrive a few milliseconds out of timestamp order.
+            var observedAt = vehicle is {} pose && pose.ReceivedAt > next.ReceivedAt ? pose.ReceivedAt : next.ReceivedAt;
+            navigationRoute = navigationRoute.Accept(next, EffectiveRouteAvailability(next, observedAt, VehicleUsable(observedAt)));
             changed = navigationRoute;
         }
-        if (changed.Generation != generation) RouteChanged?.Invoke(changed);
+        if (changed.GeometryGeneration != generation) RouteChanged?.Invoke(changed);
     }
 
     public void ObserveFine(bool fined, string offence, ulong amount, DateTimeOffset observedAt)
@@ -221,36 +225,55 @@ public sealed class GameSnapshotStore
 
     public GameDataSnapshot Capture(DateTimeOffset now)
     {
+        NavigationRouteState? changed = null;
+        GameDataSnapshot snapshot;
         lock (gate)
         {
             if(pendingFerry is {} pending&&now-pending.Started>=FerryEvidenceWait)
             {
                 // A dead telemetry stream must not leave a possible transfer pending forever.
                 session++;pendingFerry=null;ferryExpectation=null;ferryArrival=null;
-                zeroNavigationSince=null;zeroNavigationSamples=0;fines.ResetSession();
+                zeroNavigationSince=null;zeroNavigationSamples=0;routeClearedByTelemetry=false;fines.ResetSession();
                 route=new(Array.Empty<RouteNode>(),string.Empty,RouteAvailability.Unknown,default);
                 positionSignal.Reset();if(vehicle is {} current)positionSignal.Update(null,current);
             }
-            bool usable = pendingFerry is null && vehicle is { SdkActive: true, Paused: false, IsFinite: true }
-                && IsFresh(vehicle.ReceivedAt, now, TimeSpan.FromSeconds(2))
-                && IsFresh(lastVehicleProgress, now, TimeSpan.FromSeconds(2));
-            var availability = route.Availability;
-            if (availability != RouteAvailability.Unknown && !IsFresh(route.ReceivedAt, now, TimeSpan.FromSeconds(3)))
-                availability = RouteAvailability.Stale;
-            if (usable && availability == RouteAvailability.None && vehicle!.NavigationDistanceRemainingMeters > 1)
-                availability = RouteAvailability.Invalid;
-            if (usable && availability == RouteAvailability.Available && vehicle!.NavigationDistanceRemainingMeters <= 0)
-            {
-                // The route mmap can keep publishing the last node list after GPS is cleared.
-                // Only sustained, progressing telemetry explicitly reporting zero overrides it.
-                bool cleared = zeroNavigationSamples >= 3 && zeroNavigationSince is { } since
-                    && now >= since && now - since >= TimeSpan.FromSeconds(1);
-                availability = cleared ? RouteAvailability.None : RouteAvailability.Invalid;
-            }
-            return new(vehicle, route, availability, $"{instanceId}:{session}", usable,
+            bool usable = VehicleUsable(now);
+            var availability = EffectiveRouteAvailability(route, now, usable);
+            long generation = navigationRoute.GeometryGeneration;
+            navigationRoute = navigationRoute.Accept(route, availability);
+            if (navigationRoute.GeometryGeneration != generation) changed = navigationRoute;
+            snapshot = new(vehicle, route, availability, $"{instanceId}:{session}", usable,
                 fines.Latest, fines.LatestCamera, fines.GetHistory(), fines.DroppedCount)
                 {NavigationRoute=navigationRoute,PositionSignal=positionSignal.Capture(now),FerryUse=ferryEvents.Latest,FerryArrival=ferryArrival,IsTransportPending=pendingFerry is not null,TrafficSignals=trafficSignals};
         }
+        if (changed is not null) RouteChanged?.Invoke(changed);
+        return snapshot;
+    }
+    private bool VehicleUsable(DateTimeOffset now) =>
+        pendingFerry is null && vehicle is { SdkActive: true, Paused: false, IsFinite: true }
+        && IsFresh(vehicle.ReceivedAt, now, TimeSpan.FromSeconds(2))
+        && IsFresh(lastVehicleProgress, now, TimeSpan.FromSeconds(2));
+
+    private RouteAvailability EffectiveRouteAvailability(RouteSnapshot raw, DateTimeOffset now, bool usable)
+    {
+        if (raw.Availability != RouteAvailability.Unknown && !IsFresh(raw.ReceivedAt, now, TimeSpan.FromSeconds(3)))
+            return RouteAvailability.Stale;
+        if (pendingFerry is not null && raw.Availability == RouteAvailability.None)
+            return RouteAvailability.Invalid;
+        if (raw.Availability == RouteAvailability.Available && routeClearedByTelemetry) return RouteAvailability.None;
+        // Pausing or a frozen pose cannot turn the same missing node list into a confirmed clear.
+        if (raw.Availability == RouteAvailability.None
+            && vehicle is { SdkActive:true, IsFinite:true, NavigationDistanceRemainingMeters:>1 })
+            return RouteAvailability.Invalid;
+        if (usable && raw.Availability == RouteAvailability.Available && vehicle!.NavigationDistanceRemainingMeters <= 0)
+        {
+            // The mmap can keep its last nodes after GPS is cleared. Wait for sustained, advancing zero telemetry.
+            bool cleared = zeroNavigationSamples >= 3 && zeroNavigationSince is {} since
+                && now >= since && now - since >= TimeSpan.FromSeconds(1);
+            if (cleared) routeClearedByTelemetry = true;
+            return cleared ? RouteAvailability.None : RouteAvailability.Invalid;
+        }
+        return raw.Availability;
     }
 
     private static bool IsFresh(DateTimeOffset received, DateTimeOffset now, TimeSpan maxAge)

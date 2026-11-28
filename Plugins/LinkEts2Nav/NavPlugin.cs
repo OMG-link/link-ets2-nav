@@ -278,7 +278,7 @@ public sealed class NavPlugin : Plugin
                         pipeline.Reset(); navigation.Reset();
                         if(!guidance.HasVerifiedFerryContinuation(data))guidance.Reset();
                     }
-                    mapScanner.ObserveRoute(data.NavigationRoute.Generation);
+                    mapScanner.ObserveRoute(data.NavigationRoute.GeometryGeneration);
                     var preparation = mapScanner.AdoptReady();
                     if (preparation.IsPrepared)
                         logOutput.Change("map-preparation", standalone?"附近导航资料已准备好。":"全局地图准备已完成。", now);
@@ -317,7 +317,7 @@ public sealed class NavPlugin : Plugin
                         HostMap = standalone ? null : currentInstallation.GetMapData(),
                         UseNavigationIndex = standalone,
                         Route = data.RouteAvailability == RouteAvailability.Available ? data.Route : null,
-                        RouteGeneration=data.NavigationRoute.Generation,
+                        RouteGeneration=data.NavigationRoute.GeometryGeneration,
                         NavigationRemainingMeters = vehicle.NavigationDistanceRemainingMeters }, now))
                         logOutput.ScanStarted(position, now);
                     }
@@ -350,7 +350,7 @@ public sealed class NavPlugin : Plugin
                     var latest = source.Capture();
                     if (latest.SessionId != session) { mapScanner.Invalidate(); speech?.ClearPlan(); continue; }
                     token.ThrowIfCancellationRequested();
-                    mapScanner.ObserveRoute(latest.NavigationRoute.Generation);
+                    mapScanner.ObserveRoute(latest.NavigationRoute.GeometryGeneration);
                     guidance.Observe(latest,DateTimeOffset.UtcNow);
                     var calibrated = nearby with { Cameras = nearby.Cameras.Select(calibrations.Apply).ToArray() };
                     var navigationDiagnostic=navigation.Process(latest,calibrated,DateTimeOffset.UtcNow);

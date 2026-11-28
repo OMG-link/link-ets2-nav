@@ -143,6 +143,26 @@ public sealed class GuidancePlaybackManager:IAsyncDisposable
         }
         PreparePending();Wake();
     }
+    // After a confirmed replan, an unlocated vehicle cannot use the old queue.
+    // Keep spoken coverage intact so a newly matched plan can reuse the same junction.
+    internal IReadOnlyList<string> DeferPending(string source)
+    {
+        string[] triggerIds;
+        lock(gate)
+        {
+            var unplayed = pending.Where(p => p.Key.Item1 == source && !p.Value.Speech.IsNotification).ToArray();
+            if(unplayed.Length == 0) return [];
+            triggerIds = unplayed.Select(p => p.Value.Speech.TriggerId).ToArray();
+            foreach(var (key, item) in unplayed)
+            {
+                pending.Remove(key);
+                latest.Remove(key);
+                usage?.Withdrawn(item.Speech.Text);
+            }
+        }
+        PreparePending();Wake();
+        return triggerIds;
+    }
     public void Reset()
     {
         lock(gate){foreach(var item in pending.Values)usage?.Withdrawn(item.Speech.Text);pending.Clear();latest.Clear();coverage.Reset();generation++;updateHeld=false;}

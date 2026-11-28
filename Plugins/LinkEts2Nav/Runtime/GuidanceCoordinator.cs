@@ -21,6 +21,7 @@ public sealed class GuidanceCoordinator
     private readonly SpeechAnnouncementQueue? cache;
     private readonly GuidancePlaybackManager? playback;
     private readonly Action<string> log;
+    private Func<string,bool>? AnalysisAudioReady { get; init; }
     private readonly object gate=new();
     private readonly EnvironmentPreviewPlanner environment=new();
     private readonly NavigationJourneyTracker journey=new();
@@ -34,15 +35,17 @@ public sealed class GuidanceCoordinator
     private string? session,lastPlayed;
     private readonly Dictionary<string,string> playedBySource=new(StringComparer.Ordinal);
     private IReadOnlyList<GuidanceTriggerResult> latest=[];
-    private RouteSnapshot? observedRoute;
-    private string? replacementRevision;
-    private readonly HashSet<string> replacementApplied=new(StringComparer.Ordinal);
+    private readonly NavigationRouteCursor routes = new();
+    private readonly Dictionary<string,long> publishedContinuity = new(StringComparer.Ordinal);
     private readonly Dictionary<string,string> lastQueued=new(StringComparer.Ordinal);
     private readonly HashSet<(string Source,string Id)> notifications=[];
     private const string SignalSource="position-signal";
     public GuidanceTimeline Timeline { get; }=new();
     public SpeechTriggerScheduler Scheduler { get; }=new();
     public event Action<QueuedGuidanceSpeech>? Queued;
+    internal IReadOnlyList<GuidanceTriggerResult> LatestTriggers => latest;
+    internal static GuidanceCoordinator ForAnalysis(SpeechAnnouncementQueue? cache) =>
+        new(cache) { AnalysisAudioReady = cache is null ? null : cache.IsReady };
     public GuidanceCoordinator(SpeechAnnouncementQueue? cache=null,GuidancePlaybackManager? playback=null,Action<string>? log=null)
     {
         this.cache=cache;this.playback=playback;this.log=log??(_=>{});
@@ -57,7 +60,15 @@ public sealed class GuidanceCoordinator
             {WindowStartRemainingMeters=t.Window?.StartAlongMeters-p.PlayerAlongMeters}))
         .OrderBy(p=>p.RemainingMeters).Take(64).ToArray(),SequenceEnds=Timeline.Sources.SelectMany(p=>p.Sequences
             .Select(s=>new GuidanceSequenceEndDiagnostic(p.Source,s.Id,s.EndAlongMeters-p.PlayerAlongMeters,s.Ended))).ToArray()};}}
-    public bool WillReplaceSource(string source,string revision)=>replacementRevision==revision&&!replacementApplied.Contains(source);
+    internal NavigationRouteState RouteFor(GameDataSnapshot data)
+    {
+        EnsureSession(data.SessionId);
+        return routes.Observe(data);
+    }
+    public bool WillReplaceSource(string source,string revision) =>
+        routes.Current.MatchesAvailableRevision(revision) && HasNewRoute(source);
+    private bool HasNewRoute(string source) => publishedContinuity.TryGetValue(source, out var published)
+        && published != routes.Current.ContinuityGeneration;
     public void Notify(string source,string sessionId,GuidanceNotification notification)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
@@ -80,7 +91,7 @@ public sealed class GuidanceCoordinator
     {
         EnsureSession(plan.SessionId);playback?.BeginUpdate();
         var previous=Timeline.Sources.FirstOrDefault(p=>p.Source==plan.Source);
-        if(previous is not null&&replacementRevision==plan.RouteRevision&&replacementApplied.Add(plan.Source))
+        if(previous is not null&&WillReplaceSource(plan.Source,plan.RouteRevision))
         {
             var current=plan.Events.Select(e=>e.Id).ToHashSet(StringComparer.Ordinal);
             var removed=previous.Events.Where(e=>!current.Contains(e.Id)&&e.AlongMeters>previous.PlayerAlongMeters)
@@ -90,6 +101,8 @@ public sealed class GuidanceCoordinator
             // Do not catch up an old turn at a junction whose chosen exit just changed.
             plan=plan with{CoordinateFrame=null};
         }
+        if (routes.Current.MatchesAvailableRevision(plan.RouteRevision))
+            publishedContinuity[plan.Source] = routes.Current.ContinuityGeneration;
         Timeline.Publish(plan);
         if(previous is not null&&plan.ReplacedSequenceIds.Count>0)
         {
@@ -163,8 +176,15 @@ public sealed class GuidanceCoordinator
     {
         var ids=Timeline.Sources.FirstOrDefault(p=>p.Source==source)?.Events.Select(e=>e.Id).ToArray()??[];
         playback?.Withdraw(source,ids);Scheduler.ForgetEvents(source,ids);Timeline.Clear(source);
+        publishedContinuity.Remove(source);
     }
-    public void Suspend(string source)=>Timeline.Suspend(source);
+    public void Suspend(string source)
+    {
+        Timeline.Suspend(source);
+        if(playback is not null && HasNewRoute(source))
+            Scheduler.ForgetEvent(source,playback.DeferPending(source));
+    }
+    internal void ClearPreparation() => cache?.ClearPlan("guidance-preparation");
     public void UpdateProgress(string source,string sessionId,double along,DateTimeOffset observedAt,bool active)
         =>Timeline.UpdateProgress(source,sessionId,along,observedAt,active);
     public void ObservePassage(string source,string eventPrefix,DateTimeOffset observedAt)
@@ -175,6 +195,7 @@ public sealed class GuidanceCoordinator
             &&journey.ResumeAfterFerry(data.SessionId))
         {
             Reset(preserveJourney:true);session=data.SessionId;resumedFerrySession=data.SessionId;
+            routes.ResumeAfterFerry(data.SessionId);
             log("已确认轮渡抵达："+arrival.SourceId+" → "+arrival.TargetId+"；空间状态已重置，继续原导航旅程。");
         }
         EnsureSession(data.SessionId);playback?.BeginUpdate();
@@ -185,18 +206,13 @@ public sealed class GuidanceCoordinator
             Notify(SignalSource,data.SessionId,new("weak:"+data.PositionSignal.Episode,PositionSignalTracker.Text)
                 {AllowsStalePosition=true});
         else if(!data.PositionSignal.IsWeak)WithdrawNotifications(SignalSource);
-        if(knownRunning)cache?.UpdatePlan(SignalSource,[PositionSignalTracker.Text],-5);
-        if(observedRoute is not null&&observedRoute.Revision!=data.Route.Revision)
-        {
-            replacementRevision=RouteContinuity.IsForwardExtension(observedRoute,data.Route)?null:data.Route.Revision;
-            replacementApplied.Clear();
-        }
-        observedRoute=data.Route;
+        if(knownRunning && AnalysisAudioReady is null)cache?.UpdatePlan(SignalSource,[PositionSignalTracker.Text],-5);
+        var route = RouteFor(data);
         // Playback is released only after the whole trigger batch has been applied.
         playback?.SetActive(data.IsVehicleUsable&&data.Vehicle is {Paused:false,SdkActive:true,IsFinite:true,SpeedMetersPerSecond:>=-.1} v
             &&now>=v.ReceivedAt&&now-v.ReceivedAt<=TimeSpan.FromSeconds(2));
         if(!processJourney)return;
-        var lifecycle=journey.Update(data,now);
+        var lifecycle=journey.Update(data,now,route);
         if(lifecycle.WithdrawNotices)WithdrawNotifications(NavigationJourneyTracker.Source);
         if(lifecycle.Ended){pendingJourney=null;ClearSource("navigation");ClearSource("city-entry");ClearSource("narrow-road");}
         if(lifecycle.Notice is {} request){pendingJourney=request;nextJourneyEstimate=default;journeyEstimateFailure=null;}
@@ -228,13 +244,13 @@ public sealed class GuidanceCoordinator
         playback?.SetActive(active);
         if(!active)
         {
-            cache?.ClearPlan("guidance-preparation");latest=Scheduler.Update(Timeline,now,0,observedEndsOnly:true);
+            ClearPreparation();latest=Scheduler.Update(Timeline,now,0,observedEndsOnly:true);
             playback?.ApplyBatch(latest,false);return;
         }
         latest=[];
         try
         {
-        latest=Scheduler.Update(Timeline,now,data.Vehicle!.SpeedMetersPerSecond);
+        latest=Scheduler.Update(Timeline,now,data.Vehicle!.SpeedMetersPerSecond,null,false,AnalysisAudioReady);
         cache?.UpdatePlan("guidance-preparation",Scheduler.Prepare(Timeline,now));
         foreach(var result in latest)
         {
@@ -256,8 +272,10 @@ public sealed class GuidanceCoordinator
         &&data.FerryArrival?.CurrentSessionId==data.SessionId;
     public void Reset(bool preserveJourney=false)
     {
-        pendingJourney=null;nextJourneyEstimate=default;journeyEstimateFailure=null;Timeline.Reset();Scheduler.Reset();if(!preserveJourney)journey.Reset();playback?.Reset();cache?.ClearPlan("guidance-preparation");
+        pendingJourney=null;nextJourneyEstimate=default;journeyEstimateFailure=null;Timeline.Reset();Scheduler.Reset();if(!preserveJourney)journey.Reset();playback?.Reset();ClearPreparation();
         resumedFerrySession=null;
-        latest=[];lastQueued.Clear();notifications.Clear();environment.Reset();environmentFrame=null;session=null;observedRoute=null;replacementRevision=null;replacementApplied.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}
+        latest=[];lastQueued.Clear();notifications.Clear();environment.Reset();environmentFrame=null;session=null;
+        if(!preserveJourney)routes.Reset();
+        publishedContinuity.Clear();lock(gate){lastPlayed=null;playedBySource.Clear();}
     }
 }

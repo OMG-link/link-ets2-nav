@@ -139,4 +139,143 @@ public sealed class NavigationRouteStateTests
         Assert.Same(full,current.FullRoute);Assert.Equal(1,current.Generation);Assert.Equal(1,changes);
     }
 
+    [Fact]
+    public void RollingWindowKeepsVisitOrdinalsButRebuildsTheUnseenGeometry()
+    {
+        var original = NavigationRouteState.Empty.Accept(Route(1, 2, 3));
+        var next = Route(2, 3, 4);
+        var extended = original.Accept(next);
+        Assert.Equal(original.ContinuityGeneration, extended.ContinuityGeneration);
+        Assert.Equal(original.GeometryGeneration + 1, extended.GeometryGeneration);
+        Assert.Same(next, extended.FullRoute);
+        Assert.Equal(1, extended.FirstNodeOrdinal);
+        Assert.Equal(0, extended.CurrentNodeIndex);
+        var trimmed = extended.Accept(Route(3, 4));
+        Assert.Equal(2, trimmed.FirstNodeOrdinal + trimmed.CurrentNodeIndex);
+        Assert.Equal(extended.GeometryGeneration, trimmed.GeometryGeneration);
+        Assert.False(LinkEts2Nav.Map.LoadedNavigationRoute.Covers(original.FullRoute, next));
+        Assert.True(LinkEts2Nav.Map.LoadedNavigationRoute.Covers(next, trimmed.CurrentSnapshot));
+    }
+
+    [Theory]
+    [InlineData(4, false)]
+    [InlineData(9, true)]
+    public void RestoredWindowIsComparedWithThePreviouslyKnownTail(int tail, bool replaced)
+    {
+        var original = NavigationRouteState.Empty.Accept(Route(1, 2, 3, 4));
+        var partial = original.Accept(Route(2, 3) with { MayBeTruncated = true });
+        var missing = partial.Accept(RouteSnapshot.Parse([new(8, -1, 0)], Now));
+        Assert.Same(partial.FullRoute, missing.FullRoute);
+        var restored = missing.Accept(Route(2, 3, (ulong)tail));
+        Assert.Equal(replaced, original.ContinuityGeneration != restored.ContinuityGeneration);
+        Assert.Equal(replaced ? 0 : 1, restored.FirstNodeOrdinal);
+    }
+
+    [Fact]
+    public void SingleRemainingVisibleNodeCanRecoverThePreviouslyProvenNextEdge()
+    {
+        var original = NavigationRouteState.Empty.Accept(Route(1, 2, 3, 4));
+        var partial = original.Accept(Route(2, 3)).Accept(Route(3));
+        Assert.Equal(original.ContinuityGeneration, partial.ContinuityGeneration);
+        var next = partial.Accept(Route(3, 4, 5));
+        Assert.Equal(original.ContinuityGeneration, next.ContinuityGeneration);
+        Assert.Equal(2, next.FirstNodeOrdinal);
+        Assert.NotEqual(original.ContinuityGeneration, partial.Accept(Route(4)).ContinuityGeneration);
+    }
+
+    [Fact]
+    public void SingleJunctionOrAmbiguousRepeatedVisitsCannotProveContinuation()
+    {
+        var crossing = NavigationRouteState.Empty.Accept(Route(1, 2, 3));
+        Assert.NotEqual(crossing.ContinuityGeneration, crossing.Accept(Route(3, 4)).ContinuityGeneration);
+        var loop = NavigationRouteState.Empty.Accept(Route(1, 2, 1, 2, 1, 2));
+        Assert.NotEqual(loop.ContinuityGeneration, loop.Accept(Route(1, 2, 1, 2, 3)).ContinuityGeneration);
+    }
+
+    [Fact]
+    public void ConfirmedNearerGoalChangesJourneyDespiteSharedPrefix()
+    {
+        RouteSnapshot Complete(params ulong[] ids) => RouteSnapshot.Parse(ids.Select((id, i) =>
+            new RouteNode(id, (ids.Length - i - 1) * 100, 0)), Now);
+        var original = NavigationRouteState.Empty.Accept(Complete(1, 2, 3, 4));
+        var next = original.Accept(Complete(2, 3));
+        Assert.NotEqual(original.ContinuityGeneration, next.ContinuityGeneration);
+        Assert.Equal(0, next.FirstNodeOrdinal);
+    }
+
+    [Fact]
+    public void EmptyMmapWhileDrivingPreservesRouteEvenWhenVehicleCallbackIsNewer()
+    {
+        var store = new GameSnapshotStore();
+        var pose = new VehicleSnapshot(0, 0, 0, 0, 12, 900, true, false, 1, Now.AddMilliseconds(40));
+        store.UpdateVehicle(pose);
+        var route = Route(1, 2, 3);
+        store.UpdateRoute(route);
+        var initial = store.Capture(pose.ReceivedAt).NavigationRoute;
+        var empty = Route() with { ReceivedAt = Now.AddMilliseconds(20) };
+        store.UpdateRoute(empty);
+        var missing = store.Capture(pose.ReceivedAt);
+        Assert.Equal(RouteAvailability.Invalid, missing.RouteAvailability);
+        Assert.Same(empty, missing.Route);
+        Assert.Same(route, missing.NavigationRoute.FullRoute);
+        store.UpdateVehicle(pose with { Paused = true });
+        Assert.Equal(initial.ContinuityGeneration, store.Capture(pose.ReceivedAt).NavigationRoute.ContinuityGeneration);
+        store.UpdateVehicle(pose);
+        store.UpdateRoute(Route(2, 3));
+        var resumed = store.Capture(pose.ReceivedAt).NavigationRoute;
+        Assert.Equal(initial.GeometryGeneration, resumed.GeometryGeneration);
+        Assert.Equal(initial.ContinuityGeneration, resumed.ContinuityGeneration);
+    }
+
+    [Fact]
+    public void ConfirmedZeroClearsOnceDespiteHeldNodesAndPauseThenStartsNewRoute()
+    {
+        var store = new GameSnapshotStore();
+        var pose = new VehicleSnapshot(0, 0, 0, 0, 12, 900, true, false, 1, Now);
+        var raw = Route(1, 2, 3);
+        store.UpdateVehicle(pose); store.UpdateRoute(raw);
+        var initial = store.Capture(Now).NavigationRoute;
+        GameDataSnapshot Step(int ms, double remaining, bool paused = false)
+        {
+            var time = Now.AddMilliseconds(ms);
+            store.UpdateVehicle(pose with { SimulationTime = (ulong)ms + 1, ReceivedAt = time,
+                NavigationDistanceRemainingMeters = remaining, Paused = paused });
+            return store.Capture(time);
+        }
+        Step(100, 0); Step(600, 0);
+        var ended = Step(1100, 0);
+        Assert.Same(raw, ended.Route);
+        Assert.Equal(RouteAvailability.None, ended.RouteAvailability);
+        Assert.Empty(ended.NavigationRoute.FullRoute.Nodes);
+        Assert.Equal(initial.GeometryGeneration + 1, ended.NavigationRoute.GeometryGeneration);
+        Assert.Equal(ended.NavigationRoute.GeometryGeneration, Step(1300, 0, true).NavigationRoute.GeometryGeneration);
+        Assert.Equal(ended.NavigationRoute.ContinuityGeneration + 1, Step(1500, 900).NavigationRoute.ContinuityGeneration);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ConsumersThatSkippedTheReplacementStillReactOnce(bool returnsToOriginal)
+    {
+        var store = new GameSnapshotStore();
+        store.UpdateVehicle(new(0,0,0,0,12,900,true,false,1,Now));
+        store.UpdateRoute(Route(1, 2, 3));
+        var initial = store.Capture(Now);
+        var guidance = new GuidanceCoordinator();
+        var journey = new NavigationJourneyTracker();
+        Assert.Equal(NavigationJourneyNoticeKind.Start, journey.Update(initial, Now).Notice!.Kind);
+        guidance.Observe(initial, Now);
+        guidance.Publish(new("navigation", initial.SessionId, initial.Route.Revision, 0, true, Now, []));
+
+        store.UpdateRoute(Route(1, 9, 3));
+        store.UpdateRoute(returnsToOriginal ? Route(1, 2, 3) : Route(9, 3));
+        var later = store.Capture(Now);
+        guidance.Observe(later, Now);
+        Assert.True(guidance.WillReplaceSource("navigation", later.Route.Revision));
+        Assert.Equal(NavigationJourneyNoticeKind.Replanned, journey.Update(later, Now).Notice!.Kind);
+        guidance.Publish(new("navigation", later.SessionId, later.Route.Revision, 0, true, Now, []));
+        Assert.False(guidance.WillReplaceSource("navigation", later.Route.Revision));
+        Assert.Null(journey.Update(later, Now).Notice);
+    }
+
 }

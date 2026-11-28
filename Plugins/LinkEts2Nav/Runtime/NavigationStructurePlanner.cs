@@ -25,9 +25,9 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
     private readonly NavigationManeuverDetector detector=new();
     private readonly LaneMergeDetector mergeDetector=new();
 
-    public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes,IReadOnlyList<int> sourceNodeIndices,AuxiliaryLaneIndex? auxiliaries=null)
+    public NavigationStructurePlan Build(IReadOnlyList<DirectedRoad> route,RouteSnapshot sdkRoute,NearbyMapSnapshot nearby,RoadPathSource paths,LaneNavigationPlan lanes,IReadOnlyList<int> sourceNodeIndices,AuxiliaryLaneIndex? auxiliaries=null,long firstNodeOrdinal=0)
     {
-        var ranges=RoundaboutRouteAdapter.Build(route,nearby.RoadStructures,sourceNodeIndices,
+        var ranges=RoundaboutRouteAdapter.Build(route,nearby.RoadStructures,sourceNodeIndices,firstNodeOrdinal,
             uid=>nearby.Map.Nodes.TryGetValue(uid,out var node)&&node is TruckLib.ScsMap.Node?node.Position:null);
         detector.MissingConnection=paths.DescribeMissingConnection;
         if(nearby.Components is {} components)detector.Components.UseIndex(paths.GetNavigationGraph(),components);

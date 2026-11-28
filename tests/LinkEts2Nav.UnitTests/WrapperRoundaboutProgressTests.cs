@@ -8,9 +8,10 @@ namespace LinkEts2Nav.UnitTests;
 public sealed class WrapperRoundaboutProgressTests
 {
     [Theory]
-    [InlineData(1)]
-    [InlineData(2)]
-    public void SdkPrefixConsumptionDoesNotRebuildOrReplayTheRingSeries(int hostCut)
+    [InlineData(1, false)]
+    [InlineData(2, false)]
+    [InlineData(1, true)]
+    public void TrimmingAndRollingTheSdkWindowNeverReplayTheRingSeries(int hostCut, bool appendTail)
     {
         var now=DateTimeOffset.UtcNow;var map=new TruckLib.ScsMap.Map();
         var before=Road.Add(map,Vector3.Zero,new(100,0,0),default);
@@ -22,15 +23,27 @@ public sealed class WrapperRoundaboutProgressTests
             ExitPorts=[new(exit,new(200,0,0)){Bearing=1,DepartureBranches=[new(new(1,7),new(180,0,0))]}]};
         var nearby=new NearbyMapSnapshot(map,[],[],[]){PrefabPaths=[passage],RoadStructures=new Dictionary<ulong,RoundaboutStructure>{{1,ring}}};
         RouteNode[] host=[new(before.Node.Uid,400,40),new(entry,300,30),new(entry,300,30),new(exit,200,20),new(after.ForwardNode.Uid,0,0)];
-        var full=RouteSnapshot.Parse(host,now);
+        var full=RouteSnapshot.Parse(appendTail ? host[..^1] : host,now);
         var stable=NavigationRouteState.Empty.Accept(full);var logs=new List<string>();var runtime=new NavigationRuntime(log:logs.Add);
         GameDataSnapshot Data(double x)=>new(new(x,0,0,.75,10,400,true,false,1,now),stable.CurrentSnapshot,RouteAvailability.Available,"same-session",true){NavigationRoute=stable};
         var first=runtime.Process(Data(90),nearby,now);int structures=runtime.StructureBuildCount,plans=runtime.EventPlanBuildCount;
         stable=stable.Accept(RouteSnapshot.Parse(host.Skip(hostCut),now));
-        var same=runtime.Process(Data(90),nearby,now);
-        Assert.Equal(1,stable.CurrentNodeIndex);Assert.Same(full,stable.FullRoute);
-        Assert.Equal(structures,runtime.StructureBuildCount);Assert.Equal(plans,runtime.EventPlanBuildCount);
-        Assert.Equal(first.Upcoming.Select(a=>a.Id),same.Upcoming.Select(a=>a.Id));
+        // At the shared endpoint both the trimmed approach and the ring lane fit the vehicle.
+        var same=runtime.Process(Data(appendTail ? 110 : 90),nearby,now);
+        Assert.Equal(1,stable.FirstNodeOrdinal + stable.CurrentNodeIndex);
+        if (appendTail)
+        {
+            Assert.True(runtime.StructureBuildCount > structures);
+            Assert.NotNull(same.LaneRoute);
+            var originalExit = Assert.Single(first.Upcoming, a => a.Kind == ManeuverKind.ExitRoundabout);
+            Assert.Equal(originalExit.Id, Assert.Single(same.Upcoming, a => a.HasSdkVisitIdentity).Id);
+        }
+        else
+        {
+            Assert.Same(full,stable.FullRoute);
+            Assert.Equal(structures,runtime.StructureBuildCount);Assert.Equal(plans,runtime.EventPlanBuildCount);
+            Assert.Equal(first.Upcoming.Select(a=>a.Id),same.Upcoming.Select(a=>a.Id));
+        }
         runtime.Process(Data(160),nearby,now);
         Assert.Single(logs.Where(l=>l.StartsWith("\u5bfc\u822a\u6307\u4ee4")&&l.Contains("\u8fdb\u5165\u73af\u5c9b")));
         Assert.Single(logs.Where(l=>l.StartsWith("\u5bfc\u822a\u6307\u4ee4")&&l.Contains("\u9a76\u51fa\u73af\u5c9b")));

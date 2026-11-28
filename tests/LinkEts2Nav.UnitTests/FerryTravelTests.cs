@@ -41,6 +41,26 @@ public sealed class FerryTravelTests
         Assert.Equal("a",arrived.FerryUse!.SourceId);Assert.Equal(RouteAvailability.Available,arrived.RouteAvailability);
     }
 
+    [Fact]
+    public void AnEmptyRouteWhileWaitingForFerryProofCannotClearTheJourney()
+    {
+        var store = Store();
+        var initial = store.Capture(Now);
+        store.UpdateVehicle(Pose(10000, .1, 2), Raw(true));
+        store.UpdateRoute(RouteSnapshot.Parse([], Now.AddSeconds(.1)));
+        var pending = store.Capture(Now.AddSeconds(.1));
+        Assert.True(pending.IsTransportPending);
+        Assert.Equal(RouteAvailability.None, pending.Route.Availability);
+        Assert.Equal(RouteAvailability.Invalid, pending.RouteAvailability);
+        Assert.Same(initial.NavigationRoute.FullRoute, pending.NavigationRoute.FullRoute);
+        store.UpdateVehicle(Pose(10000, .2, 3), Raw(true, "a", "b"));
+        store.UpdateVehicle(Pose(10000, .3, 4), Raw(true, "a", "b"));
+        store.UpdateRoute(RouteSnapshot.Parse([new(999, 0, 0)], Now.AddSeconds(.3)));
+        var arrived = store.Capture(Now.AddSeconds(.3));
+        Assert.NotNull(arrived.FerryArrival);
+        Assert.Equal(initial.NavigationRoute.ContinuityGeneration, arrived.NavigationRoute.ContinuityGeneration);
+    }
+
     [Theory][InlineData(false)][InlineData(true)]
     public void AStableOldNonemptyPayloadDoesNotConsumeTheNewEventEdge(bool initialFlag)
     {

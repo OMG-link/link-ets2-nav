@@ -67,7 +67,7 @@ public static class SpeechPackCommands
                 throw new InvalidDataException("Job filename leaves the input directory.");
             // Validate all expected inputs before the builder can alter the output.
             // Extra files are deliberately ignored; the job list alone defines this pack.
-            PcmAudio.Read(path);
+            SpeechPackFormat.ValidateWave(path);
             sources.Add(job.Text, path);
         }
         await SpeechPackBuilder.BuildAsync(output, model, voice, imported.Items.Select(j => j.Text),
@@ -85,14 +85,14 @@ public static class SpeechPackCommands
         var projected = new PackManifest(1, model, voice, jobs.Items.Select(j =>
             new PackEntry(j.Text, SpeechPack.FileName(j.Text), new string('0', 64))).ToArray()) { ApiProfile = apiProfile };
         if (JsonSerializer.SerializeToUtf8Bytes(projected, new JsonSerializerOptions { WriteIndented = true }).Length
-            > 2097152)
+            > SpeechPackFormat.MaximumNameManifestBytes)
             throw new InvalidDataException("Speech manifest exceeds the runtime pack size limit.");
     }
 
     internal static void Validate(SpeechJobs jobs)
     {
         if (jobs.Schema != 1 || jobs.Kind is not ("fixed" or "city-names") || jobs.Items is null
-            || jobs.Items.Length < 1 || jobs.Kind == "city-names" && jobs.Items.Length > 4096)
+            || jobs.Items.Length < 1 || jobs.Kind == "city-names" && jobs.Items.Length > SpeechPackFormat.MaximumNameEntries)
             throw new InvalidDataException("Invalid speech jobs schema, kind or count.");
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var job in jobs.Items)

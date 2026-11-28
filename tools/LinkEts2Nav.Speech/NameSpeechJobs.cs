@@ -36,19 +36,15 @@ public static class NameSpeechJobs
                 names.Add(Path.GetFileName(file));
             }
         }
-        if (sources.Count is < 1 or > 4096) throw new InvalidDataException("A name pack supports 1..4096 distinct names.");
+        if (sources.Count is < 1 or > SpeechPackFormat.MaximumNameEntries) throw new InvalidDataException("A name pack supports 1..4096 distinct names.");
         var entries = new Dictionary<string, PackEntry>(StringComparer.Ordinal);
         if (packDirectory is not null && File.Exists(Path.Combine(packDirectory, "manifest.json")))
         {
             string path = Path.Combine(packDirectory, "manifest.json");
-            if (new FileInfo(path).Length > 2097152) throw new InvalidDataException("Place-name manifest too large.");
-            var manifest = JsonSerializer.Deserialize<PackManifest>(await File.ReadAllTextAsync(path));
-            if (manifest is not { Schema: 1, Entries: not null } || manifest.Entries.Length > 4096)
-                throw new InvalidDataException("Invalid place-name manifest.");
+            var manifest = SpeechPackFormat.ReadManifest(path, SpeechPackFormat.MaximumNameEntries, SpeechPackFormat.MaximumNameManifestBytes);
             foreach (var entry in manifest.Entries)
-                if (entry is null || string.IsNullOrWhiteSpace(entry.Text) || !entries.TryAdd(entry.Text, entry))
-                    throw new InvalidDataException("Invalid or duplicate place-name manifest entry.");
-            if (entries.Keys.Union(sources.Keys, StringComparer.Ordinal).Count() > 4096)
+                entries.Add(entry.Text, entry);
+            if (entries.Keys.Union(sources.Keys, StringComparer.Ordinal).Count() > SpeechPackFormat.MaximumNameEntries)
                 throw new InvalidDataException("The extended name pack would exceed 4096 entries.");
         }
         var coverage = sources.Select(p =>
@@ -59,12 +55,8 @@ public static class NameSpeechJobs
                 state = "invalid";
                 try
                 {
-                    if (entry.File == SpeechPack.FileName(p.Key))
-                    {
-                        string path = Path.Combine(packDirectory!, entry.File);
-                        PcmAudio.Read(path);
-                        if (SpeechPack.Hash(File.ReadAllBytes(path)) == entry.Sha256) state = "ready";
-                    }
+                    SpeechPackFormat.ValidateEntry(packDirectory!, entry);
+                    state = "ready";
                 }
                 catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { }
             }

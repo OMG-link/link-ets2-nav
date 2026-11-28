@@ -76,17 +76,12 @@ internal sealed class BudgetSpeechSource : IDisposable
         return path;
     }
 
-    internal static string HashFile(string path)
-    {
-        using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream));
-    }
+    internal static string HashFile(string path) => SpeechPackFormat.HashFile(path);
 
     internal static bool Verified(string path, string sha)
     {
-        if (!File.Exists(path) || new FileInfo(path).Length is < 44 or > PcmAudio.MaximumWaveBytes ||
-            !string.Equals(sha, HashFile(path), StringComparison.OrdinalIgnoreCase)) return false;
-        try { PcmAudio.Read(path); return true; } catch (InvalidDataException) { return false; }
+        if (!File.Exists(path)) return false;
+        try { SpeechPackFormat.VerifyWave(path, sha); return true; } catch (InvalidDataException) { return false; }
     }
 
     public void Dispose() { client?.Dispose(); local?.Dispose(); }

@@ -14,6 +14,8 @@ public static class SpeechPackBuilder
         PackManifest? previous = null;
         if (File.Exists(manifestPath))
         {
+            // A checkpoint can contain stale or incomplete entries: retain verified
+            // recordings individually and regenerate only what is missing or damaged.
             using var stream = File.OpenRead(manifestPath);
             previous = await JsonSerializer.DeserializeAsync<PackManifest>(stream, cancellationToken: cancellationToken);
         }
@@ -34,8 +36,8 @@ public static class SpeechPackBuilder
             {
                 try
                 {
-                    PcmAudio.Read(path);
-                    valid = SpeechPack.Hash(await File.ReadAllBytesAsync(path, cancellationToken)) == cached.Sha256;
+                    SpeechPackFormat.ValidateEntry(output, cached);
+                    valid = true;
                 }
                 catch (Exception ex) when (ex is IOException or InvalidDataException) { }
             }
@@ -49,7 +51,7 @@ public static class SpeechPackBuilder
             log?.Invoke("Generating: " + text);
             byte[] pcm = await generate(text, cancellationToken);
             PcmAudio.Write(path, pcm);
-            var entry = new PackEntry(text, file, SpeechPack.Hash(await File.ReadAllBytesAsync(path, cancellationToken)));
+            var entry = new PackEntry(text, file, SpeechPackFormat.HashFile(path));
             completed.Add(entry);
             checkpoint[text] = entry;
             // Keep later cached entries as well, so an interrupted mixed cached/new

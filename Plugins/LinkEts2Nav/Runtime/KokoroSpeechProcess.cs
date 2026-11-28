@@ -74,10 +74,8 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
             var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             if (!path.StartsWith(cacheRoot, comparison) || Path.GetExtension(path) != ".wav")
                 throw new IOException("Speech worker returned a file outside its cache.");
-            using var wav = File.OpenRead(path);
-            Span<byte> header = stackalloc byte[12];
-            if (wav.Length < 44 || wav.Read(header) != 12 || !header[..4].SequenceEqual("RIFF"u8)
-                || !header[8..].SequenceEqual("WAVE"u8)) throw new IOException("Speech worker returned invalid WAV audio.");
+            try { SpeechFiles.SpeechPackFormat.ValidateWave(path); }
+            catch (InvalidDataException e) { throw new IOException("Speech worker returned invalid WAV audio.", e); }
             completed=true;
             return path;
         }

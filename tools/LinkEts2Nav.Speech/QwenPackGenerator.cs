@@ -29,12 +29,11 @@ internal static class QwenPackGenerator
             string[] requested=texts.ToArray();
             if(requested.Any(t=>t.Length>128||t.Any(char.IsControl)))throw new InvalidDataException("Invalid city name.");
             string manifest=Path.Combine(output,"manifest.json");
-            if(File.Exists(manifest)&&new FileInfo(manifest).Length>2097152)throw new InvalidDataException("City-name manifest too large.");
-            var existing=File.Exists(manifest)?JsonSerializer.Deserialize<PackManifest>(await File.ReadAllTextAsync(manifest)):null;
-            if(existing is not null&&(existing.Schema!=1||existing.Model!=Model||existing.Voice!=Voice||existing.Entries is null||existing.Entries.Length>4096||existing.Entries.Any(e=>e is null)))
+            var existing=File.Exists(manifest)?SpeechPackFormat.ReadManifest(manifest,SpeechPackFormat.MaximumNameEntries,SpeechPackFormat.MaximumNameManifestBytes):null;
+            if(existing is not null&&(existing.Model!=Model||existing.Voice!=Voice))
                 throw new InvalidDataException("Cannot extend an incompatible city-name pack.");
             texts=(existing?.Entries.Select(e=>e.Text)??[]).Concat(requested).Distinct(StringComparer.Ordinal).ToArray();
-            if(texts.Count()>4096)throw new InvalidDataException("Too many city names.");
+            if(texts.Count()>SpeechPackFormat.MaximumNameEntries)throw new InvalidDataException("Too many city names.");
         }
         var pack = await SpeechPackBuilder.BuildAsync(output, Model, Voice, texts,
             async (text, token) =>

@@ -73,8 +73,8 @@ internal sealed class KokoroSynthesis : IDisposable
             if (audio.SampleRate <= 0 || samples.Length == 0 || samples.Any(sample => !float.IsFinite(sample)))
                 throw new InvalidDataException("Synthesizer returned invalid audio samples.");
             if (!audio.SaveToWaveFile(temporary)) throw new IOException("Unable to save synthesized WAV.");
-            if (!WaveFile.IsValid(temporary)) throw new InvalidDataException("Synthesizer did not produce a valid PCM WAV.");
-            var entry = new CacheEntry(key, fingerprint, text, options.Voice, 36, HashFile(temporary));
+            SpeechPackFormat.ValidateWave(temporary);
+            var entry = new CacheEntry(key, fingerprint, text, options.Voice, 36, SpeechPackFormat.HashFile(temporary));
             File.WriteAllText(temporaryMetadata, JsonSerializer.Serialize(entry), new UTF8Encoding(false));
             File.Move(temporary, path, overwrite: true);
             File.Move(temporaryMetadata, metadataPath, overwrite: true);
@@ -102,59 +102,17 @@ internal sealed class KokoroSynthesis : IDisposable
     {
         try
         {
-            if (!File.Exists(metadataPath) || new FileInfo(metadataPath).Length > 16384 || !WaveFile.IsValid(path)) return false;
+            if (!File.Exists(metadataPath) || new FileInfo(metadataPath).Length > 16384) return false;
             var entry = JsonSerializer.Deserialize<CacheEntry>(File.ReadAllText(metadataPath));
-            return entry is not null && entry.Key == key && entry.Fingerprint == fingerprint
-                && StringComparer.OrdinalIgnoreCase.Equals(entry.Sha256, HashFile(path));
+            if (entry is null || entry.Key != key || entry.Fingerprint != fingerprint) return false;
+            SpeechPackFormat.VerifyWave(path, entry.Sha256);
+            return true;
         }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return false; }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or UnauthorizedAccessException) { return false; }
     }
 
     private string Resource(string name) => Path.Combine(options.ModelDirectory, name);
     private static string HashText(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
-    private static string HashFile(string path)
-    {
-        using var file = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(file));
-    }
     public void Dispose() => model?.Dispose();
     private sealed record CacheEntry(string Key, string Fingerprint, string Text, string Voice, int SpeakerId, string Sha256);
-}
-
-internal static class WaveFile
-{
-    public static bool IsValid(string path)
-    {
-        if (!File.Exists(path)) return false;
-        using var stream = File.OpenRead(path);
-        if (stream.Length < 44 || stream.Length > 64 * 1024 * 1024) return false;
-        using var reader = new BinaryReader(stream, Encoding.ASCII, leaveOpen: true);
-        if (reader.ReadUInt32() != 0x46464952 || (long)reader.ReadUInt32() + 8 != stream.Length
-            || reader.ReadUInt32() != 0x45564157) return false;
-        bool format = false, data = false;
-        ushort blockAlign = 0;
-        while (stream.Position + 8 <= stream.Length)
-        {
-            uint name = reader.ReadUInt32(), size = reader.ReadUInt32();
-            long next = stream.Position + size;
-            if (next > stream.Length) return false;
-            if (name == 0x20746D66)
-            {
-                if (size < 16 || reader.ReadUInt16() != 1) return false;
-                ushort channels = reader.ReadUInt16();
-                uint rate = reader.ReadUInt32(), byteRate = reader.ReadUInt32();
-                blockAlign = reader.ReadUInt16();
-                ushort bits = reader.ReadUInt16();
-                if (channels != 1 || rate != 24000 || bits != 16 || blockAlign != 2 || byteRate != rate * blockAlign) return false;
-                format = true;
-            }
-            else if (name == 0x61746164)
-            {
-                if (!format || size < blockAlign || size % blockAlign != 0) return false;
-                data = true;
-            }
-            stream.Position = next + (size & 1);
-        }
-        return format && data && stream.Position == stream.Length;
-    }
 }

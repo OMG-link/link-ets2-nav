@@ -106,23 +106,19 @@ public static class ContextualSpeech
                 },Console.WriteLine);
         }
         else if(args[0]!="--slice-context-pack")throw new ArgumentException("Unknown contextual speech command.");
-        var sourcePack=JsonSerializer.Deserialize<PackManifest>(await File.ReadAllTextAsync(Path.Combine(sourceDirectory,"manifest.json")))
-            ??throw new InvalidDataException("Missing carrier manifest.");
+        var sourcePack=SpeechPackFormat.ReadManifest(Path.Combine(sourceDirectory,"manifest.json"));
         var samples=new Dictionary<string,byte[]>(StringComparer.Ordinal);var provenance=new List<object>();
         foreach(var item in plan.Items)
         {
             var source=sourcePack.Entries.Single(e=>e.Text==item.CarrierText);
-            if(source.File!=SpeechPack.FileName(item.CarrierText))throw new InvalidDataException("Unexpected carrier filename.");
+            byte[] pcm=SpeechPackFormat.ReadEntry(sourceDirectory,source);
             string path=Path.Combine(sourceDirectory,source.File);
-            string sourceHash=SpeechPack.Hash(await File.ReadAllBytesAsync(path));
-            if(sourceHash!=source.Sha256)throw new InvalidDataException("Carrier WAV checksum mismatch.");
-            byte[] pcm=PcmAudio.Read(path);
             var times=JsonSerializer.Deserialize<ContextTimestamps>(await File.ReadAllTextAsync(path+".timestamps.json"))
                 ??throw new InvalidDataException("Missing carrier timestamps.");
             var cut=Locate(item,times,pcm);
             samples.Add(item.Text,pcm[(cut.StartSample*2)..(cut.EndSample*2)]);
             provenance.Add(new{item.Text,item.CarrierText,item.FilledWords,item.StartChar,item.EndChar,SourceFile=source.File,
-                SourceSha256=sourceHash,cut.StartSample,cut.EndSample,SampleRate=24000,cut.Method,Model=sourcePack.Model,Voice=sourcePack.Voice});
+                SourceSha256=source.Sha256,cut.StartSample,cut.EndSample,SampleRate=24000,cut.Method,Model=sourcePack.Model,Voice=sourcePack.Voice});
         }
         await SpeechPackBuilder.BuildAsync(output,sourcePack.Model,sourcePack.Voice,plan.Items.Select(i=>i.Text),
             (text,_)=>Task.FromResult(samples[text]),Console.WriteLine,reuseCachedAudio:false);

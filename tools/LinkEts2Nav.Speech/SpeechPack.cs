@@ -1,31 +1,16 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using LinkEts2Nav.Core;
 
 namespace LinkEts2Nav.Speech;
 
-public sealed record PackEntry(string Text, string File, string Sha256)
-{
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public bool Composed { get; init; }
-    // Absent inherits the manifest profile. Empty means an imported recording with unknown synthesis settings.
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? VoiceProfile { get; init; }
-}
-public sealed record PackManifest(int Schema, string Model, string Voice, PackEntry[] Entries)
-{
-    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    public string? ApiProfile { get; init; }
-}
-
 /// <summary>Only explicitly generated pack entries can override the local voice.</summary>
 public sealed class SpeechPack(string? directory, string cacheDirectory)
 {
     public static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
-    public static string FileName(string text) => Hash(Encoding.UTF8.GetBytes(text)) + ".wav";
+    public static string FileName(string text) => SpeechPackFormat.FileName(text);
     public static readonly int[] CommonLimits = [30, 40, 50, 60, 70, 80, 90, 100];
     public const string UncalibratedText = "正靠近未校准的探头，无法获取其监测方向，请减速慢行。";
     public static IEnumerable<string> DefaultTexts() => SpeechTextCatalog.DefaultTexts;
@@ -55,22 +40,26 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         {
             if (directory is not null && File.Exists(Path.Combine(directory, "manifest.json")))
             {
-                using var manifest = File.OpenRead(Path.Combine(directory, "manifest.json"));
-                pack = JsonSerializer.Deserialize<PackManifest>(manifest);
-                if (pack is not { Schema: 1, Entries: not null } || pack.Entries.Any(e => e is null))
-                    throw new InvalidDataException("Unsupported speech pack.");
+                pack = SpeechPackFormat.ReadManifest(Path.Combine(directory, "manifest.json"));
                 var exact = pack.Entries.SingleOrDefault(e => e.Text == text);
                 if (exact is not null)
                 {
-                    string source = Resolve(exact);
+                    using var source = File.OpenRead(SpeechPackFormat.EntryPath(directory, exact));
+                    SpeechPackFormat.Verify(source, exact.Sha256);
                     string target = Path.Combine(cacheDirectory, "qwen-" + exact.Sha256 + ".wav");
-                    if (File.Exists(target) && Hash(File.ReadAllBytes(target)) == exact.Sha256) return (target, true);
-                    PcmAudio.Write(target, PcmAudio.Read(source));
+                    // Verify the original even on a cache hit. A removed or damaged pack
+                    // must still take its normal recovery path.
+                    if (File.Exists(target) && new FileInfo(target).Length == source.Length &&
+                        string.Equals(SpeechPackFormat.HashFile(target), exact.Sha256, StringComparison.OrdinalIgnoreCase))
+                        return (target, true);
+                    // Preserve ancillary RIFF chunks too: the cache is keyed by the digest of the complete source file.
+                    source.Position = 0;
+                    PcmAudio.Copy(target, source);
                     return (target, false);
                 }
             }
         }
-        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
+        catch (Exception ex) when (SpeechPackFormat.IsReadFailure(ex))
         {
             Console.Error.WriteLine("Speech pack unavailable: " + ex.GetType().Name);
             pack = null;
@@ -134,7 +123,8 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             var middle = pack.Entries.SingleOrDefault(e => e.Text == middleText);
             if (middle is null) return local(text);
             // Validate the cloud fragment before spending time on local inference.
-            string middlePath = Resolve(middle);
+            string middlePath = SpeechPackFormat.EntryPath(directory!, middle);
+            SpeechPackFormat.VerifyWave(middlePath, middle.Sha256);
             var identity = JsonSerializer.Serialize(new { schema = 2, text, pack.Model, pack.Voice, middle.Sha256 });
             var paths = new List<string>();
             if (match.Groups["distance"].Success) paths.Add(local(match.Groups["distance"].Value).Path);
@@ -171,10 +161,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         {
             string nameDirectory=Path.Combine(directory??"","CityNames"),manifest=Path.Combine(nameDirectory,"manifest.json");
             if(directory is null||!File.Exists(manifest))return Generic();
-            if(new FileInfo(manifest).Length>2097152)throw new InvalidDataException("Place-name manifest too large.");
-            var pack=JsonSerializer.Deserialize<PackManifest>(File.ReadAllText(manifest));
-            if(pack is not {Schema:1,Entries:not null}||pack.Entries.Length>4096||pack.Entries.Any(e=>e is null))
-                throw new InvalidDataException("Invalid place-name manifest.");
+            var pack=SpeechPackFormat.ReadManifest(manifest,SpeechPackFormat.MaximumNameEntries,SpeechPackFormat.MaximumNameManifestBytes);
             var names=new Dictionary<string,byte[]>(StringComparer.Ordinal);
             bool namesInVoice=true;
             foreach(string name in parts.Where(p=>p.IsName).Select(p=>p.Text).Distinct(StringComparer.Ordinal))
@@ -211,27 +198,12 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             }
             PcmAudio.Write(result,joined);return(result,false);
         }
-        catch(Exception e) when(e is IOException or JsonException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
+        catch(Exception e) when(SpeechPackFormat.IsReadFailure(e))
         {
             Console.Error.WriteLine("Place-name fragment unavailable; using generic audio: "+e.GetType().Name);
             return Generic();
         }
     }
 
-    private string Resolve(PackEntry entry,string? packDirectory=null)
-    {
-        string root = packDirectory ?? directory!;
-        ReadVerified(entry, root);
-        return Path.Combine(root, entry.File);
-    }
-
-    internal static byte[] ReadVerified(PackEntry entry, string directory)
-    {
-        if (entry.File != FileName(entry.Text)) throw new InvalidDataException("Unexpected pack filename.");
-        using var file = File.OpenRead(Path.Combine(directory, entry.File));
-        if (file.Length is < 44 or > PcmAudio.MaximumWaveBytes || Convert.ToHexString(SHA256.HashData(file)) != entry.Sha256)
-            throw new InvalidDataException("Speech pack checksum mismatch.");
-        file.Position = 0;
-        return PcmAudio.Read(file);
-    }
+    internal static byte[] ReadVerified(PackEntry entry, string directory) => SpeechPackFormat.ReadEntry(directory, entry);
 }

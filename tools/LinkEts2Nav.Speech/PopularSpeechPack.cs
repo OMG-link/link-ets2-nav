@@ -181,15 +181,19 @@ internal static class PopularSpeechPack
     {
         string path = Path.Combine(directory, "manifest.json");
         if (!File.Exists(path)) return null;
-        using var file = File.OpenRead(path);
-        var pack = JsonSerializer.Deserialize<PackManifest>(file);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        if (pack is not { Schema: 1, Entries: not null }
-            || pack.Entries.Any(e => e is null || string.IsNullOrWhiteSpace(e.Text) || e.Text.Length > 2048 || e.Text.Any(char.IsControl)
-                || e.Text != e.Text.Trim().Normalize() || !seen.Add(e.Text) || e.File != SpeechPack.FileName(e.Text)
-                || e.Sha256 is not { Length: 64 } || !e.Sha256.All(Uri.IsHexDigit)))
-            throw new PackGenerationException("source");
-        return pack;
+        try
+        {
+            var pack = SpeechPackFormat.ReadManifest(path);
+            foreach (var entry in pack.Entries)
+            {
+                SpeechPackFormat.EntryPath(directory, entry);
+                if (entry.Sha256 is not { Length: 64 } || !entry.Sha256.All(char.IsAsciiHexDigit))
+                    throw new InvalidDataException("Invalid speech pack checksum.");
+            }
+            return pack;
+        }
+        catch (Exception e) when (e is JsonException or InvalidDataException or InvalidOperationException or KeyNotFoundException or FormatException)
+        { throw new PackGenerationException("source"); }
     }
 
     private static void CopyDirectory(DirectoryInfo source, DirectoryInfo destination, CancellationToken token, HashSet<string>? omit = null)

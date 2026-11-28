@@ -5,10 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <DefineConstants>$(DefineConstants);SPEECH_PACK_TOOL</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Plugins/LinkEts2Nav/Core/JourneySpeechText.cs" Link="JourneySpeechText.cs" />
     <Compile Include="../../Plugins/LinkEts2Nav/Runtime/SpeechGenerationProtocol.cs" Link="SpeechGenerationProtocol.cs" />
+    <Compile Include="../../Plugins/LinkEts2Nav/Runtime/SpeechPackFormat.cs" Link="SpeechPackFormat.cs" />
     <EmbeddedResource Include="Texts/zh-CN.txt" LogicalName="LinkEts2Nav.Speech.zh-CN.txt" />
     <EmbeddedResource Include="Texts/contextual-fragments.json" LogicalName="LinkEts2Nav.Speech.contextual-fragments.json" />
     <PackageReference Include="org.k2fsa.sherpa.onnx" Version="2.0.1" />

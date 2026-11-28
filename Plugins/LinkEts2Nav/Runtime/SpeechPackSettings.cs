@@ -62,41 +62,16 @@ public sealed class SpeechPackSettings(string hostDirectory)
     private static (IReadOnlyDictionary<string,string> Fixed,IReadOnlyDictionary<string,string> Names) Validate(string directory, CancellationToken token)
     {
         if(!Directory.Exists(directory))throw new DirectoryNotFoundException("语音包目录不存在。");
-        IReadOnlyDictionary<string,string> Load(string path,int? limit=null)
+        IReadOnlyDictionary<string,string> Load(string path,bool names=false)
         {
-            if(!File.Exists(Path.Combine(path,"manifest.json")))return new Dictionary<string,string>();
-            var files=PreGeneratedSpeech.Load(path, maximumEntries: limit, cancellationToken: token);
-            if(files.Count==0)throw new InvalidDataException("语音包清单、音频或校验和无效："+path);
-            foreach(string file in files.Values)
-            {
-                token.ThrowIfCancellationRequested();
-                ValidateWave(file);
-            }
+            var files=names ? PreGeneratedSpeech.LoadNames(path,cancellationToken:token) :
+                PreGeneratedSpeech.Load(path,cancellationToken:token);
+            if(files.Count==0 && File.Exists(Path.Combine(path,"manifest.json")))
+                throw new InvalidDataException("语音包清单、音频或校验和无效："+path);
             return files;
         }
-        var fixedFiles=Load(directory);var names=Load(Path.Combine(directory,"CityNames"),4096);
+        var fixedFiles=Load(directory);var names=Load(Path.Combine(directory,"CityNames"),names:true);
         if(fixedFiles.Count+names.Count==0)throw new InvalidDataException("该目录没有可用的 manifest.json 或 CityNames/manifest.json。");
         return(fixedFiles,names);
-    }
-    private static void ValidateWave(string file)
-    {
-        using var input=File.OpenRead(file);using var reader=new BinaryReader(input);
-        input.Position=12;bool format=false,data=false;
-        while(input.Position+8<=input.Length)
-        {
-            string kind=System.Text.Encoding.ASCII.GetString(reader.ReadBytes(4));uint size=reader.ReadUInt32();long next=input.Position+size+(size%2);
-            if(next>input.Length)throw new InvalidDataException("WAV 音频区块不完整。");
-            if(kind=="fmt ")
-            {
-                if(size<16||reader.ReadUInt16()!=1||reader.ReadUInt16()!=1||reader.ReadUInt32()!=24000)
-                    throw new InvalidDataException("语音包音频必须是24kHz单声道PCM16 WAV。");
-                if(reader.ReadUInt32()!=48000||reader.ReadUInt16()!=2||reader.ReadUInt16()!=16)
-                    throw new InvalidDataException("语音包音频必须是PCM16 WAV。");
-                format=true;
-            }
-            if(kind=="data")data=size>0&&size%2==0;
-            input.Position=next;
-        }
-        if(!format||!data)throw new InvalidDataException("WAV 音频缺少有效格式或采样数据。");
     }
 }

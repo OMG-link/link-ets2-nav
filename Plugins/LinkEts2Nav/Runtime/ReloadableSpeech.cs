@@ -27,10 +27,19 @@ public sealed class ReloadableSpeech:ISpeechSynthesizer,ISpeechSynthesisDiagnost
     {
         this.options=options;this.settings=settings;this.create=create??(value=>new KokoroSpeechProcess(value));
         worker=new(this.create(options));
-        Fixed=PreGeneratedSpeech.Load(options.PackDirectory,log);
-        Names=PreGeneratedSpeech.Load(Path.Combine(options.PackDirectory,"CityNames"),log,4096).Keys.ToHashSet(StringComparer.Ordinal);
+        Fixed=LoadAtStartup(options.PackDirectory,false,log);
+        Names=LoadAtStartup(Path.Combine(options.PackDirectory,"CityNames"),true,log).Keys.ToHashSet(StringComparer.Ordinal);
         revision=settings.Pending is {} saved&&Path.GetFullPath(saved.Directory)==Path.GetFullPath(options.PackDirectory)?saved.Revision:0;
         settings.MarkActive(options.PackDirectory);
+    }
+    private static IReadOnlyDictionary<string,string> LoadAtStartup(string directory,bool names,Action<string>? log)
+    {
+        try { return names ? PreGeneratedSpeech.LoadNames(directory,log) : PreGeneratedSpeech.Load(directory,log); }
+        catch(Exception e) when(SpeechFiles.SpeechPackFormat.IsReadFailure(e))
+        {
+            log?.Invoke($"预生成语音目录未加载：{directory}。{e.Message}");
+            return new Dictionary<string,string>(StringComparer.Ordinal);
+        }
     }
     public async Task<string> SynthesizeAsync(string text,CancellationToken token)
     {

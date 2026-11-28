@@ -1,7 +1,6 @@
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Text;
-using System.Text.Json;
 using LinkEts2Nav.Core;
 
 namespace LinkEts2Nav.Speech;
@@ -29,15 +28,12 @@ internal sealed class NavigationSpeechPack
         if (!File.Exists(manifest)) return null;
         try
         {
-            using var stream = File.OpenRead(manifest);
-            var pack = JsonSerializer.Deserialize<PackManifest>(stream);
-            if (pack is not { Schema: 1, Entries: not null } || string.IsNullOrWhiteSpace(pack.Model) ||
-                string.IsNullOrWhiteSpace(pack.Voice) || pack.Entries.Any(e => e is null || string.IsNullOrEmpty(e.Text) ||
-                e.Text.Length > 2048 || e.Text.Any(char.IsControl)) ||
-                pack.Entries.DistinctBy(e => e.Text, StringComparer.Ordinal).Count() != pack.Entries.Length) return null;
+            var pack = SpeechPackFormat.ReadManifest(manifest);
+            if (string.IsNullOrWhiteSpace(pack.Model) || string.IsNullOrWhiteSpace(pack.Voice) ||
+                pack.Entries.Any(e => e.Text.Any(char.IsControl))) return null;
             return pack;
         }
-        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return null; }
+        catch (Exception e) when (SpeechPackFormat.IsReadFailure(e)) { return null; }
     }
 
     internal static NavigationSpeechPack? Open(string root, PackManifest? fixedPack, PackManifest? namesVoice = null)

@@ -65,10 +65,9 @@ internal static class JourneySpeechJobs
         string model = "kokoro-" + synthesis.Fingerprint, manifest = Path.Combine(output, "manifest.json");
         if (Directory.Exists(output) && Directory.EnumerateFileSystemEntries(output).Any())
         {
-            using var stream = File.OpenRead(manifest);
-            var previous = JsonSerializer.Deserialize<PackManifest>(stream);
-            if (previous is not { Schema: 1, Entries: not null } || previous.Model != model || previous.Voice != settings.Voice ||
-                previous.Entries.Any(e => e is null || e.Composed || e.VoiceProfile is not null))
+            var previous = SpeechPackFormat.ReadManifest(manifest);
+            if (previous.Model != model || previous.Voice != settings.Voice ||
+                previous.Entries.Any(e => e.Composed || e.VoiceProfile is not null))
                 throw new InvalidDataException("Generate a different journey voice in a separate empty directory.");
             texts = previous.Entries.Select(e => e.Text).Concat(texts).Distinct(StringComparer.Ordinal).ToArray();
         }

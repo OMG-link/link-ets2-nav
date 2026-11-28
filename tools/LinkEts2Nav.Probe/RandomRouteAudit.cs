@@ -24,6 +24,7 @@ internal static class RandomRouteAudit
         var unmatched = new List<object>();
         var unmatchedSamples = new List<object>();
         var unplanned = new List<object>();
+        var speechRoutes = new List<object>();
         long frames = 0, matchedFrames = 0, completeLaneFrames = 0;
         int attempts = 0, finished = 0, matchedRoutes = 0, routesWithPrefabs = 0, prefabStarts = 0;
         string stage = "map scan";
@@ -62,9 +63,10 @@ internal static class RandomRouteAudit
                 bool matched = false;
                 bool planned = false;
                 string? lastState = null;
+                var played = new List<object>();
                 try
                 {
-                    foreach (var (nav, hasStructure) in Replay(walk, nodes, map, estimator, sdkScale))
+                    foreach (var (nav, hasStructure) in Replay(walk, nodes, map, estimator, sdkScale, played))
                     {
                         int frame = samples++;
                         frames++;
@@ -86,6 +88,9 @@ internal static class RandomRouteAudit
                     if (matched) matchedRoutes++;
                     else unmatched.Add(new { attempt = attempts, nodes = key, state = lastState, steps = walk.Select(Witness) });
                     if (!planned) unplanned.Add(new { attempt = attempts, nodes = key, steps = walk.Select(Witness) });
+                    speechRoutes.Add(new { attempt = attempts, nodes = key,
+                        steps = walk.Select(s => new { owner = s.Owner.ToString("X16"), from = s.From.ToString("X16"), to = s.To.ToString("X16"),
+                            type = s.Road is null ? "prefab" : "road", entry = s.Entry, exit = s.Exit, inputs = s.Inputs, outputs = s.Outputs }).ToArray(), played });
                     finished++;
                 }
                 catch (Exception error)
@@ -108,7 +113,7 @@ internal static class RandomRouteAudit
 
         var report = new { x = center.X, z = center.Z, radius, seed, requested = count, attempts,
             generated = seen.Count, finished, plannedRoutes = finished - unplanned.Count, matchedRoutes, routesWithPrefabs,
-            prefabStarts, frames, matchedFrames, completeLaneFrames, failures, unplanned, unmatched, unmatchedSamples };
+            prefabStarts, frames, matchedFrames, completeLaneFrames, failures, unplanned, unmatched, unmatchedSamples, speechRoutes };
         var path = Path.GetFullPath(output);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
@@ -118,10 +123,15 @@ internal static class RandomRouteAudit
     }
 
     private static IEnumerable<(NavigationDiagnostic Navigation, bool HasStructure)> Replay(IReadOnlyList<Step> walk, RouteNode[] nodes,
-        NearbyMapSnapshot map, RouteJourneyEstimator estimator, double sdkScale)
+        NearbyMapSnapshot map, RouteJourneyEstimator estimator, double sdkScale, List<object> played)
     {
         var state = NavigationRouteState.Empty;
-        var guidance = new GuidanceCoordinator { JourneyEstimateProvider = data => estimator.Estimate(data.Route) };
+        int currentVisit = 0;
+        double currentFraction = 0, currentX = 0, currentZ = 0;
+        using var speech = new AuditSpeechPlayback(cue => played.Add(new { visit = currentVisit, fraction = currentFraction,
+            x = currentX, z = currentZ, source = cue.Source, stage = cue.Stage, eventId = cue.EventId, triggerId = cue.TriggerId, text = cue.Text }));
+        var guidance = speech.Guidance;
+        guidance.JourneyEstimateProvider = data => estimator.Estimate(data.Route);
         var runtime = new NavigationRuntime(guidance: guidance);
         var warnings = new WarningPipeline(guidance: guidance);
         var signals = new TrafficLightReminderRuntime(guidance, new());
@@ -137,12 +147,15 @@ internal static class RandomRouteAudit
                     var route = RouteSnapshot.Parse(nodes.Skip(visit), now);
                     state = state.Accept(route);
                     var vehicle = Pose(walk[visit], fraction, remaining, now);
+                    currentVisit = visit; currentFraction = fraction; currentX = vehicle.X; currentZ = vehicle.Z;
                     var data = new GameDataSnapshot(vehicle, route, route.Availability, "route-audit", true) { NavigationRoute = state };
                     guidance.Observe(data, now);
+                    speech.FinishBatch();
                     var nav = runtime.Process(data, map, now);
                     warnings.Process(data, map, now);
                     signals.Process(data, map, nav, now);
                     guidance.Tick(data, now);
+                    speech.FinishBatch();
                     yield return (nav, runtime.StructureBuildCount > 0);
                 }
             }

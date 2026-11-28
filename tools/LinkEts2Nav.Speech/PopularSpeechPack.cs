@@ -64,7 +64,8 @@ internal static class PopularSpeechPack
             if (output.Exists && output.EnumerateFileSystemInfos().Any())
             {
                 if (old?.ApiProfile is null) throw new PackGenerationException("occupied");
-                var owned = old.Entries.Select(e => e.File).Append("manifest.json").Append("CityNames").ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var owned = old.Entries.Select(e => e.File).Append("manifest.json").Append("CityNames")
+                    .Append(JourneySpeechPack.DirectoryName).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 CopyDirectory(output, stage, token, owned);
             }
             var entries = CopySource(job.SourcePack, previous, stage, audio, token);

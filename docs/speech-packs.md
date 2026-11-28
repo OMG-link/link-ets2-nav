@@ -16,6 +16,18 @@ API 接收 HTTP POST 的 JSON，并直接返回 24 kHz 单声道 PCM16 WAV。服
 
 服务提供计数接口时，将其地址填入高级设置的“Token 计数地址”。它须与合成 API 的协议、主机和端口相同，接收相同的 POST JSON 和认证信息，返回含非负整数的 JSON，例如 `{"tokens":7}`。留空时，工具以本次需要合成的文字所占的 UTF-8 字节数保守估算。本地模型也按这一规则使用预算。
 
+## 出发与重新规划提示
+
+导航优先播放与当前行程文字完全匹配的整句录音。距离或分钟数换成新组合时，播放器读取所选语音包的 `Journey/manifest.json`，将同一音色的录音拼成一份完整 WAV。例如“准备出发，全程一点二公里，大约需要两分钟。”可使用“准备出发，”“全程一点二公里，”“大约需要两分钟。”三条录音。常见分句可以整段录制，其他距离和时长由预录数词、单位和固定词组组成。旧包缺少所需录音时，播放器会把完整原句交给本地 TTS。
+
+维护者可用现有本地 Kokoro 模型生成这组片段。以下命令在仓库根目录运行。
+
+```powershell
+dotnet run --project tools/LinkEts2Nav.Speech -- --generate-journey-pack --model-dir MODEL_DIR --cache-dir CACHE_DIR --output artifacts/speech/my-pack/Journey
+```
+
+使用自己的配音时，先运行 `--export-journey-jobs --output artifacts/speech/journey-jobs.json` 导出文本，再用下文的 `--import-pack` 将同一模型、同一音色的 24 kHz 单声道 PCM16 录音导入包内的 `Journey` 目录。导出和本地生成都接受 `--texts journey-lines.txt`，文件采用 UTF-8，每行一条真实的出发或重新规划提示，可将该行的距离与时长额外录成自然分句。生成常用语音包时，当前所选包的行程录音会一并沿用。
+
 ## 导出待生成任务
 
 在仓库根目录执行：

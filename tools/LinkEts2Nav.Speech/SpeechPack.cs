@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using LinkEts2Nav.Core;
 
 namespace LinkEts2Nav.Speech;
 
@@ -82,6 +83,8 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             Console.Error.WriteLine("Speech pack unavailable: " + ex.GetType().Name);
             pack = null;
         }
+        if (directory is not null && JourneySpeechText.Parse(text) is { } journey)
+            return JourneySpeechPack.TryGenerate(directory, cacheDirectory, journey) ?? local(text);
         var company=Regex.Match(text,@"^(?<prefix>.*?)(?<arrival>到达)(?<name>[^\r\n]+?)货场(?<suffix>附近，本次导航结束。|。)$",
             RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
         if(company.Success)
@@ -189,12 +192,18 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
 
     private string Resolve(PackEntry entry,string? packDirectory=null)
     {
-        // Flat content-derived filenames prevent manifest path traversal.
+        string root = packDirectory ?? directory!;
+        ReadVerified(entry, root);
+        return Path.Combine(root, entry.File);
+    }
+
+    internal static byte[] ReadVerified(PackEntry entry, string directory)
+    {
         if (entry.File != FileName(entry.Text)) throw new InvalidDataException("Unexpected pack filename.");
-        string path = Path.Combine(packDirectory??directory!, entry.File);
-        if (new FileInfo(path).Length > 64 * 1024 * 1024 || Hash(File.ReadAllBytes(path)) != entry.Sha256)
+        using var file = File.OpenRead(Path.Combine(directory, entry.File));
+        if (file.Length is < 44 or > PcmAudio.MaximumWaveBytes || Convert.ToHexString(SHA256.HashData(file)) != entry.Sha256)
             throw new InvalidDataException("Speech pack checksum mismatch.");
-        PcmAudio.Read(path);
-        return path;
+        file.Position = 0;
+        return PcmAudio.Read(file);
     }
 }

@@ -135,7 +135,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
                     lock (gate){version=audioVersion;text = plans.OrderBy(p => p.Value.Priority).ThenBy(p => p.Key, StringComparer.Ordinal).SelectMany(p => p.Value.Texts).FirstOrDefault(p => !ready.ContainsKey(p) && !unavailable.Contains(p));}
                     if (text is null) break;
                     var preparation=Stopwatch.StartNew();
-                    log("开始准备 TTS 音频：" + text);
+                    log("开始准备语音：" + text);
                     string file;bool synthesized=false,cancelled=false;
                     try
                     {
@@ -168,7 +168,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
                     bool stale;lock (gate){stale=version!=audioVersion;if(!stale){ready[text] = file;exactPack.Remove(text);}}
                     usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,stale?null:(synthesizer as ISpeechSynthesisDiagnostics)?.LastCacheHit,cancelled:stale);
                     if(stale)continue;
-                    log("TTS 文件缓存已就绪：" + text + " 文件=" + file);
+                    log("语音已就绪：" + text + " 文件=" + file);
                     CacheChanged?.Invoke();
                 }
             }

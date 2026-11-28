@@ -15,6 +15,7 @@ if (args.Contains("--help", StringComparer.Ordinal))
     Console.WriteLine("Prepare missing names: --prepare-name-jobs --texts UTF8_FILE [--texts UTF8_FILE] --output FILE [--pack CityNames_DIR].");
     Console.WriteLine("Context fragments: --export-context-jobs --output DIR [--plan FILE]; --generate-context-pack --keys FILE --output DIR [--plan FILE]; --slice-context-pack --carriers DIR --output DIR [--plan FILE].");
     Console.WriteLine("Import external WAVs: --import-pack --jobs FILE --input DIR --output DIR [--model NAME] [--voice NAME].");
+    Console.WriteLine("Journey recordings: --export-journey-jobs --output FILE [--texts JOURNEY_LINES]; --generate-journey-pack --model-dir DIR --cache-dir DIR --output PACK/Journey [--texts JOURNEY_LINES] [--voice zf_067] [--threads 2].");
     Console.WriteLine("Generate cloud pack: --generate-pack --keys FILE --output DIR [--texts UTF8_FILE] (explicit network calls, billed by provider).");
     Console.WriteLine("Generate city-name fragments: --generate-city-names --keys FILE --output DIR --texts UTF8_FILE.");
     Console.WriteLine("No playback or model downloads. EOF exits 0; startup errors exit 2; request errors keep the worker alive.");
@@ -28,6 +29,7 @@ var json = new JsonSerializerOptions
 };
 try
 {
+    if (args.Length > 0 && args[0] is "--export-journey-jobs" or "--generate-journey-pack") return await JourneySpeechJobs.RunAsync(args);
     if (args.Length > 0 && args[0] is "--export-context-jobs" or "--generate-context-pack" or "--slice-context-pack") return await ContextualSpeech.RunAsync(args);
     if (args.Length > 0 && args[0] == "--prepare-name-jobs") return await NameSpeechJobs.RunAsync(args);
     if (args is [LinkEts2Nav.SpeechProtocol.GenerationJob.Mode]) return await PopularSpeechPack.RunWorkerAsync();

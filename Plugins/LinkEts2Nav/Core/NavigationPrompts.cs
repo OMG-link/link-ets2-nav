@@ -20,24 +20,7 @@ public static class NavigationPrompts
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
 
-    public static string Number(int value)
-    {
-        if (value is < 0 or > 9999) throw new ArgumentOutOfRangeException(nameof(value));
-        if (value == 0) return "零";
-        const string digits = "零一二三四五六七八九";
-        string result = "";
-        bool zero = false;
-        foreach (var (divisor, unit) in new[] { (1000,"千"), (100,"百"), (10,"十"), (1,"") })
-        {
-            int digit = value / divisor;
-            value %= divisor;
-            if (digit == 0) { if (result.Length > 0 && value > 0) zero = true; continue; }
-            if (zero) { result += "零"; zero = false; }
-            if (!(divisor == 10 && digit == 1 && result.Length == 0)) result += digits[digit];
-            result += unit;
-        }
-        return result;
-    }
+    public static string Number(int value) => JourneySpeechText.BelowTenThousand(value);
 
     public static string AtDistance(ManeuverKind kind, int meters) => AtDistance(kind,meters,0);
 

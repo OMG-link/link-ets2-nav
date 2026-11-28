@@ -107,6 +107,8 @@ public sealed class BudgetSpeechPackTests : IDisposable
             (_, _) => Task.FromResult<byte[]>([91, 0]), cancellationToken: TestContext.Current.CancellationToken);
         string names = Directory.CreateDirectory(Path.Combine(source, "CityNames")).FullName;
         await File.WriteAllTextAsync(Path.Combine(names, "extra.txt"), "original language", TestContext.Current.CancellationToken);
+        string journey = Directory.CreateDirectory(Path.Combine(source, "Journey")).FullName;
+        File.WriteAllText(Path.Combine(journey, "manifest.json"), "{}");
         File.WriteAllText(Path.Combine(source, "context-provenance.json"), "{}");
 
         var first = await Run(api, "original", "first", candidates, 9);
@@ -141,6 +143,10 @@ public sealed class BudgetSpeechPackTests : IDisposable
         Assert.Equal(new byte[] { 91, 0 }, PcmAudio.Read(Path.Combine(root, "second", SpeechPack.FileName(original))));
         Assert.True(File.Exists(Path.Combine(root, "second", "CityNames", "extra.txt")));
         Assert.True(File.Exists(Path.Combine(root, "second", "context-provenance.json")));
+        Assert.True(File.Exists(Path.Combine(root, "second", "Journey", "manifest.json")));
+        var rotated = await Run(api, "empty", "first", [new(hot, 40)], 1);
+        Assert.Equal("done", rotated.GetProperty("Kind").GetString());
+        Assert.False(Directory.Exists(Path.Combine(root, "first", "Journey")));
     }
 
     [Fact]

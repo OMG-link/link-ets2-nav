@@ -152,16 +152,17 @@ try {
             $oldManifest = Join-Path $packDeployment 'manifest.json'
             if (Test-Path -LiteralPath $oldManifest) { Remove-Item -LiteralPath $oldManifest -Force }
         }
-        if (-not (Test-Path -LiteralPath (Join-Path $speechPack 'CityNames\manifest.json'))) {
-            $oldManifest = Join-Path $packDeployment 'CityNames\manifest.json'
-            if (Test-Path -LiteralPath $oldManifest) { Remove-Item -LiteralPath $oldManifest -Force }
-        }
         Get-ChildItem -LiteralPath $speechPack -File | Copy-Item -Destination $packDeployment -Force
-        $cityNamePack = Join-Path $speechPack 'CityNames'
-        if (Test-Path -LiteralPath (Join-Path $cityNamePack 'manifest.json')) {
-            $cityNameDeployment = Join-Path $packDeployment 'CityNames'
-            New-Item -ItemType Directory -Path $cityNameDeployment -Force | Out-Null
-            Get-ChildItem -LiteralPath $cityNamePack -File | Copy-Item -Destination $cityNameDeployment -Force
+        foreach ($subpack in @('CityNames', 'Journey')) {
+            $sourceSubpack = Join-Path $speechPack $subpack
+            $targetSubpack = Join-Path $packDeployment $subpack
+            if (Test-Path -LiteralPath (Join-Path $sourceSubpack 'manifest.json')) {
+                New-Item -ItemType Directory -Path $targetSubpack -Force | Out-Null
+                Get-ChildItem -LiteralPath $sourceSubpack -File | Copy-Item -Destination $targetSubpack -Force
+            } else {
+                $oldManifest = Join-Path $targetSubpack 'manifest.json'
+                if (Test-Path -LiteralPath $oldManifest) { Remove-Item -LiteralPath $oldManifest -Force }
+            }
         }
         Write-Host "Local speech pack deployed to $packDeployment."
     }

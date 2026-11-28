@@ -118,5 +118,45 @@ public sealed class PreparedNavigationPackTests : IDisposable
         Assert.Equal(new short[] { 999 }, Audio(company));
     }
 
+    [Theory]
+    [InlineData("到达North Quay货场。", "到达", "North Quay", "货场", "到达目的地。")]
+    [InlineData("进入Eindhoven城区，请注意减速慢行。", "进入", "Eindhoven", "城区，请注意减速慢行", "进入城区，请注意减速慢行。")]
+    public void NormalModeUsesTheWholeNamedWordingAvailableInOneNavigationVoice(string text, string prefix, string name, string suffix, string generic)
+    {
+        Manifest(Navigation, [Clip(Navigation, prefix, 501), Clip(Navigation, name, 502), Clip(Navigation, suffix, 503),
+            Clip(Navigation, generic, 700)]);
+        var result = Reader.Generate(text, NoLive);
+        Assert.Equal(new short[] { 501, 502, 503 }, MemoryMarshal.Cast<byte, short>(PcmAudio.Read(result.Path)).ToArray());
+        Assert.Equal(new short[] { 700 }, Audio(text)); // The stricter mode retains its registered-name requirement.
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void NormalModePreservesTheRegisteredNameAndOnlySynthesizesMissingCarrierAudio(bool recordedCarriers)
+    {
+        const string prefix = "进入", suffix = "城区，请注意减速慢行。", generic = prefix + suffix;
+        const string name = "Húsavík";
+        string places = Path.Combine(root, "CityNames");
+        Manifest(places, [Clip(places, name, 904)], voice: "recorded-name");
+        var navigation = new List<PackEntry> { Clip(Navigation, generic, 700) };
+        if (recordedCarriers) navigation.AddRange([Clip(Navigation, prefix, 501), Clip(Navigation, suffix, 502)]);
+        Manifest(Navigation, navigation);
+        var live = new List<string>();
+        (string Path, bool CacheHit) Local(string cue)
+        {
+            Assert.Contains(cue, new[] { prefix, suffix });
+            live.Add(cue);
+            string dir = Path.Combine(root, "live");
+            var entry = Clip(dir, cue, (short)(cue == prefix ? 501 : 502));
+            return (Path.Combine(dir, entry.File), false);
+        }
+        var named = Reader.Generate(prefix + name + suffix, Local);
+        Assert.Equal(new short[] { 501, 904, 502 }, MemoryMarshal.Cast<byte, short>(PcmAudio.Read(named.Path)).ToArray());
+        Assert.Equal(recordedCarriers ? Array.Empty<string>() : [prefix, suffix], live);
+        var missing = Reader.Generate(prefix + "未登记" + suffix, NoLive);
+        Assert.Equal(new short[] { 700 }, MemoryMarshal.Cast<byte, short>(PcmAudio.Read(missing.Path)).ToArray());
+    }
+
     public void Dispose() => Directory.Delete(root, recursive: true);
 }

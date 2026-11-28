@@ -87,6 +87,10 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         }
         if (directory is not null && JourneySpeechText.Parse(text) is { } journey &&
             JourneySpeechPack.TryGenerate(directory, cacheDirectory, journey) is { } brief) return brief;
+        (string Path, bool CacheHit)? RecordedNavigation() =>
+            directory is not null && NavigationSpeechPack.Open(directory, pack)?.Render(text) is { } recorded
+                ? NavigationSpeechPack.Save(cacheDirectory, "navigation", recorded) : null;
+        if (!preparedOnly && RecordedNavigation() is { } complete) return complete;
         var company=Regex.Match(text,@"^(?<prefix>(?:.*，然后)?.*?)到达(?<name>[^\r\n]+?)货场(?<suffix>附近，本次导航结束。|。)$",
             RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
         if(company.Success)
@@ -113,9 +117,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             return GenerateNamedParts(text,prefix+suffix,[(prefix,false),(city.Groups["name"].Value,true),(suffix,false)],
                 "city-entry-v1","city",local,pack,preparedOnly);
         }
-        if (directory is not null && NavigationSpeechPack.Open(directory, pack)?.Render(text) is { } recorded)
-            return NavigationSpeechPack.Save(cacheDirectory, "navigation", recorded);
-        if (preparedOnly) throw new PreparedSpeechUnavailableException();
+        if (preparedOnly) return RecordedNavigation() ?? throw new PreparedSpeechUnavailableException();
         if (pack is null) return local(text);
         try
         {
@@ -196,11 +198,6 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
                 if(i==parts.Length)return NavigationSpeechPack.Save(cacheDirectory,filePrefix,joinedNames.ToArray());
             }
             if(preparedOnly)return Generic();
-            if(File.Exists(Path.Combine(directory,NavigationSpeechPack.DirectoryName,"manifest.json")))
-            {
-                try{return Generate(fallback,local,preparedOnly:true);}
-                catch(PreparedSpeechUnavailableException){ }
-            }
             var samples=parts.Select(p=>p.IsName?names[p.Text]:PcmAudio.Read(Generate(p.Text,local).Path)).ToArray();
             string key=Hash(Encoding.UTF8.GetBytes(identity+"|"+text+"|"+string.Join("|",samples.Select(Hash))));
             string result=Path.Combine(cacheDirectory,filePrefix+"-"+key+".wav");

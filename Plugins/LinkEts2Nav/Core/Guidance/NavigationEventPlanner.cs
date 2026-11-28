@@ -325,11 +325,15 @@ public sealed class NavigationEventPlanner
         var m=list[i].Maneuver;string text=NavigationPrompts.Execute(m.Kind,m.ExecutionInstruction??Instruction(m,0));
         if(m.ExecutionOnly||m.Kind==ManeuverKind.EnterRoundabout||m.AnnouncementMode!=NavigationAnnouncementMode.Normal)return text;
         int next=ActionIndex(list,i+1);if(next<0||list[next].Maneuver.ExecutionOnly||list[next].Maneuver.JunctionId==m.JunctionId)return text;
-        if(list[next].BriefingAlong is not {} first)return text;
-        double available=list[next].Along-first;
-        double gap=list[next].Along-list[i].Along;
-        // A late briefing can be close to the next action even after a long drive from this one.
-        if(gap<=0||gap>=100||available<0||available>=100)return text;
+        var current = list[i];
+        var following = list[next];
+        if (current.EndAlong is not {} end || end < current.Along || following.BriefingAlong is not {} briefing) return text;
+        double afterExit = following.Along - end;
+        double available = following.Along - briefing;
+        // Eligibility starts at the physical exit. The spoken distance starts at the current action.
+        double spokenDistance = following.Along - current.Along;
+        if (afterExit is not (>= 0 and < 100) || available is not (>= 0 and < 100)
+            || spokenDistance is not (> 0 and < 10_000)) return text;
         string? nextInstruction=list[next].Maneuver.Kind==ManeuverKind.Destination&&list[next].Maneuver.DestinationCompanyName is {} company
             ?"到达"+company+"货场":list[next].Maneuver.Instruction;
         if(list[next].Maneuver.JunctionLaneInstruction is {} lanes)
@@ -337,6 +341,6 @@ public sealed class NavigationEventPlanner
             if(list[next].Along-playerAlong<=JunctionLaneDistance)nextInstruction=lanes;
             else if(list[next].Maneuver.Kind==ManeuverKind.ChooseLanes)return text;
         }
-        return NavigationPrompts.Then(text,list[next].Maneuver.Kind,gap,nextInstruction);
+        return NavigationPrompts.Then(text,list[next].Maneuver.Kind,spokenDistance,nextInstruction);
     }
 }

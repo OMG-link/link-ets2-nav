@@ -26,19 +26,33 @@ public sealed class ThenBoundaryTests
     [InlineData(100.1,false)]
     [InlineData(100,false)]
     [InlineData(99.9,true)]
-    public void ThresholdUsesTheAlreadyPlannedSpeakingInterval(double available,bool joined)
+    public void ThresholdUsesThePhysicalExit(double available,bool joined)
         =>Assert.Equal(joined,Execution(Plan(250,250+available)).Text.Contains("然后"));
 
-    [Fact]
-    public void LateDiscoveryReusesTheExistingFirstBoundaryRatherThanGuessingThePreviousEnd()
+    [Theory]
+    [InlineData(99.9, "向右前方行驶，然后一百九十米向右前方行驶。")]
+    [InlineData(100, "向右前方行驶。")]
+    public void LateDiscoveryRetainsItsFirstBriefingButCannotBridgeADistantExit(double afterExit, string expected)
     {
         var planner=new NavigationEventPlanner();var scheduler=new SpeechTriggerScheduler();
         planner.Build("s","r",Now,0,[First(200)],true,false,false,scheduler);
         // Refinement discovers the following decision after its predecessor's end.
         var plan=planner.Build("s","r",Now.AddSeconds(1),220,
-            [First(200) with{DistanceMeters=-120,EndDistanceMeters=-20},Next(300) with{DistanceMeters=80,EndDistanceMeters=130}],
+            [First(200) with{DistanceMeters=-120,EndDistanceMeters=-20},Next(200 + afterExit - 220)],
             true,false,false,scheduler);
         Assert.Equal(220,Assert.Single(plan.Triggers,t=>t.Kind==SpeechTriggerKind.Overview&&t.EventId.StartsWith("next@")).AlongMeters);
-        Assert.Equal("向右前方行驶，然后二百米向右前方行驶。",Execution(plan).Text);
+        Assert.Equal(expected, Execution(plan).Text);
+    }
+
+    [Theory]
+    [InlineData(10000)]
+    [InlineData(10060)]
+    public void NearbyExitKeepsBothExecutionsIndependentWhenTheSpokenDistanceIsOutOfRange(double startToStart)
+    {
+        double next = 100 + startToStart;
+        var plan = Plan(next - 30, next);
+        Assert.Equal("向右前方行驶。", Execution(plan).Text);
+        Assert.Equal("向右前方行驶。", Assert.Single(plan.Triggers, t => t.Kind == SpeechTriggerKind.Execution
+            && t.EventId.StartsWith("next@")).Text);
     }
 }

@@ -35,6 +35,8 @@ public enum SpeechPackGenerationPhase { Idle, Running, Succeeded, Failed, Cancel
 public sealed record SpeechPackGenerationStatus(SpeechPackGenerationPhase Phase, int Completed, int Total, string Message,
     string? OutputDirectory, long Budget = 0, long SpentTokens = 0, int WholeCount = 0, int ComposedCount = 0);
 
+internal sealed class SpeechPackDirectoryReservedException() : InvalidOperationException("该语音包目录正在生成，请在完成后再选择。");
+
 /// <summary>One private generation job per host. Pages can reconnect and observe its state without resubmitting a request.</summary>
 public sealed class SpeechPackGeneration
 {
@@ -103,7 +105,7 @@ public sealed class SpeechPackGeneration
                 string resolved = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory.Trim(), host));
                 lock (gate)
                     if (reservedDirectory is { } reserved && UsesDirectory(resolved, reserved))
-                        throw new InvalidOperationException("该语音包目录正在生成，请在完成后再选择。");
+                        throw new SpeechPackDirectoryReservedException();
             }
             return await settings.SaveAsync(directory, token);
         }

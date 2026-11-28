@@ -56,7 +56,7 @@ public static class NameSpeechJobs
                 try
                 {
                     SpeechPackFormat.ValidateEntry(packDirectory!, entry);
-                    state = "ready";
+                    if (!entry.ExactOnly) state = "ready";
                 }
                 catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { }
             }

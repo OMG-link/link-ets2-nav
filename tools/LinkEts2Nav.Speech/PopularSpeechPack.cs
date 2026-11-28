@@ -106,9 +106,9 @@ internal static class PopularSpeechPack
                 !BudgetSpeechSource.Verified(sourceFile, entry.Sha256)) throw new PackGenerationException("source");
             string target = Path.Combine(stage.FullName, entry.File);
             File.Copy(sourceFile, target, true);
-            string origin = entry.VoiceProfile ?? pack!.ApiProfile ?? "";
+            string origin = entry.ExactOnly ? "" : entry.VoiceProfile ?? pack!.ApiProfile ?? "";
             entries.Add(entry.Text, entry with { VoiceProfile = origin == audio.Profile ? null : origin });
-            if (!entry.Composed && origin == audio.Profile) audio.AddVerified(entry.Text, target);
+            if (!entry.ExactOnly && !entry.Composed && origin == audio.Profile) audio.AddVerified(entry.Text, target);
         }
         return entries;
     }
@@ -117,7 +117,7 @@ internal static class PopularSpeechPack
         Dictionary<string, PackEntry> entries, Action<GenerationReply> progress, CancellationToken token)
     {
         var rows = job.Candidates.Select(BudgetPhrase.From).ToArray();
-        var retained = entries.ToDictionary(pair => pair.Key, pair => pair.Value.Composed, StringComparer.Ordinal);
+        var retained = entries.ToDictionary(pair => pair.Key, pair => !pair.Value.ExactOnly && pair.Value.Composed, StringComparer.Ordinal);
         // Imported recordings have an explicitly unknown origin. An earlier generated voice may
         // be upgraded after covering new texts, while a hand-picked original is always retained.
         var replaceVoice = entries.Values.Where(e => e.VoiceProfile is { Length: > 0 }).Select(e => e.Text).ToHashSet(StringComparer.Ordinal);

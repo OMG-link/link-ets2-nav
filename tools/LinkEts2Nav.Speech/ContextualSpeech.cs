@@ -107,10 +107,13 @@ public static class ContextualSpeech
         }
         else if(args[0]!="--slice-context-pack")throw new ArgumentException("Unknown contextual speech command.");
         var sourcePack=SpeechPackFormat.ReadManifest(Path.Combine(sourceDirectory,"manifest.json"));
+        if(string.IsNullOrWhiteSpace(sourcePack.Model)||string.IsNullOrWhiteSpace(sourcePack.Voice))
+            throw new InvalidDataException("Carrier recordings require a known model and voice.");
         var samples=new Dictionary<string,byte[]>(StringComparer.Ordinal);var provenance=new List<object>();
         foreach(var item in plan.Items)
         {
             var source=sourcePack.Entries.Single(e=>e.Text==item.CarrierText);
+            if(source.ExactOnly)throw new InvalidDataException("Carrier recording cannot be used as a fragment.");
             byte[] pcm=SpeechPackFormat.ReadEntry(sourceDirectory,source);
             string path=Path.Combine(sourceDirectory,source.File);
             var times=JsonSerializer.Deserialize<ContextTimestamps>(await File.ReadAllTextAsync(path+".timestamps.json"))

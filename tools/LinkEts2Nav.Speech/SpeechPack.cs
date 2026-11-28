@@ -32,7 +32,10 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
     }
 
     public (string Path, bool CacheHit) Generate(string text, Func<string, (string Path, bool CacheHit)> local,
-        bool preparedOnly = false)
+        bool preparedOnly = false) => Generate(text, local, preparedOnly, asFragment: false);
+
+    private (string Path, bool CacheHit) Generate(string text, Func<string, (string Path, bool CacheHit)> local,
+        bool preparedOnly, bool asFragment)
     {
         if (preparedOnly) local = _ => throw new PreparedSpeechUnavailableException();
         PackManifest? pack = null;
@@ -42,7 +45,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             {
                 pack = SpeechPackFormat.ReadManifest(Path.Combine(directory, "manifest.json"));
                 var exact = pack.Entries.SingleOrDefault(e => e.Text == text);
-                if (exact is not null)
+                if (exact is not null && (!asFragment || !exact.ExactOnly))
                 {
                     using var source = File.OpenRead(SpeechPackFormat.EntryPath(directory, exact));
                     SpeechPackFormat.Verify(source, exact.Sha256);
@@ -121,7 +124,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
                 match.Groups["where"].Value + "，有测速照相";
             middleText += hasSpeed ? "，限速" : "。";
             var middle = pack.Entries.SingleOrDefault(e => e.Text == middleText);
-            if (middle is null) return local(text);
+            if (middle is null || middle.ExactOnly) return local(text);
             // Validate the cloud fragment before spending time on local inference.
             string middlePath = SpeechPackFormat.EntryPath(directory!, middle);
             SpeechPackFormat.VerifyWave(middlePath, middle.Sha256);
@@ -167,7 +170,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             foreach(string name in parts.Where(p=>p.IsName).Select(p=>p.Text).Distinct(StringComparer.Ordinal))
             {
                 var clip=pack.Entries.SingleOrDefault(e=>e.Text==name);
-                if(clip is null)return Generic();
+                if(clip is null || clip.ExactOnly)return Generic();
                 namesInVoice &= NavigationSpeechPack.InVoice(clip,pack);
                 names[name]=ReadVerified(clip,nameDirectory);
             }
@@ -187,7 +190,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
                 if(i==parts.Length)return NavigationSpeechPack.Save(cacheDirectory,filePrefix,joinedNames.ToArray());
             }
             if(preparedOnly)return Generic();
-            var samples=parts.Select(p=>p.IsName?names[p.Text]:PcmAudio.Read(Generate(p.Text,local).Path)).ToArray();
+            var samples=parts.Select(p=>p.IsName?names[p.Text]:PcmAudio.Read(Generate(p.Text,local,false,asFragment:true).Path)).ToArray();
             string key=Hash(Encoding.UTF8.GetBytes(identity+"|"+text+"|"+string.Join("|",samples.Select(Hash))));
             string result=Path.Combine(cacheDirectory,filePrefix+"-"+key+".wav");
             byte[] joined=samples.SelectMany(x=>x).ToArray();

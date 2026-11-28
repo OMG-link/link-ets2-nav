@@ -284,9 +284,12 @@ public sealed class PopularSpeechPackTests : IDisposable
         while (generation.Status.Completed == 0) await Task.Delay(10, progressTimeout.Token);
         Assert.Equal(1, generation.Status.Completed);
         string reserved = Path.Combine(root, "SpeechPacks", "LinkEts2Nav", "Popular-2");
-        var busy = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var busy = await Assert.ThrowsAsync<SpeechPackDirectoryReservedException>(() =>
             generation.SelectPackAsync(reserved, TestContext.Current.CancellationToken));
         Assert.Contains("正在生成", busy.Message);
+        var response = await SpeechManifestMetadataTests.Import(reserved, generation, TestContext.Current.CancellationToken);
+        Assert.Equal(409, response.Status);
+        Assert.Contains("正在写入", response.Message);
         Assert.Equal(old, (await generation.SelectPackAsync(old, TestContext.Current.CancellationToken)).Directory);
         await generation.CancelAndWaitAsync().WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         Assert.Equal(SpeechPackGenerationPhase.Cancelled, (await Finished()).Phase);

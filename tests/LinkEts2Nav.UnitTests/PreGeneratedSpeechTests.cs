@@ -22,10 +22,10 @@ public sealed class PreGeneratedSpeechTests:IDisposable
         Assert.Empty(messages);
     }
     [Fact]
-    public void InvalidManifestFieldsRetainTheirActualError()
+    public void MissingSchemaIdentifiesTheInvalidManifestField()
     {
         Directory.CreateDirectory(directory);File.WriteAllText(Manifest,"{}");
-        Assert.Throws<KeyNotFoundException>(()=>PreGeneratedSpeech.Load(directory));
+        Assert.Contains("Schema",Assert.Throws<InvalidDataException>(()=>PreGeneratedSpeech.Load(directory)).Message);
     }
     [Fact]
     public void DirectoryNamedManifestIsInvalidRatherThanAnAbsentOptionalPack()

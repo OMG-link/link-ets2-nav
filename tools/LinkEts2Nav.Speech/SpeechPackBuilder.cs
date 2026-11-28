@@ -22,7 +22,7 @@ public static class SpeechPackBuilder
         string[] planned = texts.Distinct(StringComparer.Ordinal).ToArray();
         var plannedTexts = planned.ToHashSet(StringComparer.Ordinal);
         var checkpoint = reuseCachedAudio && previous is { Schema: 1 } && previous.Model == model && previous.Voice == voice
-            ? (previous.Entries ?? []).Where(e => e is not null && !e.Composed && plannedTexts.Contains(e.Text)
+            ? (previous.Entries ?? []).Where(e => e is not null && !e.ExactOnly && !e.Composed && plannedTexts.Contains(e.Text)
                 && e.File == SpeechPack.FileName(e.Text)).ToDictionary(e => e.Text, StringComparer.Ordinal)
             : new Dictionary<string, PackEntry>(StringComparer.Ordinal);
         var completed = new List<PackEntry>();

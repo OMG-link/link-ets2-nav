@@ -30,7 +30,7 @@ internal static class QwenPackGenerator
             if(requested.Any(t=>t.Length>128||t.Any(char.IsControl)))throw new InvalidDataException("Invalid city name.");
             string manifest=Path.Combine(output,"manifest.json");
             var existing=File.Exists(manifest)?SpeechPackFormat.ReadManifest(manifest,SpeechPackFormat.MaximumNameEntries,SpeechPackFormat.MaximumNameManifestBytes):null;
-            if(existing is not null&&(existing.Model!=Model||existing.Voice!=Voice))
+            if(existing is not null&&(existing.Model!=Model||existing.Voice!=Voice||existing.Entries.Any(e=>e.ExactOnly)))
                 throw new InvalidDataException("Cannot extend an incompatible city-name pack.");
             texts=(existing?.Entries.Select(e=>e.Text)??[]).Concat(requested).Distinct(StringComparer.Ordinal).ToArray();
             if(texts.Count()>SpeechPackFormat.MaximumNameEntries)throw new InvalidDataException("Too many city names.");

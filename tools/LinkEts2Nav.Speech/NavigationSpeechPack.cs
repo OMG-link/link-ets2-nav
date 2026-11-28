@@ -19,7 +19,7 @@ internal sealed class NavigationSpeechPack
         first.Model == second.Model && first.Voice == second.Voice && first.ApiProfile == second.ApiProfile &&
         (ReferenceEquals(first, second) || !string.IsNullOrEmpty(first.ApiProfile) || first.Model != "external" || first.Voice != "default");
 
-    internal static bool InVoice(PackEntry e, PackManifest pack) => !e.Composed &&
+    internal static bool InVoice(PackEntry e, PackManifest pack) => !e.ExactOnly && !e.Composed &&
         (e.VoiceProfile is null || e.VoiceProfile.Length != 0 && e.VoiceProfile == pack.ApiProfile);
 
     internal static PackManifest? Read(string directory)

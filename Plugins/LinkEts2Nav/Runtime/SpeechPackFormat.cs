@@ -15,6 +15,10 @@ sealed record PackEntry(string Text, string File, string Sha256)
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Composed { get; init; }
+    // A recording can still play in full when its optional origin metadata cannot be
+    // interpreted. Preserve this restriction if a later generation copies the recording.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ExactOnly { get; init; }
     // Absent inherits the manifest profile. Empty means an unknown recording origin.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? VoiceProfile { get; init; }
@@ -52,30 +56,61 @@ internal static class SpeechPackFormat
         if (maximumBytes is int bytes && stream.Length > bytes) throw new InvalidDataException("Speech pack manifest is too large.");
         using var json = JsonDocument.Parse(stream);
         var root = json.RootElement;
-        if (root.GetProperty("Schema").GetInt32() != 1) throw new InvalidDataException("Unsupported speech pack schema.");
-        var items = root.GetProperty("Entries");
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("Schema", out var schema) ||
+            schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out var version) || version != 1)
+            throw new InvalidDataException("Speech pack Schema must be 1.");
+        if (!root.TryGetProperty("Entries", out var items) || items.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("Speech pack Entries must be an array.");
         int count = items.GetArrayLength();
         if (maximumEntries is int limit && count > limit) throw new InvalidDataException("Too many speech pack entries.");
         var entries = new PackEntry[count];
         var seen = new HashSet<string>(StringComparer.Ordinal);
         int i = 0;
-        static string? Optional(JsonElement obj, string name) => obj.TryGetProperty(name, out var value) ? value.GetString() : null;
+        bool packMetadataValid = true;
+        string? model = OptionalString(root, "Model", ref packMetadataValid);
+        string? voice = OptionalString(root, "Voice", ref packMetadataValid);
+        string? profile = OptionalString(root, "ApiProfile", ref packMetadataValid);
         foreach (var item in items.EnumerateArray())
         {
             token.ThrowIfCancellationRequested();
             if (item.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Invalid speech pack entry.");
-            string? text = Optional(item, "Text");
-            if (text is not { Length: > 0 and <= 2048 } || !seen.Add(text))
+            string text = RequiredString(item, "Text");
+            if (text.Length > 2048 || !seen.Add(text))
                 throw new InvalidDataException("Invalid or duplicate speech pack text.");
-            entries[i++] = new(text, Optional(item, "File") ?? "", Optional(item, "Sha256") ?? "")
+            bool entryMetadataValid = packMetadataValid;
+            string? voiceProfile = OptionalString(item, "VoiceProfile", ref entryMetadataValid);
+            bool composed = OptionalFlag(item, "Composed", ref entryMetadataValid);
+            bool exactOnly = OptionalFlag(item, "ExactOnly", ref entryMetadataValid);
+            entries[i++] = new(text, RequiredString(item, "File"), RequiredString(item, "Sha256"))
             {
-                Composed = item.TryGetProperty("Composed", out var composed) && composed.GetBoolean(),
-                VoiceProfile = Optional(item, "VoiceProfile")
+                Composed = composed, ExactOnly = exactOnly || !entryMetadataValid,
+                VoiceProfile = entryMetadataValid ? voiceProfile : ""
             };
         }
         // Early fixed packs omitted model and voice. They can be played as whole recordings;
         // composition still requires an explicitly shared voice.
-        return new(1, Optional(root, "Model") ?? "", Optional(root, "Voice") ?? "", entries) { ApiProfile = Optional(root, "ApiProfile") };
+        return new(1, packMetadataValid ? model ?? "" : "", packMetadataValid ? voice ?? "" : "", entries)
+            { ApiProfile = packMetadataValid ? profile : null };
+    }
+
+    private static string RequiredString(JsonElement item, string name) =>
+        item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text
+            ? text : throw new InvalidDataException($"Speech pack {name} must be a nonempty string.");
+
+    private static string? OptionalString(JsonElement item, string name, ref bool valid)
+    {
+        if (!item.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind == JsonValueKind.String) return value.GetString();
+        valid = false;
+        return null;
+    }
+
+    private static bool OptionalFlag(JsonElement item, string name, ref bool valid)
+    {
+        if (!item.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.False) return false;
+        if (value.ValueKind == JsonValueKind.True) return true;
+        valid = false;
+        return false;
     }
 
     internal static string EntryPath(string directory, PackEntry entry)

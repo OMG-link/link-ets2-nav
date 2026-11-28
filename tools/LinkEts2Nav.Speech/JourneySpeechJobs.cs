@@ -67,7 +67,7 @@ internal static class JourneySpeechJobs
         {
             var previous = SpeechPackFormat.ReadManifest(manifest);
             if (previous.Model != model || previous.Voice != settings.Voice ||
-                previous.Entries.Any(e => e.Composed || e.VoiceProfile is not null))
+                previous.Entries.Any(e => e.ExactOnly || e.Composed || e.VoiceProfile is not null))
                 throw new InvalidDataException("Generate a different journey voice in a separate empty directory.");
             texts = previous.Entries.Select(e => e.Text).Concat(texts).Distinct(StringComparer.Ordinal).ToArray();
         }

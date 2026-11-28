@@ -73,7 +73,8 @@ public sealed class PlayerSettingsServer : IAsyncDisposable
             app.MapPost("/api/speech/generate", Generate);
             app.MapPost("/api/speech/cancel", () => SpeechPackGeneration.Current.TryCancel()
                 ? Results.Ok() : Message(409, "当前没有正在生成的语音包。"));
-            app.MapPost("/api/speech/import", Import);
+            app.MapPost("/api/speech/import", (HttpRequest request, CancellationToken token) =>
+                Import(request, SpeechPackGeneration.Current, token));
             app.MapPost("/api/replay", SaveReplay);
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
             return new(app, capability);
@@ -129,19 +130,23 @@ public sealed class PlayerSettingsServer : IAsyncDisposable
     }
 
     private sealed record ImportInput(string? Directory);
-    private static async Task<IResult> Import(HttpRequest request, CancellationToken token)
+    internal static async Task<IResult> Import(HttpRequest request, SpeechPackGeneration generation, CancellationToken token)
     {
         var input = await request.ReadFromJsonAsync<ImportInput>(token);
         if (string.IsNullOrWhiteSpace(input?.Directory)) return Message(400, "请填写本机的语音包目录。");
         try
         {
-            var pack = await SpeechPackGeneration.Current.SelectPackAsync(input.Directory, token);
+            var pack = await generation.SelectPackAsync(input.Directory, token);
             return Results.Json(new { message = $"已应用语音包，包含 {pack.Fixed.Count} 条语句和 {pack.Names.Count} 个名称。" });
         }
         catch (DirectoryNotFoundException) { return Message(400, "找不到这个目录，请检查路径。"); }
         catch (UnauthorizedAccessException) { return Message(400, "无法读取语音包或写入配置，请检查目录权限。"); }
-        catch (InvalidOperationException) { return Message(409, "这个目录的语音包正在写入，请等待生成结束。"); }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException or JsonException)
+        catch (SpeechPackDirectoryReservedException) { return Message(409, "这个目录的语音包正在写入，请等待生成结束。"); }
+        catch (IOException ex) when (OperatingSystem.IsWindows() && (ex.HResult & 0xffff) is 32 or 33)
+        { return Message(409, "语音包或配置文件正被其他程序占用，请稍后再试。"); }
+        catch (Exception ex) when (ex is InvalidDataException or JsonException)
+        { return Message(400, "语音包清单、WAV 音频或配置文件的格式无效，请检查后重试。"); }
+        catch (Exception ex) when (ex is IOException or ArgumentException)
         { return Message(400, "语音包无法应用，请检查清单、音频文件和配置目录。"); }
     }
 

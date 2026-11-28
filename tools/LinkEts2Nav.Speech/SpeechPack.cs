@@ -56,8 +56,10 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         return text;
     }
 
-    public (string Path, bool CacheHit) Generate(string text, Func<string, (string Path, bool CacheHit)> local)
+    public (string Path, bool CacheHit) Generate(string text, Func<string, (string Path, bool CacheHit)> local,
+        bool preparedOnly = false)
     {
+        if (preparedOnly) local = _ => throw new PreparedSpeechUnavailableException();
         PackManifest? pack = null;
         try
         {
@@ -83,29 +85,37 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             Console.Error.WriteLine("Speech pack unavailable: " + ex.GetType().Name);
             pack = null;
         }
-        if (directory is not null && JourneySpeechText.Parse(text) is { } journey)
-            return JourneySpeechPack.TryGenerate(directory, cacheDirectory, journey) ?? local(text);
-        var company=Regex.Match(text,@"^(?<prefix>.*?)(?<arrival>到达)(?<name>[^\r\n]+?)货场(?<suffix>附近，本次导航结束。|。)$",
+        if (directory is not null && JourneySpeechText.Parse(text) is { } journey &&
+            JourneySpeechPack.TryGenerate(directory, cacheDirectory, journey) is { } brief) return brief;
+        var company=Regex.Match(text,@"^(?<prefix>(?:.*，然后)?.*?)到达(?<name>[^\r\n]+?)货场(?<suffix>附近，本次导航结束。|。)$",
             RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
         if(company.Success)
         {
             string prefix=company.Groups["prefix"].Value+"到达",suffix="货场"+company.Groups["suffix"].Value;
             string fallback=company.Groups["prefix"].Value+(suffix=="货场。"?"到达目的地。":"到达目的地附近，导航结束。");
             return GenerateNamedParts(text,fallback,
-                [(prefix,false),(company.Groups["name"].Value,true),(suffix,false)],"company-arrival-v1","company",local);
+                [(prefix,false),(company.Groups["name"].Value,true),(suffix,false)],"company-arrival-v1","company",local,pack,preparedOnly);
         }
-        var ferry=Regex.Match(text,@"^(?<prefix>(?:[零一二两三四五六七八九十百千0-9点.]+(?:米|公里)后，|即将)?)进入(?<from>[^，。\r\n]+)码头，乘坐前往(?<to>[^，。\r\n]+)的轮渡。$",
+        var ferry=Regex.Match(text,@"^(?<prefix>.*?)进入(?<from>[^，。\r\n]+)码头，乘坐前往(?<to>[^，。\r\n]+)的轮渡。$",
             RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
         if(ferry.Success)
         {
             string prefix=ferry.Groups["prefix"].Value;
             return GenerateNamedParts(text,prefix+"进入码头，按导航方向乘坐轮渡。",
                 [(prefix+"进入",false),(ferry.Groups["from"].Value,true),("码头，乘坐前往",false),
-                    (ferry.Groups["to"].Value,true),("的轮渡。",false)],"ferry-entry-v1","ferry",local);
+                    (ferry.Groups["to"].Value,true),("的轮渡。",false)],"ferry-entry-v1","ferry",local,pack,preparedOnly);
         }
-        var city=Regex.Match(text,@"^(?<prefix>(?:[零一二两三四五六七八九十百千0-9]+米后，|即将)进入)(?<name>[^，。\r\n]+)城区，请注意减速慢行。$",
+        var city=Regex.Match(text,@"^(?<prefix>.*?进入)(?<name>[^，。\r\n]+)城区，请注意减速慢行。$",
             RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
-        if(city.Success)return GenerateCityEntry(city.Groups["prefix"].Value,city.Groups["name"].Value,text,local);
+        if(city.Success)
+        {
+            string prefix=city.Groups["prefix"].Value, suffix="城区，请注意减速慢行。";
+            return GenerateNamedParts(text,prefix+suffix,[(prefix,false),(city.Groups["name"].Value,true),(suffix,false)],
+                "city-entry-v1","city",local,pack,preparedOnly);
+        }
+        if (directory is not null && NavigationSpeechPack.Open(directory, pack)?.Render(text) is { } recorded)
+            return NavigationSpeechPack.Save(cacheDirectory, "navigation", recorded);
+        if (preparedOnly) throw new PreparedSpeechUnavailableException();
         if (pack is null) return local(text);
         try
         {
@@ -146,31 +156,50 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         }
     }
 
-    private (string Path,bool CacheHit) GenerateCityEntry(string prefix,string name,string text,
-        Func<string,(string Path,bool CacheHit)> local)
-        => GenerateNamedParts(text,prefix+"城区，请注意减速慢行。",
-            [(prefix,false),(name,true),("城区，请注意减速慢行。",false)],"city-entry-v1","city",local);
-
     // The historic CityNames directory stores reusable original-language place
     // clips. Validate every requested name before invoking the local voice.
     private (string Path,bool CacheHit) GenerateNamedParts(string text,string fallback,
         (string Text,bool IsName)[] parts,string identity,string filePrefix,
-        Func<string,(string Path,bool CacheHit)> local)
+        Func<string,(string Path,bool CacheHit)> local,PackManifest? fixedPack,bool preparedOnly)
     {
+        (string Path,bool CacheHit) Generic() => Generate(fallback, local, preparedOnly);
         try
         {
             string nameDirectory=Path.Combine(directory??"","CityNames"),manifest=Path.Combine(nameDirectory,"manifest.json");
-            if(directory is null||!File.Exists(manifest))return local(fallback);
+            if(directory is null||!File.Exists(manifest))return Generic();
             if(new FileInfo(manifest).Length>2097152)throw new InvalidDataException("Place-name manifest too large.");
             var pack=JsonSerializer.Deserialize<PackManifest>(File.ReadAllText(manifest));
             if(pack is not {Schema:1,Entries:not null}||pack.Entries.Length>4096||pack.Entries.Any(e=>e is null))
                 throw new InvalidDataException("Invalid place-name manifest.");
             var names=new Dictionary<string,byte[]>(StringComparer.Ordinal);
+            bool namesInVoice=true;
             foreach(string name in parts.Where(p=>p.IsName).Select(p=>p.Text).Distinct(StringComparer.Ordinal))
             {
                 var clip=pack.Entries.SingleOrDefault(e=>e.Text==name);
-                if(clip is null)return local(fallback);
-                names[name]=PcmAudio.Read(Resolve(clip,nameDirectory));
+                if(clip is null)return Generic();
+                namesInVoice &= NavigationSpeechPack.InVoice(clip,pack);
+                names[name]=ReadVerified(clip,nameDirectory);
+            }
+            // Foreign names are exact CityNames recordings. Recorded-only composition requires
+            // every Chinese carrier (including a preceding turn) to belong to that same voice.
+            var book=namesInVoice?NavigationSpeechPack.Open(directory,fixedPack,pack):null;
+            if(book is not null)
+            {
+                using var joinedNames=new MemoryStream();
+                int i=0;
+                for(;i<parts.Length;i++)
+                {
+                    var part=parts[i];
+                    byte[]? pcm=part.IsName?names[part.Text]:book.Render(part.Text);
+                    if(pcm is null||!NavigationSpeechPack.Append(joinedNames,pcm))break;
+                }
+                if(i==parts.Length)return NavigationSpeechPack.Save(cacheDirectory,filePrefix,joinedNames.ToArray());
+            }
+            if(preparedOnly)return Generic();
+            if(File.Exists(Path.Combine(directory,NavigationSpeechPack.DirectoryName,"manifest.json")))
+            {
+                try{return Generate(fallback,local,preparedOnly:true);}
+                catch(PreparedSpeechUnavailableException){ }
             }
             var samples=parts.Select(p=>p.IsName?names[p.Text]:PcmAudio.Read(Generate(p.Text,local).Path)).ToArray();
             string key=Hash(Encoding.UTF8.GetBytes(identity+"|"+text+"|"+string.Join("|",samples.Select(Hash))));
@@ -186,7 +215,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
         catch(Exception e) when(e is IOException or JsonException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
         {
             Console.Error.WriteLine("Place-name fragment unavailable; using generic audio: "+e.GetType().Name);
-            return local(fallback);
+            return Generic();
         }
     }
 

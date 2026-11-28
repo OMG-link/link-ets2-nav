@@ -95,7 +95,7 @@ public sealed class ReloadableSpeech:ISpeechSynthesizer,ISpeechSynthesisDiagnost
     {
         await start.ConfigureAwait(false);
         await Retire(previous).ConfigureAwait(false);
-        var next=new Generation(create(new SpeechOptions{Enabled=options.Enabled,ModelDirectory=options.ModelDirectory,
+        var next=new Generation(create(new SpeechOptions{Enabled=options.Enabled,PreparedSpeechOnly=options.PreparedSpeechOnly,ModelDirectory=options.ModelDirectory,
             WorkerPath=options.WorkerPath,CacheDirectory=options.CacheDirectory,Voice=options.Voice,
             Threads=options.Threads,PackDirectory=selection.Directory}));
         bool installed=false;

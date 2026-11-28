@@ -43,10 +43,10 @@ public sealed class PlannedSpeechTests : IDisposable
     public async Task PlansStartImmediatelyInTriggerOrderAndShareWholeSentenceCache()
     {
         var synth = new Synthesizer();
-        var ready = Channel.CreateUnbounded<string>();
+        var ready = Channel.CreateUnbounded<bool>();
         var played = new List<string>();
-        await using var speech = new PlannedSpeechAnnouncer(synth, played.Add,
-            message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.Writer.TryWrite(message); });
+        await using var speech = new PlannedSpeechAnnouncer(synth, played.Add);
+        speech.Queue.CacheChanged += () => ready.Writer.TryWrite(true);
         speech.UpdatePlan(Snapshot(), [Plan(200, 900), Plan(500, 900), Plan(500, 1000, "other")], Now);
         var first = await synth.Next();
         Assert.Equal("五百米处，有测速照相。", first.Text);
@@ -70,8 +70,8 @@ public sealed class PlannedSpeechTests : IDisposable
         var synth = new Synthesizer();
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var played = new List<string>();
-        await using var speech = new PlannedSpeechAnnouncer(synth, played.Add,
-            message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.TrySetResult(); });
+        await using var speech = new PlannedSpeechAnnouncer(synth, played.Add);
+        speech.Queue.CacheChanged += () => ready.TrySetResult();
         speech.UpdatePlan(Snapshot(), [Plan(500, 800)], Now);
         var request = await synth.Next();
         Assert.False(speech.Queue.TryAnnounce(PlannedSpeechAnnouncer.Text(500,499)));
@@ -86,8 +86,8 @@ public sealed class PlannedSpeechTests : IDisposable
     {
         var synth = new Synthesizer();
         var ready = Channel.CreateUnbounded<bool>();
-        await using var speech = new PlannedSpeechAnnouncer(synth, _ => { },
-            message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.Writer.TryWrite(true); });
+        await using var speech = new PlannedSpeechAnnouncer(synth, _ => { });
+        speech.Queue.CacheChanged += () => ready.Writer.TryWrite(true);
         speech.UpdatePlan(Snapshot(), [Plan(500, 300), Plan(200, 300), Plan(500, 1200, "other")], Now);
         var generic = await synth.Next();
         Assert.Equal("前方有测速照相。", generic.Text);
@@ -120,8 +120,8 @@ public sealed class PlannedSpeechTests : IDisposable
         var synth = new Synthesizer();
         var ready = Channel.CreateUnbounded<bool>();
         var played = new List<string>();
-        await using var speech = new PlannedSpeechAnnouncer(synth, played.Add,
-            message => { if (message.StartsWith("TTS 文件缓存已就绪")) ready.Writer.TryWrite(true); });
+        await using var speech = new PlannedSpeechAnnouncer(synth, played.Add);
+        speech.Queue.CacheChanged += () => ready.Writer.TryWrite(true);
         speech.UpdatePlan(Snapshot(), [Plan(500, 800)], Now);
         string old = File("old");
         (await synth.Next()).Result.SetResult(old);
@@ -179,6 +179,7 @@ public sealed class PlannedSpeechTests : IDisposable
 
         var options = SpeechOptions.Load(directory);
         Assert.Equal(enabled, options.Enabled);
+        Assert.False(options.PreparedSpeechOnly);
         if (!enabled) return;
         Assert.Equal(model, options.ModelDirectory);
         Assert.Equal(Path.Combine(worker, "LinkEts2Nav.Speech" + workerExtension), options.WorkerPath);

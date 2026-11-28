@@ -10,6 +10,7 @@ public sealed class SpeechOptions
     internal const string DefaultWorker = "Tools/LinkEts2Nav.Speech/LinkEts2Nav.Speech.dll";
 
     public bool Enabled { get; init; }
+    public bool PreparedSpeechOnly { get; init; }
     public string? ModelDirectory { get; init; }
     public string WorkerPath { get; init; } = DefaultWorker;
     public string CacheDirectory { get; init; } = "Cache/LinkEts2Nav/Speech";
@@ -51,7 +52,7 @@ public sealed class SpeechOptions
         string packDirectory = Path.GetFullPath(value.PackDirectory, hostDirectory);
         if (!forGeneration && !explicitEnabled)
         {
-            bool hasSpeech = File.Exists(Path.Combine(modelDirectory, "model.onnx"))
+            bool hasSpeech = value.PreparedSpeechOnly || File.Exists(Path.Combine(modelDirectory, "model.onnx"))
                 || File.Exists(Path.Combine(packDirectory, "manifest.json"))
                 || File.Exists(Path.Combine(packDirectory, "CityNames", "manifest.json"));
             if (!hasSpeech || !File.Exists(workerPath)) return value;
@@ -59,7 +60,7 @@ public sealed class SpeechOptions
 
         return new()
         {
-            Enabled = !explicitEnabled || value.Enabled, ModelDirectory = modelDirectory,
+            Enabled = !explicitEnabled || value.Enabled, PreparedSpeechOnly = value.PreparedSpeechOnly, ModelDirectory = modelDirectory,
             WorkerPath = workerPath,
             CacheDirectory = Path.GetFullPath(value.CacheDirectory, hostDirectory),
             PackDirectory = packDirectory,

@@ -7,9 +7,10 @@ Console.InputEncoding = new UTF8Encoding(false);
 Console.OutputEncoding = new UTF8Encoding(false);
 if (args.Contains("--help", StringComparer.Ordinal))
 {
-    Console.WriteLine("Usage: LinkEts2Nav.Speech --model-dir DIR --cache-dir DIR [--voice zf_067] [--threads 2] [--pack-dir DIR]");
+    Console.WriteLine("Usage: LinkEts2Nav.Speech (--model-dir DIR | --prepared-only) --cache-dir DIR [--voice zf_067] [--threads 2] [--pack-dir DIR]");
     Console.WriteLine("Reads UTF-8 JSON lines {\"id\":\"request-id\",\"text\":\"完整短句\"} from stdin, in order.");
     Console.WriteLine("Writes {id,path,cacheHit,error} JSON lines. Unavailable model inputs return missingModelResource and read failures also set modelResourceUnreadable.");
+    Console.WriteLine("In --prepared-only mode an uncovered cue returns preparedSpeechUnavailable and the next cue can play.");
     Console.WriteLine("Kokoro multi-lang v1.1-zh preset: zf_067 = speaker 36, speed 1.0, CPU only.");
     Console.WriteLine("Export provider-neutral jobs: --export-jobs --output FILE [--texts UTF8_FILE] [--kind fixed|city-names].");
     Console.WriteLine("Prepare missing names: --prepare-name-jobs --texts UTF8_FILE [--texts UTF8_FILE] --output FILE [--pack CityNames_DIR].");
@@ -54,8 +55,12 @@ try
                     throw new InvalidDataException("Request id must contain 1-128 printable characters.");
                 if (string.IsNullOrWhiteSpace(request.Text) || request.Text.Length > 2048)
                     throw new InvalidDataException("Text must contain 1-2048 characters.");
-                var result = pack.Generate(request.Text.Trim().Normalize(NormalizationForm.FormC), text => (synthesis ??= new(options)).Generate(text));
+                var result = pack.Generate(request.Text.Trim().Normalize(NormalizationForm.FormC), Local, preparedOnly: options.PreparedSpeechOnly);
                 Write(new Response(id, result.Path, result.CacheHit, null));
+            }
+            catch (PreparedSpeechUnavailableException ex)
+            {
+                Write(new Response(id, null, false, ex.Message, PreparedSpeechUnavailable: true));
             }
             catch (UnavailableModelResource ex)
             {
@@ -67,6 +72,12 @@ try
                 Console.Error.WriteLine("Speech request failed: " + ex.Message);
                 Write(new Response(id, null, false, ex.Message));
             }
+        }
+
+        (string Path, bool CacheHit) Local(string text)
+        {
+            if (options.PreparedSpeechOnly) throw new PreparedSpeechUnavailableException();
+            return (synthesis ??= new(options)).Generate(text);
         }
     }
     finally { synthesis?.Dispose(); }
@@ -87,4 +98,5 @@ void Write(Response response)
 internal sealed record Request(string Id, string Text);
 internal sealed record Response(string? Id, string? Path, bool CacheHit, string? Error,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? MissingModelResource = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ModelResourceUnreadable = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ModelResourceUnreadable = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? PreparedSpeechUnavailable = null);

@@ -14,11 +14,11 @@ public interface ISpeechSynthesisDiagnostics
     bool? LastCacheHit {get;}
 }
 
-internal sealed class SpeechModelUnavailableException(string resource, string? readError = null)
-    : Exception(readError is null ? $"本地语音模型文件缺失或为空（{resource}）。"
-        : $"本地语音模型文件无法读取（{resource}）。系统原因：{readError}")
+internal enum SpeechUnavailableReason { MissingRecording, MissingModel, UnreadableModel }
+
+internal sealed class SpeechUnavailableException(SpeechUnavailableReason reason, string message) : Exception(message)
 {
-    internal bool Unreadable => readError is not null;
+    internal SpeechUnavailableReason Reason { get; } = reason;
 }
 
 /// <summary>One persistent child process keeps native inference out of the host and serializes requests.</summary>
@@ -50,12 +50,20 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
             if (root.GetProperty("id").GetString() != id) throw new IOException("Speech worker response ID mismatch.");
             if (root.TryGetProperty("error", out var error) && error.ValueKind != JsonValueKind.Null)
             {
+                if (options.PreparedSpeechOnly && root.TryGetProperty("preparedSpeechUnavailable", out var recording)
+                    && recording.ValueKind == JsonValueKind.True)
+                {
+                    completed = true;
+                    throw new SpeechUnavailableException(SpeechUnavailableReason.MissingRecording, "仅使用预录语音，当前语音包缺少所需录音。");
+                }
                 if (root.TryGetProperty("missingModelResource", out var missing) && missing.ValueKind == JsonValueKind.String
                     && !string.IsNullOrWhiteSpace(missing.GetString()))
                 {
                     completed = true;
                     bool unreadable = root.TryGetProperty("modelResourceUnreadable", out var flag) && flag.GetBoolean();
-                    throw new SpeechModelUnavailableException(missing.GetString()!, unreadable ? error.GetString() : null);
+                    throw unreadable
+                        ? new SpeechUnavailableException(SpeechUnavailableReason.UnreadableModel, $"本地语音模型文件无法读取（{missing.GetString()}）。系统原因：{error.GetString()}")
+                        : new SpeechUnavailableException(SpeechUnavailableReason.MissingModel, $"本地语音模型文件缺失或为空（{missing.GetString()}）。");
                 }
                 throw new IOException(error.GetString());
             }
@@ -91,8 +99,13 @@ public sealed class KokoroSpeechProcess(SpeechOptions options) : ISpeechSynthesi
             StandardErrorEncoding = Encoding.UTF8, WorkingDirectory = Path.GetDirectoryName(options.WorkerPath)!
         };
         if (managedAssembly) start.ArgumentList.Add(options.WorkerPath);
-        foreach (string argument in new[] { "--model-dir", options.ModelDirectory!,
-            "--cache-dir", options.CacheDirectory, "--pack-dir", options.PackDirectory, "--voice", options.Voice, "--threads",
+        if (options.PreparedSpeechOnly) start.ArgumentList.Add("--prepared-only");
+        else
+        {
+            start.ArgumentList.Add("--model-dir");
+            start.ArgumentList.Add(options.ModelDirectory!);
+        }
+        foreach (string argument in new[] { "--cache-dir", options.CacheDirectory, "--pack-dir", options.PackDirectory, "--voice", options.Voice, "--threads",
             options.Threads.ToString(System.Globalization.CultureInfo.InvariantCulture) }) start.ArgumentList.Add(argument);
         await DisposeAsync().ConfigureAwait(false);
         process = Process.Start(start) ?? throw new IOException("Could not start the speech worker.");

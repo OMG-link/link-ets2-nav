@@ -141,6 +141,55 @@ public sealed class OptionalSpeechModelTests
         finally { Directory.Delete(host, true); }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RecordingPreferenceSurvivesPackSwitchAndAnUncoveredCueDoesNotStopPlayback(bool preparedOnly)
+    {
+        string host = Directory.CreateTempSubdirectory("nav-recording-mode-").FullName;
+        try
+        {
+            const string first = "测试用已录音提示。", missing = "测试用尚未录音提示。";
+            WritePack(Path.Combine(host, "pack"), (first, 7));
+            var config = new Dictionary<string, object> {
+                ["packDirectory"] = "pack", ["workerPath"] = typeof(SpeechPack).Assembly.Location, ["modelDirectory"] = "absent-model"
+            };
+            if (preparedOnly) config["preparedSpeechOnly"] = true; // Old settings omit this property.
+            string settingsDirectory = Directory.CreateDirectory(Path.Combine(host, "Settings")).FullName;
+            File.WriteAllText(Path.Combine(settingsDirectory, "LinkEts2Nav.Speech.json"), JsonSerializer.Serialize(config));
+            var options = SpeechOptions.Load(host);
+            Assert.True(options.Enabled);
+            Assert.Equal(preparedOnly, options.PreparedSpeechOnly);
+            var reason = preparedOnly ? SpeechUnavailableReason.MissingRecording : SpeechUnavailableReason.MissingModel;
+
+            var token = TestContext.Current.CancellationToken;
+            var settings = new SpeechPackSettings(host);
+            var resources = new ReloadableSpeech(options, settings);
+            var messages = new ConcurrentQueue<string>();
+            await using var queue = new SpeechAnnouncementQueue(resources, _ => { }, messages.Enqueue, token, resources.Fixed);
+            var player = new Player();
+            await using var playback = new GuidancePlaybackManager(queue, player, () => "tone.wav", cancellationToken: token);
+            var failure = await Assert.ThrowsAsync<SpeechUnavailableException>(() => resources.SynthesizeAsync(missing, token));
+            Assert.Equal(reason, failure.Reason);
+            Assert.Equal(new byte[] { 7, 0 }, PcmAudio.Read(await resources.SynthesizeAsync(first, token)));
+            playback.Notify("test", new("missing", missing));
+            Assert.Equal("tone.wav", await player.Next(token));
+            Assert.Contains(messages, line => line.Contains(preparedOnly ? "仅使用预录语音" : "模型文件缺失或为空"));
+
+            string replacement = Path.Combine(host, "replacement");
+            WritePack(replacement, (missing, 8));
+            await settings.SaveAsync(replacement, token);
+            Assert.True(await resources.ApplyPendingAsync(queue));
+            playback.Notify("test", new("recorded", missing));
+            Assert.Equal(new byte[] { 8, 0 }, PcmAudio.Read(await player.Next(token)));
+            var afterSwitch = await Assert.ThrowsAsync<SpeechUnavailableException>(() => resources.SynthesizeAsync(first, token));
+            Assert.Equal(reason, afterSwitch.Reason);
+            Assert.Equal(preparedOnly, SpeechOptions.Load(host).PreparedSpeechOnly);
+            playback.ThrowIfFaulted();
+        }
+        finally { Directory.Delete(host, true); }
+    }
+
     private static void WritePack(string directory, params (string Text, byte Sample)[] recordings)
     {
         Directory.CreateDirectory(directory);

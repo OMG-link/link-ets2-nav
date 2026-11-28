@@ -62,10 +62,10 @@ public sealed class SpeechAnnouncementFaultTests:IDisposable
     {
         var failure=new FormatException("preparation log defect");
         var synth=new Synth((_,_)=>Task.FromResult(Audio()));
-        var queue=new SpeechAnnouncementQueue(synth,_=>{},message=>
-        {if(message.StartsWith(beforeSynthesis?"开始准备":"TTS 文件缓存"))throw failure;});
+        int expectedCalls=beforeSynthesis?0:1;
+        var queue=new SpeechAnnouncementQueue(synth,_=>{},_=>{if(synth.Calls==expectedCalls)throw failure;});
         queue.UpdatePlan("test",["text"]);Assert.Same(failure,await Fault<FormatException>(queue));
-        Assert.Equal(beforeSynthesis?0:1,synth.Calls);
+        Assert.Equal(expectedCalls,synth.Calls);
         Assert.Same(failure,await Assert.ThrowsAsync<FormatException>(()=>queue.DisposeAsync().AsTask()));
     }
     [Fact]

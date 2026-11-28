@@ -123,7 +123,7 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
 
     private async Task PrepareAsync()
     {
-        var reportedModelFailures = new HashSet<bool>();
+        var reportedUnavailable = new HashSet<SpeechUnavailableReason>();
         try
         {
             while (await changed.Reader.WaitToReadAsync(stop.Token))
@@ -144,14 +144,14 @@ public sealed class SpeechAnnouncementQueue : IAsyncDisposable
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested)
                     {cancelled=true;usage?.Prepared(text,preparation.Elapsed.TotalMilliseconds,null,cancelled:true);break;}
-                    catch (SpeechModelUnavailableException issue)
+                    catch (SpeechUnavailableException issue)
                     {
                         lock (gate)
                         {
                             if (version != audioVersion) continue;
                             unavailable.Add(text);
                         }
-                        if (reportedModelFailures.Add(issue.Unreadable))
+                        if (reportedUnavailable.Add(issue.Reason))
                         {
                             log($"{issue.Message} 已安装的录音可继续使用，其余语句将播放提示音。");
                         }

@@ -25,24 +25,32 @@ internal static class Protocol
     }
 }
 
-internal sealed record WorkerOptions(string ModelDirectory, string CacheDirectory, string Voice, int Threads, string? PackDirectory)
+internal sealed class PreparedSpeechUnavailableException() : Exception("No prepared recording covers this cue.");
+
+internal sealed record WorkerOptions(string ModelDirectory, string CacheDirectory, string Voice, int Threads, string? PackDirectory,
+    bool PreparedSpeechOnly = false)
 {
     public static WorkerOptions Parse(string[] args)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        for (int i = 0; i < args.Length; i += 2)
+        bool preparedOnly = false;
+        for (int i = 0; i < args.Length; i++)
         {
-            if (i + 1 >= args.Length || args[i] is not ("--model-dir" or "--cache-dir" or "--voice" or "--threads" or "--pack-dir")
-                || !values.TryAdd(args[i], args[i + 1]))
+            string option = args[i];
+            if (option == "--prepared-only" && !preparedOnly) { preparedOnly = true; continue; }
+            if (i + 1 >= args.Length || option is not ("--model-dir" or "--cache-dir" or "--voice" or "--threads" or "--pack-dir")
+                || !values.TryAdd(option, args[++i]))
                 throw new ArgumentException("Unknown, repeated or incomplete speech worker option; use --help.");
         }
-        if (!values.TryGetValue("--model-dir", out string? model) || string.IsNullOrWhiteSpace(model)
-            || !values.TryGetValue("--cache-dir", out string? cache) || string.IsNullOrWhiteSpace(cache))
-            throw new ArgumentException("Both --model-dir and --cache-dir are required.");
+        var model = values.GetValueOrDefault("--model-dir");
+        if (!preparedOnly && string.IsNullOrWhiteSpace(model)) throw new ArgumentException("Live speech requires --model-dir.");
+        if (!values.TryGetValue("--cache-dir", out string? cache) || string.IsNullOrWhiteSpace(cache))
+            throw new ArgumentException("Speech requires --cache-dir.");
         string voice = values.GetValueOrDefault("--voice", "zf_067");
         if (voice != "zf_067") throw new ArgumentException("This Kokoro v1.1-zh preset supports zf_067 only.");
         if (!int.TryParse(values.GetValueOrDefault("--threads", "2"), out int threads) || threads is < 1 or > 8)
             throw new ArgumentException("Threads must be between 1 and 8.");
-        return new(Path.GetFullPath(model), Path.GetFullPath(cache), voice, threads, values.TryGetValue("--pack-dir", out var pack) ? Path.GetFullPath(pack) : null);
+        return new(preparedOnly ? "" : Path.GetFullPath(model!), Path.GetFullPath(cache), voice, threads,
+            values.TryGetValue("--pack-dir", out var pack) ? Path.GetFullPath(pack) : null, preparedOnly);
     }
 }

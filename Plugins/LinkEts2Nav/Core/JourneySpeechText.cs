@@ -85,7 +85,7 @@ internal sealed record JourneySpeechText(string Heading, string DistanceNumber, 
         return result.ToString();
     }
 
-    private static string SpokenNumber(int value)
+    internal static string SpokenNumber(int value)
     {
         if (value <= 9999) return FormattedNumber(value);
         var result = new StringBuilder();

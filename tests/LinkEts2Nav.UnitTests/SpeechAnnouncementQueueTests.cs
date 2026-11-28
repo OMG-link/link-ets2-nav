@@ -29,8 +29,8 @@ public sealed class SpeechAnnouncementQueueTests : IDisposable
         var synth=new Synth();
         var ready=Channel.CreateUnbounded<bool>();
         var played=new List<string>();
-        await using var queue=new SpeechAnnouncementQueue(synth,played.Add,
-            m=>{if(m.StartsWith("TTS 文件缓存已就绪"))ready.Writer.TryWrite(true);});
+        await using var queue=new SpeechAnnouncementQueue(synth,played.Add);
+        queue.CacheChanged+=()=>ready.Writer.TryWrite(true);
         queue.UpdatePlan("a",["first"]);
         var first=await synth.Requests.Reader.ReadAsync(TestContext.Current.CancellationToken);
         queue.UpdatePlan("b",["second"],1);
@@ -51,8 +51,8 @@ public sealed class SpeechAnnouncementQueueTests : IDisposable
     {
         var synth=new Synth();
         var ready=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var queue=new SpeechAnnouncementQueue(synth,_=>{},
-            m=>{if(m.StartsWith("TTS 文件缓存已就绪"))ready.TrySetResult();});
+        await using var queue=new SpeechAnnouncementQueue(synth,_=>{});
+        queue.CacheChanged+=()=>ready.TrySetResult();
         queue.UpdatePlan("a",["shared"]);
         var request=await synth.Requests.Reader.ReadAsync(TestContext.Current.CancellationToken);
         queue.UpdatePlan("b",["shared"],1);

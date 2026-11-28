@@ -109,6 +109,8 @@ public sealed class BudgetSpeechPackTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(names, "extra.txt"), "original language", TestContext.Current.CancellationToken);
         string journey = Directory.CreateDirectory(Path.Combine(source, "Journey")).FullName;
         File.WriteAllText(Path.Combine(journey, "manifest.json"), "{}");
+        string navigation = Directory.CreateDirectory(Path.Combine(source, "Navigation")).FullName;
+        File.WriteAllText(Path.Combine(navigation, "manifest.json"), "{}");
         File.WriteAllText(Path.Combine(source, "context-provenance.json"), "{}");
 
         var first = await Run(api, "original", "first", candidates, 9);
@@ -144,9 +146,11 @@ public sealed class BudgetSpeechPackTests : IDisposable
         Assert.True(File.Exists(Path.Combine(root, "second", "CityNames", "extra.txt")));
         Assert.True(File.Exists(Path.Combine(root, "second", "context-provenance.json")));
         Assert.True(File.Exists(Path.Combine(root, "second", "Journey", "manifest.json")));
+        Assert.True(File.Exists(Path.Combine(root, "second", "Navigation", "manifest.json")));
         var rotated = await Run(api, "empty", "first", [new(hot, 40)], 1);
         Assert.Equal("done", rotated.GetProperty("Kind").GetString());
         Assert.False(Directory.Exists(Path.Combine(root, "first", "Journey")));
+        Assert.False(Directory.Exists(Path.Combine(root, "first", "Navigation")));
     }
 
     [Fact]

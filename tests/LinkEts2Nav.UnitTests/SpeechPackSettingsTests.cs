@@ -82,8 +82,9 @@ public sealed class SpeechPackSettingsTests:IDisposable
     public void LocalGenerationUsesConfiguredModelVoiceAndThreadsWithoutEnablingPlayback()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
-        File.WriteAllText(SettingsFile, """{"enabled":false,"modelDirectory":"custom","voice":"zf_067","threads":6,"cacheDirectory":"existing-cache"}""");
+        File.WriteAllText(SettingsFile, """{"enabled":false,"preparedSpeechOnly":true,"modelDirectory":"custom","voice":"zf_067","threads":6,"cacheDirectory":"existing-cache"}""");
         var options = SpeechOptions.LoadForGeneration(root);
+        Assert.True(options.PreparedSpeechOnly);
         Assert.Equal(Path.Combine(root, "custom"), options.ModelDirectory);
         Assert.Equal(Path.Combine(root, "existing-cache"), options.CacheDirectory);
         Assert.Equal("zf_067", options.Voice);

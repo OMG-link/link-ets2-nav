@@ -110,7 +110,10 @@ public sealed class NavPlugin : Plugin
         if (!options.Enabled) return null;
         resources=new ReloadableSpeech(options,SpeechPackSettings.Current,message=>log.Event(message,DateTimeOffset.UtcNow));
         cityNames=resources.Names;
-        log.Event("TTS 已启用：按预警触发顺序预生成，音色=" + options.Voice + "，文件缓存=" + options.CacheDirectory, DateTimeOffset.UtcNow);
+        log.Event(options.PreparedSpeechOnly
+            ? "预录语音已启用，文件缓存=" + options.CacheDirectory
+            : "TTS 已启用：按预警触发顺序预生成，音色=" + options.Voice + "，文件缓存=" + options.CacheDirectory,
+            DateTimeOffset.UtcNow);
         return new(resources, path => AudioHandler.Current.Queue(path),
             message => log.Event(message, DateTimeOffset.UtcNow), token,
             resources.Fixed,usage);

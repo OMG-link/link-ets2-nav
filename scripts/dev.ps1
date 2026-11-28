@@ -153,7 +153,7 @@ try {
             if (Test-Path -LiteralPath $oldManifest) { Remove-Item -LiteralPath $oldManifest -Force }
         }
         Get-ChildItem -LiteralPath $speechPack -File | Copy-Item -Destination $packDeployment -Force
-        foreach ($subpack in @('CityNames', 'Journey')) {
+        foreach ($subpack in @('CityNames', 'Journey', 'Navigation')) {
             $sourceSubpack = Join-Path $speechPack $subpack
             $targetSubpack = Join-Path $packDeployment $subpack
             if (Test-Path -LiteralPath (Join-Path $sourceSubpack 'manifest.json')) {

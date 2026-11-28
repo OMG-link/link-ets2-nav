@@ -38,11 +38,11 @@ public sealed class PreparedNavigationPackTests : IDisposable
     [Fact]
     public void EveryDirectionLaneAndNumberMustBeCoveredAndListAndClausePausesAreAudible()
     {
-        var entries = new[] { "左转", "然后", "走右侧第", "第", "车道" }.Select((t, i) => Clip(Navigation, t, (short)(500 + i))).ToArray();
+        var entries = new[] { "左转", "然后", "走右侧第", "第三", "车道" }.Select((t, i) => Clip(Navigation, t, (short)(500 + i))).ToArray();
         Manifest(Navigation, entries);
         Manifest(Journey, [Clip(Journey, "一", 601), Clip(Journey, "三", 603)]);
         const string text = "左转，然后走右侧第一、第三车道。";
-        short[] expected = [500, .. new short[3600], 501, 502, 601, .. new short[2400], 503, 603, 504];
+        short[] expected = [500, .. new short[3600], 501, 502, 601, .. new short[2400], 503, 504];
         Assert.Equal(expected, Audio(text));
         Assert.True(Reader.Generate(text, NoLive, true).CacheHit);
         Missing(text.Replace("右侧", "左侧"));
@@ -82,16 +82,22 @@ public sealed class PreparedNavigationPackTests : IDisposable
         const string text = "沿当前道路，继续行驶10005公里。";
         Manifest(Navigation, [Clip(Navigation, "沿当前道路，继续行驶", 501), Clip(Navigation, "公里", 502)]);
         var digits = new[] { "一", "万", "零", "五" }.Select((t, i) => Clip(Journey, t, (short)(600 + i))).ToArray();
-        Manifest(Journey, digits, profile: "different");
+        var number = Clip(Journey, "一万零五", 670);
+        Manifest(Journey, [.. digits, number], profile: "different");
         Missing(text);
-        Manifest(Journey, digits, voice: "different");
+        Manifest(Journey, [.. digits, number], voice: "different");
         Missing(text);
-        Manifest(Journey, [.. digits[..3], digits[3] with { VoiceProfile = "" }]);
+        Manifest(Journey, [.. digits, number with { VoiceProfile = "" }]);
         Missing(text);
-        Manifest(Journey, [.. digits[..3], digits[3] with { Composed = true }]);
+        Manifest(Journey, [.. digits, number with { Composed = true }]);
         Missing(text);
         Manifest(Journey, digits);
-        Assert.Equal(new short[] { 501, 600, 601, 602, 603, 502 }, Audio(text));
+        Missing(text);
+        Assert.Equal(("live", false), Reader.Generate(text, t => { Assert.Equal(text, t); return ("live", false); }));
+        Manifest(Journey, [.. digits, number]);
+        Assert.Equal(new short[] { 501, 670, 502 }, Audio(text));
+        Manifest(Navigation, [Clip(Navigation, "左", 701), Clip(Navigation, "转", 702)]);
+        Missing("左转。");
     }
 
     [Fact]

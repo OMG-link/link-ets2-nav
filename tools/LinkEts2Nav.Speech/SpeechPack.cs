@@ -85,12 +85,24 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
             Console.Error.WriteLine("Speech pack unavailable: " + ex.GetType().Name);
             pack = null;
         }
-        if (directory is not null && JourneySpeechText.Parse(text) is { } journey &&
-            JourneySpeechPack.TryGenerate(directory, cacheDirectory, journey) is { } brief) return brief;
+        var journey = JourneySpeechText.Parse(text);
+        var brief = directory is not null && journey is not null ? JourneySpeechPack.Read(directory, journey) : null;
+        if (brief?.Save(cacheDirectory) is { } recordedJourney) return recordedJourney;
+        var navigation = directory is null ? null : NavigationSpeechPack.Open(directory, pack);
         (string Path, bool CacheHit)? RecordedNavigation() =>
-            directory is not null && NavigationSpeechPack.Open(directory, pack)?.Render(text) is { } recorded
+            navigation?.Render(text) is { } recorded
                 ? NavigationSpeechPack.Save(cacheDirectory, "navigation", recorded) : null;
         if (!preparedOnly && RecordedNavigation() is { } complete) return complete;
+        if (!preparedOnly && brief is not null && journey is not null && (brief.Distance is null) != (brief.Time is null))
+        {
+            int endDistance = text.IndexOf('，', journey.Heading.Length) + 1;
+            // Pass the original clause to the existing model cache, retaining printed large
+            // numbers and punctuation. A model failure keeps its ordinary worker protocol.
+            var hybrid = brief.Distance is null
+                ? brief with { Distance = PcmAudio.Read(local(text[journey.Heading.Length..endDistance]).Path) }
+                : brief with { Time = PcmAudio.Read(local(text[endDistance..]).Path) };
+            if (hybrid.Save(cacheDirectory, hybrid: true) is { } result) return result;
+        }
         var company=Regex.Match(text,@"^(?<prefix>(?:.*，然后)?.*?)到达(?<name>[^\r\n]+?)货场(?<suffix>附近，本次导航结束。|。)$",
             RegexOptions.CultureInvariant,TimeSpan.FromSeconds(1));
         if(company.Success)

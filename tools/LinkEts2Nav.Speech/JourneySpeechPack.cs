@@ -1,4 +1,3 @@
-using System.Text.Json;
 using LinkEts2Nav.Core;
 
 namespace LinkEts2Nav.Speech;
@@ -7,74 +6,64 @@ internal static class JourneySpeechPack
 {
     internal const string DirectoryName = "Journey";
 
-    internal static (string Path, bool CacheHit)? TryGenerate(string directory, string cache, JourneySpeechText journey)
+    internal sealed record Recording(byte[] Heading, byte[]? Distance, byte[]? Time)
     {
-        string root = Path.Combine(directory, DirectoryName), manifest = Path.Combine(root, "manifest.json");
-        if (!File.Exists(manifest)) return null;
-        try
+        internal (string Path, bool CacheHit)? Save(string cache, bool hybrid = false)
         {
-            using var stream = File.OpenRead(manifest);
-            var pack = JsonSerializer.Deserialize<PackManifest>(stream);
-            if (pack is not { Schema: 1, Entries: not null } || string.IsNullOrWhiteSpace(pack.Model)
-                || string.IsNullOrWhiteSpace(pack.Voice)) throw new InvalidDataException("Invalid journey voice.");
-            var entries = new Dictionary<string, PackEntry>(StringComparer.Ordinal);
-            foreach (var e in pack.Entries)
-            {
-                if (e is null || string.IsNullOrWhiteSpace(e.Text)) throw new InvalidDataException("Invalid journey clip.");
-                // A plain single-voice manifest is the import format. Mixed root-pack entries with
-                // an explicitly unknown/foreign origin cannot establish a common recorded voice.
-                if (e.Composed || e.VoiceProfile is not null && (e.VoiceProfile.Length == 0 || e.VoiceProfile != pack.ApiProfile)) continue;
-                if (!entries.TryAdd(e.Text, e)) throw new InvalidDataException("Duplicate journey clip.");
-            }
-
-            var samples = new Dictionary<string, byte[]?>(StringComparer.Ordinal);
+            if (Distance is null || Time is null) return null;
             using var output = new MemoryStream();
-            bool Append(string word)
-            {
-                if (!entries.TryGetValue(word, out var entry)) return false;
-                if (!samples.TryGetValue(word, out byte[]? pcm))
-                {
-                    try { pcm = SpeechPack.ReadVerified(entry, root); }
-                    catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { pcm = null; }
-                    samples.Add(word, pcm);
-                }
-                if (pcm is null) return false;
-                if (pcm.Length > PcmAudio.MaximumWaveBytes - 44 - output.Length) throw new InvalidDataException("Journey audio is too long.");
-                output.Write(pcm);
-                return true;
-            }
-            bool Number(string number)
-            {
-                for (int start = 0; start < number.Length;)
-                {
-                    // Use the longest available number recording at each position. Single-digit
-                    // and place-value recordings cover every number from the shared formatter.
-                    int length = number.Length - start;
-                    while (length > 0 && !Append(number.Substring(start, length))) length--;
-                    if (length == 0) return false;
-                    start += length;
-                }
-                return true;
-            }
-            if (!Append(journey.Heading) || (!Append(journey.DistanceClause) &&
-                !(Append(JourneySpeechText.DistancePrefix) && Number(journey.DistanceNumber) && Append(journey.DistanceUnit))) ||
-                (!Append(journey.TimeClause) && !(Append(JourneySpeechText.TimePrefix) && Number(journey.Minutes)
-                    && Append(JourneySpeechText.TimeSuffix)))) return null;
-
-            byte[] joined = output.ToArray();
-            string path = Path.Combine(cache, "journey-" + SpeechPack.Hash(joined) + ".wav");
-            if (File.Exists(path))
-            {
-                try { if (PcmAudio.Read(path).AsSpan().SequenceEqual(joined)) return (path, true); }
-                catch (Exception e) when (e is IOException or InvalidDataException) { }
-            }
-            PcmAudio.Write(path, joined);
-            return (path, false);
+            if (!NavigationSpeechPack.Append(output, Heading) || !NavigationSpeechPack.Append(output, Distance) ||
+                !NavigationSpeechPack.Append(output, Time)) return null;
+            return NavigationSpeechPack.Save(cache, hybrid ? "journey-hybrid" : "journey", output.ToArray());
         }
-        catch (Exception e) when (e is IOException or JsonException or InvalidDataException or UnauthorizedAccessException)
+    }
+
+    internal static Recording? Read(string directory, JourneySpeechText journey)
+    {
+        string root = Path.Combine(directory, DirectoryName);
+        var pack = NavigationSpeechPack.Read(root);
+        if (pack is null) return null;
+        var entries = pack.Entries.Where(e => NavigationSpeechPack.InVoice(e, pack)).ToDictionary(e => e.Text, StringComparer.Ordinal);
+        var samples = new Dictionary<string, byte[]?>(StringComparer.Ordinal);
+        byte[]? Clip(string word)
         {
-            Console.Error.WriteLine("Journey recording unavailable: " + e.GetType().Name);
+            if (!entries.TryGetValue(word, out var entry)) return null;
+            if (!samples.TryGetValue(word, out var pcm))
+            {
+                try { pcm = SpeechPack.ReadVerified(entry, root); }
+                catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { pcm = null; }
+                samples.Add(word, pcm);
+            }
+            return pcm;
+        }
+        byte[]? Phrase(string text) => Clip(text) ?? Clip(text.TrimEnd('，', '。'));
+        static byte[]? Join(params byte[][] clips)
+        {
+            using var output = new MemoryStream();
+            foreach (var clip in clips)
+                if (!NavigationSpeechPack.Append(output, clip)) return null;
+            return output.ToArray();
+        }
+        byte[]? Quantity(string prefix, string number, string unit)
+        {
+            if (Phrase(prefix + number + unit) is { } clause) return clause;
+            if (Clip(prefix) is not { } lead) return null;
+            if (Phrase(number + unit) is { } quantity) return Join(lead, quantity);
+            if (number.Length > 1 && Clip(number) is { } wholeNumber && Phrase(unit) is { } measure)
+                return Join(lead, wholeNumber, measure);
+
+            // Only split on a complete Chinese place-value group, e.g. 一百 + 二十二分钟.
+            // A decimal point, an isolated digit or a succession of short number clips
+            // cannot stand in for a naturally recorded quantity.
+            for (int split = 2; split < number.Length; split++)
+                if ("百千万亿".Contains(number[split - 1]) && !number[..split].Contains('点') &&
+                    number[split] is not ('零' or '点') && Clip(number[..split]) is { } group &&
+                    Phrase(number[split..] + unit) is { } ending)
+                    return Join(lead, group, ending);
             return null;
         }
+        return Phrase(journey.Heading) is { } heading ? new(heading,
+            Quantity(JourneySpeechText.DistancePrefix, journey.DistanceNumber, journey.DistanceUnit),
+            Quantity(JourneySpeechText.TimePrefix, journey.Minutes, JourneySpeechText.TimeSuffix)) : null;
     }
 }

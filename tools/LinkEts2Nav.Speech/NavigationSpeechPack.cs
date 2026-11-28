@@ -64,6 +64,9 @@ internal sealed class NavigationSpeechPack
             if (numbersOnly && !e.Text.All(JourneySpeechText.NumberSounds.Contains)) continue;
             string word = Pronunciation(e.Text).Trim('，','。','；','、','！','？');
             if (word.Length == 0) continue;
+            // A suffix following a distance and a complete one-digit number can stand
+            // alone. Do not build a spoken word such as 左转 out of isolated characters.
+            if (word.Length == 1 && word[0] != '后' && !("零一二两三四五六七八九十".Contains(word[0]))) continue;
             if (!words.TryGetValue(word[0], out var clips)) words.Add(word[0], clips = []);
             clips.Add(new(word, directory, e));
         }
@@ -109,10 +112,14 @@ internal sealed class NavigationSpeechPack
             for (int i = spoken.Length - 1; i >= 0; i--)
             {
                 if (Punctuation.Contains(spoken[i])) { count[i] = count[i + 1]; continue; }
+                // One recording must cover a numeric expression, including decimal points.
+                // A route whose speed or distance is missing can use the live voice.
+                if (i > 0 && JourneySpeechText.NumberSounds.Contains(spoken[i - 1]) && JourneySpeechText.NumberSounds.Contains(spoken[i])) continue;
                 if (!words.TryGetValue(spoken[i], out var choices)) continue;
                 foreach (var clip in choices)
                 {
                     int end = i + clip.Word.Length;
+                    if (clip.Word == "后" && (i == 0 || spoken[i - 1] is not ('米' or '里'))) continue;
                     if (end > spoken.Length || count[end] == int.MaxValue || count[end] + 1 > count[i] ||
                         !spoken.AsSpan(i).StartsWith(clip.Word, StringComparison.Ordinal) ||
                         samples.TryGetValue(clip, out var prior) && prior is null) continue;

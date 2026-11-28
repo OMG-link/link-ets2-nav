@@ -50,27 +50,25 @@ public sealed class JourneySpeechPackTests : IDisposable
     }
 
     [Fact]
-    public void CorruptOptionalClauseUsesTheBaseVoiceAndOnlyMissingOrIncompatibleRequiredAudioFallsBack()
+    public void CorruptOrForeignRecordingsCannotBeReplacedByAStringOfIndividualDigits()
     {
         var baseEntries = WriteBase();
         var clause = Write(Journey, "全程一点二公里，", 90);
         Save(Journey, [.. baseEntries, clause]);
         PcmAudio.Write(Path.Combine(Journey, clause.File), [1, 0]);
         var pack = new SpeechPack(root, Cache);
-        Assert.Equal(Expected("准备出发，", "全程", "一", "点", "二", "公里，", "大约需要", "两", "分钟。"),
-            PcmAudio.Read(pack.Generate(Example, NoModel).Path));
-
         var calls = new List<string>();
         (string, bool) Local(string text) { calls.Add(text); return ("fallback", false); }
-        foreach (var entry in new[] { Write(Journey, "点", 12) with { VoiceProfile = "another-voice" },
-                     Write(Journey, "点", 12) with { VoiceProfile = "" }, Write(Journey, "点", 12) with { Composed = true } })
+        Assert.Equal("fallback", pack.Generate(Example, Local).Path);
+        foreach (var entry in new[] { Write(Journey, "两分钟", 12) with { VoiceProfile = "another-voice" },
+                     Write(Journey, "两分钟", 12) with { VoiceProfile = "" }, Write(Journey, "两分钟", 12) with { Composed = true } })
         {
-            Save(Journey, [.. baseEntries.Where(e => e.Text != "点"), entry]);
+            Save(Journey, [.. baseEntries, entry]);
             Assert.Equal("fallback", pack.Generate(Example, Local).Path);
         }
         File.Delete(Path.Combine(Journey, "manifest.json"));
         Assert.Equal("fallback", pack.Generate(Example, Local).Path);
-        Assert.Equal(Enumerable.Repeat(Example, 4), calls);
+        Assert.Equal(Enumerable.Repeat(Example, 5), calls);
     }
 
     [Fact]
@@ -79,17 +77,62 @@ public sealed class JourneySpeechPackTests : IDisposable
         string text = NavigationJourneyPrompts.Format(NavigationJourneyNoticeKind.Replanned, 2050, 101 * 60);
         var entries = WriteBase();
         var time = Write(Journey, "一百零一", 77);
-        Save(Journey, [.. entries, time]);
+        var distance = Write(Journey, "二点一公里", 74);
+        Save(Journey, [.. entries, distance, time]);
         var pack = new SpeechPack(root, Cache);
         var first = pack.Generate(text, NoModel);
-        byte[] expected = [.. Expected("重新规划路线，", "全程", "二", "点", "一", "公里，", "大约需要"), 77, 0, .. Expected("分钟。")];
+        byte[] expected = [.. Expected("重新规划路线，", "全程"), 74, 0, .. Expected("大约需要"), 77, 0, .. Expected("分钟。")];
         Assert.Equal(expected, PcmAudio.Read(first.Path));
         var updated = Write(Journey, "一百零一", 78);
-        Save(Journey, [.. entries, updated]);
+        Save(Journey, [.. entries, distance, updated]);
         var changed = pack.Generate(text, NoModel);
         Assert.NotEqual(first.Path, changed.Path);
         expected[^4] = 78;
         Assert.Equal(expected, PcmAudio.Read(changed.Path));
+    }
+
+    [Theory]
+    [InlineData(22, 0)]
+    [InlineData(122, 82)]
+    [InlineData(222, 83)]
+    public void FormattedJourneysKeepWholeQuantitiesAndTheLongestMatchingMinuteEnding(int minutes, int leading)
+    {
+        var entries = WriteBase();
+        var corrupt = Write(Journey, "一百二十二分钟。", 90);
+        Save(Journey, [.. entries, Write(Journey, "三点二公里", 80), Write(Journey, "二十二分钟", 81),
+            Write(Journey, "一百", 82), Write(Journey, "两百", 83), corrupt]);
+        PcmAudio.Write(Path.Combine(Journey, corrupt.File), [99, 0]);
+        string text = NavigationJourneyPrompts.Format(NavigationJourneyNoticeKind.Replanned, 3200, minutes * 60);
+        var actual = PcmAudio.Read(new SpeechPack(root, Cache).Generate(text, NoModel).Path);
+        byte[] head = [.. Expected("重新规划路线，", "全程"), 80, 0, .. Expected("大约需要")];
+        byte[] expected = leading == 0 ? [.. head, 81, 0] : [.. head, (byte)leading, 0, 81, 0];
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void OnlyOneMissingNaturalClauseUsesTheLiveVoiceAndTheOtherRemainsIntact(bool missingTime)
+    {
+        var entries = WriteBase();
+        const string distance = "全程三点七公里，", duration = "大约需要97531分钟。";
+        string prompt = NavigationJourneyPrompts.Format(NavigationJourneyNoticeKind.Start, 3700, 97531 * 60d);
+        Assert.Equal("准备出发，" + distance + duration, prompt);
+        string spokenDuration = JourneySpeechText.Parse(prompt)!.TimeClause;
+        var good = Write(Journey, missingTime ? distance : spokenDuration, 70);
+        Save(Journey, [.. entries, good]);
+        var pack = new SpeechPack(root, Cache);
+        string localPath = Path.Combine(Cache, "local.wav");
+        var requests = new List<string>();
+        (string, bool) Local(string text) { requests.Add(text); PcmAudio.Write(localPath, [99,0]); return (localPath, false); }
+        Assert.Equal("PreparedSpeechUnavailableException", Record.Exception(() => pack.Generate(prompt, NoModel, true))?.GetType().Name);
+        var result = pack.Generate(prompt, Local);
+        Assert.StartsWith("journey-hybrid-", Path.GetFileName(result.Path));
+        Assert.Equal(missingTime ? new byte[] { 1,0,70,0,99,0 } : [1,0,99,0,70,0], PcmAudio.Read(result.Path));
+        Assert.Equal(new[] { missingTime ? duration : distance }, requests);
+        string nav = Path.Combine(root, "Navigation");
+        Save(nav, Write(nav, prompt, 92));
+        Assert.Equal(new byte[] { 92,0 }, PcmAudio.Read(pack.Generate(prompt, NoModel).Path));
     }
 
     [Fact]

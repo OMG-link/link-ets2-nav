@@ -44,7 +44,7 @@ public sealed record NavigationRouteState(
         if (availability != RouteAvailability.Available)
             return this with { CurrentSnapshot = next, Availability = availability };
 
-        var goal = RouteContinuity.ConfirmedGoal(next);
+        var goal = next.ConfirmedGoalUid;
         long head = FirstNodeOrdinal + CurrentNodeIndex;
         var reference = forwardWindow ?? lastAvailable;
         long referenceStart = forwardWindow is null ? head : forwardWindowOrdinal;
@@ -59,7 +59,7 @@ public sealed record NavigationRouteState(
         long nextHead = replaced ? 0 : head + change.PreviousOffset;
         long nextEnd = nextHead + next.Nodes.Count;
         bool sameGeometry = !replaced && nextEnd == FirstNodeOrdinal + FullRoute.Nodes.Count
-            && FullRoute.MayBeTruncated == next.MayBeTruncated && RouteContinuity.ConfirmedGoal(FullRoute) == goal;
+            && FullRoute.MayBeTruncated == next.MayBeTruncated && FullRoute.ConfirmedGoalUid == goal;
         return new NavigationRouteState(sameGeometry ? FullRoute : next, next, sameGeometry ? checked((int)(nextHead - FirstNodeOrdinal)) : 0,
             GeometryGeneration + (sameGeometry ? 0 : 1))
         {

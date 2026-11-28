@@ -118,8 +118,7 @@ public sealed class FerryJourneyIndex
     public IReadOnlyList<FerryRouteLeg> OnRoute(RouteSnapshot route)
     {
         var nodes=RouteStructureIdentity.Nodes(route);var legs=new List<FerryRouteLeg>();
-        var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
-        ulong? goal=!route.MayBeTruncated&&terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:null;
+        ulong? goal=route.ConfirmedGoalUid;
         for(int i=1;i<nodes.Length;i++)
         {
             if(!activationPorts.TryGetValue(nodes[i-1],out var from)||!activationPorts.TryGetValue(nodes[i],out var to)

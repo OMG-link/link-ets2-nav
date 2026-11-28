@@ -70,6 +70,49 @@ public sealed class FerryNavigationTests
         runtime.Process(Data(changed,1250,Now),scene.Map,Now);Assert.Null(runtime.ExpectedFerry);
     }
 
+    [Theory]
+    [InlineData(false, 50f)]
+    [InlineData(true, 0f)]
+    public void BookingKeepsTheEnteredFerryUntilTheSameSdkNodesConfirmADifferentGoal(bool truncated, float remaining)
+    {
+        var scene = Scene();
+        var progress = new FerryNavigationProgress();
+        void AtPort(RouteSnapshot route) => progress.Observe(Data(route, 1250, Now), scene.Map, Now);
+
+        AtPort(scene.Route);
+        var original = Assert.IsType<FerryTravelExpectation>(progress.Expected);
+        Assert.Equal(scene.Exit.ForwardNode.Uid, original.Leg.GoalUid);
+        // The SDK window now ends at the opposite ferry activation, before its known road exit.
+        AtPort(RouteSnapshot.Parse(scene.Route.Nodes.Take(4), Now));
+        Assert.Equal(original.Leg.GoalUid, progress.Expected?.Leg.GoalUid);
+        Assert.Equal(scene.Exit.Node.Uid, progress.Expected?.Leg.ExitUid);
+
+        var booked = RouteSnapshot.Parse([new(scene.Exit.Node.Uid, 1000, 10), new(999, remaining, 0)], Now)
+            with { MayBeTruncated = truncated };
+        AtPort(booked);
+        Assert.Equal(original.Leg.Id, progress.Expected?.Leg.Id);
+        Assert.Equal(original.Leg.GoalUid, progress.Expected?.Leg.GoalUid);
+        var changed = RouteSnapshot.Parse([new(scene.Exit.Node.Uid, 1000, 10), new(999, 0, 0)], Now);
+        Assert.Equal(booked.Revision, changed.Revision);
+        AtPort(changed);
+        Assert.Null(progress.Expected);
+    }
+
+    [Fact]
+    public void AnEnteredFerryCanFirstLearnItsConfirmedGoalAfterBooking()
+    {
+        var scene = Scene();
+        var progress = new FerryNavigationProgress();
+        void AtPort(RouteSnapshot route) => progress.Observe(Data(route, 1250, Now), scene.Map, Now);
+        AtPort(scene.Route with { MayBeTruncated = true });
+        var original = Assert.IsType<FerryTravelExpectation>(progress.Expected);
+        Assert.Null(original.Leg.GoalUid);
+        AtPort(RouteSnapshot.Parse([new(scene.Exit.Node.Uid, 1000, 10), new(998, 0, 0)], Now));
+        Assert.Equal(998UL, progress.Expected?.Leg.GoalUid);
+        AtPort(RouteSnapshot.Parse([new(scene.Exit.Node.Uid, 1000, 10), new(999, 0, 0)], Now));
+        Assert.Null(progress.Expected);
+    }
+
     [Fact]
     public void NativeEntranceRequiresContinuousApproachAndRejectsParallelRoadAndTeleport()
     {

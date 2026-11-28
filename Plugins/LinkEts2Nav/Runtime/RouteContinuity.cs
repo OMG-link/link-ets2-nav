@@ -6,10 +6,6 @@ internal readonly record struct RouteChange(RouteChangeKind Kind, int PreviousOf
 /// <summary>Compares the ordered SDK visits. Repeated physical nodes are not interchangeable visits.</summary>
 public static class RouteContinuity
 {
-    internal static ulong? ConfirmedGoal(RouteSnapshot route) =>
-        !route.MayBeTruncated && route.Nodes.Count > 0 && route.Nodes[^1].DistanceToEndMeters <= .01f
-            ? route.Nodes[^1].Uid : null;
-
     internal static int ExactSuffixOffset(RouteSnapshot previous, RouteSnapshot next)
     {
         int offset = previous.Nodes.Count - next.Nodes.Count;
@@ -49,6 +45,6 @@ public static class RouteContinuity
 
     public static bool IsForwardExtension(RouteSnapshot oldRoute, RouteSnapshot newRoute) =>
         oldRoute.Availability == RouteAvailability.Available && newRoute.Availability == RouteAvailability.Available
-        && !(ConfirmedGoal(oldRoute) is {} oldGoal && ConfirmedGoal(newRoute) is {} goal && oldGoal != goal)
+        && !(oldRoute.ConfirmedGoalUid is {} oldGoal && newRoute.ConfirmedGoalUid is {} goal && oldGoal != goal)
         && Compare(oldRoute, newRoute).Kind != RouteChangeKind.Replaced;
 }

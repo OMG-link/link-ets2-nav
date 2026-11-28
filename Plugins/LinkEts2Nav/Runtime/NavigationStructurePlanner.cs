@@ -34,8 +34,7 @@ internal sealed class NavigationStructurePlanner(IReadOnlySet<string>? spokenPla
         IReadOnlyList<NavigationManeuver> upcoming=detector.FindSequence(route,0,paths.GetNavigationGraph(),out double confirmedUntil,out bool unresolvedJoin,out double firstUnresolvedJoinAlong,lanes,ranges);
         if(NavigationDestination.Find(sdkRoute,route,0,confirmedUntil,unresolvedJoin) is {} destination)
         {
-            var terminal=sdkRoute.Nodes.MinBy(n=>n.DistanceToEndMeters)!;
-            if(nearby.Companies.AtTerminal(terminal.Uid) is {DisplayName:{} name})
+            if(nearby.Companies.AtTerminal(route[^1].EndNodeUid) is {DisplayName:{} name})
             {
                 destination=destination with{DestinationCompanyName=name,ExecutionInstruction="到达"+name+"货场附近，本次导航结束"};
                 log?.Invoke("导航终点已按预制件归属确认货场名称："+name+

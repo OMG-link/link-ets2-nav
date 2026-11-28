@@ -8,6 +8,7 @@ internal sealed class FerryNavigationProgress
 {
     private FerryJourneyIndex? index;
     private ulong[] routeNodes=[];
+    private ulong? routeGoal;
     private FerryRouteLeg? planned;
     private DateTimeOffset? entered;
     private long observedCompletion;
@@ -15,7 +16,7 @@ internal sealed class FerryNavigationProgress
     private VehicleSnapshot? previous;
     public FerryTravelExpectation? Expected {get;private set;}
     public FerryRouteLeg? EnteredLeg=>entered is not null?planned:null;
-    public void Reset(){index=null;routeNodes=[];planned=null;entered=null;Expected=null;entryReported=false;previous=null;}
+    public void Reset(){index=null;routeNodes=[];routeGoal=null;planned=null;entered=null;Expected=null;entryReported=false;previous=null;}
     public string? TakeEntryPassage()
     {
         if(entered is null||planned is null||entryReported)return null;
@@ -31,19 +32,30 @@ internal sealed class FerryNavigationProgress
         {Reset();return;}
         if(nearby.Ferries is null||data.Vehicle is not {SdkActive:true,IsFinite:true} vehicle
             ||now<vehicle.ReceivedAt||now-vehicle.ReceivedAt>TimeSpan.FromSeconds(2))return;
-        var ids=RouteStructureIdentity.Nodes(data.Route);
-        if(data.RouteAvailability==RouteAvailability.Available&&(!ReferenceEquals(index,nearby.Ferries)||!routeNodes.SequenceEqual(ids)))
+        var nodes=data.Route.Nodes;
+        var goal=data.Route.ConfirmedGoalUid;
+        if(data.RouteAvailability==RouteAvailability.Available&&(!ReferenceEquals(index,nearby.Ferries)
+            ||routeGoal!=goal||!nodes.Select(n=>n.Uid).SequenceEqual(routeNodes)))
         {
-            index=nearby.Ferries;routeNodes=ids;
+            index=nearby.Ferries;
+            routeNodes=nodes.Select(n=>n.Uid).ToArray();
+            routeGoal=goal;
             var candidate=index.OnRoute(data.Route).FirstOrDefault();
             // The SDK drops the ferry records when the player books the crossing,
             // before placement moves. Preserve that entered, still-legal transfer.
-            bool arrivalPrefix=entered is not null&&planned is not null&&planned.ExitUid!=0&&ids.FirstOrDefault()==planned.ExitUid;
-            var goal=data.Route.MayBeTruncated?null:data.Route.Nodes.MinBy(n=>n.DistanceToEndMeters);
-            bool sameGoal=planned?.GoalUid is null||goal?.Uid==planned.GoalUid;
-            if(candidate is not null&&planned?.Id==candidate.Id)planned=candidate;
-            else if(!arrivalPrefix||!sameGoal)
+            bool arrivalPrefix=entered is not null&&planned is not null&&planned.ExitUid!=0
+                &&nodes.Count>0&&nodes[0].Uid==planned.ExitUid;
+            bool goalChanged=planned?.GoalUid is {} previousGoal&&goal is {} newGoal&&previousGoal!=newGoal;
+            if(candidate is not null&&planned?.Id==candidate.Id)
+                planned=entered is null?candidate:candidate with
+                {
+                    ExitUid=candidate.ExitUid!=0?candidate.ExitUid:planned.ExitUid,
+                    GoalUid=candidate.GoalUid??planned.GoalUid
+                };
+            else if(!arrivalPrefix||goalChanged)
             {planned=candidate;entered=null;Expected=null;entryReported=false;}
+            else if(planned is {GoalUid:null}&&goal is not null)
+                planned=planned with {GoalUid=goal};
         }
         if(planned is null)return;
         var position=new Vector3((float)vehicle.X,(float)vehicle.Y,(float)vehicle.Z);

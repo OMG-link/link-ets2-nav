@@ -1,4 +1,5 @@
 using System.Numerics;
+using LinkEts2Nav.Core;
 using LinkEts2Nav.Map;
 using LinkEts2Nav.Runtime;
 using TruckLib.ScsMap;
@@ -110,6 +111,31 @@ public sealed class RouteJourneyEstimatorTests
         Assert.False(estimator.Estimate(route with{MayBeTruncated=true}).Ready);
         Assert.False(estimator.Estimate(route with{Nodes=[route.Nodes[0],route.Nodes[1] with{DistanceToEndMeters=100}]}).Ready);
         Assert.False(new RouteJourneyEstimator(map,(_,_)=>new(null,"unknown category")).Estimate(route).Ready);
+    }
+
+    [Theory]
+    [InlineData(0f, false, true, true)]
+    [InlineData(.01f, false, true, true)]
+    [InlineData(.011f, false, true, false)]
+    [InlineData(0f, true, true, false)]
+    [InlineData(0f, false, false, false)]
+    [InlineData(float.NaN, false, true, false)]
+    [InlineData(-1f, false, true, false)]
+    public void SdkGoalEvidenceAgreesForEstimationAndArrival(float remaining, bool truncated, bool validUid, bool expected)
+    {
+        var map = new TruckLib.ScsMap.Map();
+        var road = Road.Add(map, Vector3.Zero, new(500, 0, 0), default);
+        var full = Route(road.Node.Uid, road.ForwardNode.Uid);
+        var route = full with
+        {
+            Nodes = [full.Nodes[0], new(validUid ? road.ForwardNode.Uid : 0, remaining, 0)],
+            MayBeTruncated = truncated
+        };
+        var path = new DirectedRoad("road", road.Node.Uid, road.ForwardNode.Uid, [Vector3.Zero, new(500, 0, 0)]);
+        Assert.Equal(expected ? road.ForwardNode.Uid : (ulong?)null, route.ConfirmedGoalUid);
+        Assert.Equal(expected, new RouteJourneyEstimator(map, Eighty).Estimate(route).Ready);
+        Assert.Equal(expected, NavigationDestination.Find(route, [path], 0, 500, false) is not null);
+        Assert.Null((route with { Availability = RouteAvailability.Invalid }).ConfirmedGoalUid);
     }
 
     [Fact]

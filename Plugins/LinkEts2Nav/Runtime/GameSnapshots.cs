@@ -26,6 +26,11 @@ public sealed record RouteSnapshot(
     IReadOnlyList<RouteNode> Nodes, string Revision, RouteAvailability Availability,
     DateTimeOffset ReceivedAt, bool MayBeTruncated = false)
 {
+    // Parse establishes strictly decreasing SDK distances. Only the last node can be the goal.
+    internal ulong? ConfirmedGoalUid =>
+        Availability == RouteAvailability.Available && !MayBeTruncated && Nodes.Count > 0
+        && Nodes[^1] is { Uid: not 0, DistanceToEndMeters: >= 0 and <= .01f } goal ? goal.Uid : null;
+
     public static RouteSnapshot Parse(IEnumerable<RouteNode> source, DateTimeOffset receivedAt)
     {
         var nodes = new List<RouteNode>();

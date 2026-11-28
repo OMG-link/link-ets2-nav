@@ -268,8 +268,7 @@ public sealed class RoadPathSource:IDisposable
     {
         if(retries is null)return BuildRouteComponents(route);
         var ids=RouteStructureIdentity.Nodes(route);
-        var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
-        var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
+        var meaning=(route.MayBeTruncated,route.ConfirmedGoalUid);
         if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning&&routeWaitScope==retries.ScopeVersion)return cachedChunks;
         routeRetry?.Dispose();
         routeWaitScope=retries.ScopeVersion;mapIssues.Clear();
@@ -303,8 +302,7 @@ public sealed class RoadPathSource:IDisposable
     private List<List<DirectedRoad>> BuildRouteComponents(RouteSnapshot route)
     {
         var ids=RouteStructureIdentity.Nodes(route);
-        var terminal=route.Nodes.MinBy(n=>n.DistanceToEndMeters);
-        var meaning=(route.MayBeTruncated,terminal is {DistanceToEndMeters:<=.01f}?terminal.Uid:(ulong?)null);
+        var meaning=(route.MayBeTruncated,route.ConfirmedGoalUid);
         if(cachedNodes is not null&&cachedNodes.SequenceEqual(ids)&&cachedRouteMeaning==meaning)return cachedChunks;
         cachedNodes=null;cachedChunks=[];sdkVisits.Clear();
         List<DirectedRoad>? chunk = null;

@@ -33,10 +33,9 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
     public static string NavigationDistance(int meters)
     {
         if (meters < 1000) return Number(meters).Replace("二百", "两百", StringComparison.Ordinal) + "米";
-        const string digits = "零一二三四五六七八九";
         string text = Number(meters / 1000);
         string fraction = (meters % 1000).ToString("000", System.Globalization.CultureInfo.InvariantCulture).TrimEnd('0');
-        if (fraction.Length > 0) text += "点" + string.Concat(fraction.Select(c => digits[c - '0']));
+        if (fraction.Length > 0) text += "点" + string.Concat(fraction.Select(c => JourneySpeechText.Digits[c - '0']));
         if (fraction.Length == 0) text = meters / 1000 == 2 ? "两" : text.Replace("二百", "两百", StringComparison.Ordinal);
         return text + "公里";
     }
@@ -44,16 +43,7 @@ public sealed class SpeechPack(string? directory, string cacheDirectory)
     public static string Number(int number)
     {
         if (number is < 1 or > 9999) throw new ArgumentOutOfRangeException(nameof(number));
-        const string digits = "零一二三四五六七八九";
-        string text = number >= 1000 ? digits[number / 1000] + "千" : "";
-        int hundreds = number / 100 % 10;
-        if (hundreds > 0) text += digits[hundreds] + "百";
-        else if (number >= 1000 && number % 100 > 0) text += "零";
-        int rest = number % 100;
-        if (hundreds > 0 && rest is > 0 and < 10) text += "零";
-        if (rest >= 10) text += (rest / 10 == 1 && number < 100 ? "" : digits[rest / 10].ToString()) + "十";
-        if (rest % 10 != 0) text += digits[rest % 10];
-        return text;
+        return JourneySpeechText.BelowTenThousand(number);
     }
 
     public (string Path, bool CacheHit) Generate(string text, Func<string, (string Path, bool CacheHit)> local,

@@ -83,9 +83,8 @@ public static class NavigationPrompts
         int hundredths = (int)Math.Round((kilometers - Math.Floor(kilometers)) * 100);
         if (hundredths != 0)
         {
-            const string digits = "零一二三四五六七八九";
             string fraction = hundredths.ToString("00", CultureInfo.InvariantCulture).TrimEnd('0');
-            number += "点" + string.Concat(fraction.Select(c => digits[c-'0']));
+            number += "点" + string.Concat(fraction.Select(c => JourneySpeechText.Digits[c-'0']));
         }
         if (hundredths == 0) number = whole == 2 ? "两" : number.Replace("二百", "两百", StringComparison.Ordinal);
         return number + "公里";

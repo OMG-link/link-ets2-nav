@@ -42,13 +42,7 @@ public sealed class PlannedSpeechAnnouncer : IWarningPlanner, IAsyncDisposable
     public static string Number(int value)
     {
         if (value is < 1 or > 999) throw new ArgumentOutOfRangeException(nameof(value));
-        const string digits = "零一二三四五六七八九";
-        string result = value >= 100 ? digits[value / 100] + "百" : "";
-        int rest = value % 100;
-        if (value >= 100 && rest is > 0 and < 10) result += "零";
-        if (rest >= 10) result += (rest / 10 == 1 && value < 100 ? "" : digits[rest / 10].ToString()) + "十";
-        if (rest % 10 != 0) result += digits[rest % 10];
-        return result;
+        return JourneySpeechText.BelowTenThousand(value);
     }
 
     private static string BaseText(double stage, double actualDistance, bool firstConfirmedInside200Meters)

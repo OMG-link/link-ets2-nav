@@ -1,0 +1,5 @@
+<Project>
+  <!-- The upstream BeforeBuild target updates messages.pot and replaces its .bak.
+       Tests use the existing .po files, which the project still embeds and copies. -->
+  <Target Name="ExtractGetTextStrings" />
+</Project>

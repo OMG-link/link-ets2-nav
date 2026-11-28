@@ -84,13 +84,9 @@ try {
         }
         $timer = [Diagnostics.Stopwatch]::StartNew()
         if (-not $NoRestore -and -not $NoBuild) {
-            # Shared projects still use GetText.Extractor, but tests do not need the host executable.
-            Push-Location $frameworkRoot
-            try { Invoke-Checked dotnet @('tool', 'restore') }
-            finally { Pop-Location }
             Invoke-Checked dotnet @('restore', $testTarget)
         }
-        $testArguments = @('test', $testTarget, '-c', $Configuration, '--no-restore')
+        $testArguments = @('test', $testTarget, '-c', $Configuration, '--no-restore', '-p:NavTestBuild=true')
         if ($NoBuild) { $testArguments += '--no-build' }
         if ($TestFilter) { $testArguments += @('--filter', $TestFilter) }
         Invoke-Checked dotnet $testArguments

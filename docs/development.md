@@ -53,7 +53,7 @@ git submodule update --init --recursive --depth 1
 覆盖源码生成在忽略提交的 `artifacts/host-overrides/`，不直接修改子模块实现。更新上游后如源码锚点检查失败，应核对接口再适配。只发布插件 DLL 时不携带这些宿主限制。
 
 ```powershell
-dotnet test LinkEts2Nav.slnx
+dotnet test tests/Tests.slnx
 # 或使用开发脚本与 VS Code 的 Nav: Test 任务
 .\scripts\dev.ps1 -Action Test
 ```
@@ -68,7 +68,7 @@ README 面向用户，保留功能、安装、使用和限制说明。开发指�
 
 使用 xUnit.net v3 3.2.2，通过 VSTest 适配器运行，可使用 `dotnet test` 与 VS Code 测试面板；依赖由 NuGet 恢复，无需系统级安装。测试项目不随插件部署。
 
-测试入口使用 `tests/Tests.slnx`，只构建两类测试及其实际依赖，不构建宿主主程序或地图检查工具。默认 `Test` 仍执行全部单元测试和集成测试；日常按改动范围选择：
+`dotnet test tests/Tests.slnx` 和 `scripts/dev.ps1 -Action Test` 使用上游现有的 `.po` 文件构建翻译资源，保留工作区的 `messages.pot` 和 `messages.pot.bak`。测试解决方案只构建两类测试及其实际依赖。开发脚本默认执行全部单元测试和集成测试，也可按改动范围选择测试。
 
 ```powershell
 # 插件算法、地图匹配、语音规则

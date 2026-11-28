@@ -3,7 +3,10 @@
   <PropertyGroup>
     <NavOverrides>$(MSBuildThisFileDirectory)artifacts/host-overrides/</NavOverrides>
     <NavUi>$(MSBuildThisFileDirectory)dev-host/ui/</NavUi>
+    <NavTestSolution>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', 'tests', 'Tests.slnx'))</NavTestSolution>
   </PropertyGroup>
+  <Import Project="tests/TestTranslations.targets"
+          Condition="'$(MSBuildProjectName)' == 'ETS2LA.Translations' And ('$(NavTestBuild)' == 'true' Or '$(SolutionPath)' == '$(NavTestSolution)')" />
   <Import Project="scripts/ProbeRunner/ScratchProbes.targets"
           Condition="'$(MSBuildProjectExtension)' == '.csproj' And $([MSBuild]::EnsureTrailingSlash('$(MSBuildProjectDirectory)').StartsWith('$(MSBuildThisFileDirectory).tmp$([System.IO.Path]::DirectorySeparatorChar)'))" />
   <!-- Keep diagnostics enabled for our plugin/tests; suppress known upstream diagnostics only. -->
